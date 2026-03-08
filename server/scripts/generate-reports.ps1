@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("all", "coverage", "complexity")]
+    [ValidateSet("all", "coverage", "complexity", "callgraph")]
     [string]$Report = "all",
     [switch]$FailOnCommandFailure
 )
@@ -19,6 +19,7 @@ if (Test-Path $cargoBin) {
 $reportsRoot = Join-Path $serverRoot "target\reports"
 $coverageRoot = Join-Path $reportsRoot "coverage"
 $complexityRoot = Join-Path $reportsRoot "complexity"
+$callgraphRoot = Join-Path $reportsRoot "callgraph"
 
 function Escape-Html {
     param([AllowNull()][string]$Value)
@@ -257,6 +258,27 @@ function Test-ToolAvailable {
     param([string]$CommandName)
 
     return $null -ne (Get-Command $CommandName -ErrorAction SilentlyContinue)
+}
+
+function Get-ExecutableSuffix {
+    $runtime = [System.Runtime.InteropServices.RuntimeInformation]
+    if ($runtime::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Windows)) {
+        return ".exe"
+    }
+
+    return ""
+}
+
+function Get-RepoLocalCallgraphBinary {
+    param([string]$BinaryName)
+
+    $suffix = Get-ExecutableSuffix
+    $candidate = Join-Path $serverRoot "tools\scip-callgraph\current\src\target\release\$BinaryName$suffix"
+    if (Test-Path $candidate) {
+        return $candidate
+    }
+
+    return $null
 }
 
 function Invoke-CheckedCommand {
@@ -934,6 +956,335 @@ $(($noteItems -join "`n"))
     }
 }
 
+function Invoke-CallgraphReport {
+    param(
+        [hashtable]$SourceInventory
+    )
+
+    $notes = [System.Collections.Generic.List[string]]::new()
+    $reportPath = Join-Path $callgraphRoot "index.html"
+    $outputPath = Join-Path $callgraphRoot "output.html"
+    $fullScipPath = Join-Path $callgraphRoot "index.scip"
+    $fullScipJsonPath = Join-Path $callgraphRoot "index.scip.json"
+    $backendCoreScipJsonPath = Join-Path $callgraphRoot "backend_core.index.scip.json"
+    $fullDotPath = Join-Path $callgraphRoot "call_graph.dot"
+    $fullSvgPath = Join-Path $callgraphRoot "call_graph.svg"
+    $fullPngPath = Join-Path $callgraphRoot "call_graph.png"
+    $fallbackSvgPath = Join-Path $callgraphRoot "call_graph.simple.svg"
+    $coreDotPath = Join-Path $callgraphRoot "backend_core.dot"
+    $coreSvgPath = Join-Path $callgraphRoot "backend_core.svg"
+    $corePngPath = Join-Path $callgraphRoot "backend_core.png"
+    $coreFallbackSvgPath = Join-Path $callgraphRoot "backend_core.simple.svg"
+    $generateCallGraph = Get-RepoLocalCallgraphBinary -BinaryName "generate_call_graph_dot"
+    $generateFilesSubgraph = Get-RepoLocalCallgraphBinary -BinaryName "generate_files_subgraph_dot"
+    $writeAtomsToSvg = Get-RepoLocalCallgraphBinary -BinaryName "write_atoms_to_svg"
+    $backendCoreFiles = @(
+        "bin/dedicated_server/src/main.rs",
+        "crates/game_api/src/app.rs",
+        "crates/game_api/src/realtime.rs",
+        "crates/game_api/src/transport.rs",
+        "crates/game_net/src/lib.rs",
+        "crates/game_net/src/control.rs",
+        "crates/game_net/src/ingress.rs",
+        "crates/game_lobby/src/lib.rs",
+        "crates/game_match/src/lib.rs",
+        "crates/game_sim/src/lib.rs"
+    )
+
+    if (-not (Test-ToolAvailable -CommandName "rust-analyzer")) {
+        $notes.Add("Call graph report was skipped because rust-analyzer is not installed.")
+        $body = @"
+<h1>Call Graph Unavailable</h1>
+<div class="panel">
+  <p>rust-analyzer is not installed, so the backend call graph could not be generated.</p>
+  <p class="muted">Install it with <code>./scripts/install-tools.ps1 -CallgraphOnly</code>.</p>
+</div>
+"@
+        Write-ReportHtml -Path $reportPath -Title "Call Graph Unavailable" -Body $body
+        Write-ReportHtml -Path $outputPath -Title "Call Graph Unavailable" -Body $body
+        return [pscustomobject]@{
+            Name = "Call Graph"
+            Status = "failed"
+            Notes = @($notes)
+            IndexPath = "callgraph/index.html"
+            ErrorMessage = "rust-analyzer is not installed."
+        }
+    }
+
+    if ($null -eq $generateCallGraph -or $null -eq $generateFilesSubgraph -or $null -eq $writeAtomsToSvg) {
+        $notes.Add("Call graph report was skipped because the repo-local scip-callgraph binaries are missing.")
+        $body = @"
+<h1>Call Graph Unavailable</h1>
+<div class="panel">
+  <p>The repo-local scip-callgraph binaries are missing, so the backend call graph could not be generated.</p>
+  <p class="muted">Install them with <code>./scripts/install-tools.ps1 -CallgraphOnly</code>.</p>
+</div>
+"@
+        Write-ReportHtml -Path $reportPath -Title "Call Graph Unavailable" -Body $body
+        Write-ReportHtml -Path $outputPath -Title "Call Graph Unavailable" -Body $body
+        return [pscustomobject]@{
+            Name = "Call Graph"
+            Status = "failed"
+            Notes = @($notes)
+            IndexPath = "callgraph/index.html"
+            ErrorMessage = "scip-callgraph binaries are not installed."
+        }
+    }
+
+    try {
+        if (Test-Path $callgraphRoot) {
+            Remove-Item -Recurse -Force -Path $callgraphRoot
+        }
+        New-Item -ItemType Directory -Force -Path $callgraphRoot | Out-Null
+
+        Push-Location $serverRoot
+        try {
+            if (Test-Path "index.scip") {
+                Remove-Item -Force -Path "index.scip"
+            }
+
+            Invoke-CheckedCommand -Description "rust-analyzer scip" -Command {
+                rust-analyzer scip . | Out-Host
+            }
+
+            if (-not (Test-Path "index.scip")) {
+                throw "rust-analyzer did not produce index.scip in the server workspace root."
+            }
+
+            Move-Item -Force -Path "index.scip" -Destination $fullScipPath
+        }
+        finally {
+            Pop-Location
+        }
+
+        Invoke-CheckedCommand -Description "scip_json_dump" -Command {
+            rustup run stable cargo run -p scip_json_dump --quiet -- $fullScipPath $fullScipJsonPath | Out-Host
+        }
+
+        $scipJson = Get-Content -Path $fullScipJsonPath -Raw | ConvertFrom-Json
+        $documents = @($scipJson.documents)
+        $normalizedBackendCoreFiles = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        foreach ($backendCoreFile in $backendCoreFiles) {
+            [void]$normalizedBackendCoreFiles.Add(($backendCoreFile -replace "/", "\"))
+        }
+
+        $backendCoreDocuments = @(
+            $documents |
+                Where-Object {
+                    $normalizedRelativePath = ([string]$_.relative_path) -replace "/", "\"
+                    $normalizedBackendCoreFiles.Contains($normalizedRelativePath)
+                }
+        )
+
+        $backendCoreScipJson = [ordered]@{
+            metadata = $scipJson.metadata
+            documents = $backendCoreDocuments
+        }
+        $backendCoreScipJsonText = $backendCoreScipJson | ConvertTo-Json -Depth 100 -Compress
+        [System.IO.File]::WriteAllText(
+            $backendCoreScipJsonPath,
+            $backendCoreScipJsonText,
+            [System.Text.UTF8Encoding]::new($false)
+        )
+
+        $graphvizAvailable = $true
+        try {
+            & $generateCallGraph $fullScipJsonPath $fullDotPath | Out-Host
+            if ($LASTEXITCODE -ne 0) {
+                throw "generate_call_graph_dot failed with exit code $LASTEXITCODE."
+            }
+        }
+        catch {
+            $graphvizAvailable = $false
+            if (-not (Test-Path $fullDotPath)) {
+                throw $_
+            }
+
+            $notes.Add("Graphviz 'dot' is not installed; the full call graph DOT was generated and a simple SVG fallback was used instead.")
+            Invoke-CheckedCommand -Description "write_atoms_to_svg" -Command {
+                & $writeAtomsToSvg $fullScipJsonPath $fallbackSvgPath | Out-Host
+            }
+        }
+
+        try {
+            & $generateFilesSubgraph $fullScipJsonPath $coreDotPath @($backendCoreFiles) | Out-Host
+            if ($LASTEXITCODE -ne 0) {
+                throw "generate_files_subgraph_dot failed with exit code $LASTEXITCODE."
+            }
+        }
+        catch {
+            if (Test-Path $coreDotPath) {
+                $notes.Add("The curated backend_core DOT was generated, but Graphviz 'dot' is not installed so no backend_core SVG was rendered.")
+            }
+            else {
+                $notes.Add("Curated backend core subgraph generation failed: $($_.Exception.Message)")
+            }
+        }
+
+        if ($backendCoreDocuments.Count -gt 0) {
+            try {
+                Invoke-CheckedCommand -Description "write_atoms_to_svg backend_core" -Command {
+                    & $writeAtomsToSvg $backendCoreScipJsonPath $coreFallbackSvgPath | Out-Host
+                }
+            }
+            catch {
+                $notes.Add("Curated backend core simple SVG generation failed: $($_.Exception.Message)")
+            }
+        }
+
+        $documentCount = $documents.Count
+        $symbolCount = @($documents | ForEach-Object { @($_.symbols).Count } | Measure-Object -Sum).Sum
+        $occurrenceCount = @($documents | ForEach-Object { @($_.occurrences).Count } | Measure-Object -Sum).Sum
+        $coreEmbedAsset = if (Test-Path $coreSvgPath) {
+            "backend_core.svg"
+        }
+        elseif (Test-Path $coreFallbackSvgPath) {
+            "backend_core.simple.svg"
+        }
+        else {
+            $null
+        }
+
+        $fullEmbedAsset = if (Test-Path $fullSvgPath) {
+            "call_graph.svg"
+        }
+        elseif (Test-Path $fallbackSvgPath) {
+            "call_graph.simple.svg"
+        }
+        else {
+            $null
+        }
+
+        $notes.Add("The full backend call graph currently covers the entire Rust workspace under server/.")
+        $notes.Add("backend_core.dot is the curated main-backend subgraph for the dedicated server, app layer, transport boundary, and core simulation crates.")
+        if ($graphvizAvailable) {
+            $notes.Add("Graphviz 'dot' was available, so DOT, SVG, and PNG were generated from the full call graph.")
+        }
+
+        $embedBlock = if ($null -ne $coreEmbedAsset) {
+            @"
+<div class="panel">
+  <h2>Main Backend Preview</h2>
+  <object data="./$(Escape-Html $coreEmbedAsset)" type="image/svg+xml" style="width: 100%; min-height: 48rem; border: 1px solid var(--line); border-radius: 12px;">
+    <p>SVG preview could not be embedded. Open <a href="./$(Escape-Html $coreEmbedAsset)">the SVG directly</a>.</p>
+  </object>
+</div>
+"@
+        }
+        else {
+            @"
+<div class="panel">
+  <h2>Preview Unavailable</h2>
+  <p>No curated backend SVG preview could be generated.</p>
+</div>
+"@
+        }
+
+        $fullEmbedBlock = if ($null -ne $fullEmbedAsset) {
+            @"
+<div class="panel">
+  <h2>Full Workspace Preview</h2>
+  <object data="./$(Escape-Html $fullEmbedAsset)" type="image/svg+xml" style="width: 100%; min-height: 48rem; border: 1px solid var(--line); border-radius: 12px;">
+    <p>SVG preview could not be embedded. Open <a href="./$(Escape-Html $fullEmbedAsset)">the SVG directly</a>.</p>
+  </object>
+</div>
+"@
+        }
+        else {
+            ""
+        }
+
+        $artifactItems = @(
+            '<li><a href="./index.scip">Raw SCIP index</a></li>',
+            '<li><a href="./index.scip.json">SCIP JSON</a></li>',
+            '<li><a href="./call_graph.dot">Full call graph DOT</a></li>',
+            '<li><a href="./backend_core.index.scip.json">Curated backend core SCIP JSON</a></li>',
+            '<li><a href="./backend_core.dot">Curated backend core DOT</a></li>'
+        )
+        if (Test-Path $fullSvgPath) {
+            $artifactItems += '<li><a href="./call_graph.svg">Full call graph SVG</a></li>'
+        }
+        if (Test-Path $fallbackSvgPath) {
+            $artifactItems += '<li><a href="./call_graph.simple.svg">Full call graph simple SVG</a></li>'
+        }
+        if (Test-Path $fullPngPath) {
+            $artifactItems += '<li><a href="./call_graph.png">Full call graph PNG</a></li>'
+        }
+        if (Test-Path $coreSvgPath) {
+            $artifactItems += '<li><a href="./backend_core.svg">Curated backend core SVG</a></li>'
+        }
+        if (Test-Path $coreFallbackSvgPath) {
+            $artifactItems += '<li><a href="./backend_core.simple.svg">Curated backend core simple SVG</a></li>'
+        }
+        if (Test-Path $corePngPath) {
+            $artifactItems += '<li><a href="./backend_core.png">Curated backend core PNG</a></li>'
+        }
+
+        $noteItems = foreach ($note in ($notes | Sort-Object -Unique)) {
+            "<li>$(Escape-Html $note)</li>"
+        }
+
+        $body = @"
+<h1>Call Graph Report</h1>
+<p class="muted">Commit <code>$(Escape-Html (Get-GitValue -CommandArgs @("rev-parse", "--short", "HEAD") -Fallback "unknown"))</code>. Generated from <code>rust-analyzer scip .</code> plus repo-local <code>scip-callgraph</code>.</p>
+<div class="grid">
+  <div class="metric"><span class="muted">SCIP documents</span><strong>$documentCount</strong></div>
+  <div class="metric"><span class="muted">Symbol definitions</span><strong>$symbolCount</strong></div>
+  <div class="metric"><span class="muted">Occurrences</span><strong>$occurrenceCount</strong></div>
+  <div class="metric"><span class="muted">Renderer</span><strong>$(if ($graphvizAvailable) { "Graphviz DOT + SVG" } elseif (($null -ne $coreEmbedAsset) -or ($null -ne $fullEmbedAsset)) { "DOT + simple SVG fallback" } else { "DOT only" })</strong></div>
+</div>
+$embedBlock
+$fullEmbedBlock
+<div class="panel">
+  <h2>Artifacts</h2>
+  <ul>
+$(($artifactItems -join "`n"))
+  </ul>
+</div>
+<div class="panel">
+  <h2>Notes</h2>
+  <ul>
+$(($noteItems -join "`n"))
+  </ul>
+</div>
+<p class="footer"><a href="../index.html">Back to report index</a></p>
+"@
+
+        Write-ReportHtml -Path $reportPath -Title "Call Graph Report" -Body $body
+        Write-ReportHtml -Path $outputPath -Title "Call Graph Report" -Body $body
+
+        return [pscustomobject]@{
+            Name = "Call Graph"
+            Status = "ok"
+            Notes = @($notes | Sort-Object -Unique)
+            IndexPath = "callgraph/index.html"
+            ErrorMessage = $null
+        }
+    }
+    catch {
+        $errorMessage = $_.Exception.Message
+        $notes.Add("Call graph generation failed: $errorMessage")
+        $body = @"
+<h1>Call Graph Report Failed</h1>
+<div class="panel">
+  <p>The call graph step could not complete.</p>
+  <p><code>$(Escape-Html $errorMessage)</code></p>
+</div>
+<p class="footer"><a href="../index.html">Back to report index</a></p>
+"@
+        Write-ReportHtml -Path $reportPath -Title "Call Graph Report Failed" -Body $body
+        Write-ReportHtml -Path $outputPath -Title "Call Graph Report Failed" -Body $body
+
+        return [pscustomobject]@{
+            Name = "Call Graph"
+            Status = "failed"
+            Notes = @($notes)
+            IndexPath = "callgraph/index.html"
+            ErrorMessage = $errorMessage
+        }
+    }
+}
+
 function Invoke-ReportGeneration {
     $commitShort = Get-GitValue -CommandArgs @("rev-parse", "--short", "HEAD") -Fallback "unknown"
     $commitLong = Get-GitValue -CommandArgs @("rev-parse", "HEAD") -Fallback "unknown"
@@ -952,11 +1303,15 @@ function Invoke-ReportGeneration {
         "coverage" {
             $results += Invoke-CoverageReport -SourceInventory $sourceInventory
         }
+        "callgraph" {
+            $results += Invoke-CallgraphReport -SourceInventory $sourceInventory
+        }
         "complexity" {
             $results += Invoke-ComplexityReport -SourceInventory $sourceInventory
         }
         default {
             $results += Invoke-CoverageReport -SourceInventory $sourceInventory
+            $results += Invoke-CallgraphReport -SourceInventory $sourceInventory
             $results += Invoke-ComplexityReport -SourceInventory $sourceInventory
         }
     }

@@ -59,6 +59,7 @@ cd server
 ```
 
 That script now installs Verus into the repo-local cache at `server/tools/verus/current`.
+It also installs the repo-local `scip-callgraph` binaries used for backend call-graph reports.
 
 Run the configured quality checks:
 
@@ -81,11 +82,32 @@ cd server
 ./scripts/quality.ps1 reports
 ```
 
+Generate only the backend call-graph report:
+
+```powershell
+cd server
+./scripts/quality.ps1 callgraph
+```
+
 Open the combined report:
 
 ```text
 server/target/reports/output.html
 ```
+
+Open the main backend call graph directly:
+
+```text
+server/target/reports/callgraph/output.html
+```
+
+The quickest curated backend artifact is:
+
+```text
+server/target/reports/callgraph/backend_core.simple.svg
+```
+
+If Graphviz is available, the report also writes `backend_core.svg` and `backend_core.png`. Without Graphviz, it still writes `backend_core.dot` and `backend_core.simple.svg`.
 
 Do not run `./scripts/quality.ps1 test` and `./scripts/quality.ps1 reports` in parallel. The coverage step uses its own target directory and those commands can interfere with each other if started at the same time.
 
@@ -118,6 +140,7 @@ git commit -m "Describe the change"
 Hook behavior:
 - `pre-commit` runs fast repo checks such as whitespace, TOML/YAML validation, `typos`, `taplo`, and Rust formatting.
 - `post-commit` generates the HTML reports and writes them to `server/target/reports/output.html`.
+- `post-commit` also refreshes the backend call graph under `server/target/reports/callgraph/`.
 - `pre-push` runs Rust linting and tests before the branch leaves your machine.
 - each push to `main` uploads a GitHub Actions artifact named `server-reports-<commit-sha>` that contains `server/target/reports/output.html`
 

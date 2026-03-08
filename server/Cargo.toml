@@ -1,5 +1,6 @@
 [workspace]
 members = [
+  "bin/scip_json_dump",
   "bin/dedicated_server",
   "crates/game_api",
   "crates/game_content",
