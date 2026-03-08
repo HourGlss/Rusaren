@@ -264,6 +264,11 @@ impl Lobby {
         self.players.len()
     }
 
+    #[must_use]
+    pub fn players(&self) -> Vec<LobbyPlayer> {
+        self.players.values().cloned().collect()
+    }
+
     fn ensure_open(&self) -> Result<(), LobbyError> {
         if matches!(self.phase, LobbyPhase::Open) {
             Ok(())

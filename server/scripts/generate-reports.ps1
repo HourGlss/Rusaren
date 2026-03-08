@@ -1379,6 +1379,11 @@ function Invoke-FuzzCoverageReport {
                 Target = "session_ingress"
                 Scope = "crates/game_net/src/ingress.rs plus control decode and domain validation."
                 Description = "Session binding and hostile ingress sequencing."
+            },
+            [pscustomobject]@{
+                Target = "server_control_event_decode"
+                Scope = "crates/game_net/src/control.rs plus game_domain validation via decoded lobby snapshots and records."
+                Description = "Server control event decode for lobby directory and full lobby snapshot payloads."
             }
         )
 

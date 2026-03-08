@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::io;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -138,7 +139,8 @@ pub async fn spawn_dev_server(listener: TcpListener) -> io::Result<DevServerHand
     let (ingress_tx, ingress_rx) = mpsc::unbounded_channel();
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let runtime = Arc::new(Mutex::new(RuntimeState {
-        app: ServerApp::new(),
+        app: ServerApp::new_persistent(default_record_store_path())
+            .map_err(io::Error::other)?,
         transport: RealtimeTransport::new(),
     }));
     let state = DevServerState {
@@ -167,6 +169,14 @@ pub async fn spawn_dev_server(listener: TcpListener) -> io::Result<DevServerHand
         ingress_task,
         tick_task,
     })
+}
+
+fn default_record_store_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("var")
+        .join("player_records.tsv")
 }
 
 async fn run_ingress_loop(
@@ -442,14 +452,20 @@ mod tests {
             .await;
         let _ = bob.send(ClientMessage::Binary(connect_bob.into())).await;
 
-        assert!(matches!(
-            recv_event(&mut alice).await,
-            ServerControlEvent::Connected { .. }
-        ));
-        assert!(matches!(
-            recv_event(&mut bob).await,
-            ServerControlEvent::Connected { .. }
-        ));
+        let alice_connect_events = recv_events_until(&mut alice, 3, |event| {
+            matches!(event, ServerControlEvent::LobbyDirectorySnapshot { .. })
+        })
+        .await;
+        let bob_connect_events = recv_events_until(&mut bob, 3, |event| {
+            matches!(event, ServerControlEvent::LobbyDirectorySnapshot { .. })
+        })
+        .await;
+        assert!(alice_connect_events
+            .iter()
+            .any(|event| matches!(event, ServerControlEvent::Connected { .. })));
+        assert!(bob_connect_events
+            .iter()
+            .any(|event| matches!(event, ServerControlEvent::Connected { .. })));
 
         let create = match ClientControlCommand::CreateGameLobby.encode_packet(2, 0) {
             Ok(packet) => packet,
@@ -457,29 +473,48 @@ mod tests {
         };
         let _ = alice.send(ClientMessage::Binary(create.into())).await;
 
-        let created = recv_event(&mut alice).await;
+        let created_events = recv_events_until(&mut alice, 4, |event| {
+            matches!(event, ServerControlEvent::GameLobbyCreated { .. })
+        })
+        .await;
+        let created = created_events
+            .into_iter()
+            .find(|event| matches!(event, ServerControlEvent::GameLobbyCreated { .. }))
+            .expect("create flow should include GameLobbyCreated");
         let lobby_id = match created {
             ServerControlEvent::GameLobbyCreated { lobby_id } => lobby_id,
             other => panic!("expected GameLobbyCreated, got {other:?}"),
         };
-        assert!(matches!(
-            recv_event(&mut alice).await,
-            ServerControlEvent::GameLobbyJoined { lobby_id: current, player_id: joined_player } if current == lobby_id && joined_player == player_id(1)
-        ));
+        let alice_post_create = recv_events_until(&mut alice, 4, |event| {
+            matches!(event, ServerControlEvent::GameLobbySnapshot { .. })
+        })
+        .await;
+        assert!(alice_post_create.iter().any(|event| matches!(
+            event,
+            ServerControlEvent::GameLobbyJoined { lobby_id: current, player_id: joined_player } if *current == lobby_id && *joined_player == player_id(1)
+        )));
 
         let join = match (ClientControlCommand::JoinGameLobby { lobby_id }).encode_packet(2, 0) {
             Ok(packet) => packet,
             Err(error) => panic!("join packet should encode: {error}"),
         };
         let _ = bob.send(ClientMessage::Binary(join.into())).await;
-        assert!(matches!(
-            recv_event(&mut alice).await,
-            ServerControlEvent::GameLobbyJoined { lobby_id: current, player_id: joined_player } if current == lobby_id && joined_player == player_id(2)
-        ));
-        assert!(matches!(
-            recv_event(&mut bob).await,
-            ServerControlEvent::GameLobbyJoined { lobby_id: current, player_id: joined_player } if current == lobby_id && joined_player == player_id(2)
-        ));
+        let alice_join_events = recv_events_until(&mut alice, 4, |event| {
+            matches!(event, ServerControlEvent::GameLobbySnapshot { .. })
+        })
+        .await;
+        let bob_join_events = recv_events_until(&mut bob, 4, |event| {
+            matches!(event, ServerControlEvent::GameLobbySnapshot { .. })
+        })
+        .await;
+        assert!(alice_join_events.iter().any(|event| matches!(
+            event,
+            ServerControlEvent::GameLobbyJoined { lobby_id: current, player_id: joined_player } if *current == lobby_id && *joined_player == player_id(2)
+        )));
+        assert!(bob_join_events.iter().any(|event| matches!(
+            event,
+            ServerControlEvent::GameLobbyJoined { lobby_id: current, player_id: joined_player } if *current == lobby_id && *joined_player == player_id(2)
+        )));
 
         let _ = alice
             .send(ClientMessage::Binary(
@@ -663,10 +698,13 @@ mod tests {
         .encode_packet(1, 0)
         .expect("connect packet should encode");
         let _ = socket.send(ClientMessage::Binary(connect.into())).await;
-        assert!(matches!(
-            recv_event(&mut socket).await,
-            ServerControlEvent::Connected { .. }
-        ));
+        let connect_events = recv_events_until(&mut socket, 3, |event| {
+            matches!(event, ServerControlEvent::LobbyDirectorySnapshot { .. })
+        })
+        .await;
+        assert!(connect_events
+            .iter()
+            .any(|event| matches!(event, ServerControlEvent::Connected { .. })));
 
         let reconnect = ClientControlCommand::Connect {
             player_id: player_id(2),

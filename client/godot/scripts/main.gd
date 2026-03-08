@@ -26,6 +26,7 @@ var central_panel: PanelContainer
 var lobby_panel: PanelContainer
 var match_panel: PanelContainer
 var results_panel: PanelContainer
+var central_directory_log: RichTextLabel
 var roster_log: RichTextLabel
 var event_log: RichTextLabel
 var join_lobby_input: LineEdit
@@ -223,7 +224,7 @@ func _build_central_panel() -> PanelContainer:
 	body.add_child(title)
 
 	var summary := Label.new()
-	summary.text = "Create a game lobby or join one by ID. This shell keeps the flow honest to the current backend, so there is no lobby browser yet."
+	summary.text = "Create a game lobby or join one by ID. The backend now publishes a central lobby directory, so this shell can show active game lobbies before you join."
 	summary.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	summary.add_theme_color_override("font_color", Color8(187, 196, 203))
 	body.add_child(summary)
@@ -233,6 +234,18 @@ func _build_central_panel() -> PanelContainer:
 	prompt.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	prompt.add_theme_color_override("font_color", Color8(164, 178, 188))
 	body.add_child(prompt)
+
+	var list_title := Label.new()
+	list_title.text = "Active game lobbies"
+	list_title.add_theme_color_override("font_color", Color8(244, 233, 216))
+	body.add_child(list_title)
+
+	central_directory_log = RichTextLabel.new()
+	central_directory_log.fit_content = true
+	central_directory_log.scroll_active = true
+	central_directory_log.custom_minimum_size = Vector2(0, 150)
+	central_directory_log.add_theme_color_override("default_color", Color8(222, 230, 236))
+	body.add_child(central_directory_log)
 
 	return panel
 
@@ -407,7 +420,7 @@ func _build_roster_panel() -> PanelContainer:
 	body.add_child(title)
 
 	var note := Label.new()
-	note.text = "Best-effort roster assembled from the real event stream."
+	note.text = "Authoritative roster built from the current backend snapshot plus live updates."
 	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	note.add_theme_color_override("font_color", Color8(179, 199, 192))
 	body.add_child(note)
@@ -628,6 +641,7 @@ func _refresh_ui() -> void:
 	score_label.text = app_state.score_text()
 	countdown_value_label.text = app_state.countdown_label
 	outcome_label.text = result_text
+	central_directory_log.text = "\n".join(app_state.lobby_directory_lines())
 	roster_log.text = "\n".join(app_state.roster_lines())
 	event_log.text = app_state.event_log_text()
 

@@ -41,3 +41,10 @@ path = "fuzz_targets/session_ingress.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "server_control_event_decode"
+path = "fuzz_targets/server_control_event_decode.rs"
+test = false
+doc = false
+bench = false

@@ -8,7 +8,8 @@ use std::{
 
 use game_domain::{LobbyId, PlayerId, PlayerName, ReadyState, SkillTree, TeamSide};
 use game_net::{
-    ChannelId, ClientControlCommand, PacketHeader, PacketKind, ValidatedInputFrame,
+    ChannelId, ClientControlCommand, LobbyDirectoryEntry, LobbySnapshotPhase,
+    LobbySnapshotPlayer, PacketHeader, PacketKind, ServerControlEvent, ValidatedInputFrame,
     BUTTON_CAST, BUTTON_PRIMARY,
 };
 
@@ -23,6 +24,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     write_control_command_corpus(&corpus_root.join("control_command_decode"))?;
     write_input_frame_corpus(&corpus_root.join("input_frame_decode"))?;
     write_session_ingress_corpus(&corpus_root.join("session_ingress"))?;
+    write_server_control_event_corpus(&corpus_root.join("server_control_event_decode"))?;
 
     println!("Seed corpora written under {}", corpus_root.display());
     Ok(())
@@ -126,6 +128,90 @@ fn write_session_ingress_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
     write_seed(dir, "valid_bind_then_ready.bin", &valid_stream)?;
     write_seed(dir, "invalid_first_packet.bin", &invalid_first)?;
     write_seed(dir, "rebinding_attempt.bin", &rebinding)?;
+    Ok(())
+}
+
+fn write_server_control_event_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
+    recreate_dir(dir)?;
+
+    let connected = ServerControlEvent::Connected {
+        player_id: player_id(7)?,
+        player_name: player_name("Alice")?,
+        record: game_domain::PlayerRecord {
+            wins: 1,
+            losses: 2,
+            no_contests: 3,
+        },
+    }
+    .encode_packet(1, 0)?;
+    let directory = ServerControlEvent::LobbyDirectorySnapshot {
+        lobbies: vec![LobbyDirectoryEntry {
+            lobby_id: lobby_id(3)?,
+            player_count: 2,
+            team_a_count: 1,
+            team_b_count: 1,
+            ready_count: 2,
+            phase: LobbySnapshotPhase::LaunchCountdown {
+                seconds_remaining: 5,
+            },
+        }],
+    }
+    .encode_packet(2, 10)?;
+    let snapshot = ServerControlEvent::GameLobbySnapshot {
+        lobby_id: lobby_id(3)?,
+        phase: LobbySnapshotPhase::Open,
+        players: vec![
+            LobbySnapshotPlayer {
+                player_id: player_id(7)?,
+                player_name: player_name("Alice")?,
+                record: game_domain::PlayerRecord::new(),
+                team: Some(TeamSide::TeamA),
+                ready: ReadyState::Ready,
+            },
+            LobbySnapshotPlayer {
+                player_id: player_id(8)?,
+                player_name: player_name("Bob")?,
+                record: game_domain::PlayerRecord {
+                    wins: 4,
+                    losses: 1,
+                    no_contests: 0,
+                },
+                team: Some(TeamSide::TeamB),
+                ready: ReadyState::NotReady,
+            },
+        ],
+    }
+    .encode_packet(3, 11)?;
+    let truncated = snapshot[..snapshot.len() - 1].to_vec();
+
+    let mut invalid_optional_team_payload = vec![18];
+    invalid_optional_team_payload.extend_from_slice(&3_u32.to_le_bytes());
+    invalid_optional_team_payload.push(0);
+    invalid_optional_team_payload.extend_from_slice(&1_u16.to_le_bytes());
+    invalid_optional_team_payload.extend_from_slice(&7_u32.to_le_bytes());
+    invalid_optional_team_payload.push(5);
+    invalid_optional_team_payload.extend_from_slice(b"Alice");
+    invalid_optional_team_payload.extend_from_slice(&0_u16.to_le_bytes());
+    invalid_optional_team_payload.extend_from_slice(&0_u16.to_le_bytes());
+    invalid_optional_team_payload.extend_from_slice(&0_u16.to_le_bytes());
+    invalid_optional_team_payload.push(9);
+    invalid_optional_team_payload.push(0);
+    let invalid_optional_team_payload_len = u16::try_from(invalid_optional_team_payload.len())?;
+    let invalid_optional_team = PacketHeader::new(
+        ChannelId::Control,
+        PacketKind::ControlEvent,
+        0,
+        invalid_optional_team_payload_len,
+        4,
+        12,
+    )?
+    .encode(&invalid_optional_team_payload);
+
+    write_seed(dir, "connected_valid.bin", &connected)?;
+    write_seed(dir, "directory_valid.bin", &directory)?;
+    write_seed(dir, "snapshot_valid.bin", &snapshot)?;
+    write_seed(dir, "truncated_snapshot.bin", &truncated)?;
+    write_seed(dir, "invalid_optional_team.bin", &invalid_optional_team)?;
     Ok(())
 }
 

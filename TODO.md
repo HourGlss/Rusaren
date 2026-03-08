@@ -21,8 +21,8 @@ Release gate:
 ## 0.4.0 Backend MVP
 
 - [ ] Finish the backend MVP around one fully playable rules slice.
-- [ ] Persist player identity and `W-L-NC`.
-- [ ] Add lobby discovery and full lobby snapshot events.
+- [x] Persist player identity and `W-L-NC`.
+- [x] Add lobby discovery and full lobby snapshot events.
 - [ ] Keep strict validation on every network boundary.
 
 Release gate:

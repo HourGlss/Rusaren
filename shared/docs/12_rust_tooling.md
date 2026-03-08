@@ -91,6 +91,7 @@ For this repo, the first target order should be:
 The initial real fuzz targets now live under `server/fuzz/` and cover:
 - packet header decode
 - client control command decode
+- server control event decode
 - validated input frame decode
 - ingress/session sequencing
 

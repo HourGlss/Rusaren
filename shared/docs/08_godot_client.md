@@ -23,13 +23,14 @@ Recommended client architecture:
 Current implementation status:
 - `client/godot/` now contains a thin Godot 4 shell for the websocket dev adapter.
 - The current shell uses a binary `NetAdapter` for `ClientControlCommand` and `ServerControlEvent`.
-- The current shell renders central lobby, game lobby, launch countdown, match skill-pick state, and results.
+- The current shell renders central lobby, game lobby, launch countdown, match skill-pick state, results, and central-lobby directory snapshots.
+- The current shell now consumes authoritative full game-lobby snapshots, including late-joiner roster state and `W-L-NC`.
 - Combat rendering is still placeholder-only.
 - The current shell is intentionally websocket-first while the WebRTC transport stays in planning.
 
 Current backend limitations the shell must expose honestly:
-- Central lobby does not yet have a server-driven lobby browser, so joining a lobby is manual by `lobby_id`.
-- The backend does not yet emit a full lobby snapshot to a late joiner, so the shell's roster view is built from live events and may be incomplete until more activity occurs.
+- Joining a lobby is still manual by `lobby_id`, even though the server now publishes a central-lobby directory snapshot.
+- Combat rendering is still placeholder-only; the shell shows authoritative state changes, not final gameplay presentation.
 
 Disconnect UX:
 - If a match is aborted because a player disconnects, show: `<PLAYER_NAME> has disconnected. Game is over.`

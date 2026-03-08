@@ -163,6 +163,21 @@ class ByteCursor:
 				error_message = "encoded team %d is invalid" % raw
 				return null
 
+	func read_optional_team_label() -> Variant:
+		var raw = read_u8()
+		if has_error():
+			return null
+		match raw:
+			0:
+				return "Unassigned"
+			TEAM_A:
+				return "Team A"
+			TEAM_B:
+				return "Team B"
+			_:
+				error_message = "encoded optional team %d is invalid" % raw
+				return null
+
 	func read_ready_label() -> Variant:
 		var raw = read_u8()
 		if has_error():
@@ -206,6 +221,28 @@ class ByteCursor:
 				return "No Contest"
 			_:
 				error_message = "encoded match outcome %d is invalid" % raw
+				return null
+
+	func read_lobby_phase() -> Variant:
+		var raw = read_u8()
+		if has_error():
+			return null
+		match raw:
+			0:
+				return {
+					"name": "Open",
+					"seconds_remaining": 0,
+				}
+			1:
+				var seconds_remaining = read_u8()
+				if has_error():
+					return null
+				return {
+					"name": "Launch Countdown",
+					"seconds_remaining": seconds_remaining,
+				}
+			_:
+				error_message = "encoded lobby phase %d is invalid" % raw
 				return null
 
 	func finish() -> Dictionary:
@@ -479,6 +516,60 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 			event = {
 				"type": "Error",
 				"message": error_message,
+			}
+		17:
+			var lobby_count = cursor.read_u16()
+			if cursor.has_error():
+				return _error(cursor.error_message)
+			var lobbies: Array[Dictionary] = []
+			for _lobby_index in range(int(lobby_count)):
+				var lobby_id = cursor.read_lobby_id()
+				var player_count = cursor.read_u16()
+				var team_a_count = cursor.read_u16()
+				var team_b_count = cursor.read_u16()
+				var ready_count = cursor.read_u16()
+				var phase = cursor.read_lobby_phase()
+				if cursor.has_error():
+					return _error(cursor.error_message)
+				lobbies.append({
+					"lobby_id": lobby_id,
+					"player_count": player_count,
+					"team_a_count": team_a_count,
+					"team_b_count": team_b_count,
+					"ready_count": ready_count,
+					"phase": phase,
+				})
+			event = {
+				"type": "LobbyDirectorySnapshot",
+				"lobbies": lobbies,
+			}
+		18:
+			var lobby_id = cursor.read_lobby_id()
+			var phase = cursor.read_lobby_phase()
+			var player_count = cursor.read_u16()
+			if cursor.has_error():
+				return _error(cursor.error_message)
+			var players: Array[Dictionary] = []
+			for _player_index in range(int(player_count)):
+				var player_id = cursor.read_player_id()
+				var player_name = cursor.read_string("player_name", MAX_PLAYER_NAME_LEN)
+				var record = cursor.read_record()
+				var team = cursor.read_optional_team_label()
+				var ready = cursor.read_ready_label()
+				if cursor.has_error():
+					return _error(cursor.error_message)
+				players.append({
+					"player_id": player_id,
+					"player_name": player_name,
+					"record": record,
+					"team": team,
+					"ready": ready,
+				})
+			event = {
+				"type": "GameLobbySnapshot",
+				"lobby_id": lobby_id,
+				"phase": phase,
+				"players": players,
 			}
 		_:
 			return _error("unknown server event %d" % kind)

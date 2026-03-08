@@ -88,6 +88,8 @@ impl ClientControlCommand {
         Ok(header.encode(&payload))
     }
 
+    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::too_many_lines)]
     pub fn decode_packet(packet: &[u8]) -> Result<(PacketHeader, Self), PacketError> {
         let (header, payload) = PacketHeader::decode(packet)?;
         if header.channel_id != ChannelId::Control
@@ -207,11 +209,47 @@ pub enum ServerControlEvent {
     ReturnedToCentralLobby {
         record: PlayerRecord,
     },
+    LobbyDirectorySnapshot {
+        lobbies: Vec<LobbyDirectoryEntry>,
+    },
+    GameLobbySnapshot {
+        lobby_id: LobbyId,
+        phase: LobbySnapshotPhase,
+        players: Vec<LobbySnapshotPlayer>,
+    },
     Error {
         message: String,
     },
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LobbyDirectoryEntry {
+    pub lobby_id: LobbyId,
+    pub player_count: u16,
+    pub team_a_count: u16,
+    pub team_b_count: u16,
+    pub ready_count: u16,
+    pub phase: LobbySnapshotPhase,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LobbySnapshotPlayer {
+    pub player_id: PlayerId,
+    pub player_name: PlayerName,
+    pub record: PlayerRecord,
+    pub team: Option<TeamSide>,
+    pub ready: ReadyState,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LobbySnapshotPhase {
+    Open,
+    LaunchCountdown {
+        seconds_remaining: u8,
+    },
+}
+
+#[allow(clippy::too_many_lines)]
 impl ServerControlEvent {
     #[allow(clippy::too_many_lines)]
     pub fn encode_packet(self, seq: u32, sim_tick: u32) -> Result<Vec<u8>, PacketError> {
@@ -343,6 +381,52 @@ impl ServerControlEvent {
                 payload.extend_from_slice(&record.losses.to_le_bytes());
                 payload.extend_from_slice(&record.no_contests.to_le_bytes());
             }
+            Self::LobbyDirectorySnapshot { lobbies } => {
+                payload.push(17);
+                let lobby_count =
+                    u16::try_from(lobbies.len()).map_err(|_| PacketError::PayloadTooLarge {
+                        actual: lobbies.len(),
+                        maximum: usize::from(u16::MAX),
+                    })?;
+                payload.extend_from_slice(&lobby_count.to_le_bytes());
+                for lobby in lobbies {
+                    payload.extend_from_slice(&lobby.lobby_id.get().to_le_bytes());
+                    payload.extend_from_slice(&lobby.player_count.to_le_bytes());
+                    payload.extend_from_slice(&lobby.team_a_count.to_le_bytes());
+                    payload.extend_from_slice(&lobby.team_b_count.to_le_bytes());
+                    payload.extend_from_slice(&lobby.ready_count.to_le_bytes());
+                    encode_lobby_snapshot_phase(&mut payload, lobby.phase);
+                }
+            }
+            Self::GameLobbySnapshot {
+                lobby_id,
+                phase,
+                players,
+            } => {
+                payload.push(18);
+                payload.extend_from_slice(&lobby_id.get().to_le_bytes());
+                encode_lobby_snapshot_phase(&mut payload, phase);
+                let player_count =
+                    u16::try_from(players.len()).map_err(|_| PacketError::PayloadTooLarge {
+                        actual: players.len(),
+                        maximum: usize::from(u16::MAX),
+                    })?;
+                payload.extend_from_slice(&player_count.to_le_bytes());
+                for player in players {
+                    payload.extend_from_slice(&player.player_id.get().to_le_bytes());
+                    push_len_prefixed_string(
+                        &mut payload,
+                        "player_name",
+                        player.player_name.as_str(),
+                        game_domain::MAX_PLAYER_NAME_LEN,
+                    )?;
+                    payload.extend_from_slice(&player.record.wins.to_le_bytes());
+                    payload.extend_from_slice(&player.record.losses.to_le_bytes());
+                    payload.extend_from_slice(&player.record.no_contests.to_le_bytes());
+                    payload.push(encode_optional_team(player.team));
+                    payload.push(encode_ready_state(player.ready));
+                }
+            }
             Self::Error { message } => {
                 payload.push(16);
                 push_len_prefixed_string(&mut payload, "message", &message, MAX_MESSAGE_BYTES)?;
@@ -455,6 +539,49 @@ impl ServerControlEvent {
             15 => Self::ReturnedToCentralLobby {
                 record: read_player_record(payload, &mut index, "ReturnedToCentralLobby")?,
             },
+            17 => {
+                let lobby_count = usize::from(read_u16(
+                    payload,
+                    &mut index,
+                    "LobbyDirectorySnapshot",
+                )?);
+                let mut lobbies = Vec::with_capacity(lobby_count);
+                for _ in 0..lobby_count {
+                    lobbies.push(LobbyDirectoryEntry {
+                        lobby_id: read_lobby_id(payload, &mut index, "LobbyDirectorySnapshot")?,
+                        player_count: read_u16(payload, &mut index, "LobbyDirectorySnapshot")?,
+                        team_a_count: read_u16(payload, &mut index, "LobbyDirectorySnapshot")?,
+                        team_b_count: read_u16(payload, &mut index, "LobbyDirectorySnapshot")?,
+                        ready_count: read_u16(payload, &mut index, "LobbyDirectorySnapshot")?,
+                        phase: read_lobby_snapshot_phase(
+                            payload,
+                            &mut index,
+                            "LobbyDirectorySnapshot",
+                        )?,
+                    });
+                }
+                Self::LobbyDirectorySnapshot { lobbies }
+            }
+            18 => {
+                let lobby_id = read_lobby_id(payload, &mut index, "GameLobbySnapshot")?;
+                let phase = read_lobby_snapshot_phase(payload, &mut index, "GameLobbySnapshot")?;
+                let player_count = usize::from(read_u16(payload, &mut index, "GameLobbySnapshot")?);
+                let mut players = Vec::with_capacity(player_count);
+                for _ in 0..player_count {
+                    players.push(LobbySnapshotPlayer {
+                        player_id: read_player_id(payload, &mut index, "GameLobbySnapshot")?,
+                        player_name: read_player_name(payload, &mut index, "GameLobbySnapshot")?,
+                        record: read_player_record(payload, &mut index, "GameLobbySnapshot")?,
+                        team: read_optional_team(payload, &mut index, "GameLobbySnapshot")?,
+                        ready: read_ready_state(payload, &mut index, "GameLobbySnapshot")?,
+                    });
+                }
+                Self::GameLobbySnapshot {
+                    lobby_id,
+                    phase,
+                    players,
+                }
+            }
             16 => Self::Error {
                 message: read_string(payload, &mut index, "Error", "message", MAX_MESSAGE_BYTES)?,
             },
@@ -598,6 +725,19 @@ fn read_team(
     }
 }
 
+fn read_optional_team(
+    payload: &[u8],
+    index: &mut usize,
+    kind: &'static str,
+) -> Result<Option<TeamSide>, PacketError> {
+    match read_u8(payload, index, kind)? {
+        0 => Ok(None),
+        1 => Ok(Some(TeamSide::TeamA)),
+        2 => Ok(Some(TeamSide::TeamB)),
+        other => Err(PacketError::InvalidEncodedOptionalTeam(other)),
+    }
+}
+
 fn read_ready_state(
     payload: &[u8],
     index: &mut usize,
@@ -637,10 +777,32 @@ fn read_match_outcome(
     }
 }
 
+fn read_lobby_snapshot_phase(
+    payload: &[u8],
+    index: &mut usize,
+    kind: &'static str,
+) -> Result<LobbySnapshotPhase, PacketError> {
+    match read_u8(payload, index, kind)? {
+        0 => Ok(LobbySnapshotPhase::Open),
+        1 => Ok(LobbySnapshotPhase::LaunchCountdown {
+            seconds_remaining: read_u8(payload, index, kind)?,
+        }),
+        other => Err(PacketError::InvalidEncodedLobbyPhase(other)),
+    }
+}
+
 fn encode_team(team: TeamSide) -> u8 {
     match team {
         TeamSide::TeamA => 1,
         TeamSide::TeamB => 2,
+    }
+}
+
+fn encode_optional_team(team: Option<TeamSide>) -> u8 {
+    match team {
+        None => 0,
+        Some(TeamSide::TeamA) => 1,
+        Some(TeamSide::TeamB) => 2,
     }
 }
 
@@ -665,6 +827,16 @@ fn encode_match_outcome(outcome: MatchOutcome) -> u8 {
         MatchOutcome::TeamAWin => 1,
         MatchOutcome::TeamBWin => 2,
         MatchOutcome::NoContest => 3,
+    }
+}
+
+fn encode_lobby_snapshot_phase(payload: &mut Vec<u8>, phase: LobbySnapshotPhase) {
+    match phase {
+        LobbySnapshotPhase::Open => payload.push(0),
+        LobbySnapshotPhase::LaunchCountdown { seconds_remaining } => {
+            payload.push(1);
+            payload.push(seconds_remaining);
+        }
     }
 }
 
@@ -843,6 +1015,48 @@ mod tests {
     }
 
     #[test]
+    fn server_control_event_round_trips_lobby_directory_and_snapshot_packets() {
+        let directory_event = ServerControlEvent::LobbyDirectorySnapshot {
+            lobbies: vec![LobbyDirectoryEntry {
+                lobby_id: lobby_id(3),
+                player_count: 4,
+                team_a_count: 1,
+                team_b_count: 2,
+                ready_count: 3,
+                phase: LobbySnapshotPhase::LaunchCountdown {
+                    seconds_remaining: 4,
+                },
+            }],
+        };
+        let snapshot_event = ServerControlEvent::GameLobbySnapshot {
+            lobby_id: lobby_id(3),
+            phase: LobbySnapshotPhase::Open,
+            players: vec![LobbySnapshotPlayer {
+                player_id: player_id(7),
+                player_name: player_name("Alice"),
+                record: PlayerRecord {
+                    wins: 1,
+                    losses: 2,
+                    no_contests: 3,
+                },
+                team: Some(TeamSide::TeamA),
+                ready: ReadyState::Ready,
+            }],
+        };
+
+        let directory_packet = directory_event.clone().encode_packet(2, 3).expect("packet");
+        let snapshot_packet = snapshot_event.clone().encode_packet(4, 5).expect("packet");
+
+        let (_, decoded_directory) =
+            ServerControlEvent::decode_packet(&directory_packet).expect("decode");
+        let (_, decoded_snapshot) =
+            ServerControlEvent::decode_packet(&snapshot_packet).expect("decode");
+
+        assert_eq!(decoded_directory, directory_event);
+        assert_eq!(decoded_snapshot, snapshot_event);
+    }
+
+    #[test]
     fn server_control_event_rejects_bad_payloads_and_unknown_variants() {
         let header = PacketHeader::new(ChannelId::Control, PacketKind::ControlEvent, 0, 1, 1, 1)
             .expect("header");
@@ -858,6 +1072,59 @@ mod tests {
         assert_eq!(
             ServerControlEvent::decode_packet(&packet),
             Err(PacketError::InvalidEncodedMatchOutcome(9))
+        );
+    }
+
+    #[test]
+    fn server_control_event_rejects_invalid_snapshot_phase_and_optional_team_values() {
+        let mut payload = vec![17];
+        payload.extend_from_slice(&1_u16.to_le_bytes());
+        payload.extend_from_slice(&1_u32.to_le_bytes());
+        payload.extend_from_slice(&0_u16.to_le_bytes());
+        payload.extend_from_slice(&0_u16.to_le_bytes());
+        payload.extend_from_slice(&0_u16.to_le_bytes());
+        payload.extend_from_slice(&0_u16.to_le_bytes());
+        payload.push(9);
+        let header = PacketHeader::new(
+            ChannelId::Control,
+            PacketKind::ControlEvent,
+            0,
+            u16::try_from(payload.len()).expect("payload length should fit in u16"),
+            1,
+            1,
+        )
+        .expect("header");
+        let packet = header.encode(&payload);
+        assert_eq!(
+            ServerControlEvent::decode_packet(&packet),
+            Err(PacketError::InvalidEncodedLobbyPhase(9))
+        );
+
+        let mut payload = vec![18];
+        payload.extend_from_slice(&1_u32.to_le_bytes());
+        payload.push(0);
+        payload.extend_from_slice(&1_u16.to_le_bytes());
+        payload.extend_from_slice(&7_u32.to_le_bytes());
+        payload.push(5);
+        payload.extend_from_slice(b"Alice");
+        payload.extend_from_slice(&0_u16.to_le_bytes());
+        payload.extend_from_slice(&0_u16.to_le_bytes());
+        payload.extend_from_slice(&0_u16.to_le_bytes());
+        payload.push(9);
+        payload.push(0);
+        let header = PacketHeader::new(
+            ChannelId::Control,
+            PacketKind::ControlEvent,
+            0,
+            u16::try_from(payload.len()).expect("payload length should fit in u16"),
+            1,
+            1,
+        )
+        .expect("header");
+        let packet = header.encode(&payload);
+        assert_eq!(
+            ServerControlEvent::decode_packet(&packet),
+            Err(PacketError::InvalidEncodedOptionalTeam(9))
         );
     }
 

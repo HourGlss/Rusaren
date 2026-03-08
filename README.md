@@ -11,6 +11,7 @@ Buildable now:
 - a scripted backend-only gameplay slice that exercises lobby -> match -> combat -> no-contest flow
 - a real websocket dev adapter on top of the backend app layer
 - a Godot 4 shell under `client/godot` that drives the websocket dev adapter with real binary control packets
+- persistent player records under `server/var/player_records.tsv`
 - local quality scripts under `server/scripts`
 - GitHub Actions quality workflows
 
@@ -40,6 +41,9 @@ The dev adapter listens on:
 - `http://127.0.0.1:3000/healthz`
 - `ws://127.0.0.1:3000/ws`
 
+The dev adapter persists player `W-L-NC` records at:
+- `server/var/player_records.tsv`
+
 Open the Godot shell:
 
 ```text
@@ -50,7 +54,7 @@ The current Godot shell is wired to the websocket dev adapter first, not WebRTC 
 The project metadata version is currently `0.2.0`.
 Known shell limitations:
 - joining a lobby currently requires a manual lobby ID
-- the backend does not yet send a full lobby snapshot to late joiners, so the roster view is best-effort from live events
+- gameplay rendering is still placeholder-only even though the shell now consumes central lobby directory snapshots and full lobby snapshots
 
 Run the backend-only demo slice instead:
 
@@ -213,7 +217,7 @@ Hook behavior:
 Current local fallback behavior:
 - if `cargo-nextest` is installed, the quality script uses it for the normal test task
 - if `cargo-nextest` is not installed, the quality script falls back to `cargo test`
-- fuzzing uses `cargo-fuzz` under `server/fuzz/` and currently starts with packet-header, control-command, input-frame, and ingress-session targets
+- fuzzing uses `cargo-fuzz` under `server/fuzz/` and currently starts with packet-header, control-command, server-control-event, input-frame, and ingress-session targets
 - project docs are generated from `shared/docs` through `mdBook`, while Rust API docs are generated with `cargo doc --workspace --all-features --no-deps`
 
 ## Docs

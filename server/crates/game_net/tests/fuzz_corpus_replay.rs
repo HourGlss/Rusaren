@@ -1,6 +1,9 @@
 use std::{fs, path::PathBuf};
 
-use game_net::{ClientControlCommand, NetworkSessionGuard, PacketHeader, ValidatedInputFrame};
+use game_net::{
+    ClientControlCommand, NetworkSessionGuard, PacketHeader, ServerControlEvent,
+    ValidatedInputFrame,
+};
 
 fn corpus_dir(target: &str) -> PathBuf {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -79,5 +82,12 @@ fn replay_session_ingress_corpus() {
             index += packet_len;
             packets_seen = packets_seen.saturating_add(1);
         }
+    }
+}
+
+#[test]
+fn replay_server_control_event_corpus() {
+    for bytes in corpus_files("server_control_event_decode") {
+        let _ = ServerControlEvent::decode_packet(&bytes);
     }
 }

@@ -24,6 +24,7 @@ var record := {
 	"losses": 0,
 	"no_contests": 0,
 }
+var lobby_directory: Array[Dictionary] = []
 var roster := {}
 var recent_events: Array[String] = []
 
@@ -45,6 +46,7 @@ func prepare_for_connection(url: String, player_id: int, player_name: String) ->
 	score_b = 0
 	lobby_locked = false
 	match_phase = "idle"
+	lobby_directory.clear()
 	roster.clear()
 	recent_events.clear()
 	_append_event("Connecting to %s." % websocket_url)
@@ -93,9 +95,18 @@ func apply_server_event(event: Dictionary) -> void:
 			phase_label = "Central Lobby"
 			countdown_label = ""
 			outcome_label = ""
+			lobby_directory.clear()
 			roster.clear()
 			banner_message = "Connected as %s." % local_player_name
 			_append_event("Connected as %s (#%d)." % [local_player_name, local_player_id])
+		"LobbyDirectorySnapshot":
+			lobby_directory = event.get("lobbies", []).duplicate(true)
+			var lobby_count := lobby_directory.size()
+			banner_message = "Lobby directory updated: %d open entr%s." % [
+				lobby_count,
+				"ies" if lobby_count != 1 else "y",
+			]
+			_append_event(banner_message)
 		"GameLobbyCreated":
 			current_lobby_id = int(event.get("lobby_id", 0))
 			screen = "lobby"
@@ -114,6 +125,31 @@ func apply_server_event(event: Dictionary) -> void:
 			member["skill"] = ""
 			banner_message = "%s joined lobby #%d." % [_display_name(joined_player_id), current_lobby_id]
 			_append_event("%s joined lobby #%d." % [_display_name(joined_player_id), current_lobby_id])
+		"GameLobbySnapshot":
+			current_lobby_id = int(event.get("lobby_id", current_lobby_id))
+			screen = "lobby"
+			roster.clear()
+			var players: Array = event.get("players", [])
+			for player_data in players:
+				var player_id := int(player_data.get("player_id", 0))
+				var member := _ensure_roster_entry(player_id, String(player_data.get("player_name", "")))
+				member["name"] = String(player_data.get("player_name", member["name"]))
+				member["record"] = player_data.get("record", {})
+				member["team"] = String(player_data.get("team", "Unassigned"))
+				member["ready"] = String(player_data.get("ready", "Not Ready"))
+				member["skill"] = "Awaiting next pick"
+			var phase: Dictionary = event.get("phase", {})
+			var phase_name := String(phase.get("name", "Open"))
+			var seconds_remaining := int(phase.get("seconds_remaining", 0))
+			lobby_locked = phase_name != "Open"
+			phase_label = "Game Lobby #%d" % current_lobby_id
+			if lobby_locked:
+				countdown_label = "Launch in %ds." % seconds_remaining
+				banner_message = "Lobby #%d is locked for launch." % current_lobby_id
+			else:
+				countdown_label = ""
+				banner_message = "Lobby #%d snapshot refreshed." % current_lobby_id
+			_append_event("Lobby #%d snapshot received with %d player(s)." % [current_lobby_id, players.size()])
 		"GameLobbyLeft":
 			var left_player_id := int(event.get("player_id", 0))
 			if left_player_id == local_player_id:
@@ -260,6 +296,30 @@ func roster_lines() -> Array[String]:
 	return lines
 
 
+func lobby_directory_lines() -> Array[String]:
+	var lines: Array[String] = []
+	for lobby in lobby_directory:
+		var phase: Dictionary = lobby.get("phase", {})
+		var phase_name := String(phase.get("name", "Open"))
+		var seconds_remaining := int(phase.get("seconds_remaining", 0))
+		var phase_text := phase_name
+		if phase_name == "Launch Countdown":
+			phase_text = "%s (%ds)" % [phase_name, seconds_remaining]
+		lines.append(
+			"Lobby #%d  |  players %d  |  A %d  B %d  |  ready %d  |  %s" % [
+				int(lobby.get("lobby_id", 0)),
+				int(lobby.get("player_count", 0)),
+				int(lobby.get("team_a_count", 0)),
+				int(lobby.get("team_b_count", 0)),
+				int(lobby.get("ready_count", 0)),
+				phase_text,
+			]
+		)
+	if lines.is_empty():
+		lines.append("No active game lobbies.")
+	return lines
+
+
 func record_text() -> String:
 	return "W-L-NC  %d-%d-%d" % [
 		int(record.get("wins", 0)),
@@ -277,7 +337,7 @@ func event_log_text() -> String:
 
 
 func lobby_note() -> String:
-	return "Join uses a manual lobby ID. The current backend does not send a full lobby snapshot to late joiners yet, so this roster view fills in from live events."
+	return "Join still accepts a manual lobby ID, but the backend now sends a lobby directory and full lobby snapshots so late joiners land on an authoritative roster."
 
 
 func can_join_or_create_lobby() -> bool:
@@ -312,6 +372,7 @@ func _reset_to_central() -> void:
 	score_b = 0
 	lobby_locked = false
 	match_phase = "idle"
+	lobby_directory.clear()
 	roster.clear()
 
 

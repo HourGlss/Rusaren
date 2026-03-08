@@ -8,6 +8,7 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::path::PathBuf;
 
 use game_domain::{
     LobbyId, MatchId, MatchOutcome, PlayerId, PlayerName, PlayerRecord, ReadyState, SkillChoice,
@@ -16,12 +17,13 @@ use game_domain::{
 use game_lobby::{Lobby, LobbyEvent, LobbyPhase};
 use game_match::{MatchConfig, MatchEvent, MatchPhase, MatchSession};
 use game_net::{
-    ClientControlCommand, SequenceTracker, ServerControlEvent, ValidatedInputFrame, BUTTON_PRIMARY,
-    BUTTON_QUIT_TO_LOBBY,
+    ClientControlCommand, LobbyDirectoryEntry, LobbySnapshotPhase, LobbySnapshotPlayer,
+    SequenceTracker, ServerControlEvent, ValidatedInputFrame, BUTTON_PRIMARY, BUTTON_QUIT_TO_LOBBY,
 };
 use game_sim::{MovementIntent, SimPlayerSeed, SimulationWorld};
 
-use crate::transport::AppTransport;
+use crate::records::PlayerRecordStore;
+use crate::{transport::AppTransport, RecordStoreError};
 
 const DEFAULT_HIT_POINTS: u16 = 100;
 
@@ -91,6 +93,7 @@ pub struct ServerApp {
     next_lobby_id: u32,
     next_match_id: u32,
     clock_seconds: u32,
+    record_store: PlayerRecordStore,
     players: BTreeMap<PlayerId, ConnectedPlayer>,
     game_lobbies: BTreeMap<LobbyId, GameLobbyRuntime>,
     matches: BTreeMap<MatchId, MatchRuntime>,
@@ -105,10 +108,21 @@ impl Default for ServerApp {
 impl ServerApp {
     #[must_use]
     pub fn new() -> Self {
+        Self::from_record_store(PlayerRecordStore::new_ephemeral())
+    }
+
+    pub fn new_persistent(path: impl Into<PathBuf>) -> Result<Self, RecordStoreError> {
+        Ok(Self::from_record_store(PlayerRecordStore::new_persistent(
+            path.into(),
+        )?))
+    }
+
+    fn from_record_store(record_store: PlayerRecordStore) -> Self {
         Self {
             next_lobby_id: 1,
             next_match_id: 1,
             clock_seconds: 0,
+            record_store,
             players: BTreeMap::new(),
             game_lobbies: BTreeMap::new(),
             matches: BTreeMap::new(),
@@ -143,6 +157,7 @@ impl ServerApp {
         match location {
             PlayerLocation::CentralLobby => {
                 self.players.remove(&player_id);
+                self.broadcast_lobby_directory_snapshot(transport);
             }
             PlayerLocation::GameLobby(lobby_id) => {
                 let recipients = self.lobby_members(lobby_id);
@@ -166,6 +181,7 @@ impl ServerApp {
                                 player_id,
                             },
                         );
+                        self.broadcast_game_lobby_snapshot(transport, lobby_id);
                     }
                     Ok(LobbyEvent::MatchAborted { message, .. }) => {
                         self.players.remove(&player_id);
@@ -178,6 +194,7 @@ impl ServerApp {
                             &remaining,
                             ServerControlEvent::Error { message },
                         );
+                        self.broadcast_game_lobby_snapshot(transport, lobby_id);
                     }
                     Ok(other) => {
                         self.players.remove(&player_id);
@@ -195,6 +212,7 @@ impl ServerApp {
                 }
 
                 self.cleanup_empty_lobby(lobby_id);
+                self.broadcast_lobby_directory_snapshot(transport);
             }
             PlayerLocation::Match(match_id) => {
                 self.end_match_as_no_contest(transport, match_id, player_id);
@@ -268,11 +286,19 @@ impl ServerApp {
                     return;
                 }
 
+                let record = match self.record_store.load_or_create(player_id, &player_name) {
+                    Ok(record) => record,
+                    Err(error) => {
+                        self.send_error(transport, sender_id, &error.to_string());
+                        return;
+                    }
+                };
+
                 self.players.insert(
                     player_id,
                     ConnectedPlayer {
                         player_name: player_name.clone(),
-                        record: PlayerRecord::new(),
+                        record,
                         location: PlayerLocation::CentralLobby,
                         inbound_control: SequenceTracker::new(),
                         inbound_input: SequenceTracker::new(),
@@ -291,9 +317,10 @@ impl ServerApp {
                     ServerControlEvent::Connected {
                         player_id,
                         player_name,
-                        record: PlayerRecord::new(),
+                        record,
                     },
                 );
+                self.send_lobby_directory_snapshot(transport, player_id);
             }
             ClientControlCommand::CreateGameLobby => {
                 self.handle_create_game_lobby(transport, sender_id)
@@ -362,6 +389,8 @@ impl ServerApp {
                 player_id: sender_id,
             },
         );
+        self.send_game_lobby_snapshot(transport, lobby_id, sender_id);
+        self.broadcast_lobby_directory_snapshot(transport);
     }
 
     fn handle_join_game_lobby<T: AppTransport>(
@@ -408,6 +437,8 @@ impl ServerApp {
                 player_id: sender_id,
             },
         );
+        self.broadcast_game_lobby_snapshot(transport, lobby_id);
+        self.broadcast_lobby_directory_snapshot(transport);
     }
 
     fn handle_leave_game_lobby<T: AppTransport>(&mut self, transport: &mut T, sender_id: PlayerId) {
@@ -465,6 +496,9 @@ impl ServerApp {
                     ServerControlEvent::ReturnedToCentralLobby { record },
                 );
                 self.cleanup_empty_lobby(lobby_id);
+                self.broadcast_game_lobby_snapshot(transport, lobby_id);
+                self.send_lobby_directory_snapshot(transport, sender_id);
+                self.broadcast_lobby_directory_snapshot(transport);
             }
             Ok(other) => self.send_error(
                 transport,
@@ -495,7 +529,11 @@ impl ServerApp {
         };
 
         match events {
-            Ok(events) => self.broadcast_lobby_events(transport, lobby_id, &events),
+            Ok(events) => {
+                self.broadcast_lobby_events(transport, lobby_id, &events);
+                self.broadcast_game_lobby_snapshot(transport, lobby_id);
+                self.broadcast_lobby_directory_snapshot(transport);
+            }
             Err(error) => self.send_error(transport, sender_id, &error.to_string()),
         }
     }
@@ -520,7 +558,11 @@ impl ServerApp {
         };
 
         match events {
-            Ok(events) => self.broadcast_lobby_events(transport, lobby_id, &events),
+            Ok(events) => {
+                self.broadcast_lobby_events(transport, lobby_id, &events);
+                self.broadcast_game_lobby_snapshot(transport, lobby_id);
+                self.broadcast_lobby_directory_snapshot(transport);
+            }
             Err(error) => self.send_error(transport, sender_id, &error.to_string()),
         }
     }
@@ -578,6 +620,7 @@ impl ServerApp {
                 sender_id,
                 ServerControlEvent::ReturnedToCentralLobby { record },
             );
+            self.send_lobby_directory_snapshot(transport, sender_id);
         }
 
         self.cleanup_finished_match(match_id);
@@ -736,6 +779,8 @@ impl ServerApp {
                             seconds_remaining,
                         },
                     );
+                    self.broadcast_game_lobby_snapshot(transport, lobby_id);
+                    self.broadcast_lobby_directory_snapshot(transport);
                 }
                 Ok(LobbyEvent::MatchLaunchReady { roster }) => {
                     self.start_match_from_lobby(transport, lobby_id, roster);
@@ -853,7 +898,7 @@ impl ServerApp {
                     message,
                     score,
                 } => {
-                    self.apply_match_outcome(match_id, *outcome);
+                    self.apply_match_outcome(transport, match_id, *outcome);
                     self.broadcast_event(
                         transport,
                         &self.match_recipients(match_id),
@@ -942,6 +987,117 @@ impl ServerApp {
         }
     }
 
+    fn send_lobby_directory_snapshot<T: AppTransport>(
+        &mut self,
+        transport: &mut T,
+        player_id: PlayerId,
+    ) {
+        let event = ServerControlEvent::LobbyDirectorySnapshot {
+            lobbies: self.build_lobby_directory_entries(),
+        };
+        self.send_event(transport, player_id, event);
+    }
+
+    fn broadcast_lobby_directory_snapshot<T: AppTransport>(&mut self, transport: &mut T) {
+        let recipients = self.central_lobby_players();
+        if recipients.is_empty() {
+            return;
+        }
+
+        let event = ServerControlEvent::LobbyDirectorySnapshot {
+            lobbies: self.build_lobby_directory_entries(),
+        };
+        self.broadcast_event(transport, &recipients, event);
+    }
+
+    fn send_game_lobby_snapshot<T: AppTransport>(
+        &mut self,
+        transport: &mut T,
+        lobby_id: LobbyId,
+        player_id: PlayerId,
+    ) {
+        let Some(event) = self.build_game_lobby_snapshot(lobby_id) else {
+            return;
+        };
+        self.send_event(transport, player_id, event);
+    }
+
+    fn broadcast_game_lobby_snapshot<T: AppTransport>(&mut self, transport: &mut T, lobby_id: LobbyId) {
+        let recipients = self.lobby_members(lobby_id);
+        if recipients.is_empty() {
+            return;
+        }
+
+        let Some(event) = self.build_game_lobby_snapshot(lobby_id) else {
+            return;
+        };
+        self.broadcast_event(transport, &recipients, event);
+    }
+
+    fn build_lobby_directory_entries(&self) -> Vec<LobbyDirectoryEntry> {
+        self.game_lobbies
+            .iter()
+            .map(|(lobby_id, runtime)| {
+                let players = runtime.lobby.players();
+                let team_a_count = players
+                    .iter()
+                    .filter(|player| player.team == Some(TeamSide::TeamA))
+                    .count();
+                let team_b_count = players
+                    .iter()
+                    .filter(|player| player.team == Some(TeamSide::TeamB))
+                    .count();
+                let ready_count = players
+                    .iter()
+                    .filter(|player| player.ready_state.is_ready())
+                    .count();
+
+                LobbyDirectoryEntry {
+                    lobby_id: *lobby_id,
+                    player_count: u16::try_from(players.len()).unwrap_or(u16::MAX),
+                    team_a_count: u16::try_from(team_a_count).unwrap_or(u16::MAX),
+                    team_b_count: u16::try_from(team_b_count).unwrap_or(u16::MAX),
+                    ready_count: u16::try_from(ready_count).unwrap_or(u16::MAX),
+                    phase: Self::lobby_snapshot_phase(runtime.lobby.phase()),
+                }
+            })
+            .collect()
+    }
+
+    fn build_game_lobby_snapshot(&self, lobby_id: LobbyId) -> Option<ServerControlEvent> {
+        let runtime = self.game_lobbies.get(&lobby_id)?;
+        let players = runtime
+            .lobby
+            .players()
+            .into_iter()
+            .map(|player| LobbySnapshotPlayer {
+                player_id: player.player_id,
+                player_name: player.player_name,
+                record: player.record,
+                team: player.team,
+                ready: player.ready_state,
+            })
+            .collect();
+
+        Some(ServerControlEvent::GameLobbySnapshot {
+            lobby_id,
+            phase: Self::lobby_snapshot_phase(runtime.lobby.phase()),
+            players,
+        })
+    }
+
+    fn lobby_snapshot_phase(phase: &LobbyPhase) -> LobbySnapshotPhase {
+        match phase {
+            LobbyPhase::Open => LobbySnapshotPhase::Open,
+            LobbyPhase::LaunchCountdown {
+                seconds_remaining,
+                ..
+            } => LobbySnapshotPhase::LaunchCountdown {
+                seconds_remaining: *seconds_remaining,
+            },
+        }
+    }
+
     fn start_match_from_lobby<T: AppTransport>(
         &mut self,
         transport: &mut T,
@@ -983,6 +1139,7 @@ impl ServerApp {
             },
         );
         self.game_lobbies.remove(&lobby_id);
+        self.broadcast_lobby_directory_snapshot(transport);
 
         self.broadcast_event(
             transport,
@@ -998,12 +1155,18 @@ impl ServerApp {
         );
     }
 
-    fn apply_match_outcome(&mut self, match_id: MatchId, outcome: MatchOutcome) {
+    fn apply_match_outcome<T: AppTransport>(
+        &mut self,
+        transport: &mut T,
+        match_id: MatchId,
+        outcome: MatchOutcome,
+    ) {
         let roster = match self.matches.get(&match_id) {
             Some(runtime) => runtime.roster.clone(),
             None => return,
         };
 
+        let mut dirty_players = Vec::new();
         for assignment in roster {
             if let Some(player) = self.players.get_mut(&assignment.player_id) {
                 match outcome {
@@ -1024,6 +1187,34 @@ impl ServerApp {
                     MatchOutcome::NoContest => player.record.record_no_contest(),
                 }
                 player.location = PlayerLocation::Results(match_id);
+                dirty_players.push(assignment.player_id);
+            }
+        }
+
+        for player_id in dirty_players {
+            let _ = self.persist_player_record(transport, player_id);
+        }
+    }
+
+    fn persist_player_record<T: AppTransport>(
+        &mut self,
+        transport: &mut T,
+        player_id: PlayerId,
+    ) -> bool {
+        let Some((player_name, record)) = self
+            .players
+            .get(&player_id)
+            .map(|player| (player.player_name.clone(), player.record))
+        else {
+            return false;
+        };
+
+        let save_result = self.record_store.save(player_id, &player_name, record);
+        match save_result {
+            Ok(()) => true,
+            Err(error) => {
+                self.send_error(transport, player_id, &error.to_string());
+                false
             }
         }
     }
@@ -1056,7 +1247,7 @@ impl ServerApp {
             None => return,
         };
 
-        self.apply_match_outcome(match_id, MatchOutcome::NoContest);
+        self.apply_match_outcome(transport, match_id, MatchOutcome::NoContest);
         let recipients = self
             .match_recipients(match_id)
             .into_iter()
@@ -1201,6 +1392,16 @@ impl ServerApp {
             .collect()
     }
 
+    fn central_lobby_players(&self) -> Vec<PlayerId> {
+        self.players
+            .iter()
+            .filter_map(|(player_id, player)| match player.location {
+                PlayerLocation::CentralLobby => Some(*player_id),
+                _ => None,
+            })
+            .collect()
+    }
+
     fn match_recipients(&self, match_id: MatchId) -> Vec<PlayerId> {
         self.matches
             .get(&match_id)
@@ -1300,9 +1501,13 @@ fn build_world(roster: &[TeamAssignment]) -> SimulationWorld {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
     use crate::transport::{HeadlessClient, InMemoryTransport};
     use game_domain::{PlayerName, SkillTree};
-    use game_net::ServerControlEvent;
+    use game_net::{LobbyDirectoryEntry, LobbySnapshotPlayer, ServerControlEvent};
 
     fn player_id(raw: u32) -> PlayerId {
         PlayerId::new(raw).expect("valid player id")
@@ -1316,29 +1521,84 @@ mod tests {
         SkillChoice::new(tree, tier).expect("valid skill choice")
     }
 
+    fn temp_path(label: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should move forward")
+            .as_nanos();
+        std::env::temp_dir()
+            .join("rusaren-tests")
+            .join(format!("{label}-{}-{unique}.tsv", std::process::id()))
+    }
+
+    fn remove_if_exists(path: &PathBuf) {
+        if path.exists() {
+            fs::remove_file(path).expect("temp file should be removable");
+        }
+        if let Some(parent) = path.parent() {
+            if parent.exists() {
+                let _ = fs::remove_dir(parent);
+            }
+        }
+    }
+
+    fn assert_connected(events: &[ServerControlEvent], player_id: PlayerId, player_name: &str) {
+        assert!(events.iter().any(|event| matches!(
+            event,
+            ServerControlEvent::Connected {
+                player_id: connected_id,
+                player_name: connected_name,
+                ..
+            } if *connected_id == player_id && connected_name.as_str() == player_name
+        )));
+    }
+
+    fn assert_directory_lobby_count(events: &[ServerControlEvent], expected_count: usize) {
+        assert!(events.iter().any(|event| matches!(
+            event,
+            ServerControlEvent::LobbyDirectorySnapshot { lobbies }
+                if lobbies.len() == expected_count
+        )));
+    }
+
+    fn lobby_directory(entries: &[ServerControlEvent]) -> Option<&[LobbyDirectoryEntry]> {
+        entries.iter().rev().find_map(|event| match event {
+            ServerControlEvent::LobbyDirectorySnapshot { lobbies } => Some(lobbies.as_slice()),
+            _ => None,
+        })
+    }
+
+    fn lobby_snapshot_players(entries: &[ServerControlEvent]) -> Option<&[LobbySnapshotPlayer]> {
+        entries.iter().rev().find_map(|event| match event {
+            ServerControlEvent::GameLobbySnapshot { players, .. } => Some(players.as_slice()),
+            _ => None,
+        })
+    }
+
+    fn connect_player(
+        server: &mut ServerApp,
+        transport: &mut InMemoryTransport,
+        raw_id: u32,
+        raw_name: &str,
+    ) -> HeadlessClient {
+        let mut client = HeadlessClient::new(player_id(raw_id), player_name(raw_name));
+        client.connect(transport).expect("connect packet");
+        server.pump_transport(transport);
+
+        let events = client.drain_events(transport).expect("connect events");
+        assert_connected(&events, player_id(raw_id), raw_name);
+        assert_directory_lobby_count(&events, 0);
+        client
+    }
+
     fn connect_pair(
         server: &mut ServerApp,
         transport: &mut InMemoryTransport,
     ) -> (HeadlessClient, HeadlessClient) {
-        let mut alice = HeadlessClient::new(player_id(1), player_name("Alice"));
-        let mut bob = HeadlessClient::new(player_id(2), player_name("Bob"));
-
-        alice.connect(transport).expect("alice connect packet");
-        bob.connect(transport).expect("bob connect packet");
-        server.pump_transport(transport);
-
-        let alice_events = alice.drain_events(transport).expect("alice events");
-        let bob_events = bob.drain_events(transport).expect("bob events");
-        assert!(matches!(
-            alice_events.as_slice(),
-            [ServerControlEvent::Connected { .. }]
-        ));
-        assert!(matches!(
-            bob_events.as_slice(),
-            [ServerControlEvent::Connected { .. }]
-        ));
-
-        (alice, bob)
+        (
+            connect_player(server, transport, 1, "Alice"),
+            connect_player(server, transport, 2, "Bob"),
+        )
     }
 
     fn lobby_id_from(events: &[ServerControlEvent]) -> LobbyId {
@@ -1361,12 +1621,30 @@ mod tests {
         server.pump_transport(transport);
         let alice_events = alice.drain_events(transport).expect("alice events");
         let lobby_id = lobby_id_from(&alice_events);
+        assert_eq!(
+            lobby_snapshot_players(&alice_events)
+                .expect("creator should receive a full lobby snapshot")
+                .len(),
+            1
+        );
 
         bob.join_game_lobby(transport, lobby_id)
             .expect("join lobby");
         server.pump_transport(transport);
-        let _ = alice.drain_events(transport).expect("alice join events");
-        let _ = bob.drain_events(transport).expect("bob join events");
+        let alice_join_events = alice.drain_events(transport).expect("alice join events");
+        let bob_join_events = bob.drain_events(transport).expect("bob join events");
+        assert_eq!(
+            lobby_snapshot_players(&alice_join_events)
+                .expect("existing member should receive updated snapshot")
+                .len(),
+            2
+        );
+        assert_eq!(
+            lobby_snapshot_players(&bob_join_events)
+                .expect("late joiner should receive a full lobby snapshot")
+                .len(),
+            2
+        );
 
         alice
             .select_team(transport, TeamSide::TeamA)
@@ -1597,5 +1875,135 @@ mod tests {
             event,
             ServerControlEvent::Error { message } if message.contains("incoming sequence")
         )));
+    }
+
+    #[test]
+    fn central_lobby_receives_directory_snapshots_as_lobbies_change() {
+        let mut server = ServerApp::new();
+        let mut transport = InMemoryTransport::new();
+        let mut alice = connect_player(&mut server, &mut transport, 1, "Alice");
+        let mut bob = connect_player(&mut server, &mut transport, 2, "Bob");
+        let mut charlie = connect_player(&mut server, &mut transport, 3, "Charlie");
+
+        alice.create_game_lobby(&mut transport).expect("create lobby");
+        server.pump_transport(&mut transport);
+        let alice_events = alice.drain_events(&mut transport).expect("alice create events");
+        let lobby_id = lobby_id_from(&alice_events);
+        let bob_events = bob.drain_events(&mut transport).expect("bob directory events");
+        let charlie_events = charlie
+            .drain_events(&mut transport)
+            .expect("charlie directory events");
+        for events in [&bob_events, &charlie_events] {
+            let directory = lobby_directory(events).expect("central players should see lobbies");
+            assert_eq!(directory.len(), 1);
+            assert_eq!(directory[0].player_count, 1);
+        }
+
+        bob.join_game_lobby(&mut transport, lobby_id)
+            .expect("join lobby");
+        server.pump_transport(&mut transport);
+        let _ = alice.drain_events(&mut transport).expect("alice join events");
+        let _ = bob.drain_events(&mut transport).expect("bob join events");
+        let charlie_events = charlie
+            .drain_events(&mut transport)
+            .expect("charlie updated directory");
+        let directory = lobby_directory(&charlie_events).expect("directory snapshot");
+        assert_eq!(directory.len(), 1);
+        assert_eq!(directory[0].player_count, 2);
+
+        bob.leave_game_lobby(&mut transport).expect("leave lobby");
+        server.pump_transport(&mut transport);
+        let _ = alice.drain_events(&mut transport).expect("alice leave events");
+        let bob_events = bob.drain_events(&mut transport).expect("bob leave events");
+        let charlie_events = charlie
+            .drain_events(&mut transport)
+            .expect("charlie leave directory");
+        assert!(bob_events.iter().any(|event| matches!(
+            event,
+            ServerControlEvent::ReturnedToCentralLobby { .. }
+        )));
+        let directory = lobby_directory(&charlie_events).expect("directory snapshot");
+        assert_eq!(directory.len(), 1);
+        assert_eq!(directory[0].player_count, 1);
+    }
+
+    #[test]
+    fn persistent_player_records_survive_reconnect() {
+        let path = temp_path("server-app-records");
+        remove_if_exists(&path);
+
+        let mut server = ServerApp::new_persistent(&path).expect("persistent server should start");
+        let mut transport = InMemoryTransport::new();
+        let (mut alice, mut bob) = connect_pair(&mut server, &mut transport);
+        let _ = launch_match(&mut server, &mut transport, &mut alice, &mut bob);
+
+        for tier in 1..=5 {
+            alice
+                .choose_skill(&mut transport, skill(SkillTree::Mage, tier))
+                .expect("alice skill");
+            bob.choose_skill(&mut transport, skill(SkillTree::Rogue, tier))
+                .expect("bob skill");
+            server.pump_transport(&mut transport);
+            let _ = alice.drain_events(&mut transport).expect("alice skill events");
+            let _ = bob.drain_events(&mut transport).expect("bob skill events");
+            server.advance_seconds(&mut transport, 5);
+            let _ = alice
+                .drain_events(&mut transport)
+                .expect("alice pre-combat events");
+            let _ = bob
+                .drain_events(&mut transport)
+                .expect("bob pre-combat events");
+            alice
+                .send_input(
+                    &mut transport,
+                    ValidatedInputFrame::new(
+                        u32::from(tier),
+                        0,
+                        0,
+                        0,
+                        0,
+                        BUTTON_PRIMARY,
+                        0,
+                    )
+                    .expect("valid input"),
+                    u32::from(tier),
+                )
+                .expect("attack packet");
+            server.pump_transport(&mut transport);
+            let _ = alice
+                .drain_events(&mut transport)
+                .expect("alice combat events");
+            let _ = bob.drain_events(&mut transport).expect("bob combat events");
+        }
+
+        alice
+            .quit_to_central_lobby(&mut transport)
+            .expect("alice quit");
+        bob.quit_to_central_lobby(&mut transport).expect("bob quit");
+        server.pump_transport(&mut transport);
+        let _ = alice.drain_events(&mut transport).expect("alice return");
+        let _ = bob.drain_events(&mut transport).expect("bob return");
+        server
+            .disconnect_player(&mut transport, player_id(1))
+            .expect("alice disconnect");
+        server
+            .disconnect_player(&mut transport, player_id(2))
+            .expect("bob disconnect");
+
+        let mut reloaded =
+            ServerApp::new_persistent(&path).expect("persistent server should reload");
+        let mut transport = InMemoryTransport::new();
+        let mut alice = HeadlessClient::new(player_id(1), player_name("Alice"));
+        alice.connect(&mut transport).expect("connect packet");
+        reloaded.pump_transport(&mut transport);
+
+        let events = alice.drain_events(&mut transport).expect("alice reconnect events");
+        assert!(events.iter().any(|event| matches!(
+            event,
+            ServerControlEvent::Connected { record, .. }
+                if record.wins == 1 && record.losses == 0 && record.no_contests == 0
+        )));
+
+        remove_if_exists(&path);
     }
 }

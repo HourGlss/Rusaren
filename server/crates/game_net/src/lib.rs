@@ -10,7 +10,10 @@ use game_domain::DomainError;
 mod control;
 mod ingress;
 
-pub use control::{ClientControlCommand, ServerControlEvent};
+pub use control::{
+    ClientControlCommand, LobbyDirectoryEntry, LobbySnapshotPhase, LobbySnapshotPlayer,
+    ServerControlEvent,
+};
 pub use ingress::{NetworkSessionGuard, MAX_INGRESS_PACKET_BYTES};
 
 pub const PACKET_MAGIC: u16 = 0x5241;
@@ -434,9 +437,11 @@ pub enum PacketError {
     InvalidEncodedMatchId(u32),
     InvalidEncodedRound(u8),
     InvalidEncodedTeam(u8),
+    InvalidEncodedOptionalTeam(u8),
     InvalidEncodedReadyState(u8),
     InvalidEncodedSkillTree(u8),
     InvalidEncodedMatchOutcome(u8),
+    InvalidEncodedLobbyPhase(u8),
     InvalidEncodedBoolean(u8),
     InvalidEncodedPlayerName(DomainError),
     InvalidUtf8String {
@@ -544,6 +549,9 @@ impl fmt::Display for PacketError {
             Self::InvalidEncodedMatchId(raw) => write!(f, "encoded match id {raw} is invalid"),
             Self::InvalidEncodedRound(raw) => write!(f, "encoded round {raw} is invalid"),
             Self::InvalidEncodedTeam(raw) => write!(f, "encoded team {raw} is invalid"),
+            Self::InvalidEncodedOptionalTeam(raw) => {
+                write!(f, "encoded optional team {raw} is invalid")
+            }
             Self::InvalidEncodedReadyState(raw) => {
                 write!(f, "encoded ready state {raw} is invalid")
             }
@@ -552,6 +560,9 @@ impl fmt::Display for PacketError {
             }
             Self::InvalidEncodedMatchOutcome(raw) => {
                 write!(f, "encoded match outcome {raw} is invalid")
+            }
+            Self::InvalidEncodedLobbyPhase(raw) => {
+                write!(f, "encoded lobby phase {raw} is invalid")
             }
             Self::InvalidEncodedBoolean(raw) => write!(f, "encoded boolean {raw} is invalid"),
             Self::InvalidEncodedPlayerName(error) => error.fmt(f),

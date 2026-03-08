@@ -5,6 +5,7 @@
 # Rust
 server/target/
 server/tools/
+server/var/
 server/fuzz/artifacts/
 server/fuzz/coverage/
 server/fuzz/target/
