@@ -58,7 +58,7 @@ class ByteCursor:
 		return value
 
 	func read_bool() -> Variant:
-		var raw := read_u8()
+		var raw = read_u8()
 		if has_error():
 			return null
 		if raw == 0:
@@ -86,7 +86,7 @@ class ByteCursor:
 		return value
 
 	func read_player_id() -> Variant:
-		var raw := read_u32()
+		var raw = read_u32()
 		if has_error():
 			return null
 		if raw <= 0:
@@ -95,7 +95,7 @@ class ByteCursor:
 		return raw
 
 	func read_lobby_id() -> Variant:
-		var raw := read_u32()
+		var raw = read_u32()
 		if has_error():
 			return null
 		if raw <= 0:
@@ -104,7 +104,7 @@ class ByteCursor:
 		return raw
 
 	func read_match_id() -> Variant:
-		var raw := read_u32()
+		var raw = read_u32()
 		if has_error():
 			return null
 		if raw <= 0:
@@ -113,7 +113,7 @@ class ByteCursor:
 		return raw
 
 	func read_round() -> Variant:
-		var raw := read_u8()
+		var raw = read_u8()
 		if has_error():
 			return null
 		if raw <= 0 or raw > 5:
@@ -122,7 +122,7 @@ class ByteCursor:
 		return raw
 
 	func read_string(field: String, max_len: int) -> Variant:
-		var length := read_u8()
+		var length = read_u8()
 		if has_error():
 			return null
 		if length > max_len:
@@ -139,9 +139,9 @@ class ByteCursor:
 		return bytes.get_string_from_utf8()
 
 	func read_record() -> Variant:
-		var wins := read_u16()
-		var losses := read_u16()
-		var no_contests := read_u16()
+		var wins = read_u16()
+		var losses = read_u16()
+		var no_contests = read_u16()
 		if has_error():
 			return null
 		return {
@@ -151,7 +151,7 @@ class ByteCursor:
 		}
 
 	func read_team_label() -> Variant:
-		var raw := read_u8()
+		var raw = read_u8()
 		if has_error():
 			return null
 		match raw:
@@ -164,7 +164,7 @@ class ByteCursor:
 				return null
 
 	func read_ready_label() -> Variant:
-		var raw := read_u8()
+		var raw = read_u8()
 		if has_error():
 			return null
 		match raw:
@@ -177,7 +177,7 @@ class ByteCursor:
 				return null
 
 	func read_skill_tree_name() -> Variant:
-		var raw := read_u8()
+		var raw = read_u8()
 		if has_error():
 			return null
 		match raw:
@@ -194,7 +194,7 @@ class ByteCursor:
 				return null
 
 	func read_match_outcome_name() -> Variant:
-		var raw := read_u8()
+		var raw = read_u8()
 		if has_error():
 			return null
 		match raw:
@@ -210,12 +210,18 @@ class ByteCursor:
 
 	func finish() -> Dictionary:
 		if has_error():
-			return _error(error_message)
+			return {
+				"ok": false,
+				"error": error_message,
+			}
 		if index != payload.size():
-			return _error("%s payload contained %d unexpected trailing bytes" % [
-				kind,
-				payload.size() - index,
-			])
+			return {
+				"ok": false,
+				"error": "%s payload contained %d unexpected trailing bytes" % [
+					kind,
+					payload.size() - index,
+				],
+			}
 		return {"ok": true}
 
 
@@ -313,9 +319,9 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 
 	match kind:
 		1:
-			var player_id := cursor.read_player_id()
-			var player_name := cursor.read_string("player_name", MAX_PLAYER_NAME_LEN)
-			var record := cursor.read_record()
+			var player_id = cursor.read_player_id()
+			var player_name = cursor.read_string("player_name", MAX_PLAYER_NAME_LEN)
+			var record = cursor.read_record()
 			if cursor.has_error():
 				return _error(cursor.error_message)
 			event = {
@@ -325,7 +331,7 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 				"record": record,
 			}
 		2:
-			var lobby_id := cursor.read_lobby_id()
+			var lobby_id = cursor.read_lobby_id()
 			if cursor.has_error():
 				return _error(cursor.error_message)
 			event = {
@@ -333,8 +339,8 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 				"lobby_id": lobby_id,
 			}
 		3:
-			var joined_lobby_id := cursor.read_lobby_id()
-			var joined_player_id := cursor.read_player_id()
+			var joined_lobby_id = cursor.read_lobby_id()
+			var joined_player_id = cursor.read_player_id()
 			if cursor.has_error():
 				return _error(cursor.error_message)
 			event = {
@@ -343,8 +349,8 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 				"player_id": joined_player_id,
 			}
 		4:
-			var left_lobby_id := cursor.read_lobby_id()
-			var left_player_id := cursor.read_player_id()
+			var left_lobby_id = cursor.read_lobby_id()
+			var left_player_id = cursor.read_player_id()
 			if cursor.has_error():
 				return _error(cursor.error_message)
 			event = {
@@ -353,9 +359,9 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 				"player_id": left_player_id,
 			}
 		5:
-			var selected_player_id := cursor.read_player_id()
-			var team := cursor.read_team_label()
-			var ready_reset := cursor.read_bool()
+			var selected_player_id = cursor.read_player_id()
+			var team = cursor.read_team_label()
+			var ready_reset = cursor.read_bool()
 			if cursor.has_error():
 				return _error(cursor.error_message)
 			event = {
@@ -365,8 +371,8 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 				"ready_reset": ready_reset,
 			}
 		6:
-			var ready_player_id := cursor.read_player_id()
-			var ready_label := cursor.read_ready_label()
+			var ready_player_id = cursor.read_player_id()
+			var ready_label = cursor.read_ready_label()
 			if cursor.has_error():
 				return _error(cursor.error_message)
 			event = {
@@ -375,9 +381,9 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 				"ready": ready_label,
 			}
 		7:
-			var countdown_lobby_id := cursor.read_lobby_id()
-			var countdown_seconds := cursor.read_u8()
-			var roster_size := cursor.read_u16()
+			var countdown_lobby_id = cursor.read_lobby_id()
+			var countdown_seconds = cursor.read_u8()
+			var roster_size = cursor.read_u16()
 			if cursor.has_error():
 				return _error(cursor.error_message)
 			event = {
@@ -387,8 +393,8 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 				"roster_size": roster_size,
 			}
 		8:
-			var tick_lobby_id := cursor.read_lobby_id()
-			var tick_seconds := cursor.read_u8()
+			var tick_lobby_id = cursor.read_lobby_id()
+			var tick_seconds = cursor.read_u8()
 			if cursor.has_error():
 				return _error(cursor.error_message)
 			event = {
@@ -397,9 +403,9 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 				"seconds_remaining": tick_seconds,
 			}
 		9:
-			var match_id := cursor.read_match_id()
-			var round := cursor.read_round()
-			var skill_pick_seconds := cursor.read_u8()
+			var match_id = cursor.read_match_id()
+			var round = cursor.read_round()
+			var skill_pick_seconds = cursor.read_u8()
 			if cursor.has_error():
 				return _error(cursor.error_message)
 			event = {
@@ -409,9 +415,9 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 				"skill_pick_seconds": skill_pick_seconds,
 			}
 		10:
-			var skill_player_id := cursor.read_player_id()
-			var tree_name := cursor.read_skill_tree_name()
-			var tier := cursor.read_u8()
+			var skill_player_id = cursor.read_player_id()
+			var tree_name = cursor.read_skill_tree_name()
+			var tier = cursor.read_u8()
 			if cursor.has_error():
 				return _error(cursor.error_message)
 			event = {
@@ -421,7 +427,7 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 				"tier": tier,
 			}
 		11:
-			var pre_combat_seconds := cursor.read_u8()
+			var pre_combat_seconds = cursor.read_u8()
 			if cursor.has_error():
 				return _error(cursor.error_message)
 			event = {
@@ -431,10 +437,10 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 		12:
 			event = {"type": "CombatStarted"}
 		13:
-			var won_round := cursor.read_round()
-			var winning_team := cursor.read_team_label()
-			var score_a := cursor.read_u8()
-			var score_b := cursor.read_u8()
+			var won_round = cursor.read_round()
+			var winning_team = cursor.read_team_label()
+			var score_a = cursor.read_u8()
+			var score_b = cursor.read_u8()
 			if cursor.has_error():
 				return _error(cursor.error_message)
 			event = {
@@ -445,10 +451,10 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 				"score_b": score_b,
 			}
 		14:
-			var outcome := cursor.read_match_outcome_name()
-			var end_score_a := cursor.read_u8()
-			var end_score_b := cursor.read_u8()
-			var message := cursor.read_string("message", MAX_MESSAGE_BYTES)
+			var outcome = cursor.read_match_outcome_name()
+			var end_score_a = cursor.read_u8()
+			var end_score_b = cursor.read_u8()
+			var message = cursor.read_string("message", MAX_MESSAGE_BYTES)
 			if cursor.has_error():
 				return _error(cursor.error_message)
 			event = {
@@ -459,7 +465,7 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 				"message": message,
 			}
 		15:
-			var returned_record := cursor.read_record()
+			var returned_record = cursor.read_record()
 			if cursor.has_error():
 				return _error(cursor.error_message)
 			event = {
@@ -467,7 +473,7 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 				"record": returned_record,
 			}
 		16:
-			var error_message := cursor.read_string("message", MAX_MESSAGE_BYTES)
+			var error_message = cursor.read_string("message", MAX_MESSAGE_BYTES)
 			if cursor.has_error():
 				return _error(cursor.error_message)
 			event = {

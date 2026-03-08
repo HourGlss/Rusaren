@@ -43,14 +43,21 @@ func poll() -> void:
 	if _socket == null:
 		return
 
-	var poll_error := _socket.poll()
-	if poll_error != OK:
-		emit_signal("transport_error", "websocket poll failed with code %d" % poll_error)
+	_socket.poll()
+	var current_state := _socket.get_ready_state()
+	if current_state == WebSocketPeer.STATE_CLOSED and _last_state != WebSocketPeer.STATE_CLOSED:
+		var close_code := _socket.get_close_code()
+		var close_reason := _socket.get_close_reason()
+		var failure_reason := "websocket closed"
+		if close_reason != "":
+			failure_reason = close_reason
+		elif close_code != -1:
+			failure_reason = "websocket closed with code %d" % close_code
+		emit_signal("transport_error", failure_reason)
 		close()
-		emit_signal("closed", "websocket poll failed")
+		emit_signal("closed", failure_reason)
 		return
 
-	var current_state := _socket.get_ready_state()
 	if current_state != _last_state:
 		_last_state = current_state
 		emit_signal("transport_state_changed", _state_name(current_state))

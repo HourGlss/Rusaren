@@ -7,6 +7,7 @@ server/target/
 server/tools/
 
 # Godot
+Godot/
 client/godot/.godot/
 client/godot/export/
 

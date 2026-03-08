@@ -1,5 +1,7 @@
 # Rarena
 
+Current repo version: `0.2.0`
+
 Rarena is a server-authoritative arena game prototype. The current repository now contains a backend-first vertical slice for lobby, match flow, simulation, and packet validation, plus local and CI quality tooling around it.
 
 ## Current status
@@ -45,6 +47,7 @@ client/godot/project.godot
 ```
 
 The current Godot shell is wired to the websocket dev adapter first, not WebRTC yet.
+The project metadata version is currently `0.2.0`.
 Known shell limitations:
 - joining a lobby currently requires a manual lobby ID
 - the backend does not yet send a full lobby snapshot to late joiners, so the roster view is best-effort from live events

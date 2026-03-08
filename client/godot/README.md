@@ -1,6 +1,6 @@
 # Godot Shell
 
-This is the first browser-safe Godot shell for the current Rust backend.
+This is the `0.2.0` browser-safe Godot shell for the current Rust backend.
 
 What it does:
 - connects to the websocket dev adapter at `ws://127.0.0.1:3000/ws`
