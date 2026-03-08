@@ -4,6 +4,7 @@
 
 # Rust
 server/target/
+server/tools/
 
 # Godot
 client/godot/.godot/

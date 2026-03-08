@@ -1,21 +1,21 @@
 use vstd::prelude::*;
 
+fn main() {}
+
 verus! {
 
-pub const HEADER_LEN: nat = 16;
-
-pub spec fn has_minimum_header(packet_len: nat) -> bool {
-    packet_len >= HEADER_LEN
+spec fn has_minimum_header(packet_len: nat) -> bool {
+    packet_len >= 16nat
 }
 
-pub spec fn payload_len_matches(packet_len: nat, payload_len: nat) -> bool
+spec fn payload_len_matches(packet_len: nat, payload_len: nat) -> bool
     recommends
         has_minimum_header(packet_len),
 {
-    payload_len == packet_len - HEADER_LEN
+    payload_len == packet_len - 16nat
 }
 
-pub spec fn header_is_accepted(
+spec fn header_is_accepted(
     packet_len: nat,
     payload_len: nat,
     has_expected_magic: bool,
@@ -29,7 +29,7 @@ pub spec fn header_is_accepted(
 
 proof fn truncated_packets_are_rejected(packet_len: nat, payload_len: nat)
     requires
-        packet_len < HEADER_LEN,
+        packet_len < 16nat,
     ensures
         !header_is_accepted(packet_len, payload_len, true, true),
 {
@@ -66,7 +66,7 @@ proof fn payload_mismatch_is_rejected_even_with_good_magic_and_version(
 )
     requires
         has_minimum_header(packet_len),
-        payload_len != packet_len - HEADER_LEN,
+        payload_len != packet_len - 16nat,
     ensures
         !header_is_accepted(packet_len, payload_len, true, true),
 {

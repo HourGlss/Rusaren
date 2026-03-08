@@ -69,6 +69,12 @@ V1 scope decision:
 - Verus is limited to small `game_net` invariant modules in v1.
 - Do not extend Verus into broad content validation or simulation logic yet.
 
+Current repo usage:
+- `server/verus/network_ingress_model.rs`
+- `server/verus/packet_header_model.rs`
+- run with `cd server && ./scripts/quality.ps1 verus`
+- installed by `cd server && ./scripts/install-tools.ps1` into `server/tools/verus/current`
+
 ## What not to do first
 
 Do not start by trying to verify:

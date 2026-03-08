@@ -13,7 +13,7 @@ Set-Location $serverRoot
 
 $cargoBin = Join-Path $HOME ".cargo\bin"
 if (Test-Path $cargoBin) {
-    $env:PATH = "$cargoBin;$env:PATH"
+    $env:PATH = "$cargoBin$([System.IO.Path]::PathSeparator)$env:PATH"
 }
 
 $reportsRoot = Join-Path $serverRoot "target\reports"

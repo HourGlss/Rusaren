@@ -44,6 +44,9 @@ jobs:
       - name: Lint
         run: ./scripts/quality.ps1 lint
 
+      - name: Verus
+        run: ./scripts/quality.ps1 verus
+
       - name: Feature matrix
         run: ./scripts/quality.ps1 hack
 

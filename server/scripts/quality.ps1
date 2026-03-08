@@ -12,7 +12,7 @@ Set-Location $serverRoot
 
 $cargoBin = Join-Path $HOME ".cargo\\bin"
 if (Test-Path $cargoBin) {
-    $env:PATH = "$cargoBin;$env:PATH"
+    $env:PATH = "$cargoBin$([System.IO.Path]::PathSeparator)$env:PATH"
 }
 
 function Invoke-QualityTask {
@@ -93,7 +93,7 @@ function Invoke-QualityTask {
 }
 
 $tasks = if ($Task -eq "all") {
-    @("fmt", "lint", "hack", "test", "doc", "reports", "deny", "audit", "typos", "taplo", "zizmor")
+    @("fmt", "lint", "verus", "hack", "test", "doc", "reports", "deny", "audit", "typos", "taplo", "zizmor")
 }
 else {
     @($Task)

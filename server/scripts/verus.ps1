@@ -5,10 +5,23 @@ $ErrorActionPreference = "Stop"
 
 $serverRoot = Split-Path -Parent $PSScriptRoot
 $verusRoot = Join-Path $serverRoot "verus"
+$repoLocalVerusRoot = Join-Path $serverRoot "tools\verus\current"
+$runtime = [System.Runtime.InteropServices.RuntimeInformation]
+$isWindows = $runtime::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Windows)
 Set-Location $serverRoot
 
-if (-not (Get-Command verus -ErrorAction SilentlyContinue)) {
-    throw "Verus is not installed or not on PATH."
+function Get-VerusCommandPath {
+    $command = Get-Command verus -ErrorAction SilentlyContinue
+    if ($null -ne $command) {
+        return $command.Source
+    }
+
+    $candidate = Join-Path $repoLocalVerusRoot $(if ($isWindows) { "verus.exe" } else { "verus" })
+    if (Test-Path $candidate) {
+        return $candidate
+    }
+
+    throw "Verus is not installed and no repo-local binary was found at $repoLocalVerusRoot."
 }
 
 if (-not (Test-Path $verusRoot)) {
@@ -20,9 +33,11 @@ if ($models.Count -eq 0) {
     throw "No Verus model files were found at $verusRoot."
 }
 
+$verusCommand = Get-VerusCommandPath
+
 foreach ($model in $models) {
     Write-Host "==> verus $($model.Name)"
-    & verus $model.FullName
+    & $verusCommand $model.FullName
     if ($LASTEXITCODE -ne 0) {
         throw "Verus verification failed for $($model.Name) with exit code $LASTEXITCODE."
     }

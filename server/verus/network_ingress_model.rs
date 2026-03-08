@@ -1,23 +1,25 @@
 use vstd::prelude::*;
 
+fn main() {}
+
 verus! {
 
-pub enum SessionState {
+enum SessionState {
     AwaitingConnect,
     Bound(int),
 }
 
-pub spec fn valid_packet_len(len: nat, max_len: nat) -> bool {
+spec fn valid_packet_len(len: nat, max_len: nat) -> bool {
     len <= max_len
 }
 
-pub spec fn accept_packet(
+spec fn accept_packet(
     state: SessionState,
     packet_len: nat,
     max_len: nat,
     is_connect: bool,
     claimed_player: int,
-) -> (accepted: bool, next: SessionState)
+) -> (result: (bool, SessionState))
     recommends
         claimed_player > 0,
 {

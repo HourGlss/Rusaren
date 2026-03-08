@@ -58,6 +58,8 @@ cd server
 ./scripts/install-tools.ps1
 ```
 
+That script now installs Verus into the repo-local cache at `server/tools/verus/current`.
+
 Run the configured quality checks:
 
 ```powershell
@@ -65,7 +67,7 @@ cd server
 ./scripts/quality.ps1
 ```
 
-Run the Verus network-boundary models explicitly if Verus is installed:
+Run only the Verus network-boundary models:
 
 ```powershell
 cd server
@@ -101,6 +103,7 @@ Recommended local flow for each change:
 cd server
 rustup run stable cargo build --workspace
 ./scripts/quality.ps1 lint
+./scripts/quality.ps1 verus
 ./scripts/quality.ps1 test
 ./scripts/quality.ps1 reports
 ```
