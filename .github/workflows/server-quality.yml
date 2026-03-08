@@ -53,8 +53,8 @@ jobs:
       - name: Doc tests
         run: ./scripts/quality.ps1 doc
 
-      - name: Coverage
-        run: ./scripts/quality.ps1 coverage
+      - name: HTML reports
+        run: ./scripts/quality.ps1 reports
 
       - name: Dependency policy
         run: ./scripts/quality.ps1 deny
@@ -71,9 +71,22 @@ jobs:
       - name: GitHub Actions security
         run: ./scripts/quality.ps1 zizmor
 
-      - name: Upload coverage
+      - name: Upload reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: server-coverage
-          path: server/target/coverage
+          name: server-reports-${{ github.sha }}
+          path: server/target/reports
+
+      - name: Report summary
+        if: always()
+        run: |
+          @"
+          ## Server reports
+
+          Commit: `${{ github.sha }}`
+          Artifact: `server-reports-${{ github.sha }}`
+          Main file inside artifact: `server/target/reports/output.html`
+          Coverage file inside artifact: `server/target/reports/coverage/output.html`
+          Complexity file inside artifact: `server/target/reports/complexity/output.html`
+          "@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8

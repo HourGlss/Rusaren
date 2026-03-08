@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("all", "fmt", "lint", "hack", "test", "doc", "coverage", "deny", "audit", "udeps", "miri", "complexity", "bench", "fuzz", "typos", "taplo", "zizmor")]
+    [ValidateSet("all", "fmt", "lint", "hack", "test", "doc", "coverage", "reports", "deny", "audit", "udeps", "miri", "complexity", "bench", "fuzz", "typos", "taplo", "zizmor")]
     [string]$Task = "all"
 )
 
@@ -18,21 +18,29 @@ if (Test-Path $cargoBin) {
 function Invoke-QualityTask {
     param([string]$Name)
 
+    $hasNextest = $null -ne (Get-Command cargo-nextest -ErrorAction SilentlyContinue)
+
     switch ($Name) {
         "fmt" { rustup run stable cargo xfmt }
         "lint" { rustup run stable cargo xlint }
         "hack" { rustup run stable cargo hack check --workspace --all-targets --each-feature --no-dev-deps }
-        "test" { rustup run stable cargo xtest }
+        "test" {
+            if ($hasNextest) {
+                rustup run stable cargo nextest run --workspace --all-features
+            }
+            else {
+                Write-Host "cargo-nextest is not installed; falling back to cargo test."
+                rustup run stable cargo test --workspace --all-features
+            }
+        }
         "doc" { rustup run stable cargo xdoc }
-        "coverage" { rustup run stable cargo xcov }
+        "coverage" { & (Join-Path $PSScriptRoot "generate-reports.ps1") -Report coverage -FailOnCommandFailure }
+        "reports" { & (Join-Path $PSScriptRoot "generate-reports.ps1") -Report all -FailOnCommandFailure }
         "deny" { rustup run stable cargo xdeny }
         "audit" { rustup run stable cargo xaudit }
         "udeps" { rustup run nightly cargo udeps --workspace --all-targets }
         "miri" { rustup run nightly cargo miri test --workspace }
-        "complexity" {
-            New-Item -ItemType Directory -Force -Path "target/quality" | Out-Null
-            rust-code-analysis-cli --metrics --output-format json --output target/quality --paths crates
-        }
+        "complexity" { & (Join-Path $PSScriptRoot "generate-reports.ps1") -Report complexity -FailOnCommandFailure }
         "bench" {
             $benchTargets = Get-ChildItem -Path $serverRoot -Recurse -File -Filter *.rs |
                 Where-Object { $_.DirectoryName -like "*\\benches" } |
@@ -84,7 +92,7 @@ function Invoke-QualityTask {
 }
 
 $tasks = if ($Task -eq "all") {
-    @("fmt", "lint", "hack", "test", "doc", "coverage", "deny", "audit", "typos", "taplo", "zizmor")
+    @("fmt", "lint", "hack", "test", "doc", "reports", "deny", "audit", "typos", "taplo", "zizmor")
 }
 else {
     @($Task)

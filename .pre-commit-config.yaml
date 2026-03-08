@@ -1,6 +1,7 @@
 default_install_hook_types:
   - pre-commit
   - pre-push
+  - post-commit
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
@@ -55,3 +56,12 @@ repos:
         files: ^server/
         stages:
           - pre-push
+
+      - id: server-reports
+        name: server reports
+        entry: powershell -NoProfile -ExecutionPolicy Bypass -File server/scripts/generate-reports.ps1
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages:
+          - post-commit

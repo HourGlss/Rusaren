@@ -1,3 +1,685 @@
 //! Protocol, transport, and snapshot replication code.
 
 #![forbid(unsafe_code)]
+
+use std::fmt;
+
+pub const PACKET_MAGIC: u16 = 0x5241;
+pub const PROTOCOL_VERSION: u8 = 1;
+pub const HEADER_LEN: usize = 16;
+pub const INPUT_PAYLOAD_LEN: usize = 16;
+pub const INPUT_PAYLOAD_LEN_U16: u16 = 16;
+
+pub const BUTTON_PRIMARY: u16 = 1 << 0;
+pub const BUTTON_SECONDARY: u16 = 1 << 1;
+pub const BUTTON_CAST: u16 = 1 << 2;
+pub const BUTTON_CANCEL: u16 = 1 << 3;
+pub const BUTTON_QUIT_TO_LOBBY: u16 = 1 << 4;
+pub const ALLOWED_BUTTONS_MASK: u16 =
+    BUTTON_PRIMARY | BUTTON_SECONDARY | BUTTON_CAST | BUTTON_CANCEL | BUTTON_QUIT_TO_LOBBY;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChannelId {
+    Control,
+    Input,
+    Snapshot,
+}
+
+impl ChannelId {
+    fn from_byte(raw: u8) -> Result<Self, PacketError> {
+        match raw {
+            0 => Ok(Self::Control),
+            1 => Ok(Self::Input),
+            2 => Ok(Self::Snapshot),
+            _ => Err(PacketError::UnknownChannel(raw)),
+        }
+    }
+
+    const fn to_byte(self) -> u8 {
+        match self {
+            Self::Control => 0,
+            Self::Input => 1,
+            Self::Snapshot => 2,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PacketKind {
+    ControlSnapshot,
+    ControlDelta,
+    LaunchCountdownStarted,
+    MatchStarted,
+    MatchAborted,
+    MatchStatistics,
+    InputFrame,
+    FullSnapshot,
+    DeltaSnapshot,
+    EventBatch,
+}
+
+impl PacketKind {
+    fn from_byte(channel: ChannelId, raw: u8) -> Result<Self, PacketError> {
+        match (channel, raw) {
+            (ChannelId::Control, 0) => Ok(Self::ControlSnapshot),
+            (ChannelId::Control, 1) => Ok(Self::ControlDelta),
+            (ChannelId::Control, 2) => Ok(Self::LaunchCountdownStarted),
+            (ChannelId::Control, 3) => Ok(Self::MatchStarted),
+            (ChannelId::Control, 4) => Ok(Self::MatchAborted),
+            (ChannelId::Control, 5) => Ok(Self::MatchStatistics),
+            (ChannelId::Input, 16) => Ok(Self::InputFrame),
+            (ChannelId::Snapshot, 32) => Ok(Self::FullSnapshot),
+            (ChannelId::Snapshot, 33) => Ok(Self::DeltaSnapshot),
+            (ChannelId::Snapshot, 34) => Ok(Self::EventBatch),
+            _ => Err(PacketError::UnknownPacketKind {
+                channel,
+                raw_kind: raw,
+            }),
+        }
+    }
+
+    const fn to_byte(self) -> u8 {
+        match self {
+            Self::ControlSnapshot => 0,
+            Self::ControlDelta => 1,
+            Self::LaunchCountdownStarted => 2,
+            Self::MatchStarted => 3,
+            Self::MatchAborted => 4,
+            Self::MatchStatistics => 5,
+            Self::InputFrame => 16,
+            Self::FullSnapshot => 32,
+            Self::DeltaSnapshot => 33,
+            Self::EventBatch => 34,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PacketHeader {
+    pub version: u8,
+    pub channel_id: ChannelId,
+    pub packet_kind: PacketKind,
+    pub flags: u8,
+    pub payload_len: u16,
+    pub seq: u32,
+    pub sim_tick: u32,
+}
+
+impl PacketHeader {
+    /// # Errors
+    ///
+    /// Returns a [`PacketError`] when `packet_kind` does not belong to
+    /// `channel_id`.
+    pub fn new(
+        channel_id: ChannelId,
+        packet_kind: PacketKind,
+        flags: u8,
+        payload_len: u16,
+        seq: u32,
+        sim_tick: u32,
+    ) -> Result<Self, PacketError> {
+        let decoded_kind = PacketKind::from_byte(channel_id, packet_kind.to_byte())?;
+        debug_assert_eq!(decoded_kind, packet_kind);
+
+        Ok(Self {
+            version: PROTOCOL_VERSION,
+            channel_id,
+            packet_kind,
+            flags,
+            payload_len,
+            seq,
+            sim_tick,
+        })
+    }
+
+    #[must_use]
+    pub fn encode(self, payload: &[u8]) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(HEADER_LEN + payload.len());
+        bytes.extend_from_slice(&PACKET_MAGIC.to_le_bytes());
+        bytes.push(self.version);
+        bytes.push(self.channel_id.to_byte());
+        bytes.push(self.packet_kind.to_byte());
+        bytes.push(self.flags);
+        bytes.extend_from_slice(&self.payload_len.to_le_bytes());
+        bytes.extend_from_slice(&self.seq.to_le_bytes());
+        bytes.extend_from_slice(&self.sim_tick.to_le_bytes());
+        bytes.extend_from_slice(payload);
+        bytes
+    }
+
+    /// # Errors
+    ///
+    /// Returns a [`PacketError`] when the packet header is truncated, the magic
+    /// bytes or version are wrong, the channel or packet kind is unknown, or the
+    /// declared payload length does not match the received bytes.
+    pub fn decode(packet: &[u8]) -> Result<(Self, &[u8]), PacketError> {
+        if packet.len() < HEADER_LEN {
+            return Err(PacketError::PacketTooShort {
+                actual: packet.len(),
+                minimum: HEADER_LEN,
+            });
+        }
+
+        let magic = u16::from_le_bytes([packet[0], packet[1]]);
+        if magic != PACKET_MAGIC {
+            return Err(PacketError::MagicMismatch {
+                expected: PACKET_MAGIC,
+                actual: magic,
+            });
+        }
+
+        let version = packet[2];
+        if version != PROTOCOL_VERSION {
+            return Err(PacketError::VersionMismatch {
+                expected: PROTOCOL_VERSION,
+                actual: version,
+            });
+        }
+
+        let channel_id = ChannelId::from_byte(packet[3])?;
+        let packet_kind = PacketKind::from_byte(channel_id, packet[4])?;
+        let flags = packet[5];
+        let payload_len = u16::from_le_bytes([packet[6], packet[7]]);
+        let seq = u32::from_le_bytes([packet[8], packet[9], packet[10], packet[11]]);
+        let sim_tick = u32::from_le_bytes([packet[12], packet[13], packet[14], packet[15]]);
+        let payload = &packet[HEADER_LEN..];
+
+        if payload.len() != usize::from(payload_len) {
+            return Err(PacketError::PayloadLengthMismatch {
+                declared: payload_len,
+                actual: payload.len(),
+            });
+        }
+
+        Ok((
+            Self {
+                version,
+                channel_id,
+                packet_kind,
+                flags,
+                payload_len,
+                seq,
+                sim_tick,
+            },
+            payload,
+        ))
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ValidatedInputFrame {
+    pub client_input_tick: u32,
+    pub move_horizontal_q: i16,
+    pub move_vertical_q: i16,
+    pub aim_horizontal_q: i16,
+    pub aim_vertical_q: i16,
+    pub buttons: u16,
+    pub ability_or_context: u16,
+}
+
+impl ValidatedInputFrame {
+    /// # Errors
+    ///
+    /// Returns a [`PacketError`] when unknown button bits are present, when cast
+    /// input omits ability context, or when non-cast input includes ability
+    /// context.
+    pub fn new(
+        client_input_tick: u32,
+        move_horizontal_q: i16,
+        move_vertical_q: i16,
+        aim_horizontal_q: i16,
+        aim_vertical_q: i16,
+        buttons: u16,
+        ability_or_context: u16,
+    ) -> Result<Self, PacketError> {
+        if buttons & !ALLOWED_BUTTONS_MASK != 0 {
+            return Err(PacketError::UnknownButtonBits {
+                provided: buttons,
+                allowed_mask: ALLOWED_BUTTONS_MASK,
+            });
+        }
+
+        let cast_requested = buttons & BUTTON_CAST != 0;
+        match (cast_requested, ability_or_context) {
+            (true, 0) => return Err(PacketError::MissingAbilityContext),
+            (false, non_zero) if non_zero != 0 => {
+                return Err(PacketError::UnexpectedAbilityContext(non_zero))
+            }
+            _ => {}
+        }
+
+        Ok(Self {
+            client_input_tick,
+            move_horizontal_q,
+            move_vertical_q,
+            aim_horizontal_q,
+            aim_vertical_q,
+            buttons,
+            ability_or_context,
+        })
+    }
+
+    /// # Errors
+    ///
+    /// Returns a [`PacketError`] when header construction fails.
+    pub fn encode_packet(self, seq: u32, sim_tick: u32) -> Result<Vec<u8>, PacketError> {
+        let mut payload = Vec::with_capacity(INPUT_PAYLOAD_LEN);
+        payload.extend_from_slice(&self.client_input_tick.to_le_bytes());
+        payload.extend_from_slice(&self.move_horizontal_q.to_le_bytes());
+        payload.extend_from_slice(&self.move_vertical_q.to_le_bytes());
+        payload.extend_from_slice(&self.aim_horizontal_q.to_le_bytes());
+        payload.extend_from_slice(&self.aim_vertical_q.to_le_bytes());
+        payload.extend_from_slice(&self.buttons.to_le_bytes());
+        payload.extend_from_slice(&self.ability_or_context.to_le_bytes());
+
+        let header = PacketHeader::new(
+            ChannelId::Input,
+            PacketKind::InputFrame,
+            0,
+            INPUT_PAYLOAD_LEN_U16,
+            seq,
+            sim_tick,
+        )?;
+
+        Ok(header.encode(&payload))
+    }
+
+    /// # Errors
+    ///
+    /// Returns a [`PacketError`] when the packet header is malformed, the packet
+    /// is not an input-frame packet, or the input payload fails validation.
+    pub fn decode_packet(packet: &[u8]) -> Result<(PacketHeader, Self), PacketError> {
+        let (header, payload) = PacketHeader::decode(packet)?;
+        if header.channel_id != ChannelId::Input || header.packet_kind != PacketKind::InputFrame {
+            return Err(PacketError::UnexpectedPacketKind {
+                expected_channel: ChannelId::Input,
+                expected_kind: PacketKind::InputFrame,
+                actual_channel: header.channel_id,
+                actual_kind: header.packet_kind,
+            });
+        }
+
+        if payload.len() != INPUT_PAYLOAD_LEN {
+            return Err(PacketError::InputPayloadLengthMismatch {
+                expected: INPUT_PAYLOAD_LEN,
+                actual: payload.len(),
+            });
+        }
+
+        let client_input_tick =
+            u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
+        let move_horizontal_q = i16::from_le_bytes([payload[4], payload[5]]);
+        let move_vertical_q = i16::from_le_bytes([payload[6], payload[7]]);
+        let aim_horizontal_q = i16::from_le_bytes([payload[8], payload[9]]);
+        let aim_vertical_q = i16::from_le_bytes([payload[10], payload[11]]);
+        let buttons = u16::from_le_bytes([payload[12], payload[13]]);
+        let ability_or_context = u16::from_le_bytes([payload[14], payload[15]]);
+
+        let frame = Self::new(
+            client_input_tick,
+            move_horizontal_q,
+            move_vertical_q,
+            aim_horizontal_q,
+            aim_vertical_q,
+            buttons,
+            ability_or_context,
+        )?;
+
+        Ok((header, frame))
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SequenceTracker {
+    newest_seq: Option<u32>,
+}
+
+impl SequenceTracker {
+    #[must_use]
+    pub const fn new() -> Self {
+        Self { newest_seq: None }
+    }
+
+    /// # Errors
+    ///
+    /// Returns [`PacketError::StaleSequence`] when `seq` is not newer than the
+    /// newest observed sequence.
+    pub fn observe(&mut self, seq: u32) -> Result<(), PacketError> {
+        if let Some(newest_seq) = self.newest_seq {
+            if seq <= newest_seq {
+                return Err(PacketError::StaleSequence {
+                    incoming: seq,
+                    newest: newest_seq,
+                });
+            }
+        }
+
+        self.newest_seq = Some(seq);
+        Ok(())
+    }
+
+    #[must_use]
+    pub const fn newest(self) -> Option<u32> {
+        self.newest_seq
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PacketError {
+    PacketTooShort {
+        actual: usize,
+        minimum: usize,
+    },
+    MagicMismatch {
+        expected: u16,
+        actual: u16,
+    },
+    VersionMismatch {
+        expected: u8,
+        actual: u8,
+    },
+    UnknownChannel(u8),
+    UnknownPacketKind {
+        channel: ChannelId,
+        raw_kind: u8,
+    },
+    PayloadLengthMismatch {
+        declared: u16,
+        actual: usize,
+    },
+    UnexpectedPacketKind {
+        expected_channel: ChannelId,
+        expected_kind: PacketKind,
+        actual_channel: ChannelId,
+        actual_kind: PacketKind,
+    },
+    InputPayloadLengthMismatch {
+        expected: usize,
+        actual: usize,
+    },
+    UnknownButtonBits {
+        provided: u16,
+        allowed_mask: u16,
+    },
+    MissingAbilityContext,
+    UnexpectedAbilityContext(u16),
+    StaleSequence {
+        incoming: u32,
+        newest: u32,
+    },
+}
+
+impl fmt::Display for PacketError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::PacketTooShort { actual, minimum } => {
+                write!(
+                    f,
+                    "packet length {actual} is below the minimum header length {minimum}"
+                )
+            }
+            Self::MagicMismatch { expected, actual } => {
+                write!(
+                    f,
+                    "packet magic {actual:#06x} does not match expected {expected:#06x}"
+                )
+            }
+            Self::VersionMismatch { expected, actual } => {
+                write!(
+                    f,
+                    "protocol version {actual} does not match expected version {expected}"
+                )
+            }
+            Self::UnknownChannel(raw) => write!(f, "unknown channel id {raw}"),
+            Self::UnknownPacketKind { channel, raw_kind } => {
+                write!(f, "unknown packet kind {raw_kind} on channel {channel:?}")
+            }
+            Self::PayloadLengthMismatch { declared, actual } => {
+                write!(
+                    f,
+                    "payload length declared {declared} but actual bytes were {actual}"
+                )
+            }
+            Self::UnexpectedPacketKind {
+                expected_channel,
+                expected_kind,
+                actual_channel,
+                actual_kind,
+            } => write!(
+                f,
+                "expected {expected_channel:?}/{expected_kind:?} but received {actual_channel:?}/{actual_kind:?}"
+            ),
+            Self::InputPayloadLengthMismatch { expected, actual } => {
+                write!(
+                    f,
+                    "input payload length {actual} does not match expected length {expected}"
+                )
+            }
+            Self::UnknownButtonBits {
+                provided,
+                allowed_mask,
+            } => write!(
+                f,
+                "button bits {provided:#06x} exceed allowed mask {allowed_mask:#06x}"
+            ),
+            Self::MissingAbilityContext => {
+                f.write_str("cast packets must provide a non-zero ability_or_context")
+            }
+            Self::UnexpectedAbilityContext(value) => write!(
+                f,
+                "ability_or_context must be zero when cast is not requested, got {value}"
+            ),
+            Self::StaleSequence { incoming, newest } => {
+                write!(f, "incoming sequence {incoming} is not newer than {newest}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for PacketError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_ok<T, E: fmt::Debug>(result: Result<T, E>) -> T {
+        match result {
+            Ok(value) => value,
+            Err(error) => panic!("expected Ok(..), got Err({error:?})"),
+        }
+    }
+
+    #[test]
+    fn header_round_trips_for_valid_packets() {
+        let header = assert_ok(PacketHeader::new(
+            ChannelId::Input,
+            PacketKind::InputFrame,
+            0,
+            INPUT_PAYLOAD_LEN_U16,
+            7,
+            33,
+        ));
+
+        let payload = vec![0_u8; INPUT_PAYLOAD_LEN];
+        let bytes = header.encode(&payload);
+        let (decoded, decoded_payload) = assert_ok(PacketHeader::decode(&bytes));
+
+        assert_eq!(decoded, header);
+        assert_eq!(decoded_payload, payload.as_slice());
+    }
+
+    #[test]
+    fn header_rejects_short_packets_invalid_magic_and_invalid_versions() {
+        assert_eq!(
+            PacketHeader::decode(&[0_u8; HEADER_LEN - 1]),
+            Err(PacketError::PacketTooShort {
+                actual: HEADER_LEN - 1,
+                minimum: HEADER_LEN,
+            })
+        );
+
+        let mut packet = vec![0_u8; HEADER_LEN];
+        packet[0..2].copy_from_slice(&0x0000_u16.to_le_bytes());
+        packet[2] = PROTOCOL_VERSION;
+        packet[3] = 1;
+        packet[4] = 16;
+        assert_eq!(
+            PacketHeader::decode(&packet),
+            Err(PacketError::MagicMismatch {
+                expected: PACKET_MAGIC,
+                actual: 0,
+            })
+        );
+
+        packet[0..2].copy_from_slice(&PACKET_MAGIC.to_le_bytes());
+        packet[2] = PROTOCOL_VERSION + 1;
+        assert_eq!(
+            PacketHeader::decode(&packet),
+            Err(PacketError::VersionMismatch {
+                expected: PROTOCOL_VERSION,
+                actual: PROTOCOL_VERSION + 1,
+            })
+        );
+    }
+
+    #[test]
+    fn header_rejects_unknown_channels_unknown_kinds_and_bad_lengths() {
+        let mut packet = vec![0_u8; HEADER_LEN];
+        packet[0..2].copy_from_slice(&PACKET_MAGIC.to_le_bytes());
+        packet[2] = PROTOCOL_VERSION;
+        packet[3] = 9;
+        assert_eq!(
+            PacketHeader::decode(&packet),
+            Err(PacketError::UnknownChannel(9))
+        );
+
+        packet[3] = ChannelId::Input.to_byte();
+        packet[4] = 99;
+        assert_eq!(
+            PacketHeader::decode(&packet),
+            Err(PacketError::UnknownPacketKind {
+                channel: ChannelId::Input,
+                raw_kind: 99,
+            })
+        );
+
+        packet[4] = PacketKind::InputFrame.to_byte();
+        packet[6..8].copy_from_slice(&(1_u16).to_le_bytes());
+        assert_eq!(
+            PacketHeader::decode(&packet),
+            Err(PacketError::PayloadLengthMismatch {
+                declared: 1,
+                actual: 0,
+            })
+        );
+    }
+
+    #[test]
+    fn input_frame_validates_button_masks_and_context_consistency() {
+        assert_eq!(
+            ValidatedInputFrame::new(1, 0, 0, 0, 0, ALLOWED_BUTTONS_MASK + 1, 0),
+            Err(PacketError::UnknownButtonBits {
+                provided: ALLOWED_BUTTONS_MASK + 1,
+                allowed_mask: ALLOWED_BUTTONS_MASK,
+            })
+        );
+
+        assert_eq!(
+            ValidatedInputFrame::new(1, 0, 0, 0, 0, BUTTON_CAST, 0),
+            Err(PacketError::MissingAbilityContext)
+        );
+
+        assert_eq!(
+            ValidatedInputFrame::new(1, 0, 0, 0, 0, 0, 7),
+            Err(PacketError::UnexpectedAbilityContext(7))
+        );
+
+        assert_eq!(
+            ValidatedInputFrame::new(1, -10, 10, 25, -25, BUTTON_CAST | BUTTON_PRIMARY, 7),
+            Ok(ValidatedInputFrame {
+                client_input_tick: 1,
+                move_horizontal_q: -10,
+                move_vertical_q: 10,
+                aim_horizontal_q: 25,
+                aim_vertical_q: -25,
+                buttons: BUTTON_CAST | BUTTON_PRIMARY,
+                ability_or_context: 7,
+            })
+        );
+    }
+
+    #[test]
+    fn input_frame_packet_round_trips_and_rejects_wrong_packets() {
+        let frame = assert_ok(ValidatedInputFrame::new(3, 1, -1, 50, -50, BUTTON_CAST, 9));
+        let packet = assert_ok(frame.encode_packet(17, 99));
+
+        let (header, decoded_frame) = assert_ok(ValidatedInputFrame::decode_packet(&packet));
+        assert_eq!(header.channel_id, ChannelId::Input);
+        assert_eq!(header.packet_kind, PacketKind::InputFrame);
+        assert_eq!(decoded_frame, frame);
+
+        let wrong_header = assert_ok(PacketHeader::new(
+            ChannelId::Control,
+            PacketKind::MatchStarted,
+            0,
+            INPUT_PAYLOAD_LEN_U16,
+            17,
+            99,
+        ))
+        .encode(&[0_u8; INPUT_PAYLOAD_LEN]);
+
+        assert_eq!(
+            ValidatedInputFrame::decode_packet(&wrong_header),
+            Err(PacketError::UnexpectedPacketKind {
+                expected_channel: ChannelId::Input,
+                expected_kind: PacketKind::InputFrame,
+                actual_channel: ChannelId::Control,
+                actual_kind: PacketKind::MatchStarted,
+            })
+        );
+    }
+
+    #[test]
+    fn input_frame_decode_rejects_bad_input_payload_lengths() {
+        let header = assert_ok(PacketHeader::new(
+            ChannelId::Input,
+            PacketKind::InputFrame,
+            0,
+            INPUT_PAYLOAD_LEN_U16 - 1,
+            1,
+            1,
+        ));
+        let packet = header.encode(&[0_u8; INPUT_PAYLOAD_LEN - 1]);
+
+        assert_eq!(
+            ValidatedInputFrame::decode_packet(&packet),
+            Err(PacketError::InputPayloadLengthMismatch {
+                expected: INPUT_PAYLOAD_LEN,
+                actual: INPUT_PAYLOAD_LEN - 1,
+            })
+        );
+    }
+
+    #[test]
+    fn sequence_tracker_accepts_increasing_sequences_and_rejects_stale_values() {
+        let mut tracker = SequenceTracker::new();
+
+        assert_eq!(tracker.observe(0), Ok(()));
+        assert_eq!(tracker.observe(1), Ok(()));
+        assert_eq!(tracker.newest(), Some(1));
+        assert_eq!(
+            tracker.observe(1),
+            Err(PacketError::StaleSequence {
+                incoming: 1,
+                newest: 1,
+            })
+        );
+        assert_eq!(
+            tracker.observe(0),
+            Err(PacketError::StaleSequence {
+                incoming: 0,
+                newest: 1,
+            })
+        );
+    }
+}
