@@ -581,6 +581,92 @@ function Get-BackendCorePrompt {
     return "Refactor $FilePath to reduce complexity in $functionList without changing externally visible behavior. Split branching logic into smaller helpers, add focused positive and negative tests for the touched branches, and keep the file easier to reason about before adding more features."
 }
 
+function Get-FuzzTargetCatalog {
+    return @(
+        [pscustomobject]@{
+            Target = "packet_header_decode"
+            Scope = "crates/game_net/src/lib.rs"
+            Description = "Packet framing and header validation."
+        },
+        [pscustomobject]@{
+            Target = "control_command_decode"
+            Scope = "crates/game_net/src/control.rs plus game_domain validation via decoded identifiers and names."
+            Description = "Control command decode and validation."
+        },
+        [pscustomobject]@{
+            Target = "input_frame_decode"
+            Scope = "crates/game_net/src/lib.rs"
+            Description = "Input packet decode and button/context validation."
+        },
+        [pscustomobject]@{
+            Target = "session_ingress"
+            Scope = "crates/game_net/src/ingress.rs plus control decode and domain validation."
+            Description = "Session binding and hostile ingress sequencing."
+        },
+        [pscustomobject]@{
+            Target = "server_control_event_decode"
+            Scope = "crates/game_net/src/control.rs plus game_domain validation via decoded lobby snapshots and records."
+            Description = "Server control event decode for lobby directory and full lobby snapshot payloads."
+        }
+    )
+}
+
+function Get-FuzzArtifactFindings {
+    param(
+        [string]$ArtifactRoot,
+        [object[]]$TargetCatalog
+    )
+
+    $targetCatalogByName = @{}
+    foreach ($targetInfo in @($TargetCatalog)) {
+        $targetCatalogByName[$targetInfo.Target] = $targetInfo
+    }
+
+    if (-not (Test-Path $ArtifactRoot)) {
+        return @()
+    }
+
+    return @(
+        Get-ChildItem -Path $ArtifactRoot -Recurse -File |
+            Sort-Object FullName |
+            ForEach-Object {
+                $targetName = Split-Path -Parent $_.FullName | Split-Path -Leaf
+                $targetInfo = if ($targetCatalogByName.ContainsKey($targetName)) { $targetCatalogByName[$targetName] } else { $null }
+                $bytes = [System.IO.File]::ReadAllBytes($_.FullName)
+                $previewLength = [Math]::Min($bytes.Length, 32)
+                $previewBytes = if ($previewLength -gt 0) {
+                    ($bytes[0..($previewLength - 1)] | ForEach-Object { $_.ToString("X2") }) -join " "
+                }
+                else {
+                    ""
+                }
+                $asciiPreview = if ($previewLength -gt 0) {
+                    -join ($bytes[0..($previewLength - 1)] | ForEach-Object {
+                        if ($_ -ge 32 -and $_ -le 126) { [char]$_ } else { "." }
+                    })
+                }
+                else {
+                    ""
+                }
+                $sha256 = (Get-FileHash -Algorithm SHA256 -Path $_.FullName).Hash
+
+                [pscustomobject]@{
+                    Target = $targetName
+                    FileName = $_.Name
+                    RelativePath = Convert-ToDisplayPath -Path $_.FullName
+                    Size = $_.Length
+                    LastWriteTime = $_.LastWriteTimeUtc
+                    ReproCommand = "cd server; rustup run nightly cargo fuzz run $targetName fuzz/artifacts/$targetName/$($_.Name)"
+                    Scope = if ($null -ne $targetInfo) { $targetInfo.Scope } else { "Unknown scope" }
+                    Description = if ($null -ne $targetInfo) { $targetInfo.Description } else { "Unknown target scope." }
+                    Sha256 = $sha256
+                    HexPreview = $previewBytes
+                    AsciiPreview = $asciiPreview
+                }
+            }
+    )
+}
+
 function Invoke-CoverageReport {
     param(
         [hashtable]$SourceInventory
@@ -1496,33 +1582,7 @@ function Invoke-FuzzCoverageReport {
         $files = @($files | Sort-Object LinePercent, DisplayPath)
         $totals = $coverageData.totals
 
-        $targetScopes = @(
-            [pscustomobject]@{
-                Target = "packet_header_decode"
-                Scope = "crates/game_net/src/lib.rs"
-                Description = "Packet framing and header validation."
-            },
-            [pscustomobject]@{
-                Target = "control_command_decode"
-                Scope = "crates/game_net/src/control.rs plus game_domain validation via decoded identifiers and names."
-                Description = "Control command decode and validation."
-            },
-            [pscustomobject]@{
-                Target = "input_frame_decode"
-                Scope = "crates/game_net/src/lib.rs"
-                Description = "Input packet decode and button/context validation."
-            },
-            [pscustomobject]@{
-                Target = "session_ingress"
-                Scope = "crates/game_net/src/ingress.rs plus control decode and domain validation."
-                Description = "Session binding and hostile ingress sequencing."
-            },
-            [pscustomobject]@{
-                Target = "server_control_event_decode"
-                Scope = "crates/game_net/src/control.rs plus game_domain validation via decoded lobby snapshots and records."
-                Description = "Server control event decode for lobby directory and full lobby snapshot payloads."
-            }
-        )
+        $targetScopes = Get-FuzzTargetCatalog
 
         $scopeRows = foreach ($scope in $targetScopes) {
             $corpusDir = Join-Path $serverRoot ("fuzz\corpus\" + $scope.Target)
@@ -1603,24 +1663,7 @@ function Invoke-FuzzCoverageReport {
                 "Seeded fuzz targets: $(Format-Percent -Value $seededTargetPercent)"
             )
 
-        $findings = @()
-        if (Test-Path $artifactRoot) {
-            $findings = @(
-                Get-ChildItem -Path $artifactRoot -Recurse -File |
-                    Sort-Object FullName |
-                    ForEach-Object {
-                        $targetName = Split-Path -Parent $_.FullName | Split-Path -Leaf
-                        [pscustomobject]@{
-                            Target = $targetName
-                            FileName = $_.Name
-                            RelativePath = Convert-ToDisplayPath -Path $_.FullName
-                            Size = $_.Length
-                            LastWriteTime = $_.LastWriteTimeUtc
-                            ReproCommand = "cd server; rustup run nightly cargo fuzz run $targetName fuzz/artifacts/$targetName/$($_.Name)"
-                        }
-                    }
-            )
-        }
+        $findings = @(Get-FuzzArtifactFindings -ArtifactRoot $artifactRoot -TargetCatalog $targetScopes)
 
         $notes.Add("This report measures corpus replay coverage, not live libFuzzer exploration coverage.")
         $notes.Add("Saved crash artifacts are reviewed on this page under Findings and reproductions, and are stored under server/fuzz/artifacts.")
@@ -1642,6 +1685,9 @@ function Invoke-FuzzCoverageReport {
   <td><code>$(Escape-Html $finding.RelativePath)</code></td>
   <td>$([int]$finding.Size)</td>
   <td>$(Escape-Html ($finding.LastWriteTime.ToString("u")))</td>
+  <td><code>$(Escape-Html $finding.Scope)</code></td>
+  <td><code>$(Escape-Html $finding.Sha256)</code></td>
+  <td><code>$(Escape-Html $finding.HexPreview)</code></td>
   <td><code>$(Escape-Html $finding.ReproCommand)</code></td>
 </tr>
 "@
@@ -1720,6 +1766,9 @@ $(if ($findingRows) {
         <th>Path</th>
         <th>Bytes</th>
         <th>Updated</th>
+        <th>Expected scope</th>
+        <th>SHA-256</th>
+        <th>Preview</th>
         <th>Reproduce</th>
       </tr>
     </thead>
@@ -1827,6 +1876,7 @@ function Invoke-HardeningQueueReport {
         foreach ($path in $backendCoreFiles) {
             $backendCoreFileSet[$path] = $true
         }
+        $targetCatalog = Get-FuzzTargetCatalog
 
         $fuzzJson = Get-Content -Path $fuzzSummaryPath -Raw | ConvertFrom-Json
         $fuzzCoverageData = $fuzzJson.data | Select-Object -First 1
@@ -1900,7 +1950,7 @@ function Invoke-HardeningQueueReport {
             }
         }
 
-        $tasks = foreach ($backendPath in $backendCoreFiles) {
+        $fileTasks = foreach ($backendPath in $backendCoreFiles) {
             $fileMetric = $fileMetrics | Where-Object { $_.NormalizedPath -eq $backendPath } | Select-Object -First 1
             $fuzzMetric = if ($fuzzByPath.ContainsKey($backendPath)) { $fuzzByPath[$backendPath] } else { $null }
             $functionSummary = if ($fileFunctionSummaries.ContainsKey($backendPath)) { $fileFunctionSummaries[$backendPath] } else { $null }
@@ -1973,6 +2023,8 @@ function Invoke-HardeningQueueReport {
             $actions.Add("Add or extend focused positive and negative tests for every touched branch.")
 
             [pscustomobject]@{
+                Kind = "file_cleanup"
+                Title = $displayPath
                 DisplayPath = $displayPath
                 NormalizedPath = $backendPath
                 PriorityScore = $priorityScore
@@ -1992,38 +2044,65 @@ function Invoke-HardeningQueueReport {
             }
         }
 
-        $tasks = @(
-            $tasks |
+        $fileTasks = @(
+            $fileTasks |
                 Sort-Object @{ Expression = "PriorityScore"; Descending = $true }, @{ Expression = "WorstFunctionCyclomatic"; Descending = $true }, DisplayPath
         )
-        for ($index = 0; $index -lt $tasks.Count; $index += 1) {
-            Add-Member -InputObject $tasks[$index] -NotePropertyName Rank -NotePropertyValue ($index + 1) -Force
-        }
 
-        $findings = @()
-        if (Test-Path $artifactRoot) {
-            $findings = @(
-                Get-ChildItem -Path $artifactRoot -Recurse -File |
-                    Sort-Object FullName |
-                    ForEach-Object {
-                        $targetName = Split-Path -Parent $_.FullName | Split-Path -Leaf
-                        [pscustomobject]@{
-                            Target = $targetName
-                            FileName = $_.Name
-                            RelativePath = Convert-ToDisplayPath -Path $_.FullName
-                            ReproCommand = "cd server; rustup run nightly cargo fuzz run $targetName fuzz/artifacts/$targetName/$($_.Name)"
-                        }
-                    }
-            )
+        $findings = @(Get-FuzzArtifactFindings -ArtifactRoot $artifactRoot -TargetCatalog $targetCatalog)
+        $findingTasks = @(
+            foreach ($finding in ($findings | Sort-Object @{ Expression = "LastWriteTime"; Descending = $true }, FileName)) {
+            [pscustomobject]@{
+                Kind = "crash_finding"
+                Title = "$($finding.Target): $($finding.FileName)"
+                DisplayPath = $finding.RelativePath
+                NormalizedPath = $null
+                PriorityScore = 100.0
+                Mi = $null
+                MiGrade = $null
+                WorstFunctionCyclomatic = $null
+                WorstFunctionGrade = $null
+                AverageFunctionCyclomatic = $null
+                AverageFunctionGrade = $null
+                FuzzLinePercent = $null
+                FuzzFunctionPercent = $null
+                FuzzRegionPercent = $null
+                HotFunctions = @()
+                Reasons = @(
+                    "Saved fuzz crash artifact exists",
+                    "Target: $($finding.Target)",
+                    "Expected scope: $($finding.Scope)",
+                    "Updated: $($finding.LastWriteTime.ToString('u'))",
+                    "Bytes: $($finding.Size)",
+                    "SHA-256: $($finding.Sha256)"
+                )
+                Actions = @(
+                    "Reproduce the crash with the saved artifact before refactoring anything around it.",
+                    "Minimize and understand the malformed input, then add a regression test and keep the artifact as a seed.",
+                    "Fix the parser, validator, or state transition defensively without trusting any network field."
+                )
+                Prompt = "Investigate the saved fuzz crash artifact $($finding.RelativePath) for target $($finding.Target). Expected scope: $($finding.Scope). Reproduce it with: $($finding.ReproCommand). Preserve protocol behavior where valid, reject malformed input defensively, add a regression test, and keep or minimize the artifact as a fuzz seed. SHA-256: $($finding.Sha256). Hex preview: $($finding.HexPreview)."
+                Finding = $finding
+            }
+            }
+        )
+
+        $queueItems = @(@($findingTasks) + @($fileTasks))
+        for ($index = 0; $index -lt $queueItems.Count; $index += 1) {
+            Add-Member -InputObject $queueItems[$index] -NotePropertyName Rank -NotePropertyValue ($index + 1) -Force
         }
 
         $notes.Add("This queue is generated from the current complexity and fuzz reports. It is intended as a repair plan, not an automatic code change.")
         $notes.Add("Backend core scope is limited to game_api, game_domain, game_lobby, game_match, game_net, and game_sim runtime files.")
         $notes.Add("Priority score weights: 35% worst-function risk, 20% average-function risk, 15% maintainability risk, 20% missing fuzz line coverage, 10% missing fuzz function coverage.")
-        $notes.Add("Saved fuzz findings, when present, should be handled before general refactoring.")
+        $notes.Add("Saved fuzz findings, when present, are placed at the top of the queue ahead of general refactoring.")
 
-        $fileRows = foreach ($task in $tasks) {
-            $hotspotLabel = if ($task.HotFunctions.Count -gt 0) {
+        $queueRows = foreach ($task in $queueItems) {
+            $kindLabel = if ($task.Kind -eq "crash_finding") { "Crash finding" } else { "Code cleanup" }
+            $hotspotLabel = if ($task.Kind -eq "crash_finding") {
+                "Target: $(Escape-Html $task.Finding.Target)<br />Scope: $(Escape-Html $task.Finding.Scope)<br />SHA-256: <code>$(Escape-Html $task.Finding.Sha256)</code><br />Preview: <code>$(Escape-Html $task.Finding.HexPreview)</code>"
+            }
+            elseif ($task.HotFunctions.Count -gt 0) {
                 ($task.HotFunctions | ForEach-Object { "$($_.Name) (CC $([int]$_.Cyclomatic))" }) -join "<br />"
             }
             else {
@@ -2033,6 +2112,7 @@ function Invoke-HardeningQueueReport {
 @"
 <tr>
   <td>$($task.Rank)</td>
+  <td>$(Escape-Html $kindLabel)</td>
   <td><code>$(Escape-Html $task.DisplayPath)</code></td>
   <td>$("{0:N2}" -f $task.PriorityScore)</td>
   <td>$(Escape-Html ($task.Reasons -join " | "))</td>
@@ -2048,6 +2128,12 @@ function Invoke-HardeningQueueReport {
   <td><code>$(Escape-Html $finding.Target)</code></td>
   <td><code>$(Escape-Html $finding.FileName)</code></td>
   <td><code>$(Escape-Html $finding.RelativePath)</code></td>
+  <td>$(Escape-Html ($finding.LastWriteTime.ToString("u")))</td>
+  <td>$([int]$finding.Size)</td>
+  <td><code>$(Escape-Html $finding.Scope)</code></td>
+  <td><code>$(Escape-Html $finding.Sha256)</code></td>
+  <td><code>$(Escape-Html $finding.HexPreview)</code></td>
+  <td><code>$(Escape-Html $finding.AsciiPreview)</code></td>
   <td><code>$(Escape-Html $finding.ReproCommand)</code></td>
 </tr>
 "@
@@ -2071,6 +2157,11 @@ function Invoke-HardeningQueueReport {
             $markdownLines.Add("")
             foreach ($finding in $findings) {
                 $markdownLines.Add('- `' + $finding.Target + '`: `' + $finding.RelativePath + '`')
+                $markdownLines.Add('  Updated: `' + $finding.LastWriteTime.ToString("u") + '`')
+                $markdownLines.Add('  Bytes: `' + $finding.Size + '`')
+                $markdownLines.Add('  Expected scope: `' + $finding.Scope + '`')
+                $markdownLines.Add('  SHA-256: `' + $finding.Sha256 + '`')
+                $markdownLines.Add('  Hex preview: `' + $finding.HexPreview + '`')
                 $markdownLines.Add('  Reproduce with: `' + $finding.ReproCommand + '`')
             }
             $markdownLines.Add("")
@@ -2078,14 +2169,20 @@ function Invoke-HardeningQueueReport {
 
         $markdownLines.Add("## Prioritized file queue")
         $markdownLines.Add("")
-        foreach ($task in $tasks) {
+        foreach ($task in $queueItems) {
             $markdownLines.Add("### $($task.Rank). $($task.DisplayPath)")
             $markdownLines.Add("")
+            $markdownLines.Add("- Kind: $($task.Kind)")
             $markdownLines.Add("- Priority score: $("{0:N2}" -f $task.PriorityScore)")
             foreach ($reason in $task.Reasons) {
                 $markdownLines.Add("- Why: $reason")
             }
-            if ($task.HotFunctions.Count -gt 0) {
+            if ($task.Kind -eq "crash_finding") {
+                $markdownLines.Add('- Debug: target `' + $task.Finding.Target + '` | scope `' + $task.Finding.Scope + '` | sha256 `' + $task.Finding.Sha256 + '`')
+                $markdownLines.Add('- Debug: hex preview `' + $task.Finding.HexPreview + '`')
+                $markdownLines.Add('- Debug: reproduce with `' + $task.Finding.ReproCommand + '`')
+            }
+            elseif ($task.HotFunctions.Count -gt 0) {
                 foreach ($function in $task.HotFunctions) {
                     $markdownLines.Add('- Hot function: `' + $function.Name + '` | CC ' + ([int]$function.Cyclomatic) + ' (' + $function.CyclomaticGrade + ') | MI ' + ('{0:N2}' -f $function.Mi) + ' (' + $function.MiGrade + ') | lines ' + $function.StartLine + '-' + $function.EndLine)
                 }
@@ -2106,10 +2203,12 @@ function Invoke-HardeningQueueReport {
                 fuzz_report = "server/target/reports/fuzz/output.html"
             }
             findings = @($findings)
-            tasks = @(
-                $tasks | ForEach-Object {
+            queue = @(
+                $queueItems | ForEach-Object {
                     [pscustomobject]@{
                         rank = $_.Rank
+                        kind = $_.Kind
+                        title = $_.Title
                         file = $_.DisplayPath
                         priority_score = [math]::Round([double]$_.PriorityScore, 2)
                         reasons = @($_.Reasons)
@@ -2142,6 +2241,21 @@ function Invoke-HardeningQueueReport {
                                 }
                             }
                         )
+                        finding = if ($_.Kind -eq "crash_finding") {
+                            [pscustomobject]@{
+                                target = $_.Finding.Target
+                                file_name = $_.Finding.FileName
+                                relative_path = $_.Finding.RelativePath
+                                updated_utc = $_.Finding.LastWriteTime.ToString("u")
+                                size_bytes = $_.Finding.Size
+                                scope = $_.Finding.Scope
+                                description = $_.Finding.Description
+                                sha256 = $_.Finding.Sha256
+                                hex_preview = $_.Finding.HexPreview
+                                ascii_preview = $_.Finding.AsciiPreview
+                                reproduce = $_.Finding.ReproCommand
+                            }
+                        } else { $null }
                     }
                 }
             )
@@ -2152,15 +2266,15 @@ function Invoke-HardeningQueueReport {
 <h1>Backend Hardening Queue</h1>
 <p class="muted">Generated from the current complexity and fuzz reports. This is a prioritized cleanup queue for future work, not an automatic refactor.</p>
 <div class="grid">
-  <div class="metric"><span class="muted">Queued files</span><strong>$($tasks.Count)</strong></div>
+  <div class="metric"><span class="muted">Queued items</span><strong>$($queueItems.Count)</strong></div>
   <div class="metric"><span class="muted">Saved fuzz findings</span><strong>$($findings.Count)</strong></div>
-  <div class="metric"><span class="muted">Top priority</span><strong>$(if ($tasks.Count -gt 0) { Escape-Html $tasks[0].DisplayPath } else { 'n/a' })</strong></div>
+  <div class="metric"><span class="muted">Top priority</span><strong>$(if ($queueItems.Count -gt 0) { Escape-Html $queueItems[0].DisplayPath } else { 'n/a' })</strong></div>
   <div class="metric"><span class="muted">Markdown handoff</span><strong><a href="./llm_todo.md">Open llm_todo.md</a></strong></div>
   <div class="metric"><span class="muted">JSON handoff</span><strong><a href="./llm_todo.json">Open llm_todo.json</a></strong></div>
 </div>
 <div class="panel">
   <h2>How to use this queue</h2>
-  <p>Work from top to bottom. Preserve behavior unless tests and docs require otherwise. Every touched function should get updated tests, and network-facing code should also get stronger fuzz coverage.</p>
+  <p>Work from top to bottom. Saved fuzz crash artifacts come first, before any general cleanup. Preserve behavior unless tests and docs require otherwise. Every touched function should get updated tests, and network-facing code should also get stronger fuzz coverage.</p>
 </div>
 <div class="panel">
   <h2>Prioritized cleanup queue</h2>
@@ -2168,15 +2282,16 @@ function Invoke-HardeningQueueReport {
     <thead>
       <tr>
         <th>Rank</th>
+        <th>Kind</th>
         <th>File</th>
         <th>Priority</th>
         <th>Why first</th>
-        <th>Hot functions</th>
+        <th>Hot functions / debug</th>
         <th>Next action</th>
       </tr>
     </thead>
     <tbody>
-$(($fileRows -join "`n"))
+$(($queueRows -join "`n"))
     </tbody>
   </table>
 </div>
@@ -2190,6 +2305,12 @@ $(if ($findingRows) {
         <th>Target</th>
         <th>Artifact</th>
         <th>Path</th>
+        <th>Updated</th>
+        <th>Bytes</th>
+        <th>Expected scope</th>
+        <th>SHA-256</th>
+        <th>Hex preview</th>
+        <th>ASCII preview</th>
         <th>Reproduce</th>
       </tr>
     </thead>
@@ -2218,7 +2339,7 @@ $(($findingRows -join "`n"))
             IndexPath = "hardening/index.html"
             ErrorMessage = $null
             Summary = [pscustomobject]@{
-                Tasks = $tasks.Count
+                Tasks = $queueItems.Count
                 Findings = $findings.Count
             }
         }
