@@ -63,3 +63,10 @@ path = "fuzz_targets/observability_metrics_render.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "player_record_store_parse"
+path = "fuzz_targets/player_record_store_parse.rs"
+test = false
+doc = false
+bench = false

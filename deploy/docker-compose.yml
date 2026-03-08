@@ -12,6 +12,13 @@ services:
       RARENA_WEB_CLIENT_ROOT: /app/server/static/webclient
     volumes:
       - rarena_data:/app/server/var
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:3000/healthz"]

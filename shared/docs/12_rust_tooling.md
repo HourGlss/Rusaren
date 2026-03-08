@@ -96,6 +96,7 @@ The initial real fuzz targets now live under `server/fuzz/` and cover:
 - ingress/session sequencing
 - HTTP route classification for the observability layer
 - Prometheus observability metric rendering and counter/gauge update flows
+- persisted player-record TSV parsing and canonicalization at the storage boundary
 
 ## Commands
 

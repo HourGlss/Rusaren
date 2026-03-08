@@ -208,7 +208,15 @@ The documentation artifacts live at:
 - `server/target/reports/rustdoc/index.html`
 
 The docs report includes a per-file publication table for every Markdown file under `shared/docs`.
-The fuzz report shows corpus replay coverage, which means line coverage measured by replaying the checked-in seed corpus through the same decode and ingress APIs used by the fuzz targets. The current replay set includes packet decode, ingress sequencing, HTTP route classification, and Prometheus observability metric rendering.
+The fuzz report shows corpus replay coverage, which means line coverage measured by replaying the checked-in seed corpus through the same decode and ingress APIs used by the fuzz targets. The current replay set includes packet decode, ingress sequencing, HTTP route classification, Prometheus observability metric rendering, and persisted player-record TSV parsing/canonicalization.
+
+Run the local Docker deploy smoke path:
+
+```powershell
+./server/scripts/docker-smoke.ps1
+```
+
+That script validates the checked-in compose file, builds the current server image, runs the container under a read-only root filesystem with dropped Linux capabilities, and probes `/`, `/healthz`, and `/metrics`.
 
 Do not run `./scripts/quality.ps1 test` and `./scripts/quality.ps1 reports` in parallel. The coverage step uses its own target directory and those commands can interfere with each other if started at the same time.
 
@@ -264,10 +272,10 @@ Hook behavior:
 Current local fallback behavior:
 - if `cargo-nextest` is installed, the quality script uses it for the normal test task
 - if `cargo-nextest` is not installed, the quality script falls back to `cargo test`
-- fuzzing uses `cargo-fuzz` under `server/fuzz/` and currently starts with packet-header, control-command, server-control-event, input-frame, ingress-session, and HTTP-route-classification targets
+- fuzzing uses `cargo-fuzz` under `server/fuzz/` and currently starts with packet-header, control-command, server-control-event, input-frame, ingress-session, HTTP-route-classification, observability-metrics-render, and player-record-store-parse targets
 - project docs are generated from `shared/docs` through `mdBook`, while Rust API docs are generated with `cargo doc --workspace --all-features --no-deps`
 - browser-export smoke checks run in `.github/workflows/godot-web-smoke.yml` and verify that the exported shell can be hosted by `dedicated_server`
-- deploy smoke checks run in `.github/workflows/deploy-stack-smoke.yml` and validate the Docker image plus the checked-in compose path
+- deploy smoke checks run in `.github/workflows/deploy-stack-smoke.yml` and through `./server/scripts/docker-smoke.ps1`, validating the Docker image plus the checked-in compose path
 
 Current manual full-loop slice:
 - start the Rust backend
@@ -293,6 +301,10 @@ High-level hosted flow:
 2. copy `deploy/.env.example` to `deploy/.env` and fill the real host and secrets
 3. run `docker compose --env-file deploy/.env -f deploy/docker-compose.yml build`
 4. run `docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d`
+
+Local container smoke before a real host deploy:
+1. run `./server/scripts/docker-smoke.ps1`
+2. verify the local image serves `/`, `/healthz`, and `/metrics`
 
 Use:
 - `shared/docs/15_deployment_ops.md`

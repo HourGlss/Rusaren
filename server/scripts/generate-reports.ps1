@@ -690,6 +690,12 @@ function Get-FuzzTargetCatalog {
             Scope = "crates/game_api/src/observability.rs via Prometheus rendering, counters, gauges, and route-labeled request metrics."
             Description = "Observability metric rendering and counter/gauge update flows exposed by the hosted ops surface."
             Paths = @("crates/game_api/src/observability.rs")
+        },
+        [pscustomobject]@{
+            Target = "player_record_store_parse"
+            Scope = "crates/game_api/src/records.rs via persisted record parsing, validation, and canonicalization."
+            Description = "Persisted player-record TSV parsing and canonicalization at the storage boundary."
+            Paths = @("crates/game_api/src/records.rs")
         }
     )
 }
@@ -705,6 +711,11 @@ function Get-FuzzReplaySuites {
             Package = "game_api"
             Test = "observability_fuzz_corpus"
             Description = "Replay HTTP route classification corpora against observability route labeling."
+        },
+        [pscustomobject]@{
+            Package = "game_api"
+            Test = "records_fuzz_corpus"
+            Description = "Replay persisted record-store corpora against TSV parsing and canonicalization."
         }
     )
 }

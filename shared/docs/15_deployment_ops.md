@@ -21,6 +21,7 @@ Files:
 - `deploy/prometheus.yml`
 - `deploy/coturn/turnserver.conf`
 - `deploy/.env.example`
+- `server/scripts/docker-smoke.ps1`
 
 What each part does:
 - `rarena-server`: serves `/`, `/ws`, `/healthz`, and `/metrics`
@@ -60,6 +61,17 @@ What each part does:
    - `https://domain.com/healthz`
    - Prometheus locally on the bind from `PROMETHEUS_BIND`
 
+## Local smoke before host deploy
+From the repo root, run:
+- `./server/scripts/docker-smoke.ps1`
+
+That smoke path:
+- validates `deploy/docker-compose.yml`
+- builds the current `server/Dockerfile`
+- runs the game server image locally
+- mounts a temporary placeholder web bundle
+- probes `/`, `/healthz`, and `/metrics`
+
 ## Restart policy and persistence
 - all services use `restart: unless-stopped`
 - player records persist in the `rarena_data` Docker volume
@@ -88,6 +100,7 @@ Current logs:
 - TLS is terminated by Caddy
 - `/metrics` is scraped internally by Prometheus and is not proxied publicly by the checked-in `Caddyfile`
 - `coturn` uses long-term credentials via a shared secret in this deployment milestone
+- `rarena-server` now runs as a non-root user with a read-only root filesystem, `no-new-privileges`, and all Linux capabilities dropped in the checked-in compose path
 - before `0.7.0` WebRTC rollout, replace placeholder secrets with generated values and keep them out of git
 
 ## Current limitation

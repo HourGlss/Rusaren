@@ -14,5 +14,7 @@ pub use observability::{classify_http_path, HttpRouteLabel, ServerObservability}
 pub use realtime::{
     spawn_dev_server, spawn_dev_server_with_options, DevServerHandle, DevServerOptions,
 };
-pub use records::{PlayerRecordStore, RecordStoreError};
+pub use records::{
+    canonicalize_record_store_contents, PlayerRecordStore, RecordStoreError, MAX_RECORD_STORE_BYTES,
+};
 pub use transport::{AppTransport, HeadlessClient, InMemoryTransport};

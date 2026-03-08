@@ -33,6 +33,7 @@ Wrap those edges with small, mostly-pure modules that own the critical invariant
 - `game_net::frame_codec`
 - `game_net::input_validation`
 - `game_net::rate_limit`
+- `game_api::records` parsing and size-limit checks at the persisted state boundary
 - `game_content::validation` for content graph invariants shared with untrusted inputs
 
 Those inner modules are the right candidates for Verus.
@@ -73,6 +74,7 @@ Current repo usage:
 - `server/verus/network_ingress_model.rs`
 - `server/verus/packet_header_model.rs`
 - `server/verus/http_route_model.rs`
+- `server/verus/player_record_store_model.rs`
 - run with `cd server && ./scripts/quality.ps1 verus`
 - installed by `cd server && ./scripts/install-tools.ps1` into `server/tools/verus/current`
 

@@ -31,6 +31,7 @@ Replay:
 - tracing for slow ticks / overload
 - expose Prometheus metrics from the Rust server and scrape them from the hosted stack
 - validate the deploy stack in CI with a same-image smoke test that checks `/`, `/healthz`, and `/metrics`
+- run the same Docker smoke path locally with `server/scripts/docker-smoke.ps1` before host deploy changes land
 - collect coverage and complexity reports for `game_sim`, `game_net`, and `game_content`
 - publish generated docs and API docs per commit so test/coverage output has architecture context beside it
 
@@ -42,4 +43,5 @@ Replay:
 - fuzz protocol decode and invalid client command sequences in `game_net`
 - fuzz the low-cardinality HTTP route classifier that feeds the observability layer
 - fuzz the Prometheus observability renderer and counter/gauge update paths that back `/metrics`
+- fuzz persisted player-record TSV parsing and canonicalization before disk state is trusted
 - initial fuzz targets should stay live for packet headers, control-command decode, server-control-event decode, input-frame decode, ingress/session sequencing, and the observability surface

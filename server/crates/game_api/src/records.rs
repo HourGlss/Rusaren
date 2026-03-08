@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use game_domain::{PlayerId, PlayerName, PlayerRecord};
 
 const FIELD_COUNT: usize = 5;
+pub const MAX_RECORD_STORE_BYTES: u64 = 1_048_576;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct StoredPlayerRecord {
@@ -33,6 +34,18 @@ impl PlayerRecordStore {
     pub fn new_persistent(path: impl Into<PathBuf>) -> Result<Self, RecordStoreError> {
         let path = path.into();
         let records = if path.exists() {
+            let metadata = fs::metadata(&path).map_err(|source| RecordStoreError::Read {
+                path: path.clone(),
+                source,
+            })?;
+            if metadata.len() > MAX_RECORD_STORE_BYTES {
+                return Err(RecordStoreError::FileTooLarge {
+                    path: path.clone(),
+                    actual: metadata.len(),
+                    maximum: MAX_RECORD_STORE_BYTES,
+                });
+            }
+
             parse_records(
                 &fs::read_to_string(&path).map_err(|source| RecordStoreError::Read {
                     path: path.clone(),
@@ -117,13 +130,38 @@ impl PlayerRecordStore {
     }
 }
 
+pub fn canonicalize_record_store_contents(input: &str) -> Result<String, RecordStoreError> {
+    let records = parse_records(input)?;
+    Ok(serialize_records(&records))
+}
+
 #[derive(Debug)]
 pub enum RecordStoreError {
-    Read { path: PathBuf, source: io::Error },
-    Write { path: PathBuf, source: io::Error },
-    CreateParentDir { path: PathBuf, source: io::Error },
-    MalformedLine { line_number: usize, reason: String },
-    DuplicatePlayerId { line_number: usize, player_id: u32 },
+    Read {
+        path: PathBuf,
+        source: io::Error,
+    },
+    Write {
+        path: PathBuf,
+        source: io::Error,
+    },
+    CreateParentDir {
+        path: PathBuf,
+        source: io::Error,
+    },
+    FileTooLarge {
+        path: PathBuf,
+        actual: u64,
+        maximum: u64,
+    },
+    MalformedLine {
+        line_number: usize,
+        reason: String,
+    },
+    DuplicatePlayerId {
+        line_number: usize,
+        player_id: u32,
+    },
 }
 
 impl fmt::Display for RecordStoreError {
@@ -150,6 +188,15 @@ impl fmt::Display for RecordStoreError {
                     path.display()
                 )
             }
+            Self::FileTooLarge {
+                path,
+                actual,
+                maximum,
+            } => write!(
+                f,
+                "player record store {} exceeds the maximum allowed size: {actual} bytes > {maximum} bytes",
+                path.display()
+            ),
             Self::MalformedLine {
                 line_number,
                 reason,
@@ -374,5 +421,44 @@ mod tests {
                 .to_string(),
             "player record store line 2 repeats player id 1"
         );
+    }
+
+    #[test]
+    fn canonicalize_record_store_contents_round_trips_valid_rows_and_rejects_invalid_rows() {
+        let canonical = canonicalize_record_store_contents("2\tBob\t1\t2\t3\n1\tAlice\t0\t0\t0\n")
+            .expect("valid rows should canonicalize");
+        assert_eq!(canonical, "1\tAlice\t0\t0\t0\n2\tBob\t1\t2\t3\n");
+
+        let invalid = canonicalize_record_store_contents("0\tAlice\t0\t0\t0\n");
+        assert!(matches!(
+            invalid,
+            Err(RecordStoreError::MalformedLine { line_number: 1, .. })
+        ));
+    }
+
+    #[test]
+    fn persistent_store_rejects_files_that_exceed_the_maximum_size() {
+        let path = temp_path("record-store-too-large");
+        remove_if_exists(&path);
+
+        let oversized = vec![b'A'; usize::try_from(MAX_RECORD_STORE_BYTES).expect("usize") + 1];
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("parent directory should exist");
+        }
+        fs::write(&path, oversized).expect("oversized file should be written");
+
+        let error = PlayerRecordStore::new_persistent(&path)
+            .expect_err("oversized record store should be rejected");
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "player record store {} exceeds the maximum allowed size: {} bytes > {} bytes",
+                path.display(),
+                MAX_RECORD_STORE_BYTES + 1,
+                MAX_RECORD_STORE_BYTES
+            )
+        );
+
+        remove_if_exists(&path);
     }
 }

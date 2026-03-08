@@ -29,6 +29,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     write_server_control_event_corpus(&corpus_root.join("server_control_event_decode"))?;
     write_http_route_classification_corpus(&corpus_root.join("http_route_classification"))?;
     write_observability_metrics_render_corpus(&corpus_root.join("observability_metrics_render"))?;
+    write_player_record_store_parse_corpus(&corpus_root.join("player_record_store_parse"))?;
 
     println!("Seed corpora written under {}", corpus_root.display());
     Ok(())
@@ -515,6 +516,28 @@ fn write_observability_metrics_render_corpus(dir: &Path) -> Result<(), Box<dyn E
         "tick_heavy.bin",
         &observability_metrics_seed(b"ticks", &[11, 12, 12, 11, 4, 2, 0]),
     )?;
+    Ok(())
+}
+
+fn write_player_record_store_parse_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
+    recreate_dir(dir)?;
+
+    write_seed(dir, "empty.bin", &[])?;
+    write_seed(dir, "single_valid_row.tsv", b"1\tAlice\t0\t0\t0\n")?;
+    write_seed(
+        dir,
+        "unsorted_valid_rows.tsv",
+        b"2\tBob\t1\t2\t3\n1\tAlice\t0\t0\t0\n",
+    )?;
+    write_seed(
+        dir,
+        "duplicate_id.tsv",
+        b"1\tAlice\t0\t0\t0\n1\tBob\t1\t1\t1\n",
+    )?;
+    write_seed(dir, "bad_field_count.tsv", b"1\tAlice\t0\t0\n")?;
+    write_seed(dir, "bad_player_id.tsv", b"0\tAlice\t0\t0\t0\n")?;
+    write_seed(dir, "bad_counter.tsv", b"1\tAlice\t999999\t0\t0\n")?;
+    write_seed(dir, "bad_name.tsv", b"1\tbad name with spaces\t0\t0\t0\n")?;
     Ok(())
 }
 
