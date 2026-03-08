@@ -117,6 +117,21 @@ pub struct DevServerHandle {
     tick_task: JoinHandle<()>,
 }
 
+#[derive(Clone, Debug)]
+pub struct DevServerOptions {
+    pub tick_interval: Duration,
+    pub record_store_path: PathBuf,
+}
+
+impl Default for DevServerOptions {
+    fn default() -> Self {
+        Self {
+            tick_interval: Duration::from_secs(1),
+            record_store_path: default_record_store_path(),
+        }
+    }
+}
+
 impl DevServerHandle {
     #[must_use]
     pub const fn local_addr(&self) -> SocketAddr {
@@ -135,12 +150,25 @@ impl DevServerHandle {
 }
 
 pub async fn spawn_dev_server(listener: TcpListener) -> io::Result<DevServerHandle> {
+    spawn_dev_server_with_options(listener, DevServerOptions::default()).await
+}
+
+pub async fn spawn_dev_server_with_options(
+    listener: TcpListener,
+    options: DevServerOptions,
+) -> io::Result<DevServerHandle> {
+    if options.tick_interval.is_zero() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "tick interval must be greater than zero",
+        ));
+    }
+
     let local_addr = listener.local_addr()?;
     let (ingress_tx, ingress_rx) = mpsc::unbounded_channel();
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let runtime = Arc::new(Mutex::new(RuntimeState {
-        app: ServerApp::new_persistent(default_record_store_path())
-            .map_err(io::Error::other)?,
+        app: ServerApp::new_persistent(options.record_store_path).map_err(io::Error::other)?,
         transport: RealtimeTransport::new(),
     }));
     let state = DevServerState {
@@ -148,7 +176,7 @@ pub async fn spawn_dev_server(listener: TcpListener) -> io::Result<DevServerHand
     };
 
     let ingress_task = tokio::spawn(run_ingress_loop(runtime.clone(), ingress_rx));
-    let tick_task = tokio::spawn(run_tick_loop(runtime.clone()));
+    let tick_task = tokio::spawn(run_tick_loop(runtime.clone(), options.tick_interval));
 
     let app = Router::new()
         .route("/healthz", get(healthcheck))
@@ -217,8 +245,8 @@ async fn run_ingress_loop(
     }
 }
 
-async fn run_tick_loop(runtime: Arc<Mutex<RuntimeState>>) {
-    let mut interval = tokio::time::interval(Duration::from_secs(1));
+async fn run_tick_loop(runtime: Arc<Mutex<RuntimeState>>, tick_interval: Duration) {
+    let mut interval = tokio::time::interval(tick_interval);
     loop {
         interval.tick().await;
         let mut runtime = runtime.lock().await;

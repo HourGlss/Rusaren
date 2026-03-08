@@ -12,6 +12,7 @@ signal packet_received(decoded_event: Dictionary)
 var _socket: WebSocketPeer = null
 var _last_state := WebSocketPeer.STATE_CLOSED
 var _next_control_seq := 1
+var _next_input_seq := 1
 
 
 func open(url: String) -> bool:
@@ -34,6 +35,7 @@ func close() -> void:
 		_socket.close()
 		_socket = null
 	_next_control_seq = 1
+	_next_input_seq = 1
 	_last_state = WebSocketPeer.STATE_CLOSED
 	if should_emit:
 		emit_signal("transport_state_changed", "closed")
@@ -97,6 +99,25 @@ func send_control_command(command_type: String, payload: Dictionary = {}) -> boo
 		return false
 
 	_next_control_seq += 1
+	return true
+
+
+func send_input_frame(payload: Dictionary = {}, sim_tick: int = 0) -> bool:
+	if _socket == null or _socket.get_ready_state() != WebSocketPeer.STATE_OPEN:
+		emit_signal("transport_error", "websocket is not open")
+		return false
+
+	var encoded := Protocol.encode_input_frame(payload, _next_input_seq, sim_tick)
+	if not encoded.get("ok", false):
+		emit_signal("transport_error", String(encoded.get("error", "input encoding failed")))
+		return false
+
+	var error := _socket.put_packet(encoded.get("packet", PackedByteArray()))
+	if error != OK:
+		emit_signal("transport_error", "websocket send failed with code %d" % error)
+		return false
+
+	_next_input_seq += 1
 	return true
 
 

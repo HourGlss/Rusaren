@@ -8,8 +8,26 @@ const MAX_PLAYER_NAME_LEN := 24
 const MAX_MESSAGE_BYTES := 200
 
 const CHANNEL_CONTROL := 0
+const CHANNEL_INPUT := 1
 const PACKET_KIND_CONTROL_COMMAND := 6
 const PACKET_KIND_CONTROL_EVENT := 7
+const PACKET_KIND_INPUT_FRAME := 16
+const BUTTON_PRIMARY := 1
+const BUTTON_SECONDARY := 1 << 1
+const BUTTON_CAST := 1 << 2
+const BUTTON_CANCEL := 1 << 3
+const BUTTON_QUIT_TO_LOBBY := 1 << 4
+const ALLOWED_BUTTONS_MASK := (
+	BUTTON_PRIMARY
+	| BUTTON_SECONDARY
+	| BUTTON_CAST
+	| BUTTON_CANCEL
+	| BUTTON_QUIT_TO_LOBBY
+)
+const MIN_I16 := -32768
+const MAX_I16 := 32767
+const MAX_U16 := 65535
+const MAX_U32 := 4294967295
 
 const TEAM_A := 1
 const TEAM_B := 2
@@ -332,6 +350,90 @@ static func encode_client_command(
 			return _error("unsupported client control command %s" % command_type)
 
 	return _encode_packet(CHANNEL_CONTROL, PACKET_KIND_CONTROL_COMMAND, 0, body, seq, sim_tick)
+
+
+static func encode_input_frame(payload: Dictionary, seq: int, sim_tick: int = 0) -> Dictionary:
+	var client_input_tick_result := _checked_range(
+		payload.get("client_input_tick", 0),
+		"client_input_tick",
+		0,
+		MAX_U32
+	)
+	if not client_input_tick_result.get("ok", false):
+		return client_input_tick_result
+	var move_horizontal_result := _checked_range(
+		payload.get("move_horizontal_q", 0),
+		"move_horizontal_q",
+		-1,
+		1
+	)
+	if not move_horizontal_result.get("ok", false):
+		return move_horizontal_result
+	var move_vertical_result := _checked_range(
+		payload.get("move_vertical_q", 0),
+		"move_vertical_q",
+		-1,
+		1
+	)
+	if not move_vertical_result.get("ok", false):
+		return move_vertical_result
+	var aim_horizontal_result := _checked_range(
+		payload.get("aim_horizontal_q", 0),
+		"aim_horizontal_q",
+		MIN_I16,
+		MAX_I16
+	)
+	if not aim_horizontal_result.get("ok", false):
+		return aim_horizontal_result
+	var aim_vertical_result := _checked_range(
+		payload.get("aim_vertical_q", 0),
+		"aim_vertical_q",
+		MIN_I16,
+		MAX_I16
+	)
+	if not aim_vertical_result.get("ok", false):
+		return aim_vertical_result
+	var ability_result := _checked_range(
+		payload.get("ability_or_context", 0),
+		"ability_or_context",
+		0,
+		MAX_U16
+	)
+	if not ability_result.get("ok", false):
+		return ability_result
+
+	var buttons := 0
+	if bool(payload.get("primary", false)):
+		buttons |= BUTTON_PRIMARY
+	if bool(payload.get("secondary", false)):
+		buttons |= BUTTON_SECONDARY
+	if bool(payload.get("cast", false)):
+		buttons |= BUTTON_CAST
+	if bool(payload.get("cancel", false)):
+		buttons |= BUTTON_CANCEL
+	if bool(payload.get("quit_to_lobby", false)):
+		buttons |= BUTTON_QUIT_TO_LOBBY
+	if buttons & ~ALLOWED_BUTTONS_MASK != 0:
+		return _error("input frame contains unsupported button bits")
+
+	var ability_or_context := int(ability_result.get("value", 0))
+	var cast_requested := buttons & BUTTON_CAST != 0
+	match [cast_requested, ability_or_context]:
+		[true, 0]:
+			return _error("cast input requires a non-zero ability_or_context")
+		[false, _]:
+			if ability_or_context != 0:
+				return _error("non-cast input must not provide ability_or_context")
+
+	var body := PackedByteArray()
+	_push_u32(body, int(client_input_tick_result.get("value", 0)))
+	_push_i16(body, int(move_horizontal_result.get("value", 0)))
+	_push_i16(body, int(move_vertical_result.get("value", 0)))
+	_push_i16(body, int(aim_horizontal_result.get("value", 0)))
+	_push_i16(body, int(aim_vertical_result.get("value", 0)))
+	_push_u16(body, buttons)
+	_push_u16(body, ability_or_context)
+	return _encode_packet(CHANNEL_INPUT, PACKET_KIND_INPUT_FRAME, 0, body, seq, sim_tick)
 
 
 static func decode_server_event(packet: PackedByteArray) -> Dictionary:
@@ -677,6 +779,12 @@ static func _push_u16(bytes: PackedByteArray, value: int) -> void:
 	bytes.append((value >> 8) & 0xff)
 
 
+static func _push_i16(bytes: PackedByteArray, value: int) -> void:
+	var encoded := value & 0xffff
+	bytes.append(encoded & 0xff)
+	bytes.append((encoded >> 8) & 0xff)
+
+
 static func _push_u32(bytes: PackedByteArray, value: int) -> void:
 	bytes.append(value & 0xff)
 	bytes.append((value >> 8) & 0xff)
@@ -716,4 +824,21 @@ static func _error(message: String) -> Dictionary:
 	return {
 		"ok": false,
 		"error": message,
+	}
+
+
+static func _checked_range(raw: Variant, field: String, minimum: int, maximum: int) -> Dictionary:
+	if typeof(raw) != TYPE_INT:
+		return _error("%s must be an integer" % field)
+	var value := int(raw)
+	if value < minimum or value > maximum:
+		return _error("%s=%d is outside the allowed range %d..=%d" % [
+			field,
+			value,
+			minimum,
+			maximum,
+		])
+	return {
+		"ok": true,
+		"value": value,
 	}

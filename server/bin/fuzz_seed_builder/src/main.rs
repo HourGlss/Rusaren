@@ -154,32 +154,35 @@ fn write_input_frame_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
     let cast = ValidatedInputFrame::new(3, 1, -1, 50, -50, BUTTON_CAST, 9)?.encode_packet(17, 99)?;
     let movement =
         ValidatedInputFrame::new(4, 25, -25, 0, 0, BUTTON_PRIMARY, 0)?.encode_packet(18, 100)?;
+    let primary_attack =
+        ValidatedInputFrame::new(5, 0, 0, 0, 0, BUTTON_PRIMARY, 0)?.encode_packet(19, 101)?;
     let truncated = cast[..cast.len() - 1].to_vec();
 
     let mut bad_buttons_payload = [0_u8; 16];
     bad_buttons_payload[12..14].copy_from_slice(&0x8000_u16.to_le_bytes());
     let bad_buttons =
-        PacketHeader::new(ChannelId::Input, PacketKind::InputFrame, 0, 16, 19, 101)?
+        PacketHeader::new(ChannelId::Input, PacketKind::InputFrame, 0, 16, 20, 102)?
             .encode(&bad_buttons_payload);
     let [cast_button_low, cast_button_high] = BUTTON_CAST.to_le_bytes();
     let missing_context =
-        PacketHeader::new(ChannelId::Input, PacketKind::InputFrame, 0, 16, 20, 101)?
+        PacketHeader::new(ChannelId::Input, PacketKind::InputFrame, 0, 16, 21, 102)?
             .encode(&[
                 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, cast_button_low, cast_button_high,
                 0, 0,
             ]);
     let unexpected_context =
-        PacketHeader::new(ChannelId::Input, PacketKind::InputFrame, 0, 16, 21, 101)?
+        PacketHeader::new(ChannelId::Input, PacketKind::InputFrame, 0, 16, 22, 102)?
             .encode(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 0]);
     let wrong_packet_kind =
-        PacketHeader::new(ChannelId::Control, PacketKind::ControlCommand, 0, 16, 22, 101)?
+        PacketHeader::new(ChannelId::Control, PacketKind::ControlCommand, 0, 16, 23, 102)?
             .encode(&[0; 16]);
     let bad_length =
-        PacketHeader::new(ChannelId::Input, PacketKind::InputFrame, 0, 15, 23, 101)?
+        PacketHeader::new(ChannelId::Input, PacketKind::InputFrame, 0, 15, 24, 102)?
             .encode(&[0; 15]);
 
     write_seed(dir, "cast_valid.bin", &cast)?;
     write_seed(dir, "movement_valid.bin", &movement)?;
+    write_seed(dir, "primary_attack_valid.bin", &primary_attack)?;
     write_seed(dir, "truncated_cast.bin", &truncated)?;
     write_seed(dir, "invalid_buttons.bin", &bad_buttons)?;
     write_seed(dir, "missing_context.bin", &missing_context)?;

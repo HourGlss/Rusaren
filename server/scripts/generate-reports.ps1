@@ -824,17 +824,57 @@ function Invoke-CoverageReport {
         }
 
         $files = @($files | Sort-Object LinePercent, DisplayPath)
-        $totals = $coverageData.totals
+        $runtimeFiles = @(
+            $files | Where-Object {
+                $SourceInventory.ContainsKey($_.DisplayPath) -and $SourceInventory[$_.DisplayPath].IsRuntimeSource
+            }
+        )
+        $runtimeCoveredLines = ($runtimeFiles | Measure-Object -Property CoveredLines -Sum).Sum
+        $runtimeTotalLines = ($runtimeFiles | Measure-Object -Property TotalLines -Sum).Sum
+        $runtimeCoveredFunctions = ($runtimeFiles | Measure-Object -Property CoveredFunctions -Sum).Sum
+        $runtimeTotalFunctions = ($runtimeFiles | Measure-Object -Property TotalFunctions -Sum).Sum
+        $runtimeLinePercent = if ($runtimeTotalLines -gt 0) {
+            ([double]$runtimeCoveredLines / [double]$runtimeTotalLines) * 100.0
+        }
+        else {
+            0.0
+        }
+        $runtimeFunctionPercent = if ($runtimeTotalFunctions -gt 0) {
+            ([double]$runtimeCoveredFunctions / [double]$runtimeTotalFunctions) * 100.0
+        }
+        else {
+            0.0
+        }
+        $runtimeRegionCovered = 0
+        $runtimeRegionTotal = 0
+        foreach ($runtimeFile in $runtimeFiles) {
+            $coverageFile = @($coverageData.files | Where-Object {
+                (Convert-ToDisplayPath -Path $_.filename) -eq $runtimeFile.DisplayPath
+            } | Select-Object -First 1)
+            if ($coverageFile.Count -eq 0) {
+                continue
+            }
+
+            $runtimeRegionCovered += [int]$coverageFile[0].summary.regions.covered
+            $runtimeRegionTotal += [int]$coverageFile[0].summary.regions.count
+        }
+        $runtimeRegionPercent = if ($runtimeRegionTotal -gt 0) {
+            ([double]$runtimeRegionCovered / [double]$runtimeRegionTotal) * 100.0
+        }
+        else {
+            0.0
+        }
         $scoreSummary = New-ScoreSummary `
-            -Score (([double]$totals.lines.percent * 0.5) + ([double]$totals.functions.percent * 0.3) + ([double]$totals.regions.percent * 0.2)) `
-            -Formula "50% line + 30% function + 20% region coverage" `
+            -Score (($runtimeLinePercent * 0.5) + ($runtimeFunctionPercent * 0.3) + ($runtimeRegionPercent * 0.2)) `
+            -Formula "50% runtime line + 30% runtime function + 20% runtime region coverage" `
             -Breakdown @(
-                "Lines: $(Format-Percent -Value ([double]$totals.lines.percent))",
-                "Functions: $(Format-Percent -Value ([double]$totals.functions.percent))",
-                "Regions: $(Format-Percent -Value ([double]$totals.regions.percent))"
+                "Runtime lines: $(Format-Percent -Value $runtimeLinePercent)",
+                "Runtime functions: $(Format-Percent -Value $runtimeFunctionPercent)",
+                "Runtime regions: $(Format-Percent -Value $runtimeRegionPercent)"
             )
         $notes.Add("Doctests are validated separately by ./scripts/quality.ps1 doc but are not included here because stable doctest coverage is still unavailable in this workflow.")
-        $notes.Add("Browser, Godot, and live WebRTC integration coverage do not exist yet because only the websocket dev adapter exists today; the frontend client and WebRTC transport are still unimplemented.")
+        $notes.Add("Headline coverage scoring is scoped to backend runtime source files under crates/*/src/*.rs.")
+        $notes.Add("This Rust coverage export does not measure GDScript. The Godot shell exists and has a headless protocol-check script, but browser and WebRTC coverage remain outside this report.")
 
         foreach ($sourceFile in ($SourceInventory.Keys | Sort-Object)) {
             if ($coveredPaths.ContainsKey($sourceFile)) {
@@ -872,12 +912,14 @@ function Invoke-CoverageReport {
 <p class="muted">Commit <code>$(Escape-Html (Get-GitValue -CommandArgs @("rev-parse", "--short", "HEAD") -Fallback "unknown"))</code>. Detailed line-by-line report: <a href="./html/index.html">coverage/html/index.html</a>.</p>
 <div class="grid">
   <div class="metric"><span class="muted">Coverage score</span><strong>$(Format-Score -Score $scoreSummary.Score) $(Format-GradeBadge -Grade $scoreSummary.Grade)</strong><div class="detail">$(Escape-Html $scoreSummary.Formula)</div></div>
-  <div class="metric"><span class="muted">Line coverage</span><strong>$(Format-Percent -Value ([double]$totals.lines.percent))</strong></div>
-  <div class="metric"><span class="muted">Function coverage</span><strong>$(Format-Percent -Value ([double]$totals.functions.percent))</strong></div>
-  <div class="metric"><span class="muted">Region coverage</span><strong>$(Format-Percent -Value ([double]$totals.regions.percent))</strong></div>
+  <div class="metric"><span class="muted">Runtime line coverage</span><strong>$(Format-Percent -Value $runtimeLinePercent)</strong></div>
+  <div class="metric"><span class="muted">Runtime function coverage</span><strong>$(Format-Percent -Value $runtimeFunctionPercent)</strong></div>
+  <div class="metric"><span class="muted">Runtime region coverage</span><strong>$(Format-Percent -Value $runtimeRegionPercent)</strong></div>
+  <div class="metric"><span class="muted">Scored runtime files</span><strong>$($runtimeFiles.Count)</strong></div>
   <div class="metric"><span class="muted">Execution mode</span><strong>$(if ($usedNextest) { "cargo llvm-cov nextest" } else { "cargo llvm-cov test" })</strong></div>
 </div>
 <div class="panel">
+  <p class="muted">The headline score is based on backend runtime source files. The table below still includes tooling and test files emitted by the coverage export.</p>
   <h2>Per-file summary</h2>
   <table>
     <thead>

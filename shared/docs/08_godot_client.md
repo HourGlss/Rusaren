@@ -25,12 +25,14 @@ Current implementation status:
 - The current shell uses a binary `NetAdapter` for `ClientControlCommand` and `ServerControlEvent`.
 - The current shell renders central lobby, game lobby, launch countdown, match skill-pick state, results, and central-lobby directory snapshots.
 - The current shell now consumes authoritative full game-lobby snapshots, including late-joiner roster state and `W-L-NC`.
+- The current shell now sends real binary `InputFrame` packets for a placeholder combat action over the websocket dev adapter.
 - Combat rendering is still placeholder-only.
 - The current shell is intentionally websocket-first while the WebRTC transport stays in planning.
 
 Current backend limitations the shell must expose honestly:
 - Joining a lobby is still manual by `lobby_id`, even though the server now publishes a central-lobby directory snapshot.
 - Combat rendering is still placeholder-only; the shell shows authoritative state changes, not final gameplay presentation.
+- The current combat slice is intentionally narrow: once combat starts, the shell uses a placeholder primary-attack control to drive the backend through real rounds and match resolution.
 
 Disconnect UX:
 - If a match is aborted because a player disconnects, show: `<PLAYER_NAME> has disconnected. Game is over.`
@@ -46,3 +48,7 @@ Lag handling:
 - Interpolate positions between snapshots
 - No movement or cast prediction in v1.
 - Cooldown UI may use cosmetic prediction, but server state remains authoritative.
+
+Current local validation:
+- Run the shell headlessly with `godot4 --headless --path client/godot --quit` to verify that the project boots.
+- Run `godot4 --headless --path client/godot -s res://tests/protocol_checks.gd` to verify the Godot packet encoder's positive and negative `InputFrame` cases.

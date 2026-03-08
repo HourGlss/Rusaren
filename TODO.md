@@ -1,19 +1,12 @@
 # Rusaren TODO
 
 Current target release line: `1.0.0`
-Current repo version: `0.2.0`
-Current roadmap position: `0.4.0 backend MVP` with the `0.5.0` Godot shell already started
+Current repo version: `0.4.0`
+Current roadmap position: `0.5.0 Godot Web MVP`
 
 Completed:
 - `0.3.0 Quality Foundation`
-
-## 0.4.0 Backend MVP
-
-- [ ] Finish the backend MVP around one fully playable rules slice.
-- [ ] Prove the backend can drive a full human-played match loop through the real adapter, not just fake clients and scripted tests.
-
-Release gate:
-- hosted backend can drive a full match loop without fake clients.
+- `0.4.0 Backend MVP`
 
 ## 0.5.0 Godot Web MVP
 

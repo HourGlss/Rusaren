@@ -37,7 +37,9 @@ var create_lobby_button: Button
 var join_lobby_button: Button
 var team_a_button: Button
 var team_b_button: Button
+var primary_attack_button: Button
 var skill_buttons: Array[Button] = []
+var _next_client_input_tick := 1
 
 
 func _ready() -> void:
@@ -327,10 +329,23 @@ func _build_match_panel() -> PanelContainer:
 	body.add_child(countdown_value_label)
 
 	var placeholder := Label.new()
-	placeholder.text = "Combat presentation stays intentionally thin in this slice. This scene shows real backend transitions, score, picks, and results while rendering remains placeholder."
+	placeholder.text = "Combat presentation stays intentionally thin in this slice. This shell now sends real input-frame packets, but the current backend slice still resolves combat with a placeholder one-hit primary attack."
 	placeholder.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	placeholder.add_theme_color_override("font_color", Color8(179, 180, 174))
 	body.add_child(placeholder)
+
+	var combat_title := Label.new()
+	combat_title.text = "Combat controls"
+	combat_title.add_theme_color_override("font_color", Color8(244, 233, 216))
+	body.add_child(combat_title)
+
+	var combat_row := HBoxContainer.new()
+	combat_row.add_theme_constant_override("separation", 10)
+	body.add_child(combat_row)
+
+	primary_attack_button = _action_button("Primary Attack", Color8(120, 78, 34))
+	primary_attack_button.pressed.connect(_on_primary_attack_pressed)
+	combat_row.add_child(primary_attack_button)
 
 	var skill_title := Label.new()
 	skill_title.text = "Skill picks"
@@ -527,6 +542,7 @@ func _on_connect_pressed() -> void:
 	var url := ws_url_input.text.strip_edges()
 	var player_id := int(player_id_input.text.strip_edges())
 	var player_name := player_name_input.text.strip_edges()
+	_next_client_input_tick = 1
 	app_state.prepare_for_connection(url, player_id, player_name)
 	_refresh_ui()
 	if not transport.open(url):
@@ -535,6 +551,7 @@ func _on_connect_pressed() -> void:
 
 
 func _on_disconnect_pressed() -> void:
+	_next_client_input_tick = 1
 	transport.close()
 	app_state.mark_transport_closed("Disconnected by the local client.")
 	_refresh_ui()
@@ -585,6 +602,21 @@ func _on_skill_pressed(tree_name: String, tier: int) -> void:
 func _on_quit_results_pressed() -> void:
 	if transport.send_control_command("QuitToCentralLobby"):
 		app_state.announce_local("Requested return to the central lobby.")
+		_refresh_ui()
+
+
+func _on_primary_attack_pressed() -> void:
+	var payload := {
+		"client_input_tick": _next_client_input_tick,
+		"move_horizontal_q": 0,
+		"move_vertical_q": 0,
+		"aim_horizontal_q": 0,
+		"aim_vertical_q": 0,
+		"primary": true,
+	}
+	if transport.send_input_frame(payload):
+		_next_client_input_tick += 1
+		app_state.announce_local("Requested primary attack.")
 		_refresh_ui()
 
 
@@ -655,6 +687,7 @@ func _refresh_ui() -> void:
 	ready_button.text = app_state.ready_button_text()
 	leave_lobby_button.disabled = not app_state.can_leave_lobby()
 	quit_results_button.disabled = not app_state.can_quit_results()
+	primary_attack_button.disabled = not app_state.can_send_combat_input()
 	for button in skill_buttons:
 		button.disabled = not app_state.can_choose_skill()
 

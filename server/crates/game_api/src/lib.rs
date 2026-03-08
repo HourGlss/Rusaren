@@ -10,5 +10,5 @@ mod transport;
 
 pub use app::{AppError, ServerApp};
 pub use records::{PlayerRecordStore, RecordStoreError};
-pub use realtime::{spawn_dev_server, DevServerHandle};
+pub use realtime::{spawn_dev_server, spawn_dev_server_with_options, DevServerHandle, DevServerOptions};
 pub use transport::{AppTransport, HeadlessClient, InMemoryTransport};

@@ -1288,23 +1288,23 @@ mod tests {
 
     fn build_test_index(project_root: &Path) -> Index {
         let mut root_symbol = SymbolInformation::new();
-        root_symbol.symbol = String::from("rust-analyzer cargo game_api 0.2.0 app/root().");
+        root_symbol.symbol = String::from("rust-analyzer cargo game_api 0.4.0 app/root().");
         root_symbol.kind = EnumOrUnknown::new(symbol_information::Kind::Function);
         root_symbol.display_name = String::from("root");
 
         let mut helper_symbol = SymbolInformation::new();
-        helper_symbol.symbol = String::from("rust-analyzer cargo game_api 0.2.0 app/helper().");
+        helper_symbol.symbol = String::from("rust-analyzer cargo game_api 0.4.0 app/helper().");
         helper_symbol.kind = EnumOrUnknown::new(symbol_information::Kind::Function);
         helper_symbol.display_name = String::from("helper");
 
         let mut enum_symbol = SymbolInformation::new();
-        enum_symbol.symbol = String::from("rust-analyzer cargo game_api 0.2.0 app/RoundWon.");
+        enum_symbol.symbol = String::from("rust-analyzer cargo game_api 0.4.0 app/RoundWon.");
         enum_symbol.kind = EnumOrUnknown::new(symbol_information::Kind::EnumMember);
         enum_symbol.display_name = String::from("RoundWon");
 
         let mut test_symbol = SymbolInformation::new();
         test_symbol.symbol =
-            String::from("rust-analyzer cargo game_api 0.2.0 app/tests/root_test().");
+            String::from("rust-analyzer cargo game_api 0.4.0 app/tests/root_test().");
         test_symbol.kind = EnumOrUnknown::new(symbol_information::Kind::Function);
         test_symbol.display_name = String::from("root_test");
 
@@ -1329,16 +1329,16 @@ mod tests {
             EnumOrUnknown::new(PositionEncoding::UTF8CodeUnitOffsetFromLineStart);
         document.symbols = vec![root_symbol, helper_symbol, enum_symbol, test_symbol];
         document.occurrences = vec![
-            definition(0, "rust-analyzer cargo game_api 0.2.0 app/root()."),
-            reference(1, "rust-analyzer cargo game_api 0.2.0 app/helper()."),
+            definition(0, "rust-analyzer cargo game_api 0.4.0 app/root()."),
+            reference(1, "rust-analyzer cargo game_api 0.4.0 app/helper()."),
             reference(
                 2,
                 "rust-analyzer cargo core https://github.com/rust-lang/rust/library/core option/impl#[`Option<T>`]unwrap_or_else().",
             ),
-            reference(3, "rust-analyzer cargo game_api 0.2.0 app/RoundWon."),
-            definition(6, "rust-analyzer cargo game_api 0.2.0 app/helper()."),
-            definition(11, "rust-analyzer cargo game_api 0.2.0 app/tests/root_test()."),
-            reference(12, "rust-analyzer cargo game_api 0.2.0 app/helper()."),
+            reference(3, "rust-analyzer cargo game_api 0.4.0 app/RoundWon."),
+            definition(6, "rust-analyzer cargo game_api 0.4.0 app/helper()."),
+            definition(11, "rust-analyzer cargo game_api 0.4.0 app/tests/root_test()."),
+            reference(12, "rust-analyzer cargo game_api 0.4.0 app/helper()."),
         ];
 
         let mut tool_info = ToolInfo::new();
@@ -1432,11 +1432,11 @@ mod tests {
     #[test]
     fn normalize_symbol_name_formats_methods_and_functions() {
         assert_eq!(
-            normalize_symbol_name("rust-analyzer cargo game_api 0.2.0 app/ServerApp#handle_packet()."),
+            normalize_symbol_name("rust-analyzer cargo game_api 0.4.0 app/ServerApp#handle_packet()."),
             "game_api::app::ServerApp::handle_packet"
         );
         assert_eq!(
-            normalize_symbol_name("rust-analyzer cargo game_api 0.2.0 app/spawn_dev_server()."),
+            normalize_symbol_name("rust-analyzer cargo game_api 0.4.0 app/spawn_dev_server()."),
             "game_api::app::spawn_dev_server"
         );
     }
@@ -1505,7 +1505,7 @@ mod tests {
             .expect("root node should exist");
         assert!(root
             .outgoing
-            .contains("rust-analyzer cargo game_api 0.2.0 app/helper()."));
+            .contains("rust-analyzer cargo game_api 0.4.0 app/helper()."));
         assert!(result
             .nodes
             .values()

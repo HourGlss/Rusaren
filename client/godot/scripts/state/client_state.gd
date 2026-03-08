@@ -215,7 +215,7 @@ func apply_server_event(event: Dictionary) -> void:
 			_append_event(countdown_label)
 		"CombatStarted":
 			match_phase = "combat"
-			countdown_label = "Combat is live."
+			countdown_label = "Combat is live. The shell can now send placeholder primary attacks."
 			banner_message = countdown_label
 			_append_event(countdown_label)
 		"RoundWon":
@@ -358,6 +358,10 @@ func can_choose_skill() -> bool:
 
 func can_quit_results() -> bool:
 	return transport_state == "open" and screen == "results"
+
+
+func can_send_combat_input() -> bool:
+	return transport_state == "open" and screen == "match" and match_phase == "combat"
 
 
 func _reset_to_central() -> void:
