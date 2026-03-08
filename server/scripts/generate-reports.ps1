@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("all", "coverage", "complexity", "callgraph", "docs", "fuzz")]
+    [ValidateSet("all", "coverage", "complexity", "callgraph", "docs", "fuzz", "hardening")]
     [string]$Report = "all",
     [switch]$FailOnCommandFailure
 )
@@ -23,6 +23,7 @@ $complexityRoot = Join-Path $reportsRoot "complexity"
 $callgraphRoot = Join-Path $reportsRoot "callgraph"
 $docsArtifactRoot = Join-Path $reportsRoot "docs"
 $rustdocArtifactRoot = Join-Path $reportsRoot "rustdoc"
+$hardeningRoot = Join-Path $reportsRoot "hardening"
 
 function Escape-Html {
     param([AllowNull()][string]$Value)
@@ -554,6 +555,30 @@ function Get-ComplexityFunctions {
     }
 
     return $items
+}
+
+function Get-BackendCorePrompt {
+    param(
+        [string]$FilePath,
+        [object[]]$HotFunctions,
+        [double]$FuzzLinePercent,
+        [double]$FuzzFunctionPercent
+    )
+
+    $functionNames = @($HotFunctions | Select-Object -First 3 | ForEach-Object { $_.Name })
+    $functionList = if ($functionNames.Count -gt 0) {
+        $functionNames -join ", "
+    }
+    else {
+        "the most complex functions in this file"
+    }
+
+    $isNetworkFacing = ($FilePath -replace '\\', '/') -like "crates/game_net/*" -or ($FilePath -replace '\\', '/') -eq "crates/game_api/src/realtime.rs"
+    if ($isNetworkFacing) {
+        return "Refactor $FilePath to reduce complexity in $functionList without changing packet formats or externally visible behavior. Split decode, validation, and dispatch branches into smaller helpers. Add positive and negative tests for each touched branch and extend fuzz seeds or corpus replay coverage because current fuzz coverage is $(Format-Percent -Value $FuzzLinePercent) lines and $(Format-Percent -Value $FuzzFunctionPercent) functions."
+    }
+
+    return "Refactor $FilePath to reduce complexity in $functionList without changing externally visible behavior. Split branching logic into smaller helpers, add focused positive and negative tests for the touched branches, and keep the file easier to reason about before adding more features."
 }
 
 function Invoke-CoverageReport {
@@ -1757,6 +1782,471 @@ $(($findingRows -join "`n"))
     }
 }
 
+function Invoke-HardeningQueueReport {
+    param(
+        [hashtable]$SourceInventory
+    )
+
+    $notes = [System.Collections.Generic.List[string]]::new()
+    $reportPath = Join-Path $hardeningRoot "index.html"
+    $outputPath = Join-Path $hardeningRoot "output.html"
+    $markdownPath = Join-Path $hardeningRoot "llm_todo.md"
+    $jsonPath = Join-Path $hardeningRoot "llm_todo.json"
+    $artifactRoot = Join-Path $serverRoot "fuzz\artifacts"
+
+    try {
+        if (Test-Path $hardeningRoot) {
+            Remove-Item -Recurse -Force -Path $hardeningRoot
+        }
+        New-Item -ItemType Directory -Force -Path $hardeningRoot | Out-Null
+
+        $fuzzSummaryPath = Join-Path $fuzzRoot "summary.json"
+        if (-not (Test-Path $fuzzSummaryPath)) {
+            throw "Fuzz summary is missing at $fuzzSummaryPath. Generate the fuzz report first."
+        }
+
+        $complexityDataRoot = Join-Path $complexityRoot "data"
+        if (-not (Test-Path $complexityDataRoot)) {
+            throw "Complexity analyzer output is missing under $complexityDataRoot. Generate the complexity report first."
+        }
+
+        $backendCoreFiles = @(
+            "crates/game_api/src/app.rs",
+            "crates/game_api/src/realtime.rs",
+            "crates/game_api/src/records.rs",
+            "crates/game_api/src/transport.rs",
+            "crates/game_domain/src/lib.rs",
+            "crates/game_lobby/src/lib.rs",
+            "crates/game_match/src/lib.rs",
+            "crates/game_net/src/control.rs",
+            "crates/game_net/src/ingress.rs",
+            "crates/game_net/src/lib.rs",
+            "crates/game_sim/src/lib.rs"
+        )
+        $backendCoreFileSet = @{}
+        foreach ($path in $backendCoreFiles) {
+            $backendCoreFileSet[$path] = $true
+        }
+
+        $fuzzJson = Get-Content -Path $fuzzSummaryPath -Raw | ConvertFrom-Json
+        $fuzzCoverageData = $fuzzJson.data | Select-Object -First 1
+        $fuzzByPath = @{}
+        foreach ($file in @($fuzzCoverageData.files)) {
+            $displayPath = Convert-ToDisplayPath -Path $file.filename
+            $normalizedPath = $displayPath -replace '\\', '/'
+            $fuzzByPath[$normalizedPath] = [pscustomobject]@{
+                DisplayPath = $displayPath
+                LinePercent = [double]$file.summary.lines.percent
+                FunctionPercent = [double]$file.summary.functions.percent
+                RegionPercent = [double]$file.summary.regions.percent
+                CoveredLines = [int]$file.summary.lines.covered
+                TotalLines = [int]$file.summary.lines.count
+            }
+        }
+
+        $fileMetrics = @()
+        $functionMetrics = @()
+        foreach ($jsonFile in Get-ChildItem -Path $complexityDataRoot -Recurse -File -Filter *.json) {
+            $jsonText = Get-Content -Path $jsonFile.FullName -Raw
+            $jsonText = $jsonText.Replace('"N1":', '"N1_upper":').Replace('"N2":', '"N2_upper":')
+            $metrics = $jsonText | ConvertFrom-Json
+            $displayPath = Convert-ToDisplayPath -Path $metrics.name
+            $normalizedPath = $displayPath -replace '\\', '/'
+            if (-not $backendCoreFileSet.ContainsKey($normalizedPath)) {
+                continue
+            }
+
+            $fileMetrics += [pscustomobject]@{
+                DisplayPath = $displayPath
+                NormalizedPath = $normalizedPath
+                Mi = [double]$metrics.metrics.mi.mi_visual_studio
+                MiGrade = Get-MaintainabilityGrade -Score ([double]$metrics.metrics.mi.mi_visual_studio)
+                Cyclomatic = [double]$metrics.metrics.cyclomatic.sum
+                Cognitive = [double]$metrics.metrics.cognitive.sum
+                FunctionCount = [int]$metrics.metrics.nom.functions
+                Sloc = [double]$metrics.metrics.loc.sloc
+            }
+
+            foreach ($node in @($metrics.spaces)) {
+                $functionMetrics += Get-ComplexityFunctions -Node $node -FilePath $displayPath
+            }
+        }
+
+        foreach ($function in $functionMetrics) {
+            Add-Member -InputObject $function -NotePropertyName NormalizedPath -NotePropertyValue (($function.FilePath -replace '\\', '/')) -Force
+            Add-Member -InputObject $function -NotePropertyName CyclomaticGrade -NotePropertyValue (Get-CyclomaticGrade -Score $function.Cyclomatic) -Force
+            Add-Member -InputObject $function -NotePropertyName MiGrade -NotePropertyValue (Get-MaintainabilityGrade -Score $function.Mi) -Force
+        }
+
+        $functionMetrics = @(
+            $functionMetrics |
+                Where-Object {
+                    $backendCoreFileSet.ContainsKey($_.NormalizedPath) -and
+                    $_.Name -notmatch '(^test_|::tests::|::prop_)'
+                } |
+                Sort-Object @{ Expression = "Cyclomatic"; Descending = $true }, @{ Expression = "Cognitive"; Descending = $true }, FilePath, Name
+        )
+
+        $fileFunctionSummaries = @{}
+        foreach ($group in ($functionMetrics | Group-Object NormalizedPath)) {
+            $worstFunction = $group.Group | Sort-Object @{ Expression = "Cyclomatic"; Descending = $true }, @{ Expression = "Cognitive"; Descending = $true }, Name | Select-Object -First 1
+            $averageCyclomatic = [double](($group.Group | Measure-Object -Property Cyclomatic -Average).Average)
+            $fileFunctionSummaries[$group.Name] = [pscustomobject]@{
+                WorstCyclomatic = [double]$worstFunction.Cyclomatic
+                WorstGrade = [string]$worstFunction.CyclomaticGrade
+                AverageCyclomatic = $averageCyclomatic
+                AverageGrade = Get-CyclomaticGrade -Score $averageCyclomatic
+                HotFunctions = @($group.Group | Sort-Object @{ Expression = "Cyclomatic"; Descending = $true }, @{ Expression = "Cognitive"; Descending = $true }, Name | Select-Object -First 3)
+            }
+        }
+
+        $tasks = foreach ($backendPath in $backendCoreFiles) {
+            $fileMetric = $fileMetrics | Where-Object { $_.NormalizedPath -eq $backendPath } | Select-Object -First 1
+            $fuzzMetric = if ($fuzzByPath.ContainsKey($backendPath)) { $fuzzByPath[$backendPath] } else { $null }
+            $functionSummary = if ($fileFunctionSummaries.ContainsKey($backendPath)) { $fileFunctionSummaries[$backendPath] } else { $null }
+
+            if (($null -eq $fileMetric) -and ($null -eq $fuzzMetric)) {
+                continue
+            }
+
+            $displayPath = if ($null -ne $fileMetric) {
+                $fileMetric.DisplayPath
+            }
+            elseif ($null -ne $fuzzMetric) {
+                $fuzzMetric.DisplayPath
+            }
+            else {
+                $backendPath -replace '/', '\'
+            }
+
+            $worstFunctionRisk = if (($null -ne $functionSummary) -and -not [string]::IsNullOrWhiteSpace($functionSummary.WorstGrade)) {
+                100.0 - (Get-CyclomaticGradeScore -Grade $functionSummary.WorstGrade)
+            }
+            else {
+                0.0
+            }
+            $averageFunctionRisk = if (($null -ne $functionSummary) -and -not [string]::IsNullOrWhiteSpace($functionSummary.AverageGrade)) {
+                100.0 - (Get-CyclomaticGradeScore -Grade $functionSummary.AverageGrade)
+            }
+            else {
+                0.0
+            }
+            $miRisk = if ($null -ne $fileMetric) {
+                100.0 - (Clamp-Score -Value $fileMetric.Mi)
+            }
+            else {
+                0.0
+            }
+            $fuzzLinePercent = if ($null -ne $fuzzMetric) { [double]$fuzzMetric.LinePercent } else { 0.0 }
+            $fuzzFunctionPercent = if ($null -ne $fuzzMetric) { [double]$fuzzMetric.FunctionPercent } else { 0.0 }
+            $priorityScore = Clamp-Score -Value (
+                ($worstFunctionRisk * 0.35) +
+                ($averageFunctionRisk * 0.20) +
+                ($miRisk * 0.15) +
+                ((100.0 - $fuzzLinePercent) * 0.20) +
+                ((100.0 - $fuzzFunctionPercent) * 0.10)
+            )
+
+            $reasons = [System.Collections.Generic.List[string]]::new()
+            if ($null -ne $functionSummary) {
+                $reasons.Add("Worst function CC $("{0:N0}" -f $functionSummary.WorstCyclomatic) ($($functionSummary.WorstGrade))")
+                $reasons.Add("Average function CC $("{0:N2}" -f $functionSummary.AverageCyclomatic) ($($functionSummary.AverageGrade))")
+            }
+            if ($null -ne $fileMetric) {
+                $reasons.Add("Maintainability index $("{0:N2}" -f $fileMetric.Mi) ($($fileMetric.MiGrade))")
+            }
+            if ($null -ne $fuzzMetric) {
+                $reasons.Add("Fuzz line coverage $(Format-Percent -Value $fuzzLinePercent)")
+                $reasons.Add("Fuzz function coverage $(Format-Percent -Value $fuzzFunctionPercent)")
+            }
+            else {
+                $reasons.Add("No direct fuzz coverage entry yet")
+            }
+
+            $actions = [System.Collections.Generic.List[string]]::new()
+            if (($null -ne $functionSummary) -and ($functionSummary.WorstCyclomatic -ge 20.0)) {
+                $actions.Add("Split the worst branching paths into smaller internal helpers before adding new behavior.")
+            }
+            if (($null -eq $fuzzMetric) -or ($fuzzLinePercent -lt 50.0) -or ($fuzzFunctionPercent -lt 50.0)) {
+                $actions.Add("Increase fuzz coverage or corpus replay coverage for this file until malformed-input handling has stronger branch coverage.")
+            }
+            $actions.Add("Add or extend focused positive and negative tests for every touched branch.")
+
+            [pscustomobject]@{
+                DisplayPath = $displayPath
+                NormalizedPath = $backendPath
+                PriorityScore = $priorityScore
+                Mi = if ($null -ne $fileMetric) { [double]$fileMetric.Mi } else { $null }
+                MiGrade = if ($null -ne $fileMetric) { [string]$fileMetric.MiGrade } else { $null }
+                WorstFunctionCyclomatic = if ($null -ne $functionSummary) { [double]$functionSummary.WorstCyclomatic } else { $null }
+                WorstFunctionGrade = if ($null -ne $functionSummary) { [string]$functionSummary.WorstGrade } else { $null }
+                AverageFunctionCyclomatic = if ($null -ne $functionSummary) { [double]$functionSummary.AverageCyclomatic } else { $null }
+                AverageFunctionGrade = if ($null -ne $functionSummary) { [string]$functionSummary.AverageGrade } else { $null }
+                FuzzLinePercent = $fuzzLinePercent
+                FuzzFunctionPercent = $fuzzFunctionPercent
+                FuzzRegionPercent = if ($null -ne $fuzzMetric) { [double]$fuzzMetric.RegionPercent } else { 0.0 }
+                HotFunctions = if ($null -ne $functionSummary) { @($functionSummary.HotFunctions) } else { @() }
+                Reasons = @($reasons)
+                Actions = @($actions)
+                Prompt = Get-BackendCorePrompt -FilePath $displayPath -HotFunctions @($functionSummary.HotFunctions) -FuzzLinePercent $fuzzLinePercent -FuzzFunctionPercent $fuzzFunctionPercent
+            }
+        }
+
+        $tasks = @(
+            $tasks |
+                Sort-Object @{ Expression = "PriorityScore"; Descending = $true }, @{ Expression = "WorstFunctionCyclomatic"; Descending = $true }, DisplayPath
+        )
+        for ($index = 0; $index -lt $tasks.Count; $index += 1) {
+            Add-Member -InputObject $tasks[$index] -NotePropertyName Rank -NotePropertyValue ($index + 1) -Force
+        }
+
+        $findings = @()
+        if (Test-Path $artifactRoot) {
+            $findings = @(
+                Get-ChildItem -Path $artifactRoot -Recurse -File |
+                    Sort-Object FullName |
+                    ForEach-Object {
+                        $targetName = Split-Path -Parent $_.FullName | Split-Path -Leaf
+                        [pscustomobject]@{
+                            Target = $targetName
+                            FileName = $_.Name
+                            RelativePath = Convert-ToDisplayPath -Path $_.FullName
+                            ReproCommand = "cd server; rustup run nightly cargo fuzz run $targetName fuzz/artifacts/$targetName/$($_.Name)"
+                        }
+                    }
+            )
+        }
+
+        $notes.Add("This queue is generated from the current complexity and fuzz reports. It is intended as a repair plan, not an automatic code change.")
+        $notes.Add("Backend core scope is limited to game_api, game_domain, game_lobby, game_match, game_net, and game_sim runtime files.")
+        $notes.Add("Priority score weights: 35% worst-function risk, 20% average-function risk, 15% maintainability risk, 20% missing fuzz line coverage, 10% missing fuzz function coverage.")
+        $notes.Add("Saved fuzz findings, when present, should be handled before general refactoring.")
+
+        $fileRows = foreach ($task in $tasks) {
+            $hotspotLabel = if ($task.HotFunctions.Count -gt 0) {
+                ($task.HotFunctions | ForEach-Object { "$($_.Name) (CC $([int]$_.Cyclomatic))" }) -join "<br />"
+            }
+            else {
+                '<span class="muted">No function hotspot extracted.</span>'
+            }
+
+@"
+<tr>
+  <td>$($task.Rank)</td>
+  <td><code>$(Escape-Html $task.DisplayPath)</code></td>
+  <td>$("{0:N2}" -f $task.PriorityScore)</td>
+  <td>$(Escape-Html ($task.Reasons -join " | "))</td>
+  <td>$hotspotLabel</td>
+  <td>$(Escape-Html ($task.Actions -join " "))</td>
+</tr>
+"@
+        }
+
+        $findingRows = foreach ($finding in $findings) {
+@"
+<tr>
+  <td><code>$(Escape-Html $finding.Target)</code></td>
+  <td><code>$(Escape-Html $finding.FileName)</code></td>
+  <td><code>$(Escape-Html $finding.RelativePath)</code></td>
+  <td><code>$(Escape-Html $finding.ReproCommand)</code></td>
+</tr>
+"@
+        }
+
+        $markdownLines = [System.Collections.Generic.List[string]]::new()
+        $markdownLines.Add("# Backend Hardening Queue")
+        $markdownLines.Add("")
+        $markdownLines.Add('Generated from `server/target/reports/complexity` and `server/target/reports/fuzz`.')
+        $markdownLines.Add("")
+        $markdownLines.Add("Use this as a prioritized repair queue for another LLM.")
+        $markdownLines.Add("")
+        $markdownLines.Add("Rules:")
+        $markdownLines.Add("- Preserve behavior and packet formats unless tests or docs require a deliberate change.")
+        $markdownLines.Add("- For every touched function, add or extend focused positive and negative tests.")
+        $markdownLines.Add("- For network-facing code, also extend fuzz seeds or corpus replay coverage.")
+        $markdownLines.Add("")
+
+        if ($findings.Count -gt 0) {
+            $markdownLines.Add("## Immediate fuzz findings")
+            $markdownLines.Add("")
+            foreach ($finding in $findings) {
+                $markdownLines.Add('- `' + $finding.Target + '`: `' + $finding.RelativePath + '`')
+                $markdownLines.Add('  Reproduce with: `' + $finding.ReproCommand + '`')
+            }
+            $markdownLines.Add("")
+        }
+
+        $markdownLines.Add("## Prioritized file queue")
+        $markdownLines.Add("")
+        foreach ($task in $tasks) {
+            $markdownLines.Add("### $($task.Rank). $($task.DisplayPath)")
+            $markdownLines.Add("")
+            $markdownLines.Add("- Priority score: $("{0:N2}" -f $task.PriorityScore)")
+            foreach ($reason in $task.Reasons) {
+                $markdownLines.Add("- Why: $reason")
+            }
+            if ($task.HotFunctions.Count -gt 0) {
+                foreach ($function in $task.HotFunctions) {
+                    $markdownLines.Add('- Hot function: `' + $function.Name + '` | CC ' + ([int]$function.Cyclomatic) + ' (' + $function.CyclomaticGrade + ') | MI ' + ('{0:N2}' -f $function.Mi) + ' (' + $function.MiGrade + ') | lines ' + $function.StartLine + '-' + $function.EndLine)
+                }
+            }
+            foreach ($action in $task.Actions) {
+                $markdownLines.Add("- Do: $action")
+            }
+            $markdownLines.Add("- Prompt: $($task.Prompt)")
+            $markdownLines.Add("")
+        }
+        Set-Content -Path $markdownPath -Value ($markdownLines -join "`r`n") -Encoding UTF8
+
+        $jsonPayload = [pscustomobject]@{
+            generated_at = (Get-Date).ToUniversalTime().ToString("u")
+            commit = Get-GitValue -CommandArgs @("rev-parse", "--short", "HEAD") -Fallback "unknown"
+            based_on = [pscustomobject]@{
+                complexity_report = "server/target/reports/complexity/output.html"
+                fuzz_report = "server/target/reports/fuzz/output.html"
+            }
+            findings = @($findings)
+            tasks = @(
+                $tasks | ForEach-Object {
+                    [pscustomobject]@{
+                        rank = $_.Rank
+                        file = $_.DisplayPath
+                        priority_score = [math]::Round([double]$_.PriorityScore, 2)
+                        reasons = @($_.Reasons)
+                        actions = @($_.Actions)
+                        prompt = $_.Prompt
+                        complexity = [pscustomobject]@{
+                            maintainability_index = $_.Mi
+                            maintainability_grade = $_.MiGrade
+                            worst_function_cyclomatic = $_.WorstFunctionCyclomatic
+                            worst_function_grade = $_.WorstFunctionGrade
+                            average_function_cyclomatic = $_.AverageFunctionCyclomatic
+                            average_function_grade = $_.AverageFunctionGrade
+                        }
+                        fuzz = [pscustomobject]@{
+                            line_percent = $_.FuzzLinePercent
+                            function_percent = $_.FuzzFunctionPercent
+                            region_percent = $_.FuzzRegionPercent
+                        }
+                        hot_functions = @(
+                            $_.HotFunctions | ForEach-Object {
+                                [pscustomobject]@{
+                                    name = $_.Name
+                                    cyclomatic = $_.Cyclomatic
+                                    cyclomatic_grade = $_.CyclomaticGrade
+                                    cognitive = $_.Cognitive
+                                    maintainability_index = $_.Mi
+                                    maintainability_grade = $_.MiGrade
+                                    start_line = $_.StartLine
+                                    end_line = $_.EndLine
+                                }
+                            }
+                        )
+                    }
+                }
+            )
+        }
+        $jsonPayload | ConvertTo-Json -Depth 8 | Set-Content -Path $jsonPath -Encoding UTF8
+
+        $body = @"
+<h1>Backend Hardening Queue</h1>
+<p class="muted">Generated from the current complexity and fuzz reports. This is a prioritized cleanup queue for future work, not an automatic refactor.</p>
+<div class="grid">
+  <div class="metric"><span class="muted">Queued files</span><strong>$($tasks.Count)</strong></div>
+  <div class="metric"><span class="muted">Saved fuzz findings</span><strong>$($findings.Count)</strong></div>
+  <div class="metric"><span class="muted">Top priority</span><strong>$(if ($tasks.Count -gt 0) { Escape-Html $tasks[0].DisplayPath } else { 'n/a' })</strong></div>
+  <div class="metric"><span class="muted">Markdown handoff</span><strong><a href="./llm_todo.md">Open llm_todo.md</a></strong></div>
+  <div class="metric"><span class="muted">JSON handoff</span><strong><a href="./llm_todo.json">Open llm_todo.json</a></strong></div>
+</div>
+<div class="panel">
+  <h2>How to use this queue</h2>
+  <p>Work from top to bottom. Preserve behavior unless tests and docs require otherwise. Every touched function should get updated tests, and network-facing code should also get stronger fuzz coverage.</p>
+</div>
+<div class="panel">
+  <h2>Prioritized cleanup queue</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Rank</th>
+        <th>File</th>
+        <th>Priority</th>
+        <th>Why first</th>
+        <th>Hot functions</th>
+        <th>Next action</th>
+      </tr>
+    </thead>
+    <tbody>
+$(($fileRows -join "`n"))
+    </tbody>
+  </table>
+</div>
+<div class="panel">
+  <h2>Saved fuzz findings</h2>
+$(if ($findingRows) {
+@"
+  <table>
+    <thead>
+      <tr>
+        <th>Target</th>
+        <th>Artifact</th>
+        <th>Path</th>
+        <th>Reproduce</th>
+      </tr>
+    </thead>
+    <tbody>
+$(($findingRows -join "`n"))
+    </tbody>
+  </table>
+"@
+} else {
+@"
+  <p>No saved fuzz findings are present under <code>server/fuzz/artifacts</code>.</p>
+  <p class="muted">When fuzzing does produce crashes, they should be handled ahead of the general queue above.</p>
+"@
+})
+</div>
+<p class="footer"><a href="../index.html">Back to report index</a></p>
+"@
+
+        Write-ReportHtml -Path $reportPath -Title "Backend Hardening Queue" -Body $body
+        Write-ReportHtml -Path $outputPath -Title "Backend Hardening Queue" -Body $body
+
+        return [pscustomobject]@{
+            Name = "Hardening Queue"
+            Status = "ok"
+            Notes = @($notes | Sort-Object -Unique)
+            IndexPath = "hardening/index.html"
+            ErrorMessage = $null
+            Summary = [pscustomobject]@{
+                Tasks = $tasks.Count
+                Findings = $findings.Count
+            }
+        }
+    }
+    catch {
+        $errorMessage = $_.Exception.Message
+        $notes.Add("Hardening queue generation failed: $errorMessage")
+        $body = @"
+<h1>Backend Hardening Queue Failed</h1>
+<div class="panel">
+  <p>The cleanup queue could not be generated.</p>
+  <p><code>$(Escape-Html $errorMessage)</code></p>
+</div>
+<p class="footer"><a href="../index.html">Back to report index</a></p>
+"@
+        Write-ReportHtml -Path $reportPath -Title "Backend Hardening Queue Failed" -Body $body
+        Write-ReportHtml -Path $outputPath -Title "Backend Hardening Queue Failed" -Body $body
+
+        return [pscustomobject]@{
+            Name = "Hardening Queue"
+            Status = "failed"
+            Notes = @($notes)
+            IndexPath = "hardening/index.html"
+            ErrorMessage = $errorMessage
+        }
+    }
+}
+
 function Invoke-DocsReport {
     $notes = [System.Collections.Generic.List[string]]::new()
     $reportPath = Join-Path $docsArtifactRoot "index.html"
@@ -1888,12 +2378,18 @@ function Invoke-ReportGeneration {
         "complexity" {
             $results += Invoke-ComplexityReport -SourceInventory $sourceInventory
         }
+        "hardening" {
+            $results += Invoke-FuzzCoverageReport -SourceInventory $sourceInventory
+            $results += Invoke-ComplexityReport -SourceInventory $sourceInventory
+            $results += Invoke-HardeningQueueReport -SourceInventory $sourceInventory
+        }
         default {
             $results += Invoke-CoverageReport -SourceInventory $sourceInventory
             $results += Invoke-FuzzCoverageReport -SourceInventory $sourceInventory
             $results += Invoke-DocsReport
             $results += Invoke-CallgraphReport -SourceInventory $sourceInventory
             $results += Invoke-ComplexityReport -SourceInventory $sourceInventory
+            $results += Invoke-HardeningQueueReport -SourceInventory $sourceInventory
         }
     }
 
