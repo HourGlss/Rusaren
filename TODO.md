@@ -2,28 +2,15 @@
 
 Current target release line: `1.0.0`
 Current repo version: `0.2.0`
+Current roadmap position: `0.4.0 backend MVP` with the `0.5.0` Godot shell already started
 
-## 0.3.0 Quality Foundation
-
-- [x] Add a real `server/fuzz/` workspace with `cargo-fuzz`.
-- [x] Add first fuzz targets for packet-header decode, control-command decode, input-frame decode, and ingress/session sequencing.
-- [x] Add `proptest` for parser and state-machine boundary testing.
-- [x] Stand up `mdBook` for project docs and architecture notes.
-- [x] Publish `cargo doc --workspace --no-deps` as API docs in CI.
-- [x] Make reports, docs, and callgraph available as per-commit artifacts.
-- [x] Make fuzz-target builds part of the pre-commit workflow for network-boundary changes.
-
-Release gate:
-- [x] `quality.ps1 fuzz` builds real targets.
-- [x] docs site builds in CI.
-- [x] reports and docs are generated automatically.
+Completed:
+- `0.3.0 Quality Foundation`
 
 ## 0.4.0 Backend MVP
 
 - [ ] Finish the backend MVP around one fully playable rules slice.
-- [x] Persist player identity and `W-L-NC`.
-- [x] Add lobby discovery and full lobby snapshot events.
-- [ ] Keep strict validation on every network boundary.
+- [ ] Prove the backend can drive a full human-played match loop through the real adapter, not just fake clients and scripted tests.
 
 Release gate:
 - hosted backend can drive a full match loop without fake clients.
@@ -31,7 +18,6 @@ Release gate:
 ## 0.5.0 Godot Web MVP
 
 - [ ] Make the Godot shell a real browser-playable MVP.
-- [ ] Add central lobby, game lobby, roster, skill-pick, match-state, and results flows against live backend state.
 - [ ] Add web export smoke checks in CI.
 - [ ] Host the static web client on the production domain.
 
@@ -87,7 +73,6 @@ Release gate:
 - [ ] Public docs site is current.
 - [ ] Rust API docs are published.
 - [ ] Fuzzing is active in CI, not just configured.
-- [ ] Coverage and complexity reports are generated per commit.
 - [ ] Deployment and operational steps are documented well enough for another engineer to run the project.
 
 Release gate:
