@@ -39,6 +39,14 @@ cd server
 rustup run stable cargo run -p dedicated_server --quiet
 ```
 
+Start the easiest local playable build:
+
+```powershell
+./server/scripts/play-local.ps1 -GodotExecutable C:\Users\azbai\Documents\Rarena\Godot\Godot_v4.6.1-stable_win64_console.exe
+```
+
+That script exports the Godot web client, builds the hardened Docker image, starts the local container, and opens the browser shell at `http://127.0.0.1:3000/`.
+
 The dev adapter listens on:
 - `http://127.0.0.1:3000/healthz`
 - `http://127.0.0.1:3000/metrics`
@@ -285,6 +293,11 @@ Current manual full-loop slice:
 - choose a skill each round
 - press `Primary Attack` during combat to resolve the current placeholder one-hit round flow
 - review the result screen and quit back to the central lobby
+
+Current easiest full-loop slice:
+- run `./server/scripts/play-local.ps1 -GodotExecutable C:\Users\azbai\Documents\Rarena\Godot\Godot_v4.6.1-stable_win64_console.exe`
+- open two browser tabs to `http://127.0.0.1:3000/`
+- connect two players and play through the placeholder round flow
 
 ## Deploy
 
