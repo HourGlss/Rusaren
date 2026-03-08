@@ -147,6 +147,36 @@ a {
     color: #991b1b;
 }
 
+.badge-grade-a {
+    background: #dcfce7;
+    color: #166534;
+}
+
+.badge-grade-b {
+    background: #d1fae5;
+    color: #065f46;
+}
+
+.badge-grade-c {
+    background: #fef3c7;
+    color: #92400e;
+}
+
+.badge-grade-d {
+    background: #fed7aa;
+    color: #9a3412;
+}
+
+.badge-grade-e {
+    background: #fecaca;
+    color: #b91c1c;
+}
+
+.badge-grade-f {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
 table {
     width: 100%;
     border-collapse: collapse;
@@ -257,6 +287,79 @@ function Get-StatusBadgeClass {
         "warning" { return "badge-warn" }
         default { return "badge-bad" }
     }
+}
+
+function Get-CyclomaticGrade {
+    param([double]$Score)
+
+    if ($Score -le 5) {
+        return "A"
+    }
+    elseif ($Score -le 10) {
+        return "B"
+    }
+    elseif ($Score -le 20) {
+        return "C"
+    }
+    elseif ($Score -le 30) {
+        return "D"
+    }
+    elseif ($Score -le 40) {
+        return "E"
+    }
+
+    return "F"
+}
+
+function Get-MaintainabilityGrade {
+    param([double]$Score)
+
+    if ($Score -gt 19) {
+        return "A"
+    }
+    elseif ($Score -gt 9) {
+        return "B"
+    }
+
+    return "C"
+}
+
+function Get-GradeBadgeClass {
+    param([string]$Grade)
+
+    switch ($Grade) {
+        "A" { return "badge-grade-a" }
+        "B" { return "badge-grade-b" }
+        "C" { return "badge-grade-c" }
+        "D" { return "badge-grade-d" }
+        "E" { return "badge-grade-e" }
+        "F" { return "badge-grade-f" }
+        default { return "badge-warn" }
+    }
+}
+
+function Get-GradeSeverity {
+    param([string]$Grade)
+
+    switch ($Grade) {
+        "A" { return 1 }
+        "B" { return 2 }
+        "C" { return 3 }
+        "D" { return 4 }
+        "E" { return 5 }
+        "F" { return 6 }
+        default { return 0 }
+    }
+}
+
+function Format-GradeBadge {
+    param([string]$Grade)
+
+    if ([string]::IsNullOrWhiteSpace($Grade)) {
+        return '<span class="muted">n/a</span>'
+    }
+
+    return '<span class="badge {0}">{1}</span>' -f (Get-GradeBadgeClass -Grade $Grade), (Escape-Html $Grade)
 }
 
 function Convert-ToDisplayPath {
@@ -636,6 +739,7 @@ function Invoke-ComplexityReport {
             $fileMetrics += [pscustomobject]@{
                 DisplayPath = $displayPath
                 Mi = [double]$metrics.metrics.mi.mi_visual_studio
+                MiGrade = Get-MaintainabilityGrade -Score ([double]$metrics.metrics.mi.mi_visual_studio)
                 Cyclomatic = [double]$metrics.metrics.cyclomatic.sum
                 Cognitive = [double]$metrics.metrics.cognitive.sum
                 FunctionCount = [int]$metrics.metrics.nom.functions
@@ -647,11 +751,43 @@ function Invoke-ComplexityReport {
             }
         }
 
-        $fileMetrics = @($fileMetrics | Sort-Object Mi, DisplayPath)
-        $functionMetrics = @($functionMetrics | Sort-Object @{ Expression = "Cognitive"; Descending = $true }, @{ Expression = "Cyclomatic"; Descending = $true }, FilePath, Name)
+        foreach ($function in $functionMetrics) {
+            Add-Member -InputObject $function -NotePropertyName CyclomaticGrade -NotePropertyValue (Get-CyclomaticGrade -Score $function.Cyclomatic)
+            Add-Member -InputObject $function -NotePropertyName MiGrade -NotePropertyValue (Get-MaintainabilityGrade -Score $function.Mi)
+        }
+
+        $functionMetrics = @($functionMetrics | Sort-Object @{ Expression = "Cyclomatic"; Descending = $true }, @{ Expression = "Cognitive"; Descending = $true }, FilePath, Name)
+
+        $fileFunctionSummaries = @{}
+        foreach ($group in ($functionMetrics | Group-Object FilePath)) {
+            $worstFunction = $group.Group | Sort-Object @{ Expression = "Cyclomatic"; Descending = $true }, @{ Expression = "Cognitive"; Descending = $true }, Name | Select-Object -First 1
+            $averageCyclomatic = [double](($group.Group | Measure-Object -Property Cyclomatic -Average).Average)
+            $fileFunctionSummaries[$group.Name] = [pscustomobject]@{
+                WorstCyclomatic = [double]$worstFunction.Cyclomatic
+                WorstGrade = [string]$worstFunction.CyclomaticGrade
+                AverageCyclomatic = $averageCyclomatic
+                AverageGrade = Get-CyclomaticGrade -Score $averageCyclomatic
+            }
+        }
+
+        foreach ($file in $fileMetrics) {
+            $summary = $null
+            if ($fileFunctionSummaries.ContainsKey($file.DisplayPath)) {
+                $summary = $fileFunctionSummaries[$file.DisplayPath]
+            }
+
+            Add-Member -InputObject $file -NotePropertyName WorstFunctionCyclomatic -NotePropertyValue $(if ($null -ne $summary) { $summary.WorstCyclomatic } else { $null })
+            Add-Member -InputObject $file -NotePropertyName WorstFunctionGrade -NotePropertyValue $(if ($null -ne $summary) { $summary.WorstGrade } else { $null })
+            Add-Member -InputObject $file -NotePropertyName AverageFunctionCyclomatic -NotePropertyValue $(if ($null -ne $summary) { $summary.AverageCyclomatic } else { $null })
+            Add-Member -InputObject $file -NotePropertyName AverageFunctionGrade -NotePropertyValue $(if ($null -ne $summary) { $summary.AverageGrade } else { $null })
+        }
+
+        $fileMetrics = @($fileMetrics | Sort-Object @{ Expression = { Get-GradeSeverity -Grade $_.WorstFunctionGrade }; Descending = $true }, @{ Expression = "Mi"; Descending = $false }, DisplayPath)
 
         $notes.Add("These metrics include inline test modules because the analyzer works on whole Rust source files.")
         $notes.Add("Placeholder crates with only crate-level docs and attributes have no meaningful complexity data yet.")
+        $notes.Add("Cyclomatic grades use Xenon/Radon bands: A 1-5, B 6-10, C 11-20, D 21-30, E 31-40, F 41+.")
+        $notes.Add("Maintainability grades use Radon MI bands: A >19, B 10-19, C <=9.")
 
         foreach ($sourceFile in ($SourceInventory.Keys | Sort-Object)) {
             if ($analyzedPaths.ContainsKey($sourceFile)) {
@@ -671,7 +807,9 @@ function Invoke-ComplexityReport {
             @"
 <tr>
   <td><code>$(Escape-Html $file.DisplayPath)</code></td>
-  <td>$("{0:N2}" -f $file.Mi)</td>
+  <td>$("{0:N2}" -f $file.Mi) $(Format-GradeBadge -Grade $file.MiGrade)</td>
+  <td>$(if ($null -ne $file.WorstFunctionCyclomatic) { '{0:N2} {1}' -f $file.WorstFunctionCyclomatic, (Format-GradeBadge -Grade $file.WorstFunctionGrade) } else { '<span class="muted">n/a</span>' })</td>
+  <td>$(if ($null -ne $file.AverageFunctionCyclomatic) { '{0:N2} {1}' -f $file.AverageFunctionCyclomatic, (Format-GradeBadge -Grade $file.AverageFunctionGrade) } else { '<span class="muted">n/a</span>' })</td>
   <td>$("{0:N0}" -f $file.Cyclomatic)</td>
   <td>$("{0:N0}" -f $file.Cognitive)</td>
   <td>$("{0:N0}" -f $file.FunctionCount)</td>
@@ -686,8 +824,8 @@ function Invoke-ComplexityReport {
   <td><code>$(Escape-Html $function.FilePath)</code></td>
   <td><code>$(Escape-Html $function.Name)</code></td>
   <td>$("{0:N0}" -f $function.Cognitive)</td>
-  <td>$("{0:N0}" -f $function.Cyclomatic)</td>
-  <td>$("{0:N2}" -f $function.Mi)</td>
+  <td>$("{0:N0}" -f $function.Cyclomatic) $(Format-GradeBadge -Grade $function.CyclomaticGrade)</td>
+  <td>$("{0:N2}" -f $function.Mi) $(Format-GradeBadge -Grade $function.MiGrade)</td>
   <td>$($function.StartLine)-$($function.EndLine)</td>
 </tr>
 "@
@@ -697,14 +835,22 @@ function Invoke-ComplexityReport {
             "<li>$(Escape-Html $note)</li>"
         }
 
+        $worstFunction = $functionMetrics | Select-Object -First 1
+        $worstFile = $fileMetrics | Select-Object -First 1
+
         $body = @"
 <h1>Complexity Report</h1>
 <p class="muted">Commit <code>$(Escape-Html (Get-GitValue -CommandArgs @("rev-parse", "--short", "HEAD") -Fallback "unknown"))</code>. Raw analyzer output lives under <code>target/reports/complexity/data</code>.</p>
 <div class="grid">
   <div class="metric"><span class="muted">Analyzed files</span><strong>$($fileMetrics.Count)</strong></div>
   <div class="metric"><span class="muted">Tracked functions</span><strong>$($functionMetrics.Count)</strong></div>
-  <div class="metric"><span class="muted">Lowest file MI</span><strong>$(if ($fileMetrics.Count -gt 0) { "{0:N2}" -f ($fileMetrics[0].Mi) } else { "n/a" })</strong></div>
-  <div class="metric"><span class="muted">Highest function cognitive score</span><strong>$(if ($functionMetrics.Count -gt 0) { "{0:N0}" -f ($functionMetrics[0].Cognitive) } else { "n/a" })</strong></div>
+  <div class="metric"><span class="muted">Worst function CC</span><strong>$(if ($null -ne $worstFunction) { '{0} ({1:N0})' -f $worstFunction.CyclomaticGrade, $worstFunction.Cyclomatic } else { 'n/a' })</strong></div>
+  <div class="metric"><span class="muted">Worst file avg CC</span><strong>$(if (($null -ne $worstFile) -and ($null -ne $worstFile.AverageFunctionCyclomatic)) { '{0} ({1:N2})' -f $worstFile.AverageFunctionGrade, $worstFile.AverageFunctionCyclomatic } else { 'n/a' })</strong></div>
+</div>
+<div class="panel">
+  <h2>Grade scale</h2>
+  <p><strong>Cyclomatic:</strong> A 1-5, B 6-10, C 11-20, D 21-30, E 31-40, F 41+.</p>
+  <p><strong>Maintainability:</strong> A &gt;19, B 10-19, C &lt;=9.</p>
 </div>
 <div class="panel">
   <h2>Per-file metrics</h2>
@@ -713,6 +859,8 @@ function Invoke-ComplexityReport {
       <tr>
         <th>File</th>
         <th>MI (VS)</th>
+        <th>Worst fn CC</th>
+        <th>Avg fn CC</th>
         <th>Cyclomatic sum</th>
         <th>Cognitive sum</th>
         <th>Functions</th>
