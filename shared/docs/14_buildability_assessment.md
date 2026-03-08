@@ -2,32 +2,32 @@
 
 ## Current state
 
-The repo is now buildable as a Rust workspace scaffold under `server/`, but it is not yet buildable as a playable or networked game. The code compiles because the workspace and crate skeletons exist, not because the product spec is fully executable.
+The repo is now buildable as a backend-first multiplayer prototype with a thin Godot shell, but it is not yet buildable as the intended browser-playable full game. The current code is real enough to exercise the lobby and match flow, but not yet the final transport or presentation stack.
 
 ## What is buildable now
 
 Buildable today:
 - the `server/` Cargo workspace
+- the websocket dev adapter and binary control protocol
+- the backend app layer, lobby flow, match flow, and fake-client tests
+- the thin Godot shell under `client/godot`
 - CI and local quality commands
-- placeholder crates for the planned server architecture
-- docs-driven implementation planning
 
 Not buildable yet:
-- a real dedicated server
-- a protocol implementation
-- content loading
-- a simulation loop
-- a playable Godot client
+- the final WebRTC gameplay transport
+- a server-driven central-lobby browser
+- full lobby snapshots for late joiners
+- full combat rendering and snapshot-driven gameplay presentation in Godot
+- authored content loading
 
 ## What is specified well enough to start coding
 
 You can start implementation now for:
-- crate boundaries and dependency rules
-- core domain types
-- lobby and round state-machine scaffolding
-- content schema design
-- validation harnesses
-- initial protocol type definitions
+- frontend shell validation against the live backend
+- backend-to-frontend protocol hardening
+- server-side lobby snapshot events
+- WebRTC adapter work
+- snapshot replication and visual presentation
 
 ## Human decisions still required
 
@@ -39,11 +39,11 @@ Still open, but no longer blocking:
 
 ## Recommendation
 
-The repo is now documented well enough to begin real implementation work on:
-1. signaling/auth/session setup
-2. WebRTC transport adapters
-3. packet codec and snapshot replication
-4. lobby and match state machines
-5. content loading and validation
+The next implementation steps should be:
+1. add backend events for lobby discovery and full lobby snapshots
+2. keep the Godot shell synced to that richer control surface
+3. add the real WebRTC transport adapter beside the websocket dev adapter
+4. start snapshot replication and gameplay presentation
+5. add content loading and validation once the network surface stops moving
 
 The next decisions should come from implementation feedback, not more speculative architecture drafting.

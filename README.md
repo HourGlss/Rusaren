@@ -8,12 +8,13 @@ Buildable now:
 - the `server/` Cargo workspace scaffold
 - a scripted backend-only gameplay slice that exercises lobby -> match -> combat -> no-contest flow
 - a real websocket dev adapter on top of the backend app layer
+- a Godot 4 shell under `client/godot` that drives the websocket dev adapter with real binary control packets
 - local quality scripts under `server/scripts`
 - GitHub Actions quality workflows
 
 Not implemented yet:
-- Godot browser client
 - real WebRTC transport integration
+- full Godot gameplay rendering
 - content loading and validation
 - full combat/class implementation
 
@@ -36,6 +37,17 @@ rustup run stable cargo run -p dedicated_server --quiet
 The dev adapter listens on:
 - `http://127.0.0.1:3000/healthz`
 - `ws://127.0.0.1:3000/ws`
+
+Open the Godot shell:
+
+```text
+client/godot/project.godot
+```
+
+The current Godot shell is wired to the websocket dev adapter first, not WebRTC yet.
+Known shell limitations:
+- joining a lobby currently requires a manual lobby ID
+- the backend does not yet send a full lobby snapshot to late joiners, so the roster view is best-effort from live events
 
 Run the backend-only demo slice instead:
 
@@ -162,6 +174,7 @@ Current local fallback behavior:
 
 Start with:
 - `shared/docs/00_index.md`
+- `shared/docs/08_godot_client.md`
 - `shared/docs/12_rust_tooling.md`
 - `shared/docs/13_verus_strategy.md`
 - `shared/docs/14_buildability_assessment.md`
