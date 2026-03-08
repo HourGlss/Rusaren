@@ -5,12 +5,42 @@ const Protocol := preload("res://scripts/net/protocol.gd")
 
 func _init() -> void:
 	var success := true
+	success = _assert_valid_connect_command() and success
+	success = _assert_connect_rejects_empty_name() and success
 	success = _assert_valid_primary_input() and success
 	success = _assert_move_axis_rejection() and success
 	success = _assert_missing_cast_context_rejection() and success
 	success = _assert_unexpected_context_rejection() and success
 	success = _assert_aim_range_rejection() and success
 	quit(0 if success else 1)
+
+
+func _assert_valid_connect_command() -> bool:
+	var encoded := Protocol.encode_client_command("Connect", {
+		"player_name": "Alice",
+	}, 1, 0)
+	if not bool(encoded.get("ok", false)):
+		return _fail("valid connect command should encode")
+
+	var decoded := Protocol.decode_packet(encoded.get("packet", PackedByteArray()))
+	if not bool(decoded.get("ok", false)):
+		return _fail("encoded connect command should decode as a packet")
+
+	var payload: PackedByteArray = decoded.get("payload", PackedByteArray())
+	if payload.size() != 7:
+		return _fail("encoded connect payload should contain kind + len + name bytes")
+	if int(payload[0]) != 1:
+		return _fail("encoded connect command should use kind 1")
+	if int(payload[1]) != 5:
+		return _fail("encoded connect command should prefix the player name length")
+	return true
+
+
+func _assert_connect_rejects_empty_name() -> bool:
+	var encoded := Protocol.encode_client_command("Connect", {
+		"player_name": "",
+	}, 1, 0)
+	return _expect_error(encoded, "player name must not be empty")
 
 
 func _assert_valid_primary_input() -> bool:

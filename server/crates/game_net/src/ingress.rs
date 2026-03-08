@@ -1,21 +1,19 @@
-use game_domain::PlayerId;
-
 use crate::{ClientControlCommand, PacketError};
 
 pub const MAX_INGRESS_PACKET_BYTES: usize = 1024;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct NetworkSessionGuard {
-    bound_player: Option<PlayerId>,
+    is_bound: bool,
 }
 
 impl NetworkSessionGuard {
     #[must_use]
     pub const fn new() -> Self {
-        Self { bound_player: None }
+        Self { is_bound: false }
     }
 
-    pub fn accept_packet(&mut self, packet: &[u8]) -> Result<PlayerId, PacketError> {
+    pub fn accept_packet(self, packet: &[u8]) -> Result<(), PacketError> {
         if packet.len() > MAX_INGRESS_PACKET_BYTES {
             return Err(PacketError::IngressPacketTooLarge {
                 actual: packet.len(),
@@ -23,33 +21,31 @@ impl NetworkSessionGuard {
             });
         }
 
-        match self.bound_player {
-            None => {
-                let (_, command) = ClientControlCommand::decode_packet(packet)?;
-                match command {
-                    ClientControlCommand::Connect { player_id, .. } => {
-                        self.bound_player = Some(player_id);
-                        Ok(player_id)
-                    }
-                    _ => Err(PacketError::FirstPacketMustBeConnect),
-                }
-            }
-            Some(player_id) => {
-                if matches!(
-                    ClientControlCommand::decode_packet(packet),
-                    Ok((_, ClientControlCommand::Connect { .. }))
-                ) {
-                    return Err(PacketError::ConnectCommandAfterBinding);
-                }
-
-                Ok(player_id)
-            }
+        if !self.is_bound {
+            let (_, command) = ClientControlCommand::decode_packet(packet)?;
+            return match command {
+                ClientControlCommand::Connect { .. } => Ok(()),
+                _ => Err(PacketError::FirstPacketMustBeConnect),
+            };
         }
+
+        if matches!(
+            ClientControlCommand::decode_packet(packet),
+            Ok((_, ClientControlCommand::Connect { .. }))
+        ) {
+            return Err(PacketError::ConnectCommandAfterBinding);
+        }
+
+        Ok(())
+    }
+
+    pub fn mark_bound(&mut self) {
+        self.is_bound = true;
     }
 
     #[must_use]
-    pub const fn bound_player(self) -> Option<PlayerId> {
-        self.bound_player
+    pub const fn is_bound(self) -> bool {
+        self.is_bound
     }
 }
 
@@ -57,13 +53,6 @@ impl NetworkSessionGuard {
 mod tests {
     use super::*;
     use game_domain::{PlayerName, ReadyState, TeamSide};
-
-    fn player_id(raw: u32) -> PlayerId {
-        match PlayerId::new(raw) {
-            Ok(player_id) => player_id,
-            Err(error) => panic!("valid player id expected: {error}"),
-        }
-    }
 
     fn player_name(raw: &str) -> PlayerName {
         match PlayerName::new(raw) {
@@ -74,7 +63,7 @@ mod tests {
 
     #[test]
     fn ingress_guard_requires_connect_before_other_packets() {
-        let mut guard = NetworkSessionGuard::new();
+        let guard = NetworkSessionGuard::new();
         let packet = match (ClientControlCommand::SetReady {
             ready: ReadyState::Ready,
         })
@@ -94,7 +83,6 @@ mod tests {
     fn ingress_guard_binds_on_connect_and_rejects_rebinding() {
         let mut guard = NetworkSessionGuard::new();
         let connect = match (ClientControlCommand::Connect {
-            player_id: player_id(7),
             player_name: player_name("Alice"),
         })
         .encode_packet(1, 0)
@@ -103,8 +91,10 @@ mod tests {
             Err(error) => panic!("packet should encode: {error}"),
         };
 
-        assert_eq!(guard.accept_packet(&connect), Ok(player_id(7)));
-        assert_eq!(guard.bound_player(), Some(player_id(7)));
+        assert_eq!(guard.accept_packet(&connect), Ok(()));
+        assert!(!guard.is_bound());
+        guard.mark_bound();
+        assert!(guard.is_bound());
 
         let select_team = match (ClientControlCommand::SelectTeam {
             team: TeamSide::TeamA,
@@ -114,10 +104,9 @@ mod tests {
             Ok(packet) => packet,
             Err(error) => panic!("packet should encode: {error}"),
         };
-        assert_eq!(guard.accept_packet(&select_team), Ok(player_id(7)));
+        assert_eq!(guard.accept_packet(&select_team), Ok(()));
 
         let reconnect = match (ClientControlCommand::Connect {
-            player_id: player_id(8),
             player_name: player_name("Mallory"),
         })
         .encode_packet(3, 0)
@@ -133,7 +122,7 @@ mod tests {
 
     #[test]
     fn ingress_guard_rejects_oversized_packets() {
-        let mut guard = NetworkSessionGuard::new();
+        let guard = NetworkSessionGuard::new();
         let packet = vec![0_u8; MAX_INGRESS_PACKET_BYTES + 1];
 
         assert_eq!(

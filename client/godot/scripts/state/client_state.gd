@@ -30,13 +30,16 @@ var roster := {}
 var recent_events: Array[String] = []
 
 
-func prepare_for_connection(url: String, player_id: int, player_name: String) -> void:
+func prepare_for_connection(url: String, player_name: String) -> void:
 	websocket_url = WebSocketConfigScript.new().runtime_default_url(url)
-	local_player_id = player_id
+	local_player_id = 0
 	local_player_name = player_name.strip_edges()
 	transport_state = "connecting"
 	screen = "central"
-	banner_message = "Connecting to %s as %s (#%d)." % [websocket_url, local_player_name, local_player_id]
+	banner_message = "Connecting to %s as %s. Waiting for a server-assigned player ID." % [
+		websocket_url,
+		local_player_name,
+	]
 	phase_label = "Central Lobby"
 	countdown_label = ""
 	outcome_label = ""

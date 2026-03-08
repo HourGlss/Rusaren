@@ -6,7 +6,7 @@ verus! {
 
 enum SessionState {
     AwaitingConnect,
-    Bound(int),
+    Bound,
 }
 
 spec fn valid_packet_len(len: nat, max_len: nat) -> bool {
@@ -18,10 +18,7 @@ spec fn accept_packet(
     packet_len: nat,
     max_len: nat,
     is_connect: bool,
-    claimed_player: int,
 ) -> (result: (bool, SessionState))
-    recommends
-        claimed_player > 0,
 {
     if !valid_packet_len(packet_len, max_len) {
         (false, state)
@@ -29,15 +26,15 @@ spec fn accept_packet(
         match state {
             SessionState::AwaitingConnect =>
                 if is_connect {
-                    (true, SessionState::Bound(claimed_player))
+                    (true, SessionState::AwaitingConnect)
                 } else {
                     (false, SessionState::AwaitingConnect)
                 },
-            SessionState::Bound(bound_player) =>
+            SessionState::Bound =>
                 if is_connect {
-                    (false, SessionState::Bound(bound_player))
+                    (false, SessionState::Bound)
                 } else {
-                    (true, SessionState::Bound(bound_player))
+                    (true, SessionState::Bound)
                 },
         }
     }
@@ -46,10 +43,8 @@ spec fn accept_packet(
 proof fn first_packet_must_bind(
     packet_len: nat,
     max_len: nat,
-    claimed_player: int,
 )
     requires
-        claimed_player > 0,
         valid_packet_len(packet_len, max_len),
     ensures
         accept_packet(
@@ -57,43 +52,49 @@ proof fn first_packet_must_bind(
             packet_len,
             max_len,
             true,
-            claimed_player,
-        ) == (true, SessionState::Bound(claimed_player)),
+        ) == (true, SessionState::AwaitingConnect),
         accept_packet(
             SessionState::AwaitingConnect,
             packet_len,
             max_len,
             false,
-            claimed_player,
         ) == (false, SessionState::AwaitingConnect),
 {
 }
 
-proof fn binding_is_monotonic_after_connect(
+spec fn mark_bound(state: SessionState) -> SessionState {
+    match state {
+        SessionState::AwaitingConnect => SessionState::Bound,
+        SessionState::Bound => SessionState::Bound,
+    }
+}
+
+proof fn connect_validation_precedes_binding(
     packet_len: nat,
     max_len: nat,
-    bound_player: int,
-    claimed_player: int,
 )
     requires
-        bound_player > 0,
-        claimed_player > 0,
         valid_packet_len(packet_len, max_len),
     ensures
         accept_packet(
-            SessionState::Bound(bound_player),
-            packet_len,
-            max_len,
-            false,
-            claimed_player,
-        ) == (true, SessionState::Bound(bound_player)),
-        accept_packet(
-            SessionState::Bound(bound_player),
+            SessionState::AwaitingConnect,
             packet_len,
             max_len,
             true,
-            claimed_player,
-        ) == (false, SessionState::Bound(bound_player)),
+        ) == (true, SessionState::AwaitingConnect),
+        mark_bound(SessionState::AwaitingConnect) == SessionState::Bound,
+        accept_packet(
+            SessionState::Bound,
+            packet_len,
+            max_len,
+            true,
+        ) == (false, SessionState::Bound),
+        accept_packet(
+            SessionState::Bound,
+            packet_len,
+            max_len,
+            false,
+        ) == (true, SessionState::Bound),
 {
 }
 

@@ -24,7 +24,6 @@ fn lobby_id(raw: u32) -> LobbyId {
 #[test]
 fn client_control_command_round_trips_valid_packets() {
     let command = ClientControlCommand::Connect {
-        player_id: player_id(7),
         player_name: player_name("Alice"),
     };
     let packet = command.clone().encode_packet(3, 11).expect("packet");
@@ -68,13 +67,12 @@ fn client_control_command_round_trips_all_variants() {
 
 #[test]
 fn client_control_command_rejects_invalid_ids_enums_and_trailing_bytes() {
-    let header = PacketHeader::new(ChannelId::Control, PacketKind::ControlCommand, 0, 6, 1, 1)
+    let header = PacketHeader::new(ChannelId::Control, PacketKind::ControlCommand, 0, 5, 1, 1)
         .expect("header");
-
-    let packet = header.encode(&[1, 0, 0, 0, 0, 0]);
+    let packet = header.encode(&[3, 0, 0, 0, 0]);
     assert_eq!(
         ClientControlCommand::decode_packet(&packet),
-        Err(PacketError::InvalidEncodedPlayerId(0))
+        Err(PacketError::InvalidEncodedLobbyId(0))
     );
 
     let header = PacketHeader::new(ChannelId::Control, PacketKind::ControlCommand, 0, 3, 1, 1)
@@ -114,7 +112,6 @@ fn client_control_command_rejects_wrong_packet_kinds_and_bad_names() {
 
     let long_name = "A".repeat(game_domain::MAX_PLAYER_NAME_LEN + 1);
     let mut payload = vec![1];
-    payload.extend_from_slice(&1_u32.to_le_bytes());
     payload.push(u8::try_from(long_name.len()).expect("name length should fit in u8"));
     payload.extend_from_slice(long_name.as_bytes());
     let header = PacketHeader::new(

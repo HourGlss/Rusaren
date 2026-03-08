@@ -9,7 +9,6 @@ var transport := DevSocketClientScript.new()
 var connect_button: Button
 var disconnect_button: Button
 var ws_url_input: LineEdit
-var player_id_input: LineEdit
 var player_name_input: LineEdit
 var banner_label: Label
 var status_label: Label
@@ -149,13 +148,12 @@ func _build_connection_panel() -> Control:
 	body.add_child(banner_label)
 
 	var grid := GridContainer.new()
-	grid.columns = 4
+	grid.columns = 3
 	grid.add_theme_constant_override("h_separation", 14)
 	grid.add_theme_constant_override("v_separation", 10)
 	body.add_child(grid)
 
 	ws_url_input = _labeled_line_edit(grid, "WebSocket URL", app_state.websocket_url)
-	player_id_input = _labeled_line_edit(grid, "Player ID", "1")
 	player_name_input = _labeled_line_edit(grid, "Player name", "Alice")
 	join_lobby_input = _labeled_line_edit(grid, "Join lobby ID", "")
 
@@ -543,10 +541,9 @@ func _labeled_line_edit(parent: Control, label_text: String, default_value: Stri
 
 func _on_connect_pressed() -> void:
 	var url := ws_url_input.text.strip_edges()
-	var player_id := int(player_id_input.text.strip_edges())
 	var player_name := player_name_input.text.strip_edges()
 	_next_client_input_tick = 1
-	app_state.prepare_for_connection(url, player_id, player_name)
+	app_state.prepare_for_connection(url, player_name)
 	ws_url_input.text = app_state.websocket_url
 	_refresh_ui()
 	if not transport.open(app_state.websocket_url):
@@ -645,10 +642,8 @@ func _on_transport_error(message: String) -> void:
 
 
 func _on_socket_opened() -> void:
-	var player_id := int(player_id_input.text.strip_edges())
 	var player_name := player_name_input.text.strip_edges()
 	if not transport.send_control_command("Connect", {
-		"player_id": player_id,
 		"player_name": player_name,
 	}):
 		app_state.mark_transport_error("The initial connect command could not be sent.")

@@ -23,6 +23,7 @@ Recommended client architecture:
 Current implementation status:
 - `client/godot/` now contains a thin Godot 4 shell for the websocket dev adapter.
 - The current shell uses a binary `NetAdapter` for `ClientControlCommand` and `ServerControlEvent`.
+- The current shell sends only the player name on connect; the backend assigns the runtime `player_id`.
 - The current shell renders central lobby, game lobby, launch countdown, match skill-pick state, results, and central-lobby directory snapshots.
 - The current shell now consumes authoritative full game-lobby snapshots, including late-joiner roster state and `W-L-NC`.
 - The current shell now sends real binary `InputFrame` packets for a placeholder combat action over the websocket dev adapter.
@@ -53,7 +54,7 @@ Lag handling:
 
 Current local validation:
 - Run the shell headlessly with `godot4 --headless --path client/godot --quit` to verify that the project boots.
-- Run `godot4 --headless --path client/godot -s res://tests/protocol_checks.gd` to verify the Godot packet encoder's positive and negative `InputFrame` cases.
+- Run `godot4 --headless --path client/godot -s res://tests/protocol_checks.gd` to verify the Godot packet encoder's positive and negative connect/input cases.
 - Run `godot4 --headless --path client/godot -s res://tests/web_export_checks.gd` to verify the same-origin browser websocket defaults and clickable lobby-directory formatting.
 - Run `server/scripts/export-web-client.ps1` to build the browser shell into `server/static/webclient/`.
 - For hosted deployment, build the web export first, then package it with the Rust server image described in `15_deployment_ops.md`.

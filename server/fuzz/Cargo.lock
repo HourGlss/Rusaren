@@ -251,6 +251,7 @@ dependencies = [
  "game_match",
  "game_net",
  "game_sim",
+ "getrandom",
  "tokio",
  "tower-http",
  "tracing",

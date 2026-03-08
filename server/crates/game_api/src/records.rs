@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fmt::Write as _;
 use std::fs;
@@ -7,19 +7,14 @@ use std::path::PathBuf;
 
 use game_domain::{PlayerId, PlayerName, PlayerRecord};
 
-const FIELD_COUNT: usize = 5;
+const CURRENT_FIELD_COUNT: usize = 4;
+const LEGACY_FIELD_COUNT: usize = 5;
 pub const MAX_RECORD_STORE_BYTES: u64 = 1_048_576;
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct StoredPlayerRecord {
-    player_name: PlayerName,
-    record: PlayerRecord,
-}
 
 #[derive(Debug)]
 pub struct PlayerRecordStore {
     path: Option<PathBuf>,
-    records: BTreeMap<PlayerId, StoredPlayerRecord>,
+    records: BTreeMap<PlayerName, PlayerRecord>,
 }
 
 impl PlayerRecordStore {
@@ -64,48 +59,24 @@ impl PlayerRecordStore {
 
     pub fn load_or_create(
         &mut self,
-        player_id: PlayerId,
         player_name: &PlayerName,
     ) -> Result<PlayerRecord, RecordStoreError> {
-        let mut changed = false;
-        let record = if let Some(stored) = self.records.get_mut(&player_id) {
-            if stored.player_name != *player_name {
-                stored.player_name = player_name.clone();
-                changed = true;
-            }
-            stored.record
-        } else {
-            self.records.insert(
-                player_id,
-                StoredPlayerRecord {
-                    player_name: player_name.clone(),
-                    record: PlayerRecord::new(),
-                },
-            );
-            changed = true;
-            PlayerRecord::new()
-        };
-
-        if changed {
-            self.flush()?;
+        if let Some(record) = self.records.get(player_name) {
+            return Ok(*record);
         }
 
-        Ok(record)
+        self.records
+            .insert(player_name.clone(), PlayerRecord::new());
+        self.flush()?;
+        Ok(PlayerRecord::new())
     }
 
     pub fn save(
         &mut self,
-        player_id: PlayerId,
         player_name: &PlayerName,
         record: PlayerRecord,
     ) -> Result<(), RecordStoreError> {
-        self.records.insert(
-            player_id,
-            StoredPlayerRecord {
-                player_name: player_name.clone(),
-                record,
-            },
-        );
+        self.records.insert(player_name.clone(), record);
         self.flush()
     }
 
@@ -162,6 +133,10 @@ pub enum RecordStoreError {
         line_number: usize,
         player_id: u32,
     },
+    DuplicatePlayerName {
+        line_number: usize,
+        player_name: String,
+    },
 }
 
 impl fmt::Display for RecordStoreError {
@@ -211,14 +186,22 @@ impl fmt::Display for RecordStoreError {
                 f,
                 "player record store line {line_number} repeats player id {player_id}"
             ),
+            Self::DuplicatePlayerName {
+                line_number,
+                player_name,
+            } => write!(
+                f,
+                "player record store line {line_number} repeats player name {player_name}"
+            ),
         }
     }
 }
 
 impl std::error::Error for RecordStoreError {}
 
-fn parse_records(input: &str) -> Result<BTreeMap<PlayerId, StoredPlayerRecord>, RecordStoreError> {
-    let mut records = BTreeMap::new();
+fn parse_records(input: &str) -> Result<BTreeMap<PlayerName, PlayerRecord>, RecordStoreError> {
+    let mut records: BTreeMap<PlayerName, PlayerRecord> = BTreeMap::new();
+    let mut legacy_ids = BTreeSet::new();
 
     for (line_index, raw_line) in input.lines().enumerate() {
         let line_number = line_index + 1;
@@ -227,47 +210,79 @@ fn parse_records(input: &str) -> Result<BTreeMap<PlayerId, StoredPlayerRecord>, 
         }
 
         let fields = raw_line.split('\t').collect::<Vec<_>>();
-        if fields.len() != FIELD_COUNT {
-            return Err(RecordStoreError::MalformedLine {
-                line_number,
-                reason: format!(
-                    "expected {FIELD_COUNT} tab-separated fields, found {}",
-                    fields.len()
-                ),
-            });
+        let (legacy_player_id, player_name, record) = parse_record_fields(&fields, line_number)?;
+
+        if let Some(player_id) = legacy_player_id {
+            if !legacy_ids.insert(player_id) {
+                return Err(RecordStoreError::DuplicatePlayerId {
+                    line_number,
+                    player_id: player_id.get(),
+                });
+            }
         }
 
-        let player_id = parse_player_id(fields[0], line_number)?;
-        let player_name =
-            PlayerName::new(fields[1]).map_err(|error| RecordStoreError::MalformedLine {
-                line_number,
-                reason: error.to_string(),
-            })?;
-        let wins = parse_counter(fields[2], line_number, "wins")?;
-        let losses = parse_counter(fields[3], line_number, "losses")?;
-        let no_contests = parse_counter(fields[4], line_number, "no_contests")?;
-
-        if records.contains_key(&player_id) {
-            return Err(RecordStoreError::DuplicatePlayerId {
-                line_number,
-                player_id: player_id.get(),
-            });
+        if let Some(existing) = records.get_mut(&player_name) {
+            if legacy_player_id.is_some() {
+                existing.wins = existing.wins.saturating_add(record.wins);
+                existing.losses = existing.losses.saturating_add(record.losses);
+                existing.no_contests = existing.no_contests.saturating_add(record.no_contests);
+            } else {
+                return Err(RecordStoreError::DuplicatePlayerName {
+                    line_number,
+                    player_name: player_name.to_string(),
+                });
+            }
+        } else {
+            records.insert(player_name, record);
         }
-
-        records.insert(
-            player_id,
-            StoredPlayerRecord {
-                player_name,
-                record: PlayerRecord {
-                    wins,
-                    losses,
-                    no_contests,
-                },
-            },
-        );
     }
 
     Ok(records)
+}
+
+fn parse_record_fields(
+    fields: &[&str],
+    line_number: usize,
+) -> Result<(Option<PlayerId>, PlayerName, PlayerRecord), RecordStoreError> {
+    match fields.len() {
+        CURRENT_FIELD_COUNT => {
+            let player_name = parse_player_name(fields[0], line_number)?;
+            let record = parse_record_counters(fields[1], fields[2], fields[3], line_number)?;
+            Ok((None, player_name, record))
+        }
+        LEGACY_FIELD_COUNT => {
+            let player_id = parse_player_id(fields[0], line_number)?;
+            let player_name = parse_player_name(fields[1], line_number)?;
+            let record = parse_record_counters(fields[2], fields[3], fields[4], line_number)?;
+            Ok((Some(player_id), player_name, record))
+        }
+        other => Err(RecordStoreError::MalformedLine {
+            line_number,
+            reason: format!(
+                "expected {CURRENT_FIELD_COUNT} or {LEGACY_FIELD_COUNT} tab-separated fields, found {other}"
+            ),
+        }),
+    }
+}
+
+fn parse_player_name(raw: &str, line_number: usize) -> Result<PlayerName, RecordStoreError> {
+    PlayerName::new(raw).map_err(|error| RecordStoreError::MalformedLine {
+        line_number,
+        reason: error.to_string(),
+    })
+}
+
+fn parse_record_counters(
+    wins: &str,
+    losses: &str,
+    no_contests: &str,
+    line_number: usize,
+) -> Result<PlayerRecord, RecordStoreError> {
+    Ok(PlayerRecord {
+        wins: parse_counter(wins, line_number, "wins")?,
+        losses: parse_counter(losses, line_number, "losses")?,
+        no_contests: parse_counter(no_contests, line_number, "no_contests")?,
+    })
 }
 
 fn parse_player_id(raw: &str, line_number: usize) -> Result<PlayerId, RecordStoreError> {
@@ -296,17 +311,13 @@ fn parse_counter(
         })
 }
 
-fn serialize_records(records: &BTreeMap<PlayerId, StoredPlayerRecord>) -> String {
+fn serialize_records(records: &BTreeMap<PlayerName, PlayerRecord>) -> String {
     let mut output = String::new();
-    for (player_id, stored) in records {
+    for (player_name, record) in records {
         let _ = writeln!(
             output,
-            "{}\t{}\t{}\t{}\t{}",
-            player_id.get(),
-            stored.player_name,
-            stored.record.wins,
-            stored.record.losses,
-            stored.record.no_contests
+            "{}\t{}\t{}\t{}",
+            player_name, record.wins, record.losses, record.no_contests
         );
     }
     output
@@ -317,10 +328,6 @@ mod tests {
     use super::*;
     use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
-
-    fn player_id(raw: u32) -> PlayerId {
-        PlayerId::new(raw).expect("valid player id")
-    }
 
     fn player_name(raw: &str) -> PlayerName {
         PlayerName::new(raw).expect("valid player name")
@@ -350,7 +357,7 @@ mod tests {
         let mut store = PlayerRecordStore::new_ephemeral();
         assert_eq!(
             store
-                .load_or_create(player_id(1), &player_name("Alice"))
+                .load_or_create(&player_name("Alice"))
                 .expect("record should load"),
             PlayerRecord::new()
         );
@@ -361,12 +368,12 @@ mod tests {
             no_contests: 3,
         };
         store
-            .save(player_id(1), &player_name("Alice"), updated)
+            .save(&player_name("Alice"), updated)
             .expect("record should save");
 
         assert_eq!(
             store
-                .load_or_create(player_id(1), &player_name("Alice"))
+                .load_or_create(&player_name("Alice"))
                 .expect("record should reload"),
             updated
         );
@@ -380,7 +387,7 @@ mod tests {
         let mut store =
             PlayerRecordStore::new_persistent(&path).expect("store should create on demand");
         let record = store
-            .load_or_create(player_id(9), &player_name("Mallory"))
+            .load_or_create(&player_name("Mallory"))
             .expect("record should load");
         assert_eq!(record, PlayerRecord::new());
 
@@ -390,7 +397,7 @@ mod tests {
             no_contests: 1,
         };
         store
-            .save(player_id(9), &player_name("Mallory"), updated)
+            .save(&player_name("Mallory"), updated)
             .expect("record should persist");
         drop(store);
 
@@ -398,7 +405,7 @@ mod tests {
             PlayerRecordStore::new_persistent(&path).expect("store should reload from disk");
         assert_eq!(
             reloaded
-                .load_or_create(player_id(9), &player_name("Mallory"))
+                .load_or_create(&player_name("Mallory"))
                 .expect("record should exist"),
             updated
         );
@@ -407,45 +414,69 @@ mod tests {
     }
 
     #[test]
-    fn persistent_store_rejects_malformed_rows_and_duplicate_ids() {
-        let bad_line = parse_records("1\tAlice\t1\t2\n");
+    fn persistent_store_rejects_malformed_rows_and_duplicate_keys() {
+        let bad_line = parse_records("Alice\t1\t2\n");
         assert!(matches!(
             bad_line,
             Err(RecordStoreError::MalformedLine { line_number: 1, .. })
         ));
 
-        let duplicate = parse_records("1\tAlice\t0\t0\t0\n1\tBob\t1\t1\t1\n");
+        let duplicate_names = parse_records("Alice\t0\t0\t0\nAlice\t1\t1\t1\n");
         assert_eq!(
-            duplicate
+            duplicate_names
                 .expect_err("duplicate rows should fail")
+                .to_string(),
+            "player record store line 2 repeats player name Alice"
+        );
+
+        let duplicate_legacy_ids = parse_records("1\tAlice\t0\t0\t0\n1\tBob\t1\t1\t1\n");
+        assert_eq!(
+            duplicate_legacy_ids
+                .expect_err("duplicate legacy ids should fail")
                 .to_string(),
             "player record store line 2 repeats player id 1"
         );
     }
 
     #[test]
-    fn canonicalize_record_store_contents_round_trips_valid_rows_and_rejects_invalid_rows() {
-        let canonical = canonicalize_record_store_contents("2\tBob\t1\t2\t3\n1\tAlice\t0\t0\t0\n")
-            .expect("valid rows should canonicalize");
-        assert_eq!(canonical, "1\tAlice\t0\t0\t0\n2\tBob\t1\t2\t3\n");
-
-        let invalid = canonicalize_record_store_contents("0\tAlice\t0\t0\t0\n");
-        assert!(matches!(
-            invalid,
-            Err(RecordStoreError::MalformedLine { line_number: 1, .. })
-        ));
+    fn legacy_rows_merge_duplicate_player_names_during_migration() {
+        let canonical =
+            canonicalize_record_store_contents("1\tAlice\t1\t2\t3\n2\tAlice\t4\t5\t6\n")
+                .expect("legacy duplicate names should merge during migration");
+        assert_eq!(canonical, "Alice\t5\t7\t9\n");
     }
 
     #[test]
-    fn persistent_store_rejects_files_that_exceed_the_maximum_size() {
-        let path = temp_path("record-store-too-large");
+    fn canonicalize_record_store_rewrites_rows_in_sorted_order() {
+        let canonical = canonicalize_record_store_contents("Mallory\t4\t2\t1\nAlice\t1\t0\t0\n")
+            .expect("canonicalization should succeed");
+        assert_eq!(canonical, "Alice\t1\t0\t0\nMallory\t4\t2\t1\n");
+    }
+
+    #[test]
+    fn canonicalize_record_store_preserves_empty_input() {
+        let canonical = canonicalize_record_store_contents("").expect("empty input should parse");
+        assert_eq!(canonical, "");
+    }
+
+    #[test]
+    fn canonicalize_record_store_reads_legacy_rows_and_rewrites_them() {
+        let canonical =
+            canonicalize_record_store_contents("9\tMallory\t4\t2\t1\n1\tAlice\t1\t0\t0\n")
+                .expect("legacy rows should parse");
+        assert_eq!(canonical, "Alice\t1\t0\t0\nMallory\t4\t2\t1\n");
+    }
+
+    #[test]
+    fn persistent_store_rejects_oversized_files() {
+        let path = temp_path("oversized-record-store");
         remove_if_exists(&path);
 
-        let oversized = vec![b'A'; usize::try_from(MAX_RECORD_STORE_BYTES).expect("usize") + 1];
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).expect("parent directory should exist");
+            fs::create_dir_all(parent).expect("test directory should exist");
         }
-        fs::write(&path, oversized).expect("oversized file should be written");
+        let oversized = "A".repeat(usize::try_from(MAX_RECORD_STORE_BYTES).unwrap_or(0) + 1);
+        fs::write(&path, oversized).expect("oversized store should be written");
 
         let error = PlayerRecordStore::new_persistent(&path)
             .expect_err("oversized record store should be rejected");

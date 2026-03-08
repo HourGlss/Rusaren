@@ -3,6 +3,7 @@ use std::io;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -23,13 +24,14 @@ use tower_http::trace::TraceLayer;
 use tracing::{debug, error, info, info_span, warn};
 
 use crate::observability::{classify_http_path, ServerObservability};
-use crate::{AppTransport, ServerApp};
+use crate::{AppTransport, ConnectionId, ServerApp};
 
 #[derive(Clone)]
 struct DevServerState {
     ingress_tx: mpsc::UnboundedSender<IngressEvent>,
     web_client_root: PathBuf,
     observability: Option<ServerObservability>,
+    next_connection_id: Arc<AtomicU64>,
 }
 
 struct RuntimeState {
@@ -49,15 +51,15 @@ impl RuntimeState {
         app.advance_seconds(transport, 1);
     }
 
-    fn disconnect_player(&mut self, player_id: PlayerId) {
+    fn disconnect_connection(&mut self, connection_id: ConnectionId) {
         let Self { app, transport, .. } = self;
-        let _ = app.disconnect_player(transport, player_id);
+        let _ = app.disconnect_connection(transport, connection_id);
     }
 }
 
 struct RealtimeTransport {
-    incoming: VecDeque<(PlayerId, Vec<u8>)>,
-    outgoing: BTreeMap<PlayerId, mpsc::UnboundedSender<Vec<u8>>>,
+    incoming: VecDeque<(ConnectionId, Vec<u8>)>,
+    outgoing: BTreeMap<ConnectionId, mpsc::UnboundedSender<Vec<u8>>>,
 }
 
 impl RealtimeTransport {
@@ -70,33 +72,33 @@ impl RealtimeTransport {
 
     fn register_client(
         &mut self,
-        player_id: PlayerId,
+        connection_id: ConnectionId,
         outbound: mpsc::UnboundedSender<Vec<u8>>,
     ) -> Result<(), &'static str> {
-        if self.outgoing.contains_key(&player_id) {
-            return Err("player is already connected");
+        if self.outgoing.contains_key(&connection_id) {
+            return Err("connection is already registered");
         }
 
-        self.outgoing.insert(player_id, outbound);
+        self.outgoing.insert(connection_id, outbound);
         Ok(())
     }
 
-    fn unregister_client(&mut self, player_id: PlayerId) {
-        self.outgoing.remove(&player_id);
+    fn unregister_client(&mut self, connection_id: ConnectionId) {
+        self.outgoing.remove(&connection_id);
     }
 
-    fn enqueue(&mut self, player_id: PlayerId, packet: Vec<u8>) {
-        self.incoming.push_back((player_id, packet));
+    fn enqueue(&mut self, connection_id: ConnectionId, packet: Vec<u8>) {
+        self.incoming.push_back((connection_id, packet));
     }
 }
 
 impl AppTransport for RealtimeTransport {
-    fn recv_from_client(&mut self) -> Option<(PlayerId, Vec<u8>)> {
+    fn recv_from_client(&mut self) -> Option<(ConnectionId, Vec<u8>)> {
         self.incoming.pop_front()
     }
 
-    fn send_to_client(&mut self, player_id: PlayerId, packet: Vec<u8>) {
-        if let Some(outbound) = self.outgoing.get(&player_id) {
+    fn send_to_client(&mut self, connection_id: ConnectionId, packet: Vec<u8>) {
+        if let Some(outbound) = self.outgoing.get(&connection_id) {
             let _ = outbound.send(packet);
         }
     }
@@ -104,17 +106,17 @@ impl AppTransport for RealtimeTransport {
 
 enum IngressEvent {
     Connect {
-        player_id: PlayerId,
+        connection_id: ConnectionId,
         outbound: mpsc::UnboundedSender<Vec<u8>>,
         packet: Vec<u8>,
-        ack: oneshot::Sender<Result<(), String>>,
+        ack: oneshot::Sender<Result<PlayerId, String>>,
     },
     Packet {
-        player_id: PlayerId,
+        connection_id: ConnectionId,
         packet: Vec<u8>,
     },
     Disconnect {
-        player_id: PlayerId,
+        connection_id: ConnectionId,
     },
 }
 
@@ -180,6 +182,7 @@ pub async fn spawn_dev_server_with_options(
     let local_addr = listener.local_addr()?;
     let (ingress_tx, ingress_rx) = mpsc::unbounded_channel();
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let next_connection_id = Arc::new(AtomicU64::new(1));
     let runtime = Arc::new(Mutex::new(RuntimeState {
         app: ServerApp::new_persistent(options.record_store_path).map_err(io::Error::other)?,
         transport: RealtimeTransport::new(),
@@ -189,6 +192,7 @@ pub async fn spawn_dev_server_with_options(
         ingress_tx: ingress_tx.clone(),
         web_client_root: options.web_client_root.clone(),
         observability: options.observability,
+        next_connection_id,
     };
 
     let ingress_task = tokio::spawn(run_ingress_loop(runtime.clone(), ingress_rx));
@@ -259,19 +263,23 @@ async fn run_ingress_loop(
         let mut runtime = runtime.lock().await;
         match event {
             IngressEvent::Connect {
-                player_id,
+                connection_id,
                 outbound,
                 packet,
                 ack,
             } => {
                 if let Err(message) = runtime
                     .transport
-                    .register_client(player_id, outbound.clone())
+                    .register_client(connection_id, outbound.clone())
                 {
                     if let Some(observability) = &runtime.observability {
                         observability.record_ingress_packet(false);
                     }
-                    warn!(player_id = player_id.get(), %message, "realtime ingress rejected duplicate connect");
+                    warn!(
+                        connection_id = connection_id.get(),
+                        %message,
+                        "realtime ingress rejected duplicate connect"
+                    );
                     send_direct_error(&outbound, message);
                     let _ = ack.send(Err(message.to_string()));
                     continue;
@@ -281,31 +289,41 @@ async fn run_ingress_loop(
                     observability.record_ingress_packet(true);
                 }
                 debug!(
-                    player_id = player_id.get(),
+                    connection_id = connection_id.get(),
                     "realtime ingress accepted connect packet"
                 );
-                runtime.transport.enqueue(player_id, packet);
+                runtime.transport.enqueue(connection_id, packet);
                 runtime.pump_transport();
-                let _ = ack.send(Ok(()));
+                if let Some(player_id) = runtime.app.player_id_for_connection(connection_id) {
+                    let _ = ack.send(Ok(player_id));
+                } else {
+                    runtime.transport.unregister_client(connection_id);
+                    let _ = ack.send(Err(String::from(
+                        "server did not bind the connection after connect",
+                    )));
+                }
             }
-            IngressEvent::Packet { player_id, packet } => {
+            IngressEvent::Packet {
+                connection_id,
+                packet,
+            } => {
                 if let Some(observability) = &runtime.observability {
                     observability.record_ingress_packet(true);
                 }
                 debug!(
-                    player_id = player_id.get(),
+                    connection_id = connection_id.get(),
                     "realtime ingress accepted packet"
                 );
-                runtime.transport.enqueue(player_id, packet);
+                runtime.transport.enqueue(connection_id, packet);
                 runtime.pump_transport();
             }
-            IngressEvent::Disconnect { player_id } => {
+            IngressEvent::Disconnect { connection_id } => {
                 info!(
-                    player_id = player_id.get(),
-                    "realtime ingress disconnected player"
+                    connection_id = connection_id.get(),
+                    "realtime ingress disconnected websocket session"
                 );
-                runtime.disconnect_player(player_id);
-                runtime.transport.unregister_client(player_id);
+                runtime.disconnect_connection(connection_id);
+                runtime.transport.unregister_client(connection_id);
             }
         }
     }
@@ -415,6 +433,7 @@ async fn websocket_upgrade(
 async fn handle_socket(state: DevServerState, socket: WebSocket) {
     let (mut sender, mut receiver) = socket.split();
     let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+    let connection_id = allocate_connection_id(&state.next_connection_id);
     let writer = tokio::spawn(async move {
         while let Some(packet) = outbound_rx.recv().await {
             if sender.send(Message::Binary(packet.into())).await.is_err() {
@@ -437,6 +456,7 @@ async fn handle_socket(state: DevServerState, socket: WebSocket) {
             Message::Binary(bytes) => {
                 let keep_open = handle_binary_message(
                     &state,
+                    connection_id,
                     &outbound_tx,
                     &mut guard,
                     &mut bound_player,
@@ -466,7 +486,12 @@ async fn handle_socket(state: DevServerState, socket: WebSocket) {
         }
         let _ = state
             .ingress_tx
-            .send(IngressEvent::Disconnect { player_id });
+            .send(IngressEvent::Disconnect { connection_id });
+        info!(
+            connection_id = connection_id.get(),
+            player_id = player_id.get(),
+            "websocket session disconnected after binding"
+        );
     }
 
     drop(outbound_tx);
@@ -476,42 +501,49 @@ async fn handle_socket(state: DevServerState, socket: WebSocket) {
 
 async fn handle_binary_message(
     state: &DevServerState,
+    connection_id: ConnectionId,
     outbound_tx: &mpsc::UnboundedSender<Vec<u8>>,
     guard: &mut NetworkSessionGuard,
     bound_player: &mut Option<PlayerId>,
     packet: Vec<u8>,
 ) -> bool {
-    let player_id = match guard.accept_packet(&packet) {
-        Ok(player_id) => player_id,
-        Err(error) => {
-            reject_socket(
-                outbound_tx,
-                state.observability.as_ref(),
-                &error.to_string(),
-            );
-            return false;
-        }
-    };
-
-    if bound_player.is_none() {
-        return bind_initial_player(state, outbound_tx, bound_player, player_id, packet).await;
+    if let Err(error) = guard.accept_packet(&packet) {
+        reject_socket(
+            outbound_tx,
+            state.observability.as_ref(),
+            &error.to_string(),
+        );
+        return false;
     }
 
-    forward_bound_packet(state, player_id, packet)
+    if bound_player.is_none() {
+        return bind_initial_player(
+            state,
+            connection_id,
+            outbound_tx,
+            guard,
+            bound_player,
+            packet,
+        )
+        .await;
+    }
+
+    forward_bound_packet(state, connection_id, packet)
 }
 
 async fn bind_initial_player(
     state: &DevServerState,
+    connection_id: ConnectionId,
     outbound_tx: &mpsc::UnboundedSender<Vec<u8>>,
+    guard: &mut NetworkSessionGuard,
     bound_player: &mut Option<PlayerId>,
-    player_id: PlayerId,
     packet: Vec<u8>,
 ) -> bool {
     let (ack_tx, ack_rx) = oneshot::channel();
     if state
         .ingress_tx
         .send(IngressEvent::Connect {
-            player_id,
+            connection_id,
             outbound: outbound_tx.clone(),
             packet,
             ack: ack_tx,
@@ -527,11 +559,13 @@ async fn bind_initial_player(
     }
 
     match ack_rx.await {
-        Ok(Ok(())) => {
+        Ok(Ok(player_id)) => {
+            guard.mark_bound();
             if let Some(observability) = &state.observability {
                 observability.record_websocket_session_bound();
             }
             info!(
+                connection_id = connection_id.get(),
                 player_id = player_id.get(),
                 "websocket session bound to player"
             );
@@ -553,10 +587,17 @@ async fn bind_initial_player(
     }
 }
 
-fn forward_bound_packet(state: &DevServerState, player_id: PlayerId, packet: Vec<u8>) -> bool {
+fn forward_bound_packet(
+    state: &DevServerState,
+    connection_id: ConnectionId,
+    packet: Vec<u8>,
+) -> bool {
     if state
         .ingress_tx
-        .send(IngressEvent::Packet { player_id, packet })
+        .send(IngressEvent::Packet {
+            connection_id,
+            packet,
+        })
         .is_ok()
     {
         return true;
@@ -567,10 +608,18 @@ fn forward_bound_packet(state: &DevServerState, player_id: PlayerId, packet: Vec
         observability.record_ingress_packet(false);
     }
     error!(
-        player_id = player_id.get(),
+        connection_id = connection_id.get(),
         "realtime ingress channel closed while forwarding packet"
     );
     false
+}
+
+fn allocate_connection_id(next_connection_id: &AtomicU64) -> ConnectionId {
+    let raw = next_connection_id.fetch_add(1, Ordering::Relaxed);
+    match ConnectionId::new(raw) {
+        Ok(connection_id) => connection_id,
+        Err(error) => panic!("generated connection id should be valid: {error}"),
+    }
 }
 
 fn send_direct_error(outbound: &mpsc::UnboundedSender<Vec<u8>>, message: &str) {

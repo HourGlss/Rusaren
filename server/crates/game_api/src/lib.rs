@@ -17,4 +17,4 @@ pub use realtime::{
 pub use records::{
     canonicalize_record_store_contents, PlayerRecordStore, RecordStoreError, MAX_RECORD_STORE_BYTES,
 };
-pub use transport::{AppTransport, HeadlessClient, InMemoryTransport};
+pub use transport::{AppTransport, ConnectionId, HeadlessClient, InMemoryTransport};

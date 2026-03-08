@@ -21,9 +21,13 @@ use game_net::{
     SequenceTracker, ServerControlEvent, ValidatedInputFrame, BUTTON_PRIMARY, BUTTON_QUIT_TO_LOBBY,
 };
 use game_sim::{MovementIntent, SimPlayerSeed, SimulationWorld};
+use getrandom::fill as fill_random;
 
 use crate::records::PlayerRecordStore;
-use crate::{transport::AppTransport, RecordStoreError};
+use crate::{
+    transport::{AppTransport, ConnectionId},
+    RecordStoreError,
+};
 
 const DEFAULT_HIT_POINTS: u16 = 100;
 
@@ -94,6 +98,8 @@ pub struct ServerApp {
     next_match_id: u32,
     clock_seconds: u32,
     record_store: PlayerRecordStore,
+    connections: BTreeMap<ConnectionId, PlayerId>,
+    player_connections: BTreeMap<PlayerId, ConnectionId>,
     players: BTreeMap<PlayerId, ConnectedPlayer>,
     game_lobbies: BTreeMap<LobbyId, GameLobbyRuntime>,
     matches: BTreeMap<MatchId, MatchRuntime>,
@@ -123,6 +129,8 @@ impl ServerApp {
             next_match_id: 1,
             clock_seconds: 0,
             record_store,
+            connections: BTreeMap::new(),
+            player_connections: BTreeMap::new(),
             players: BTreeMap::new(),
             game_lobbies: BTreeMap::new(),
             matches: BTreeMap::new(),
@@ -130,8 +138,8 @@ impl ServerApp {
     }
 
     pub fn pump_transport<T: AppTransport>(&mut self, transport: &mut T) {
-        while let Some((player_id, packet)) = transport.recv_from_client() {
-            self.handle_packet(transport, player_id, &packet);
+        while let Some((connection_id, packet)) = transport.recv_from_client() {
+            self.handle_packet(transport, connection_id, &packet);
         }
     }
 
@@ -157,6 +165,7 @@ impl ServerApp {
         match location {
             PlayerLocation::CentralLobby => {
                 self.players.remove(&player_id);
+                self.remove_player_connection(player_id);
                 self.broadcast_lobby_directory_snapshot(transport);
             }
             PlayerLocation::GameLobby(lobby_id) => {
@@ -169,6 +178,7 @@ impl ServerApp {
                 match event {
                     Ok(LobbyEvent::PlayerLeft { .. }) => {
                         self.players.remove(&player_id);
+                        self.remove_player_connection(player_id);
                         let remaining = recipients
                             .into_iter()
                             .filter(|recipient| *recipient != player_id)
@@ -185,6 +195,7 @@ impl ServerApp {
                     }
                     Ok(LobbyEvent::MatchAborted { message, .. }) => {
                         self.players.remove(&player_id);
+                        self.remove_player_connection(player_id);
                         let remaining = recipients
                             .into_iter()
                             .filter(|recipient| *recipient != player_id)
@@ -198,6 +209,7 @@ impl ServerApp {
                     }
                     Ok(other) => {
                         self.players.remove(&player_id);
+                        self.remove_player_connection(player_id);
                         self.broadcast_event(
                             transport,
                             &recipients,
@@ -217,10 +229,12 @@ impl ServerApp {
             PlayerLocation::Match(match_id) => {
                 self.end_match_as_no_contest(transport, match_id, player_id);
                 self.players.remove(&player_id);
+                self.remove_player_connection(player_id);
                 self.cleanup_finished_match(match_id);
             }
             PlayerLocation::Results(match_id) => {
                 self.players.remove(&player_id);
+                self.remove_player_connection(player_id);
                 self.cleanup_finished_match(match_id);
             }
         }
@@ -228,99 +242,97 @@ impl ServerApp {
         Ok(())
     }
 
+    pub fn disconnect_connection<T: AppTransport>(
+        &mut self,
+        transport: &mut T,
+        connection_id: ConnectionId,
+    ) -> Result<(), AppError> {
+        match self.connections.get(&connection_id).copied() {
+            Some(player_id) => self.disconnect_player(transport, player_id),
+            None => Ok(()),
+        }
+    }
+
     fn handle_packet<T: AppTransport>(
         &mut self,
         transport: &mut T,
-        player_id: PlayerId,
+        connection_id: ConnectionId,
         packet: &[u8],
     ) {
+        let bound_player = self.connections.get(&connection_id).copied();
         if let Ok((header, command)) = ClientControlCommand::decode_packet(packet) {
-            if let Some(player) = self.players.get_mut(&player_id) {
-                if let Err(error) = player.inbound_control.observe(header.seq) {
-                    self.send_error(transport, player_id, &error.to_string());
-                    return;
-                }
-            }
+            match bound_player {
+                Some(player_id) => {
+                    if let Some(player) = self.players.get_mut(&player_id) {
+                        if let Err(error) = player.inbound_control.observe(header.seq) {
+                            self.send_error(transport, player_id, &error.to_string());
+                            return;
+                        }
+                    }
 
-            self.handle_control_command(transport, player_id, header.seq, command);
+                    self.handle_control_command(
+                        transport,
+                        connection_id,
+                        player_id,
+                        header.seq,
+                        command,
+                    );
+                }
+                None => match command {
+                    ClientControlCommand::Connect { player_name } => {
+                        self.handle_connect_command(
+                            transport,
+                            connection_id,
+                            header.seq,
+                            player_name,
+                        );
+                    }
+                    _ => self.send_direct_error(
+                        transport,
+                        connection_id,
+                        "first packet must be a connect command",
+                    ),
+                },
+            }
             return;
         }
 
         match ValidatedInputFrame::decode_packet(packet) {
-            Ok((header, frame)) => {
-                if let Some(player) = self.players.get_mut(&player_id) {
-                    if let Err(error) = player.inbound_input.observe(header.seq) {
-                        self.send_error(transport, player_id, &error.to_string());
-                        return;
+            Ok((header, frame)) => match bound_player {
+                Some(player_id) => {
+                    if let Some(player) = self.players.get_mut(&player_id) {
+                        if let Err(error) = player.inbound_input.observe(header.seq) {
+                            self.send_error(transport, player_id, &error.to_string());
+                            return;
+                        }
                     }
-                }
 
-                self.handle_input_frame(transport, player_id, frame);
-            }
-            Err(error) => self.send_error(transport, player_id, &error.to_string()),
+                    self.handle_input_frame(transport, player_id, frame);
+                }
+                None => self.send_direct_error(
+                    transport,
+                    connection_id,
+                    "first packet must be a connect command",
+                ),
+            },
+            Err(error) => match bound_player {
+                Some(player_id) => self.send_error(transport, player_id, &error.to_string()),
+                None => self.send_direct_error(transport, connection_id, &error.to_string()),
+            },
         }
     }
 
     fn handle_control_command<T: AppTransport>(
         &mut self,
         transport: &mut T,
+        _connection_id: ConnectionId,
         sender_id: PlayerId,
-        seq: u32,
+        _seq: u32,
         command: ClientControlCommand,
     ) {
         match command {
-            ClientControlCommand::Connect {
-                player_id,
-                player_name,
-            } => {
-                if sender_id != player_id {
-                    self.send_error(
-                        transport,
-                        sender_id,
-                        "connect command player id must match the sender",
-                    );
-                    return;
-                }
-                if self.players.contains_key(&player_id) {
-                    self.send_error(transport, sender_id, "player is already connected");
-                    return;
-                }
-
-                let record = match self.record_store.load_or_create(player_id, &player_name) {
-                    Ok(record) => record,
-                    Err(error) => {
-                        self.send_error(transport, sender_id, &error.to_string());
-                        return;
-                    }
-                };
-
-                self.players.insert(
-                    player_id,
-                    ConnectedPlayer {
-                        player_name: player_name.clone(),
-                        record,
-                        location: PlayerLocation::CentralLobby,
-                        inbound_control: SequenceTracker::new(),
-                        inbound_input: SequenceTracker::new(),
-                        next_outbound_seq: 0,
-                    },
-                );
-                if let Some(player) = self.players.get_mut(&player_id) {
-                    if let Err(error) = player.inbound_control.observe(seq) {
-                        self.send_error(transport, sender_id, &error.to_string());
-                        return;
-                    }
-                }
-                self.send_event(
-                    transport,
-                    player_id,
-                    ServerControlEvent::Connected {
-                        player_id,
-                        player_name,
-                        record,
-                    },
-                );
-                self.send_lobby_directory_snapshot(transport, player_id);
+            ClientControlCommand::Connect { .. } => {
+                self.send_error(transport, sender_id, "player is already connected");
             }
             ClientControlCommand::CreateGameLobby => {
                 self.handle_create_game_lobby(transport, sender_id)
@@ -344,6 +356,65 @@ impl ServerApp {
                 self.handle_quit_to_central_lobby(transport, sender_id);
             }
         }
+    }
+
+    fn handle_connect_command<T: AppTransport>(
+        &mut self,
+        transport: &mut T,
+        connection_id: ConnectionId,
+        seq: u32,
+        player_name: PlayerName,
+    ) {
+        if self.connections.contains_key(&connection_id) {
+            self.send_direct_error(transport, connection_id, "connection is already bound");
+            return;
+        }
+
+        let player_id = match self.allocate_player_id() {
+            Ok(player_id) => player_id,
+            Err(message) => {
+                self.send_direct_error(transport, connection_id, &message);
+                return;
+            }
+        };
+        let record = match self.record_store.load_or_create(&player_name) {
+            Ok(record) => record,
+            Err(error) => {
+                self.send_direct_error(transport, connection_id, &error.to_string());
+                return;
+            }
+        };
+
+        let mut inbound_control = SequenceTracker::new();
+        if let Err(error) = inbound_control.observe(seq) {
+            self.send_direct_error(transport, connection_id, &error.to_string());
+            return;
+        }
+
+        self.connections.insert(connection_id, player_id);
+        self.player_connections.insert(player_id, connection_id);
+        self.players.insert(
+            player_id,
+            ConnectedPlayer {
+                player_name: player_name.clone(),
+                record,
+                location: PlayerLocation::CentralLobby,
+                inbound_control,
+                inbound_input: SequenceTracker::new(),
+                next_outbound_seq: 0,
+            },
+        );
+
+        self.send_event(
+            transport,
+            player_id,
+            ServerControlEvent::Connected {
+                player_id,
+                player_name,
+                record,
+            },
+        );
+        self.send_lobby_directory_snapshot(transport, player_id);
     }
 
     fn handle_create_game_lobby<T: AppTransport>(
@@ -1212,7 +1283,7 @@ impl ServerApp {
             return false;
         };
 
-        let save_result = self.record_store.save(player_id, &player_name, record);
+        let save_result = self.record_store.save(&player_name, record);
         match save_result {
             Ok(()) => true,
             Err(error) => {
@@ -1274,21 +1345,50 @@ impl ServerApp {
         );
     }
 
+    fn send_direct_error<T: AppTransport>(
+        &mut self,
+        transport: &mut T,
+        connection_id: ConnectionId,
+        message: &str,
+    ) {
+        self.send_direct_event(
+            transport,
+            connection_id,
+            0,
+            ServerControlEvent::Error {
+                message: message.to_string(),
+            },
+        );
+    }
+
     fn send_event<T: AppTransport>(
         &mut self,
         transport: &mut T,
         player_id: PlayerId,
         event: ServerControlEvent,
     ) {
+        let Some(connection_id) = self.player_connections.get(&player_id).copied() else {
+            return;
+        };
         let seq = match self.players.get_mut(&player_id) {
             Some(player) => player.next_outbound_seq(),
             None => 0,
         };
+        self.send_direct_event(transport, connection_id, seq, event);
+    }
+
+    fn send_direct_event<T: AppTransport>(
+        &mut self,
+        transport: &mut T,
+        connection_id: ConnectionId,
+        seq: u32,
+        event: ServerControlEvent,
+    ) {
         let packet = match event.encode_packet(seq, self.clock_seconds) {
             Ok(packet) => packet,
             Err(_) => return,
         };
-        transport.send_to_client(player_id, packet);
+        transport.send_to_client(connection_id, packet);
     }
 
     fn broadcast_event<T: AppTransport>(
@@ -1438,6 +1538,12 @@ impl ServerApp {
         }
     }
 
+    fn remove_player_connection(&mut self, player_id: PlayerId) {
+        if let Some(connection_id) = self.player_connections.remove(&player_id) {
+            self.connections.remove(&connection_id);
+        }
+    }
+
     fn allocate_lobby_id(&mut self) -> LobbyId {
         let lobby_id = match LobbyId::new(self.next_lobby_id) {
             Ok(lobby_id) => lobby_id,
@@ -1454,6 +1560,31 @@ impl ServerApp {
         };
         self.next_match_id = self.next_match_id.saturating_add(1);
         match_id
+    }
+
+    fn allocate_player_id(&self) -> Result<PlayerId, String> {
+        for _ in 0..64 {
+            let mut bytes = [0_u8; 4];
+            fill_random(&mut bytes).map_err(|error| {
+                format!("failed to allocate a secure player id from the operating system: {error}")
+            })?;
+            let raw = u32::from_le_bytes(bytes);
+            let Ok(player_id) = PlayerId::new(raw) else {
+                continue;
+            };
+            if !self.players.contains_key(&player_id) {
+                return Ok(player_id);
+            }
+        }
+
+        Err(String::from(
+            "failed to allocate a unique player id after repeated attempts",
+        ))
+    }
+
+    #[must_use]
+    pub fn player_id_for_connection(&self, connection_id: ConnectionId) -> Option<PlayerId> {
+        self.connections.get(&connection_id).copied()
     }
 
     fn decode_axis(value: i16, field: &'static str) -> Result<i8, String> {
@@ -1508,12 +1639,12 @@ mod tests {
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use crate::transport::{HeadlessClient, InMemoryTransport};
+    use crate::transport::{ConnectionId, HeadlessClient, InMemoryTransport};
     use game_domain::{PlayerName, SkillTree};
     use game_net::{LobbyDirectoryEntry, LobbySnapshotPlayer, ServerControlEvent};
 
-    fn player_id(raw: u32) -> PlayerId {
-        PlayerId::new(raw).expect("valid player id")
+    fn connection_id(raw: u64) -> ConnectionId {
+        ConnectionId::new(raw).expect("valid connection id")
     }
 
     fn player_name(raw: &str) -> PlayerName {
@@ -1581,15 +1712,22 @@ mod tests {
     fn connect_player(
         server: &mut ServerApp,
         transport: &mut InMemoryTransport,
-        raw_id: u32,
+        raw_connection_id: u64,
         raw_name: &str,
     ) -> HeadlessClient {
-        let mut client = HeadlessClient::new(player_id(raw_id), player_name(raw_name));
+        let mut client =
+            HeadlessClient::new(connection_id(raw_connection_id), player_name(raw_name));
         client.connect(transport).expect("connect packet");
         server.pump_transport(transport);
 
         let events = client.drain_events(transport).expect("connect events");
-        assert_connected(&events, player_id(raw_id), raw_name);
+        assert_connected(
+            &events,
+            client
+                .player_id()
+                .expect("headless client should receive Connected before assertions"),
+            raw_name,
+        );
         assert_directory_lobby_count(&events, 0);
         client
     }
@@ -1598,10 +1736,17 @@ mod tests {
         server: &mut ServerApp,
         transport: &mut InMemoryTransport,
     ) -> (HeadlessClient, HeadlessClient) {
-        (
-            connect_player(server, transport, 1, "Alice"),
-            connect_player(server, transport, 2, "Bob"),
-        )
+        let alice = connect_player(server, transport, 1, "Alice");
+        let bob = connect_player(server, transport, 2, "Bob");
+        assert_ne!(
+            alice
+                .player_id()
+                .expect("alice should be connected before uniqueness checks"),
+            bob.player_id()
+                .expect("bob should be connected before uniqueness checks"),
+            "server-assigned player ids should be unique across live clients"
+        );
+        (alice, bob)
     }
 
     fn lobby_id_from(events: &[ServerControlEvent]) -> LobbyId {
@@ -1822,7 +1967,11 @@ mod tests {
         let match_id = launch_match(&mut server, &mut transport, &mut alice, &mut bob);
 
         server
-            .disconnect_player(&mut transport, bob.player_id())
+            .disconnect_player(
+                &mut transport,
+                bob.player_id()
+                    .expect("bob should be connected before disconnect"),
+            )
             .expect("disconnect should work");
         let alice_events = alice
             .drain_events(&mut transport)
@@ -1869,7 +2018,7 @@ mod tests {
         let stale = ClientControlCommand::CreateGameLobby
             .encode_packet(1, 0)
             .expect("stale packet");
-        transport.send_from_client(alice.player_id(), stale);
+        transport.send_from_client(alice.connection_id(), stale);
         server.pump_transport(&mut transport);
         let alice_events = alice
             .drain_events(&mut transport)
@@ -1990,16 +2139,25 @@ mod tests {
         let _ = alice.drain_events(&mut transport).expect("alice return");
         let _ = bob.drain_events(&mut transport).expect("bob return");
         server
-            .disconnect_player(&mut transport, player_id(1))
+            .disconnect_player(
+                &mut transport,
+                alice
+                    .player_id()
+                    .expect("alice should be connected before disconnect"),
+            )
             .expect("alice disconnect");
         server
-            .disconnect_player(&mut transport, player_id(2))
+            .disconnect_player(
+                &mut transport,
+                bob.player_id()
+                    .expect("bob should be connected before disconnect"),
+            )
             .expect("bob disconnect");
 
         let mut reloaded =
             ServerApp::new_persistent(&path).expect("persistent server should reload");
         let mut transport = InMemoryTransport::new();
-        let mut alice = HeadlessClient::new(player_id(1), player_name("Alice"));
+        let mut alice = HeadlessClient::new(connection_id(9), player_name("Alice"));
         alice.connect(&mut transport).expect("connect packet");
         reloaded.pump_transport(&mut transport);
 

@@ -18,13 +18,6 @@ use tokio_tungstenite::tungstenite::Message as ClientMessage;
 type ClientStream =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
-fn player_id(raw: u32) -> PlayerId {
-    match PlayerId::new(raw) {
-        Ok(player_id) => player_id,
-        Err(error) => panic!("valid player id expected: {error}"),
-    }
-}
-
 fn player_name(raw: &str) -> PlayerName {
     match PlayerName::new(raw) {
         Ok(player_name) => player_name,
@@ -148,16 +141,29 @@ async fn send_input(
     let _ = stream.send(ClientMessage::Binary(packet.into())).await;
 }
 
-async fn connect_player(stream: &mut ClientStream, raw_id: u32, raw_name: &str) {
+async fn connect_player(stream: &mut ClientStream, raw_name: &str) {
     send_command(
         stream,
         ClientControlCommand::Connect {
-            player_id: player_id(raw_id),
             player_name: player_name(raw_name),
         },
         1,
     )
     .await;
+}
+
+fn connected_player_id(events: &[ServerControlEvent], expected_name: &str) -> PlayerId {
+    events
+        .iter()
+        .find_map(|event| match event {
+            ServerControlEvent::Connected {
+                player_id,
+                player_name,
+                ..
+            } if player_name.as_str() == expected_name => Some(*player_id),
+            _ => None,
+        })
+        .expect("connect flow should include Connected with the expected player name")
 }
 
 fn temp_record_store_path() -> PathBuf {
@@ -237,8 +243,8 @@ async fn websocket_adapter_accepts_binary_commands_and_broadcasts_events() {
     let mut alice = connect_socket(&base_url).await;
     let mut bob = connect_socket(&base_url).await;
 
-    connect_player(&mut alice, 1, "Alice").await;
-    connect_player(&mut bob, 2, "Bob").await;
+    connect_player(&mut alice, "Alice").await;
+    connect_player(&mut bob, "Bob").await;
 
     let alice_connect_events = recv_events_until(&mut alice, 3, |event| {
         matches!(event, ServerControlEvent::LobbyDirectorySnapshot { .. })
@@ -254,6 +260,8 @@ async fn websocket_adapter_accepts_binary_commands_and_broadcasts_events() {
     assert!(bob_connect_events
         .iter()
         .any(|event| matches!(event, ServerControlEvent::Connected { .. })));
+    let alice_id = connected_player_id(&alice_connect_events, "Alice");
+    let bob_id = connected_player_id(&bob_connect_events, "Bob");
 
     send_command(&mut alice, ClientControlCommand::CreateGameLobby, 2).await;
     let created_events = recv_events_until(&mut alice, 4, |event| {
@@ -275,7 +283,7 @@ async fn websocket_adapter_accepts_binary_commands_and_broadcasts_events() {
     assert!(alice_post_create.iter().any(|event| matches!(
         event,
         ServerControlEvent::GameLobbyJoined { lobby_id: current, player_id: joined_player }
-            if *current == lobby_id && *joined_player == player_id(1)
+            if *current == lobby_id && *joined_player == alice_id
     )));
 
     send_command(
@@ -295,12 +303,12 @@ async fn websocket_adapter_accepts_binary_commands_and_broadcasts_events() {
     assert!(alice_join_events.iter().any(|event| matches!(
         event,
         ServerControlEvent::GameLobbyJoined { lobby_id: current, player_id: joined_player }
-            if *current == lobby_id && *joined_player == player_id(2)
+            if *current == lobby_id && *joined_player == bob_id
     )));
     assert!(bob_join_events.iter().any(|event| matches!(
         event,
         ServerControlEvent::GameLobbyJoined { lobby_id: current, player_id: joined_player }
-            if *current == lobby_id && *joined_player == player_id(2)
+            if *current == lobby_id && *joined_player == bob_id
     )));
 
     send_command(
@@ -439,7 +447,7 @@ async fn websocket_adapter_rejects_connect_after_session_binding() {
     let (server, base_url) = start_server().await;
     let mut socket = connect_socket(&base_url).await;
 
-    connect_player(&mut socket, 1, "Alice").await;
+    connect_player(&mut socket, "Alice").await;
     let connect_events = recv_events_until(&mut socket, 3, |event| {
         matches!(event, ServerControlEvent::LobbyDirectorySnapshot { .. })
     })
@@ -451,7 +459,6 @@ async fn websocket_adapter_rejects_connect_after_session_binding() {
     send_command(
         &mut socket,
         ClientControlCommand::Connect {
-            player_id: player_id(2),
             player_name: player_name("Mallory"),
         },
         2,
@@ -508,7 +515,7 @@ async fn hosted_root_serves_the_exported_web_shell_and_keeps_websocket_routes_al
     assert!(asset_body.contains("rusaren shell"));
 
     let mut socket = connect_socket(&base_url).await;
-    connect_player(&mut socket, 1, "Alice").await;
+    connect_player(&mut socket, "Alice").await;
     let connect_events = recv_events_until(&mut socket, 3, |event| {
         matches!(event, ServerControlEvent::LobbyDirectorySnapshot { .. })
     })
@@ -558,7 +565,7 @@ async fn healthcheck_and_metrics_routes_report_expected_status_and_prometheus_te
     assert!(root_body.contains("metrics shell"));
 
     let mut socket = connect_socket(&base_url).await;
-    connect_player(&mut socket, 1, "Alice").await;
+    connect_player(&mut socket, "Alice").await;
     let _ = recv_events_until(&mut socket, 3, |event| {
         matches!(event, ServerControlEvent::LobbyDirectorySnapshot { .. })
     })
@@ -607,8 +614,8 @@ async fn websocket_adapter_finishes_a_full_match_loop_via_live_input_frames() {
     let mut alice = connect_socket(&base_url).await;
     let mut bob = connect_socket(&base_url).await;
 
-    connect_player(&mut alice, 1, "Alice").await;
-    connect_player(&mut bob, 2, "Bob").await;
+    connect_player(&mut alice, "Alice").await;
+    connect_player(&mut bob, "Bob").await;
     let _ = recv_events_until(&mut alice, 3, |event| {
         matches!(event, ServerControlEvent::LobbyDirectorySnapshot { .. })
     })
@@ -854,8 +861,8 @@ async fn websocket_adapter_rejects_input_frames_before_combat() {
     let mut alice = connect_socket(&base_url).await;
     let mut bob = connect_socket(&base_url).await;
 
-    connect_player(&mut alice, 1, "Alice").await;
-    connect_player(&mut bob, 2, "Bob").await;
+    connect_player(&mut alice, "Alice").await;
+    connect_player(&mut bob, "Bob").await;
     let _ = recv_events_until(&mut alice, 3, |event| {
         matches!(event, ServerControlEvent::LobbyDirectorySnapshot { .. })
     })

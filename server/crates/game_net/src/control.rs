@@ -9,25 +9,13 @@ const MAX_MESSAGE_BYTES: usize = 200;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ClientControlCommand {
-    Connect {
-        player_id: PlayerId,
-        player_name: PlayerName,
-    },
+    Connect { player_name: PlayerName },
     CreateGameLobby,
-    JoinGameLobby {
-        lobby_id: LobbyId,
-    },
+    JoinGameLobby { lobby_id: LobbyId },
     LeaveGameLobby,
-    SelectTeam {
-        team: TeamSide,
-    },
-    SetReady {
-        ready: ReadyState,
-    },
-    ChooseSkill {
-        tree: SkillTree,
-        tier: u8,
-    },
+    SelectTeam { team: TeamSide },
+    SetReady { ready: ReadyState },
+    ChooseSkill { tree: SkillTree, tier: u8 },
     QuitToCentralLobby,
 }
 
@@ -94,10 +82,7 @@ impl ClientControlCommand {
 
     fn encode_body(self, payload: &mut Vec<u8>) -> Result<(), PacketError> {
         match self {
-            Self::Connect {
-                player_id,
-                player_name,
-            } => encode_connect_command(payload, player_id, &player_name),
+            Self::Connect { player_name } => encode_connect_command(payload, &player_name),
             Self::CreateGameLobby | Self::LeaveGameLobby | Self::QuitToCentralLobby => Ok(()),
             Self::JoinGameLobby { lobby_id } => {
                 payload.extend_from_slice(&lobby_id.get().to_le_bytes());
@@ -470,10 +455,8 @@ impl ServerControlEvent {
 
 fn encode_connect_command(
     payload: &mut Vec<u8>,
-    player_id: PlayerId,
     player_name: &PlayerName,
 ) -> Result<(), PacketError> {
-    payload.extend_from_slice(&player_id.get().to_le_bytes());
     push_len_prefixed_string(
         payload,
         "player_name",
@@ -487,7 +470,6 @@ fn decode_connect_command(
     index: &mut usize,
 ) -> Result<ClientControlCommand, PacketError> {
     Ok(ClientControlCommand::Connect {
-        player_id: read_player_id(payload, index, "Connect")?,
         player_name: read_player_name(payload, index, "Connect")?,
     })
 }

@@ -72,7 +72,7 @@ fn replay_input_frame_corpus() {
 #[test]
 fn replay_session_ingress_corpus() {
     for bytes in corpus_files("session_ingress") {
-        let mut guard = NetworkSessionGuard::new();
+        let guard = NetworkSessionGuard::new();
         let mut index = 0_usize;
         let mut packets_seen = 0_u8;
 

@@ -4,7 +4,7 @@ use game_net::NetworkSessionGuard;
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
-    let mut guard = NetworkSessionGuard::new();
+    let guard = NetworkSessionGuard::new();
     let mut index = 0_usize;
     let mut packets_seen = 0_u8;
 

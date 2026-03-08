@@ -68,7 +68,6 @@ fn write_control_command_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
     recreate_dir(dir)?;
 
     let connect = ClientControlCommand::Connect {
-        player_id: player_id(7)?,
         player_name: player_name("Alice")?,
     }
     .encode_packet(1, 0)?;
@@ -98,9 +97,9 @@ fn write_control_command_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
     let truncated = connect[..connect.len() - 1].to_vec();
     let wrong_packet_kind =
         PacketHeader::new(ChannelId::Control, PacketKind::ControlEvent, 0, 1, 9, 0)?.encode(&[2]);
-    let invalid_player_id =
-        PacketHeader::new(ChannelId::Control, PacketKind::ControlCommand, 0, 6, 10, 0)?
-            .encode(&[1, 0, 0, 0, 0, 0]);
+    let invalid_lobby_id =
+        PacketHeader::new(ChannelId::Control, PacketKind::ControlCommand, 0, 5, 10, 0)?
+            .encode(&[3, 0, 0, 0, 0]);
     let invalid_team =
         PacketHeader::new(ChannelId::Control, PacketKind::ControlCommand, 0, 2, 11, 0)?
             .encode(&[5, 9]);
@@ -116,7 +115,6 @@ fn write_control_command_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
     let bad_name = {
         let long_name = "A".repeat(game_domain::MAX_PLAYER_NAME_LEN + 1);
         let mut payload = vec![1];
-        payload.extend_from_slice(&1_u32.to_le_bytes());
         payload.push(u8::try_from(long_name.len())?);
         payload.extend_from_slice(long_name.as_bytes());
         PacketHeader::new(
@@ -141,7 +139,7 @@ fn write_control_command_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
     write_seed(dir, "invalid_kind.bin", &invalid_kind)?;
     write_seed(dir, "truncated_connect.bin", &truncated)?;
     write_seed(dir, "wrong_packet_kind.bin", &wrong_packet_kind)?;
-    write_seed(dir, "invalid_player_id.bin", &invalid_player_id)?;
+    write_seed(dir, "invalid_lobby_id.bin", &invalid_lobby_id)?;
     write_seed(dir, "invalid_team.bin", &invalid_team)?;
     write_seed(dir, "invalid_ready.bin", &invalid_ready)?;
     write_seed(dir, "invalid_skill_tree.bin", &invalid_skill_tree)?;
@@ -216,7 +214,6 @@ fn write_session_ingress_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
     recreate_dir(dir)?;
 
     let connect = ClientControlCommand::Connect {
-        player_id: player_id(11)?,
         player_name: player_name("Mallory")?,
     }
     .encode_packet(1, 0)?;
@@ -229,7 +226,6 @@ fn write_session_ingress_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
     }
     .encode_packet(3, 0)?;
     let reconnect = ClientControlCommand::Connect {
-        player_id: player_id(12)?,
         player_name: player_name("Eve")?,
     }
     .encode_packet(4, 0)?;
@@ -523,21 +519,31 @@ fn write_player_record_store_parse_corpus(dir: &Path) -> Result<(), Box<dyn Erro
     recreate_dir(dir)?;
 
     write_seed(dir, "empty.bin", &[])?;
-    write_seed(dir, "single_valid_row.tsv", b"1\tAlice\t0\t0\t0\n")?;
+    write_seed(dir, "single_valid_row.tsv", b"Alice\t0\t0\t0\n")?;
     write_seed(
         dir,
         "unsorted_valid_rows.tsv",
+        b"Bob\t1\t2\t3\nAlice\t0\t0\t0\n",
+    )?;
+    write_seed(
+        dir,
+        "duplicate_name.tsv",
+        b"Alice\t0\t0\t0\nAlice\t1\t1\t1\n",
+    )?;
+    write_seed(
+        dir,
+        "legacy_valid_rows.tsv",
         b"2\tBob\t1\t2\t3\n1\tAlice\t0\t0\t0\n",
     )?;
     write_seed(
         dir,
-        "duplicate_id.tsv",
+        "legacy_duplicate_id.tsv",
         b"1\tAlice\t0\t0\t0\n1\tBob\t1\t1\t1\n",
     )?;
-    write_seed(dir, "bad_field_count.tsv", b"1\tAlice\t0\t0\n")?;
+    write_seed(dir, "bad_field_count.tsv", b"Alice\t0\t0\n")?;
     write_seed(dir, "bad_player_id.tsv", b"0\tAlice\t0\t0\t0\n")?;
-    write_seed(dir, "bad_counter.tsv", b"1\tAlice\t999999\t0\t0\n")?;
-    write_seed(dir, "bad_name.tsv", b"1\tbad name with spaces\t0\t0\t0\n")?;
+    write_seed(dir, "bad_counter.tsv", b"Alice\t999999\t0\t0\n")?;
+    write_seed(dir, "bad_name.tsv", b"bad name with spaces\t0\t0\t0\n")?;
     Ok(())
 }
 
@@ -603,7 +609,6 @@ fn round_number(raw: u8) -> Result<RoundNumber, Box<dyn Error>> {
 
 fn connect_valid_ingress_bind() -> Result<Vec<u8>, Box<dyn Error>> {
     ClientControlCommand::Connect {
-        player_id: player_id(11)?,
         player_name: player_name("Mallory")?,
     }
     .encode_packet(1, 0)

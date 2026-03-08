@@ -290,10 +290,7 @@ static func encode_client_command(
 
 	match command_type:
 		"Connect":
-			var player_id := int(payload.get("player_id", 0))
 			var player_name := String(payload.get("player_name", "")).strip_edges()
-			if player_id <= 0:
-				return _error("player id must be a positive integer")
 			if player_name.is_empty():
 				return _error("player name must not be empty")
 			if player_name.length() > MAX_PLAYER_NAME_LEN:
@@ -311,7 +308,6 @@ static func encode_client_command(
 				if not ascii_alphanumeric and code != 95 and code != 45:
 					return _error("player name contains unsupported characters")
 			body.append(1)
-			_push_u32(body, player_id)
 			_push_string(body, player_name)
 		"CreateGameLobby":
 			body.append(2)

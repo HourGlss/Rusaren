@@ -56,6 +56,10 @@ The dev adapter listens on:
 The dev adapter persists player `W-L-NC` records at:
 - `server/var/player_records.tsv`
 
+The client no longer chooses its own runtime player ID.
+The connect packet now sends only the player name, the Rust backend assigns a random player ID,
+and the current persistent `W-L-NC` store is keyed by player name.
+
 Open the Godot shell:
 
 ```text
@@ -288,7 +292,7 @@ Current local fallback behavior:
 Current manual full-loop slice:
 - start the Rust backend
 - export the Godot web shell and open `http://127.0.0.1:3000/` in two browser tabs, or open two native Godot clients
-- connect both players, create/join a lobby, choose teams, ready up
+- connect both players, let the server assign their runtime player IDs, create/join a lobby, choose teams, ready up
 - click a lobby from the central directory or join by manual lobby ID
 - choose a skill each round
 - press `Primary Attack` during combat to resolve the current placeholder one-hit round flow
@@ -297,7 +301,7 @@ Current manual full-loop slice:
 Current easiest full-loop slice:
 - run `./server/scripts/play-local.ps1 -GodotExecutable C:\Users\azbai\Documents\Rarena\Godot\Godot_v4.6.1-stable_win64_console.exe`
 - open two browser tabs to `http://127.0.0.1:3000/`
-- connect two players and play through the placeholder round flow
+- connect two players, receive server-assigned IDs, and play through the placeholder round flow
 
 ## Deploy
 
