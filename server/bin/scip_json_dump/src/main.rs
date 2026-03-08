@@ -217,7 +217,7 @@ mod tests {
             EnumOrUnknown::new(PositionEncoding::UTF8CodeUnitOffsetFromLineStart);
 
         let mut symbol = SymbolInformation::new();
-        symbol.symbol = String::from("rust-analyzer cargo sample 0.5.0 sample_fn().");
+        symbol.symbol = String::from("rust-analyzer cargo sample 0.6.0 sample_fn().");
         symbol.kind = EnumOrUnknown::new(symbol_information::Kind::Function);
         symbol.display_name = String::from("sample_fn");
         symbol.documentation.push(String::from("example symbol"));
@@ -225,7 +225,7 @@ mod tests {
 
         let mut occurrence = Occurrence::new();
         occurrence.range = vec![0, 0, 0, 8];
-        occurrence.symbol = String::from("rust-analyzer cargo sample 0.5.0 sample_fn().");
+        occurrence.symbol = String::from("rust-analyzer cargo sample 0.6.0 sample_fn().");
         occurrence.symbol_roles = 1;
 
         let mut document = Document::new();

@@ -6,6 +6,10 @@ Browser support is a hard requirement, so v1 transport is:
 - WebSocket for signaling and session setup
 - WebRTC DataChannel for live match traffic
 
+Current hosted-dev and hosted-MVP note:
+- `0.6.0` still serves the live playable shell over the websocket dev adapter.
+- The deploy stack already provisions the same-origin public host and a self-hosted `coturn` service so `0.7.0` can add the real WebRTC gameplay path without redesigning hosting.
+
 Do not use Godot's high-level multiplayer protocol as the wire format for the Rust server.
 
 ## Transport structure
@@ -85,6 +89,7 @@ Operational guidance:
 - Use short-lived TURN credentials issued by the HTTPS/WebSocket auth layer, not a static shared credential embedded in the client.
 - If locked-down enterprise networks matter a lot, also consider offering TURN-over-TLS on `443` in addition to `5349`.
 - TURN relay is the compatibility fallback, not the preferred steady-state path, because it adds relay bandwidth cost and some latency.
+- The `0.6.0` deploy stack already includes `coturn`, but the current playable shell still uses the websocket dev adapter until the `0.7.0` WebRTC transport lands.
 
 ## Versioning
 - Match traffic has an exact `protocol_version`.

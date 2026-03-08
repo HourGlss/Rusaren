@@ -1,0 +1,401 @@
+use std::fmt::Write as _;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HttpRouteLabel {
+    Root,
+    Healthz,
+    Metrics,
+    WebSocket,
+    StaticAsset,
+}
+
+impl HttpRouteLabel {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Root => "root",
+            Self::Healthz => "healthz",
+            Self::Metrics => "metrics",
+            Self::WebSocket => "ws",
+            Self::StaticAsset => "static_asset",
+        }
+    }
+}
+
+#[must_use]
+pub fn classify_http_path(path: &str) -> HttpRouteLabel {
+    match path {
+        "/" => HttpRouteLabel::Root,
+        "/healthz" => HttpRouteLabel::Healthz,
+        "/metrics" => HttpRouteLabel::Metrics,
+        "/ws" => HttpRouteLabel::WebSocket,
+        _ => HttpRouteLabel::StaticAsset,
+    }
+}
+
+#[derive(Debug)]
+struct ServerObservabilityInner {
+    version: String,
+    started_at: Instant,
+    http_root_requests: AtomicU64,
+    http_healthz_requests: AtomicU64,
+    http_metrics_requests: AtomicU64,
+    http_websocket_requests: AtomicU64,
+    http_static_asset_requests: AtomicU64,
+    websocket_upgrade_attempts: AtomicU64,
+    websocket_sessions_bound: AtomicU64,
+    websocket_sessions_active: AtomicU64,
+    websocket_disconnects: AtomicU64,
+    websocket_rejections: AtomicU64,
+    ingress_packets_accepted: AtomicU64,
+    ingress_packets_rejected: AtomicU64,
+    tick_iterations: AtomicU64,
+    tick_duration_last_micros: AtomicU64,
+    tick_duration_max_micros: AtomicU64,
+}
+
+impl ServerObservabilityInner {
+    fn new(version: String) -> Self {
+        Self {
+            version,
+            started_at: Instant::now(),
+            http_root_requests: AtomicU64::new(0),
+            http_healthz_requests: AtomicU64::new(0),
+            http_metrics_requests: AtomicU64::new(0),
+            http_websocket_requests: AtomicU64::new(0),
+            http_static_asset_requests: AtomicU64::new(0),
+            websocket_upgrade_attempts: AtomicU64::new(0),
+            websocket_sessions_bound: AtomicU64::new(0),
+            websocket_sessions_active: AtomicU64::new(0),
+            websocket_disconnects: AtomicU64::new(0),
+            websocket_rejections: AtomicU64::new(0),
+            ingress_packets_accepted: AtomicU64::new(0),
+            ingress_packets_rejected: AtomicU64::new(0),
+            tick_iterations: AtomicU64::new(0),
+            tick_duration_last_micros: AtomicU64::new(0),
+            tick_duration_max_micros: AtomicU64::new(0),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct ServerObservability {
+    inner: Arc<ServerObservabilityInner>,
+}
+
+impl ServerObservability {
+    #[must_use]
+    pub fn new(version: impl Into<String>) -> Self {
+        Self {
+            inner: Arc::new(ServerObservabilityInner::new(version.into())),
+        }
+    }
+
+    pub fn record_http_request(&self, route: HttpRouteLabel) {
+        let counter = match route {
+            HttpRouteLabel::Root => &self.inner.http_root_requests,
+            HttpRouteLabel::Healthz => &self.inner.http_healthz_requests,
+            HttpRouteLabel::Metrics => &self.inner.http_metrics_requests,
+            HttpRouteLabel::WebSocket => &self.inner.http_websocket_requests,
+            HttpRouteLabel::StaticAsset => &self.inner.http_static_asset_requests,
+        };
+        counter.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_websocket_upgrade_attempt(&self) {
+        self.inner
+            .websocket_upgrade_attempts
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_websocket_session_bound(&self) {
+        self.inner
+            .websocket_sessions_bound
+            .fetch_add(1, Ordering::Relaxed);
+        self.inner
+            .websocket_sessions_active
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_websocket_disconnect(&self) {
+        self.inner
+            .websocket_disconnects
+            .fetch_add(1, Ordering::Relaxed);
+        decrement_clamped(&self.inner.websocket_sessions_active);
+    }
+
+    pub fn record_websocket_rejection(&self) {
+        self.inner
+            .websocket_rejections
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_ingress_packet(&self, accepted: bool) {
+        let counter = if accepted {
+            &self.inner.ingress_packets_accepted
+        } else {
+            &self.inner.ingress_packets_rejected
+        };
+        counter.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_tick(&self, duration: Duration) {
+        let capped_micros = duration.as_micros().min(u128::from(u64::MAX));
+        let micros = u64::try_from(capped_micros).unwrap_or(u64::MAX);
+        self.inner.tick_iterations.fetch_add(1, Ordering::Relaxed);
+        self.inner
+            .tick_duration_last_micros
+            .store(micros, Ordering::Relaxed);
+        update_max(&self.inner.tick_duration_max_micros, micros);
+    }
+
+    #[must_use]
+    pub fn render_prometheus(&self) -> String {
+        let mut output = String::new();
+        write_http_metrics(&mut output, &self.inner);
+        write_websocket_metrics(&mut output, &self.inner);
+        write_ingress_metrics(&mut output, &self.inner);
+        write_tick_metrics(&mut output, &self.inner);
+        write_uptime_metric(&mut output, self.inner.started_at.elapsed());
+        write_build_info_metric(&mut output, &self.inner.version);
+        output
+    }
+}
+
+fn decrement_clamped(counter: &AtomicU64) {
+    let _ = counter.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+        Some(current.saturating_sub(1))
+    });
+}
+
+fn update_max(counter: &AtomicU64, candidate: u64) {
+    let _ = counter.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+        Some(current.max(candidate))
+    });
+}
+
+fn load_counter(counter: &AtomicU64) -> u64 {
+    counter.load(Ordering::Relaxed)
+}
+
+fn write_http_metrics(output: &mut String, inner: &ServerObservabilityInner) {
+    append_counter_group(
+        output,
+        "rarena_http_requests_total",
+        "Total HTTP requests by low-cardinality route label.",
+        &[
+            ("route", "root", load_counter(&inner.http_root_requests)),
+            (
+                "route",
+                "healthz",
+                load_counter(&inner.http_healthz_requests),
+            ),
+            (
+                "route",
+                "metrics",
+                load_counter(&inner.http_metrics_requests),
+            ),
+            ("route", "ws", load_counter(&inner.http_websocket_requests)),
+            (
+                "route",
+                "static_asset",
+                load_counter(&inner.http_static_asset_requests),
+            ),
+        ],
+    );
+}
+
+fn write_websocket_metrics(output: &mut String, inner: &ServerObservabilityInner) {
+    append_simple_counter(
+        output,
+        "rarena_websocket_upgrade_attempts_total",
+        "Total websocket upgrade attempts.",
+        load_counter(&inner.websocket_upgrade_attempts),
+    );
+    append_simple_counter(
+        output,
+        "rarena_websocket_sessions_bound_total",
+        "Total websocket sessions that successfully bound to a player id.",
+        load_counter(&inner.websocket_sessions_bound),
+    );
+    append_integer_gauge(
+        output,
+        "rarena_websocket_sessions_active",
+        "Currently active websocket sessions bound to players.",
+        load_counter(&inner.websocket_sessions_active),
+    );
+    append_simple_counter(
+        output,
+        "rarena_websocket_disconnects_total",
+        "Total websocket disconnects after a session bound to a player.",
+        load_counter(&inner.websocket_disconnects),
+    );
+    append_simple_counter(
+        output,
+        "rarena_websocket_rejections_total",
+        "Total websocket protocol or session rejections.",
+        load_counter(&inner.websocket_rejections),
+    );
+}
+
+fn write_ingress_metrics(output: &mut String, inner: &ServerObservabilityInner) {
+    append_counter_group(
+        output,
+        "rarena_ingress_packets_total",
+        "Total packets observed at the websocket ingress boundary.",
+        &[
+            (
+                "result",
+                "accepted",
+                load_counter(&inner.ingress_packets_accepted),
+            ),
+            (
+                "result",
+                "rejected",
+                load_counter(&inner.ingress_packets_rejected),
+            ),
+        ],
+    );
+}
+
+fn write_tick_metrics(output: &mut String, inner: &ServerObservabilityInner) {
+    append_simple_counter(
+        output,
+        "rarena_tick_iterations_total",
+        "Total simulation tick iterations completed by the runtime.",
+        load_counter(&inner.tick_iterations),
+    );
+    append_preformatted_gauge(
+        output,
+        "rarena_tick_duration_last_seconds",
+        "Duration of the most recent simulation tick in seconds.",
+        &format_seconds_from_micros(load_counter(&inner.tick_duration_last_micros)),
+    );
+    append_preformatted_gauge(
+        output,
+        "rarena_tick_duration_max_seconds",
+        "Maximum observed simulation tick duration in seconds.",
+        &format_seconds_from_micros(load_counter(&inner.tick_duration_max_micros)),
+    );
+}
+
+fn write_uptime_metric(output: &mut String, uptime: Duration) {
+    append_preformatted_gauge(
+        output,
+        "rarena_uptime_seconds",
+        "Server uptime in seconds since this process started.",
+        &format_duration_seconds(uptime),
+    );
+}
+
+fn write_build_info_metric(output: &mut String, version: &str) {
+    let escaped_version = escape_prometheus_label(version);
+    let _ = writeln!(
+        output,
+        "# HELP rarena_build_info Build metadata for the current Rusaren server process."
+    );
+    let _ = writeln!(output, "# TYPE rarena_build_info gauge");
+    let _ = writeln!(
+        output,
+        "rarena_build_info{{version=\"{escaped_version}\"}} 1"
+    );
+}
+
+fn format_seconds_from_micros(micros: u64) -> String {
+    format!("{}.{:06}", micros / 1_000_000, micros % 1_000_000)
+}
+
+fn format_duration_seconds(duration: Duration) -> String {
+    format!("{}.{:06}", duration.as_secs(), duration.subsec_micros())
+}
+
+fn append_simple_counter(output: &mut String, metric: &str, help: &str, value: u64) {
+    let _ = writeln!(output, "# HELP {metric} {help}");
+    let _ = writeln!(output, "# TYPE {metric} counter");
+    let _ = writeln!(output, "{metric} {value}");
+}
+
+fn append_integer_gauge(output: &mut String, metric: &str, help: &str, value: u64) {
+    let _ = writeln!(output, "# HELP {metric} {help}");
+    let _ = writeln!(output, "# TYPE {metric} gauge");
+    let _ = writeln!(output, "{metric} {value}");
+}
+
+fn append_preformatted_gauge(output: &mut String, metric: &str, help: &str, value: &str) {
+    let _ = writeln!(output, "# HELP {metric} {help}");
+    let _ = writeln!(output, "# TYPE {metric} gauge");
+    let _ = writeln!(output, "{metric} {value}");
+}
+
+fn append_counter_group(output: &mut String, metric: &str, help: &str, rows: &[(&str, &str, u64)]) {
+    let _ = writeln!(output, "# HELP {metric} {help}");
+    let _ = writeln!(output, "# TYPE {metric} counter");
+    for (label_key, label_value, value) in rows {
+        let safe_value = escape_prometheus_label(label_value);
+        let _ = writeln!(output, "{metric}{{{label_key}=\"{safe_value}\"}} {value}");
+    }
+}
+
+fn escape_prometheus_label(value: &str) -> String {
+    value
+        .replace('\\', r"\\")
+        .replace('"', "\\\"")
+        .replace('\n', r"\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classify_http_path_handles_expected_routes_and_falls_back_for_assets() {
+        assert_eq!(classify_http_path("/"), HttpRouteLabel::Root);
+        assert_eq!(classify_http_path("/healthz"), HttpRouteLabel::Healthz);
+        assert_eq!(classify_http_path("/metrics"), HttpRouteLabel::Metrics);
+        assert_eq!(classify_http_path("/ws"), HttpRouteLabel::WebSocket);
+        assert_eq!(classify_http_path("/index.js"), HttpRouteLabel::StaticAsset);
+        assert_eq!(
+            classify_http_path("/healthz/extra"),
+            HttpRouteLabel::StaticAsset
+        );
+    }
+
+    #[test]
+    fn websocket_session_gauge_never_underflows() {
+        let observability = ServerObservability::new("test");
+        observability.record_websocket_disconnect();
+
+        let metrics = observability.render_prometheus();
+        assert!(metrics.contains("rarena_websocket_sessions_active 0"));
+        assert!(metrics.contains("rarena_websocket_disconnects_total 1"));
+    }
+
+    #[test]
+    fn prometheus_render_includes_http_websocket_ingress_and_tick_metrics() {
+        let observability = ServerObservability::new("0.6.0-test");
+        observability.record_http_request(HttpRouteLabel::Root);
+        observability.record_http_request(HttpRouteLabel::Healthz);
+        observability.record_http_request(HttpRouteLabel::Metrics);
+        observability.record_websocket_upgrade_attempt();
+        observability.record_websocket_session_bound();
+        observability.record_ingress_packet(true);
+        observability.record_ingress_packet(false);
+        observability.record_tick(Duration::from_millis(12));
+        observability.record_websocket_disconnect();
+
+        let metrics = observability.render_prometheus();
+        assert!(metrics.contains("rarena_http_requests_total{route=\"root\"} 1"));
+        assert!(metrics.contains("rarena_http_requests_total{route=\"healthz\"} 1"));
+        assert!(metrics.contains("rarena_http_requests_total{route=\"metrics\"} 1"));
+        assert!(metrics.contains("rarena_websocket_upgrade_attempts_total 1"));
+        assert!(metrics.contains("rarena_websocket_sessions_bound_total 1"));
+        assert!(metrics.contains("rarena_websocket_disconnects_total 1"));
+        assert!(metrics.contains("rarena_ingress_packets_total{result=\"accepted\"} 1"));
+        assert!(metrics.contains("rarena_ingress_packets_total{result=\"rejected\"} 1"));
+        assert!(metrics.contains("rarena_tick_iterations_total 1"));
+        assert!(metrics.contains("rarena_build_info{version=\"0.6.0-test\"} 1"));
+    }
+}

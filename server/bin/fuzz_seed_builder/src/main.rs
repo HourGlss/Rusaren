@@ -27,6 +27,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     write_input_frame_corpus(&corpus_root.join("input_frame_decode"))?;
     write_session_ingress_corpus(&corpus_root.join("session_ingress"))?;
     write_server_control_event_corpus(&corpus_root.join("server_control_event_decode"))?;
+    write_http_route_classification_corpus(&corpus_root.join("http_route_classification"))?;
+    write_observability_metrics_render_corpus(&corpus_root.join("observability_metrics_render"))?;
 
     println!("Seed corpora written under {}", corpus_root.display());
     Ok(())
@@ -471,6 +473,51 @@ fn write_server_control_event_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+fn write_http_route_classification_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
+    recreate_dir(dir)?;
+
+    write_seed(dir, "empty.bin", &[])?;
+    write_seed(dir, "root.bin", b"/")?;
+    write_seed(dir, "healthz.bin", b"/healthz")?;
+    write_seed(dir, "metrics.bin", b"/metrics")?;
+    write_seed(dir, "websocket.bin", b"/ws")?;
+    write_seed(dir, "index_js.bin", b"/index.js")?;
+    write_seed(dir, "nested_asset.bin", b"/assets/shell/index.wasm")?;
+    write_seed(dir, "healthz_suffix.bin", b"/healthz/extra")?;
+    write_seed(dir, "invalid_utf8.bin", &[0x2F, 0xFF, 0x00, 0x41])?;
+    Ok(())
+}
+
+fn write_observability_metrics_render_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
+    recreate_dir(dir)?;
+
+    write_seed(dir, "empty.bin", &[])?;
+    write_seed(
+        dir,
+        "version_only.bin",
+        &observability_metrics_seed(b"0.6.0", &[]),
+    )?;
+    write_seed(
+        dir,
+        "escaped_version_and_all_ops.bin",
+        &observability_metrics_seed(
+            b"0.6.0-\"beta\"\\canary\nbuild",
+            &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+        ),
+    )?;
+    write_seed(
+        dir,
+        "disconnect_heavy.bin",
+        &observability_metrics_seed(b"disconnect-heavy", &[7, 7, 7, 6, 7, 8, 9, 10]),
+    )?;
+    write_seed(
+        dir,
+        "tick_heavy.bin",
+        &observability_metrics_seed(b"ticks", &[11, 12, 12, 11, 4, 2, 0]),
+    )?;
+    Ok(())
+}
+
 fn recreate_dir(path: &Path) -> Result<(), Box<dyn Error>> {
     if path.exists() {
         fs::remove_dir_all(path)?;
@@ -483,6 +530,19 @@ fn recreate_dir(path: &Path) -> Result<(), Box<dyn Error>> {
 fn write_seed(dir: &Path, name: &str, bytes: &[u8]) -> Result<(), Box<dyn Error>> {
     fs::write(dir.join(name), bytes)?;
     Ok(())
+}
+
+fn observability_metrics_seed(version: &[u8], operations: &[u8]) -> Vec<u8> {
+    let capped_version_len = version.len().min(32);
+    let Ok(version_len) = u8::try_from(capped_version_len) else {
+        panic!("observability metrics seed version length must fit within u8");
+    };
+
+    let mut bytes = Vec::with_capacity(1 + capped_version_len + operations.len());
+    bytes.push(version_len);
+    bytes.extend_from_slice(&version[..capped_version_len]);
+    bytes.extend_from_slice(operations);
+    bytes
 }
 
 fn prefix_packets(packets: &[Vec<u8>]) -> Vec<u8> {

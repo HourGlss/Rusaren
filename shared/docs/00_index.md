@@ -22,3 +22,5 @@ Docs:
 - 12_rust_tooling.md
 - 13_verus_strategy.md
 - 14_buildability_assessment.md
+- 15_deployment_ops.md
+- 16_runbooks.md

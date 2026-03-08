@@ -1,0 +1,79 @@
+name: deploy-stack-smoke
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/deploy-stack-smoke.yml"
+      - ".dockerignore"
+      - "deploy/**"
+      - "server/Dockerfile"
+      - "server/bin/dedicated_server/**"
+      - "server/crates/game_api/**"
+      - "README.md"
+      - "TODO.md"
+      - "shared/docs/00_index.md"
+      - "shared/docs/09_testing_ops.md"
+      - "shared/docs/14_buildability_assessment.md"
+      - "shared/docs/15_deployment_ops.md"
+      - "shared/docs/16_runbooks.md"
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - ".github/workflows/deploy-stack-smoke.yml"
+      - ".dockerignore"
+      - "deploy/**"
+      - "server/Dockerfile"
+      - "server/bin/dedicated_server/**"
+      - "server/crates/game_api/**"
+      - "README.md"
+      - "TODO.md"
+      - "shared/docs/00_index.md"
+      - "shared/docs/09_testing_ops.md"
+      - "shared/docs/14_buildability_assessment.md"
+      - "shared/docs/15_deployment_ops.md"
+      - "shared/docs/16_runbooks.md"
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Seed placeholder web bundle
+        shell: bash
+        run: |
+          mkdir -p server/static/webclient
+          cat <<'EOF' > server/static/webclient/index.html
+          <!doctype html>
+          <html>
+            <head><meta charset="utf-8"><title>Rusaren Deploy Smoke</title></head>
+            <body>Rusaren Deploy Smoke</body>
+          </html>
+          EOF
+
+      - name: Validate compose file
+        run: docker compose --env-file deploy/.env.example -f deploy/docker-compose.yml config
+
+      - name: Build server image
+        run: docker build -f server/Dockerfile -t rusaren-server:deploy-smoke .
+
+      - name: Run server image smoke test
+        shell: bash
+        run: |
+          docker run -d --rm --name rusaren-server-smoke -p 3000:3000 rusaren-server:deploy-smoke
+          trap 'docker stop rusaren-server-smoke' EXIT
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:3000/healthz >/tmp/healthz.txt; then
+              break
+            fi
+            sleep 1
+          done
+          test "$(cat /tmp/healthz.txt)" = "ok"
+          curl --fail --silent http://127.0.0.1:3000/metrics | tee /tmp/metrics.txt
+          grep -q "rarena_build_info" /tmp/metrics.txt
+          curl --fail --silent http://127.0.0.1:3000/ | tee /tmp/index.txt
+          grep -q "Rusaren Deploy Smoke" /tmp/index.txt

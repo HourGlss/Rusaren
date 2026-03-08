@@ -28,6 +28,7 @@ Current implementation status:
 - The current shell now sends real binary `InputFrame` packets for a placeholder combat action over the websocket dev adapter.
 - The current shell now exports to Web and defaults browser builds to the same-origin `/ws` endpoint.
 - The Rust dev server can now host the exported shell directly at `/`.
+- The documented production path now places Caddy in front of the Rust server for same-origin TLS while preserving the `/ws` websocket endpoint.
 - Combat rendering is still placeholder-only.
 - The current shell is intentionally websocket-first while the WebRTC transport stays in planning.
 
@@ -55,3 +56,4 @@ Current local validation:
 - Run `godot4 --headless --path client/godot -s res://tests/protocol_checks.gd` to verify the Godot packet encoder's positive and negative `InputFrame` cases.
 - Run `godot4 --headless --path client/godot -s res://tests/web_export_checks.gd` to verify the same-origin browser websocket defaults and clickable lobby-directory formatting.
 - Run `server/scripts/export-web-client.ps1` to build the browser shell into `server/static/webclient/`.
+- For hosted deployment, build the web export first, then package it with the Rust server image described in `15_deployment_ops.md`.

@@ -1,6 +1,6 @@
 # Godot Shell
 
-This is the `0.5.0` browser-safe Godot shell for the current Rust backend.
+This is the `0.6.0` browser-safe Godot shell for the current Rust backend.
 
 What it does:
 - connects to the websocket dev adapter at `ws://127.0.0.1:3000/ws`
@@ -11,6 +11,7 @@ What it does:
 - renders central-lobby, game-lobby, countdown, match, and results screens
 - consumes authoritative lobby-directory and game-lobby snapshots
 - lets players click an open lobby directly from the central directory
+- can be hosted behind the documented Caddy reverse-proxy path from `deploy/`
 
 What it does not do yet:
 - WebRTC gameplay transport

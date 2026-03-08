@@ -1,0 +1,65 @@
+# Runbooks
+
+## Deploy or update the hosted stack
+1. Export the Godot web client into `server/static/webclient/`.
+2. Update `deploy/.env`.
+3. Run:
+   - `docker compose --env-file deploy/.env -f deploy/docker-compose.yml build`
+   - `docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d`
+4. Check:
+   - `https://domain.com/`
+   - `https://domain.com/healthz`
+   - Prometheus scrape status
+
+Success criteria:
+- root page serves the shell
+- `/healthz` returns `ok`
+- Prometheus sees the backend target as `UP`
+
+## Roll back the hosted stack
+1. Restore the previous image or git revision.
+2. Rebuild or pull the prior backend image.
+3. Run:
+   - `docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d`
+4. Re-check `https://domain.com/healthz` and Prometheus target health.
+
+## Root page shows the “web client is not built yet” placeholder
+This means the backend started, but the web export bundle is missing from `server/static/webclient/`.
+
+Fix:
+1. Run `server/scripts/export-web-client.ps1`.
+2. Rebuild the backend image.
+3. Restart `rarena-server`.
+
+## `/healthz` fails
+Check in order:
+1. `docker compose ps`
+2. `docker compose logs rarena-server --tail=200`
+3. player-record volume path and filesystem permissions
+4. whether the process exited because of invalid env values
+
+## `/metrics` is empty or Prometheus target is down
+Check:
+1. `docker compose logs rarena-server --tail=200`
+2. `docker compose logs prometheus --tail=200`
+3. that `rarena-server` is healthy
+4. that `prometheus.yml` still points to `rarena-server:3000`
+
+## Logs are too noisy or too quiet
+Set `RARENA_RUST_LOG` in `deploy/.env`.
+
+Examples:
+- `info,axum=info,tower_http=info`
+- `warn,rarena_server=info,game_api=debug`
+
+Restart the stack after changing it.
+
+## coturn checklist
+Before WebRTC rollout:
+1. make sure `turn.domain.com` resolves publicly
+2. confirm ports `3478/tcp`, `3478/udp`, and the relay UDP range are open
+3. set a real `TURN_SHARED_SECRET`
+4. set the real public `TURN_EXTERNAL_IP`
+
+Current note:
+- `0.6.0` hosts `coturn`, but the public shell does not rely on it yet because gameplay is still websocket-first

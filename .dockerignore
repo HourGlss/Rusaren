@@ -1,0 +1,14 @@
+.git
+.github
+.obsidian
+.pre-commit-cache
+Godot
+client/godot/.godot
+client/godot/export
+server/fuzz/artifacts
+server/fuzz/coverage
+server/target
+server/tools
+server/var
+Thumbs.db
+.DS_Store

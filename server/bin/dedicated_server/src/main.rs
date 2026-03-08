@@ -15,6 +15,31 @@ use game_domain::{
 use game_lobby::{Lobby, LobbyEvent};
 use game_match::{MatchConfig, MatchEvent, MatchSession};
 use game_sim::{MovementIntent, SimPlayerSeed, SimulationEvent, SimulationWorld};
+use tracing::{error, info};
+use tracing_subscriber::filter::EnvFilter;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LogFormat {
+    Pretty,
+    Json,
+}
+
+impl LogFormat {
+    fn parse(raw: &str) -> Result<Self, String> {
+        if raw.eq_ignore_ascii_case("pretty") {
+            return Ok(Self::Pretty);
+        }
+        if raw.eq_ignore_ascii_case("json") {
+            return Ok(Self::Json);
+        }
+
+        Err(format!(
+            "unsupported RARENA_LOG_FORMAT '{raw}'; expected 'pretty' or 'json'"
+        ))
+    }
+}
 
 fn player_id(raw: u32) -> PlayerId {
     match PlayerId::new(raw) {
@@ -132,6 +157,84 @@ fn render_sim_event(event: &SimulationEvent) -> String {
             remaining_hit_points,
             defeated
         ),
+    }
+}
+
+fn default_record_store_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("var")
+        .join("player_records.tsv")
+}
+
+fn default_web_client_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("static")
+        .join("webclient")
+}
+
+fn parse_tick_interval(raw: Option<String>) -> Duration {
+    raw.and_then(|value| value.parse::<u64>().ok())
+        .filter(|millis| *millis > 0)
+        .map_or_else(|| Duration::from_secs(1), Duration::from_millis)
+}
+
+fn parse_log_format_from_env() -> Result<LogFormat, String> {
+    env::var("RARENA_LOG_FORMAT")
+        .map_or_else(|_| Ok(LogFormat::Pretty), |raw| LogFormat::parse(&raw))
+}
+
+fn init_tracing(log_format: LogFormat) -> Result<(), String> {
+    let env_filter = EnvFilter::try_from_default_env()
+        .or_else(|_| EnvFilter::try_new("info,axum=info,tower_http=info"))
+        .map_err(|error| format!("failed to configure tracing filter: {error}"))?;
+
+    match log_format {
+        LogFormat::Pretty => tracing_subscriber::registry()
+            .with(env_filter)
+            .with(tracing_subscriber::fmt::layer().compact())
+            .try_init()
+            .map_err(|error| format!("failed to initialize tracing: {error}")),
+        LogFormat::Json => tracing_subscriber::registry()
+            .with(env_filter)
+            .with(tracing_subscriber::fmt::layer().json())
+            .try_init()
+            .map_err(|error| format!("failed to initialize tracing: {error}")),
+    }
+}
+
+async fn wait_for_shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+
+        let mut terminate = match signal(SignalKind::terminate()) {
+            Ok(signal) => signal,
+            Err(error) => {
+                error!(%error, "failed to listen for SIGTERM, falling back to ctrl_c only");
+                let _ = tokio::signal::ctrl_c().await;
+                return;
+            }
+        };
+
+        tokio::select! {
+            result = tokio::signal::ctrl_c() => {
+                if let Err(error) = result {
+                    error!(%error, "failed to listen for ctrl_c");
+                }
+            }
+            _ = terminate.recv() => {}
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        if let Err(error) = tokio::signal::ctrl_c().await {
+            error!(%error, "failed to listen for ctrl_c");
+        }
     }
 }
 
@@ -279,40 +382,32 @@ async fn main() {
         return;
     }
 
+    let log_format = match parse_log_format_from_env() {
+        Ok(log_format) => log_format,
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+    };
+    if let Err(error) = init_tracing(log_format) {
+        eprintln!("{error}");
+        std::process::exit(1);
+    }
+
     let bind_address = env::var("RARENA_BIND").unwrap_or_else(|_| String::from("127.0.0.1:3000"));
     let listener = match tokio::net::TcpListener::bind(&bind_address).await {
         Ok(listener) => listener,
         Err(error) => {
-            eprintln!("dedicated_server failed to bind {bind_address}: {error}");
+            error!(bind_address, %error, "dedicated_server failed to bind");
             std::process::exit(1);
         }
     };
 
-    let record_store_path = env::var_os("RARENA_RECORD_STORE_PATH").map_or_else(
-        || {
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("..")
-                .join("..")
-                .join("var")
-                .join("player_records.tsv")
-        },
-        PathBuf::from,
-    );
-    let web_client_root = env::var_os("RARENA_WEB_CLIENT_ROOT").map_or_else(
-        || {
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("..")
-                .join("..")
-                .join("static")
-                .join("webclient")
-        },
-        PathBuf::from,
-    );
-    let tick_interval = env::var("RARENA_TICK_INTERVAL_MS")
-        .ok()
-        .and_then(|raw| raw.parse::<u64>().ok())
-        .filter(|millis| *millis > 0)
-        .map_or_else(|| Duration::from_secs(1), Duration::from_millis);
+    let record_store_path = env::var_os("RARENA_RECORD_STORE_PATH")
+        .map_or_else(default_record_store_path, PathBuf::from);
+    let web_client_root =
+        env::var_os("RARENA_WEB_CLIENT_ROOT").map_or_else(default_web_client_root, PathBuf::from);
+    let tick_interval = parse_tick_interval(env::var("RARENA_TICK_INTERVAL_MS").ok());
 
     let server = match spawn_dev_server_with_options(
         listener,
@@ -320,28 +415,33 @@ async fn main() {
             tick_interval,
             record_store_path,
             web_client_root,
+            observability: DevServerOptions::default().observability,
         },
     )
     .await
     {
         Ok(server) => server,
         Err(error) => {
-            eprintln!("dedicated_server failed to start websocket adapter: {error}");
+            error!(%error, "dedicated_server failed to start websocket adapter");
             std::process::exit(1);
         }
     };
 
-    println!(
-        "dedicated_server listening on http://{} and ws://{}/ws",
-        server.local_addr(),
-        server.local_addr()
+    info!(
+        http_url = %format!("http://{}", server.local_addr()),
+        websocket_url = %format!("ws://{}/ws", server.local_addr()),
+        "dedicated_server listening"
     );
-    std::future::pending::<()>().await;
+    wait_for_shutdown_signal().await;
+    info!("shutdown signal received, stopping dedicated_server");
+    server.shutdown().await;
+    info!("dedicated_server stopped");
 }
 
 #[cfg(test)]
 mod tests {
-    use super::run_demo;
+    use super::{parse_tick_interval, run_demo, LogFormat};
+    use std::time::Duration;
 
     #[test]
     fn demo_script_produces_the_expected_vertical_slice_markers() {
@@ -352,5 +452,42 @@ mod tests {
         assert!(joined.contains("combat started"));
         assert!(joined.contains("round 1 won by Team A"));
         assert!(joined.contains("NoContest"));
+    }
+
+    #[test]
+    fn parse_tick_interval_uses_default_for_missing_zero_or_invalid_values() {
+        assert_eq!(parse_tick_interval(None), Duration::from_secs(1));
+        assert_eq!(
+            parse_tick_interval(Some(String::from("0"))),
+            Duration::from_secs(1)
+        );
+        assert_eq!(
+            parse_tick_interval(Some(String::from("abc"))),
+            Duration::from_secs(1)
+        );
+    }
+
+    #[test]
+    fn parse_tick_interval_accepts_positive_milliseconds() {
+        assert_eq!(
+            parse_tick_interval(Some(String::from("25"))),
+            Duration::from_millis(25)
+        );
+    }
+
+    #[test]
+    fn parse_log_format_from_env_accepts_pretty_and_json_and_rejects_unknown_values() {
+        assert_eq!(
+            LogFormat::parse("json").expect("json log format should parse"),
+            LogFormat::Json
+        );
+        assert_eq!(
+            LogFormat::parse("PRETTY").expect("pretty log format should parse"),
+            LogFormat::Pretty
+        );
+        assert_eq!(
+            LogFormat::parse("xml").expect_err("unknown log formats should be rejected"),
+            "unsupported RARENA_LOG_FORMAT 'xml'; expected 'pretty' or 'json'"
+        );
     }
 }

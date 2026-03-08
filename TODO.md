@@ -1,23 +1,14 @@
 # Rusaren TODO
 
 Current target release line: `1.0.0`
-Current repo version: `0.5.0`
-Current roadmap position: `0.6.0 Hosting and Ops MVP`
+Current repo version: `0.6.0`
+Current roadmap position: `0.7.0 Final Transport and Replication`
 
 Completed:
 - `0.3.0 Quality Foundation`
 - `0.4.0 Backend MVP`
 - `0.5.0 Godot Web MVP`
-
-## 0.6.0 Hosting and Ops MVP
-
-- [ ] Deploy the stack on the production domain.
-- [ ] Add TLS, health checks, structured logs, Prometheus metrics, and restart policy.
-- [ ] Host `coturn` for STUN/TURN.
-- [ ] Add deployment docs and runbooks.
-
-Release gate:
-- one documented deploy path exists and the hosted stack is observable.
+- `0.6.0 Hosting and Ops MVP`
 
 ## 0.7.0 Final Transport and Replication
 

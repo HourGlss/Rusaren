@@ -29,6 +29,8 @@ Replay:
 - structured logs (match id, tick, player id)
 - metrics: tick duration, packet rates, disconnects
 - tracing for slow ticks / overload
+- expose Prometheus metrics from the Rust server and scrape them from the hosted stack
+- validate the deploy stack in CI with a same-image smoke test that checks `/`, `/healthz`, and `/metrics`
 - collect coverage and complexity reports for `game_sim`, `game_net`, and `game_content`
 - publish generated docs and API docs per commit so test/coverage output has architecture context beside it
 
@@ -38,4 +40,6 @@ Replay:
 - disconnect after launch countdown immediately ends the match
 - no reconnect-to-match flow in v1
 - fuzz protocol decode and invalid client command sequences in `game_net`
-- initial fuzz targets should stay live for packet headers, control-command decode, server-control-event decode, input-frame decode, and ingress/session sequencing
+- fuzz the low-cardinality HTTP route classifier that feeds the observability layer
+- fuzz the Prometheus observability renderer and counter/gauge update paths that back `/metrics`
+- initial fuzz targets should stay live for packet headers, control-command decode, server-control-event decode, input-frame decode, ingress/session sequencing, and the observability surface

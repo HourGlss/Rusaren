@@ -94,6 +94,8 @@ The initial real fuzz targets now live under `server/fuzz/` and cover:
 - server control event decode
 - validated input frame decode
 - ingress/session sequencing
+- HTTP route classification for the observability layer
+- Prometheus observability metric rendering and counter/gauge update flows
 
 ## Commands
 

@@ -1,0 +1,76 @@
+services:
+  rarena-server:
+    build:
+      context: ..
+      dockerfile: server/Dockerfile
+    image: rusaren/server:0.6.0
+    environment:
+      RARENA_BIND: 0.0.0.0:3000
+      RARENA_LOG_FORMAT: json
+      RUST_LOG: ${RARENA_RUST_LOG}
+      RARENA_RECORD_STORE_PATH: /app/server/var/player_records.tsv
+      RARENA_WEB_CLIENT_ROOT: /app/server/static/webclient
+    volumes:
+      - rarena_data:/app/server/var
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:3000/healthz"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  caddy:
+    image: caddy:2-alpine
+    depends_on:
+      rarena-server:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      PUBLIC_HOST: ${PUBLIC_HOST}
+      ACME_EMAIL: ${ACME_EMAIL}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:latest
+    depends_on:
+      rarena-server:
+        condition: service_healthy
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+    ports:
+      - "${PROMETHEUS_BIND}:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    restart: unless-stopped
+
+  coturn:
+    image: coturn/coturn:latest
+    command:
+      - -c
+      - /etc/coturn/turnserver.conf
+      - --realm=${TURN_REALM}
+      - --server-name=${TURN_PUBLIC_HOST}
+      - --static-auth-secret=${TURN_SHARED_SECRET}
+      - --external-ip=${TURN_EXTERNAL_IP}
+    volumes:
+      - ./coturn/turnserver.conf:/etc/coturn/turnserver.conf:ro
+    ports:
+      - "3478:3478"
+      - "3478:3478/udp"
+      - "49160-49200:49160-49200/udp"
+    restart: unless-stopped
+
+volumes:
+  rarena_data:
+  caddy_data:
+  caddy_config:
+  prometheus_data:

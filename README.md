@@ -1,6 +1,6 @@
 # Rarena
 
-Current repo version: `0.5.0`
+Current repo version: `0.6.0`
 
 Rarena is a server-authoritative arena game prototype. The current repository now contains a backend-first vertical slice for lobby, match flow, simulation, and packet validation, plus local and CI quality tooling around it.
 
@@ -12,9 +12,10 @@ Buildable now:
 - a real websocket dev adapter on top of the backend app layer
 - a Godot 4 shell under `client/godot` that drives the websocket dev adapter with real binary control packets and live combat input frames
 - a same-origin Godot Web export path hosted directly by the Rust server at `/`
+- a documented production-style deploy path with Caddy, Prometheus, and `coturn`
 - persistent player records under `server/var/player_records.tsv`
 - local quality scripts under `server/scripts`
-- GitHub Actions quality workflows plus a Godot web export smoke workflow
+- GitHub Actions quality workflows plus Godot web export and deploy smoke workflows
 
 Not implemented yet:
 - real WebRTC transport integration
@@ -40,6 +41,7 @@ rustup run stable cargo run -p dedicated_server --quiet
 
 The dev adapter listens on:
 - `http://127.0.0.1:3000/healthz`
+- `http://127.0.0.1:3000/metrics`
 - `ws://127.0.0.1:3000/ws`
 - `http://127.0.0.1:3000/` for the exported Godot web shell when `server/static/webclient` exists
 
@@ -53,7 +55,7 @@ client/godot/project.godot
 ```
 
 The current Godot shell is wired to the websocket dev adapter first, not WebRTC yet.
-The project metadata version is currently `0.5.0`.
+The project metadata version is currently `0.6.0`.
 Known shell limitations:
 - the final production transport is still planned as WebRTC, so browser play currently uses the websocket dev adapter
 - gameplay rendering is still placeholder-only even though the shell now consumes central lobby directory snapshots and full lobby snapshots
@@ -206,7 +208,7 @@ The documentation artifacts live at:
 - `server/target/reports/rustdoc/index.html`
 
 The docs report includes a per-file publication table for every Markdown file under `shared/docs`.
-The fuzz report shows corpus replay coverage, which means line coverage measured by replaying the checked-in seed corpus through the same decode and ingress APIs used by the fuzz targets.
+The fuzz report shows corpus replay coverage, which means line coverage measured by replaying the checked-in seed corpus through the same decode and ingress APIs used by the fuzz targets. The current replay set includes packet decode, ingress sequencing, HTTP route classification, and Prometheus observability metric rendering.
 
 Do not run `./scripts/quality.ps1 test` and `./scripts/quality.ps1 reports` in parallel. The coverage step uses its own target directory and those commands can interfere with each other if started at the same time.
 
@@ -262,9 +264,10 @@ Hook behavior:
 Current local fallback behavior:
 - if `cargo-nextest` is installed, the quality script uses it for the normal test task
 - if `cargo-nextest` is not installed, the quality script falls back to `cargo test`
-- fuzzing uses `cargo-fuzz` under `server/fuzz/` and currently starts with packet-header, control-command, server-control-event, input-frame, and ingress-session targets
+- fuzzing uses `cargo-fuzz` under `server/fuzz/` and currently starts with packet-header, control-command, server-control-event, input-frame, ingress-session, and HTTP-route-classification targets
 - project docs are generated from `shared/docs` through `mdBook`, while Rust API docs are generated with `cargo doc --workspace --all-features --no-deps`
 - browser-export smoke checks run in `.github/workflows/godot-web-smoke.yml` and verify that the exported shell can be hosted by `dedicated_server`
+- deploy smoke checks run in `.github/workflows/deploy-stack-smoke.yml` and validate the Docker image plus the checked-in compose path
 
 Current manual full-loop slice:
 - start the Rust backend
@@ -274,6 +277,26 @@ Current manual full-loop slice:
 - choose a skill each round
 - press `Primary Attack` during combat to resolve the current placeholder one-hit round flow
 - review the result screen and quit back to the central lobby
+
+## Deploy
+
+The checked-in `0.6.0` hosted path is:
+- `server/Dockerfile`
+- `deploy/docker-compose.yml`
+- `deploy/Caddyfile`
+- `deploy/prometheus.yml`
+- `deploy/coturn/turnserver.conf`
+- `deploy/.env.example`
+
+High-level hosted flow:
+1. export the Godot web client into `server/static/webclient/`
+2. copy `deploy/.env.example` to `deploy/.env` and fill the real host and secrets
+3. run `docker compose --env-file deploy/.env -f deploy/docker-compose.yml build`
+4. run `docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d`
+
+Use:
+- `shared/docs/15_deployment_ops.md`
+- `shared/docs/16_runbooks.md`
 
 ## Docs
 

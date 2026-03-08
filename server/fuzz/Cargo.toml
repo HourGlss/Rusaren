@@ -8,6 +8,7 @@ edition = "2021"
 cargo-fuzz = true
 
 [dependencies]
+game_api = { path = "../crates/game_api" }
 game_net = { path = "../crates/game_net" }
 libfuzzer-sys = { version = "0.4", features = ["arbitrary-derive"] }
 
@@ -45,6 +46,20 @@ bench = false
 [[bin]]
 name = "server_control_event_decode"
 path = "fuzz_targets/server_control_event_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "http_route_classification"
+path = "fuzz_targets/http_route_classification.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "observability_metrics_render"
+path = "fuzz_targets/observability_metrics_render.rs"
 test = false
 doc = false
 bench = false

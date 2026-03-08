@@ -4,11 +4,11 @@ use std::net::SocketAddr;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
-use axum::http::StatusCode;
+use axum::http::{header, Request, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, get_service};
 use axum::Router;
@@ -19,33 +19,38 @@ use tokio::net::TcpListener;
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio::task::JoinHandle;
 use tower_http::services::ServeDir;
+use tower_http::trace::TraceLayer;
+use tracing::{debug, error, info, info_span, warn};
 
+use crate::observability::{classify_http_path, ServerObservability};
 use crate::{AppTransport, ServerApp};
 
 #[derive(Clone)]
 struct DevServerState {
     ingress_tx: mpsc::UnboundedSender<IngressEvent>,
     web_client_root: PathBuf,
+    observability: Option<ServerObservability>,
 }
 
 struct RuntimeState {
     app: ServerApp,
     transport: RealtimeTransport,
+    observability: Option<ServerObservability>,
 }
 
 impl RuntimeState {
     fn pump_transport(&mut self) {
-        let Self { app, transport } = self;
+        let Self { app, transport, .. } = self;
         app.pump_transport(transport);
     }
 
     fn advance_second(&mut self) {
-        let Self { app, transport } = self;
+        let Self { app, transport, .. } = self;
         app.advance_seconds(transport, 1);
     }
 
     fn disconnect_player(&mut self, player_id: PlayerId) {
-        let Self { app, transport } = self;
+        let Self { app, transport, .. } = self;
         let _ = app.disconnect_player(transport, player_id);
     }
 }
@@ -126,6 +131,7 @@ pub struct DevServerOptions {
     pub tick_interval: Duration,
     pub record_store_path: PathBuf,
     pub web_client_root: PathBuf,
+    pub observability: Option<ServerObservability>,
 }
 
 impl Default for DevServerOptions {
@@ -134,6 +140,7 @@ impl Default for DevServerOptions {
             tick_interval: Duration::from_secs(1),
             record_store_path: default_record_store_path(),
             web_client_root: default_web_client_root(),
+            observability: Some(ServerObservability::new(env!("CARGO_PKG_VERSION"))),
         }
     }
 }
@@ -176,10 +183,12 @@ pub async fn spawn_dev_server_with_options(
     let runtime = Arc::new(Mutex::new(RuntimeState {
         app: ServerApp::new_persistent(options.record_store_path).map_err(io::Error::other)?,
         transport: RealtimeTransport::new(),
+        observability: options.observability.clone(),
     }));
     let state = DevServerState {
         ingress_tx: ingress_tx.clone(),
         web_client_root: options.web_client_root.clone(),
+        observability: options.observability,
     };
 
     let ingress_task = tokio::spawn(run_ingress_loop(runtime.clone(), ingress_rx));
@@ -225,8 +234,20 @@ fn build_router(state: DevServerState) -> Router {
     Router::new()
         .route("/", get(web_client_index))
         .route("/healthz", get(healthcheck))
+        .route("/metrics", get(metrics_export))
         .route("/ws", get(websocket_upgrade))
         .fallback_service(static_assets)
+        .layer(
+            TraceLayer::new_for_http().make_span_with(|request: &Request<_>| {
+                let route = classify_http_path(request.uri().path());
+                info_span!(
+                    "http_request",
+                    method = %request.method(),
+                    route = route.as_str(),
+                    path = %request.uri().path()
+                )
+            }),
+        )
         .with_state(state)
 }
 
@@ -247,20 +268,42 @@ async fn run_ingress_loop(
                     .transport
                     .register_client(player_id, outbound.clone())
                 {
+                    if let Some(observability) = &runtime.observability {
+                        observability.record_ingress_packet(false);
+                    }
+                    warn!(player_id = player_id.get(), %message, "realtime ingress rejected duplicate connect");
                     send_direct_error(&outbound, message);
                     let _ = ack.send(Err(message.to_string()));
                     continue;
                 }
 
+                if let Some(observability) = &runtime.observability {
+                    observability.record_ingress_packet(true);
+                }
+                debug!(
+                    player_id = player_id.get(),
+                    "realtime ingress accepted connect packet"
+                );
                 runtime.transport.enqueue(player_id, packet);
                 runtime.pump_transport();
                 let _ = ack.send(Ok(()));
             }
             IngressEvent::Packet { player_id, packet } => {
+                if let Some(observability) = &runtime.observability {
+                    observability.record_ingress_packet(true);
+                }
+                debug!(
+                    player_id = player_id.get(),
+                    "realtime ingress accepted packet"
+                );
                 runtime.transport.enqueue(player_id, packet);
                 runtime.pump_transport();
             }
             IngressEvent::Disconnect { player_id } => {
+                info!(
+                    player_id = player_id.get(),
+                    "realtime ingress disconnected player"
+                );
                 runtime.disconnect_player(player_id);
                 runtime.transport.unregister_client(player_id);
             }
@@ -273,15 +316,33 @@ async fn run_tick_loop(runtime: Arc<Mutex<RuntimeState>>, tick_interval: Duratio
     loop {
         interval.tick().await;
         let mut runtime = runtime.lock().await;
+        let started_at = Instant::now();
         runtime.advance_second();
+        let elapsed = started_at.elapsed();
+        if let Some(observability) = &runtime.observability {
+            observability.record_tick(elapsed);
+        }
+        if elapsed > tick_interval {
+            warn!(
+                tick_duration_ms = elapsed.as_secs_f64() * 1000.0,
+                configured_tick_ms = tick_interval.as_secs_f64() * 1000.0,
+                "simulation tick exceeded the configured interval"
+            );
+        }
     }
 }
 
-async fn healthcheck() -> &'static str {
+async fn healthcheck(State(state): State<DevServerState>) -> &'static str {
+    if let Some(observability) = &state.observability {
+        observability.record_http_request(crate::HttpRouteLabel::Healthz);
+    }
     "ok"
 }
 
 async fn web_client_index(State(state): State<DevServerState>) -> Response {
+    if let Some(observability) = &state.observability {
+        observability.record_http_request(crate::HttpRouteLabel::Root);
+    }
     let index_path = state.web_client_root.join("index.html");
     match tokio::fs::read_to_string(&index_path).await {
         Ok(contents) => Html(contents).into_response(),
@@ -298,6 +359,29 @@ async fn web_client_index(State(state): State<DevServerState>) -> Response {
         )
             .into_response(),
     }
+}
+
+async fn metrics_export(State(state): State<DevServerState>) -> Response {
+    if let Some(observability) = &state.observability {
+        observability.record_http_request(crate::HttpRouteLabel::Metrics);
+        return (
+            StatusCode::OK,
+            [(
+                header::CONTENT_TYPE,
+                "text/plain; version=0.0.4; charset=utf-8",
+            )],
+            observability.render_prometheus(),
+        )
+            .into_response();
+    }
+
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Html(String::from(
+            "<!doctype html><html><body><h1>Rusaren metrics are disabled</h1><p>Start the server with observability enabled to expose Prometheus metrics.</p></body></html>",
+        )),
+    )
+        .into_response()
 }
 
 fn render_missing_web_client_page(web_client_root: &Path) -> String {
@@ -319,6 +403,10 @@ async fn websocket_upgrade(
     ws: WebSocketUpgrade,
     State(state): State<DevServerState>,
 ) -> impl IntoResponse {
+    if let Some(observability) = &state.observability {
+        observability.record_http_request(crate::HttpRouteLabel::WebSocket);
+        observability.record_websocket_upgrade_attempt();
+    }
     ws.max_message_size(game_net::MAX_INGRESS_PACKET_BYTES)
         .max_frame_size(game_net::MAX_INGRESS_PACKET_BYTES)
         .on_upgrade(move |socket| handle_socket(state, socket))
@@ -337,65 +425,34 @@ async fn handle_socket(state: DevServerState, socket: WebSocket) {
 
     let mut guard = NetworkSessionGuard::new();
     let mut bound_player = None;
+    info!("websocket session opened");
 
     while let Some(message_result) = receiver.next().await {
         let Ok(message) = message_result else {
+            warn!("websocket stream ended with an error");
             break;
         };
 
         match message {
             Message::Binary(bytes) => {
-                let packet = bytes.to_vec();
-                let player_id = match guard.accept_packet(&packet) {
-                    Ok(player_id) => player_id,
-                    Err(error) => {
-                        send_direct_error(&outbound_tx, &error.to_string());
-                        break;
-                    }
-                };
-
-                if bound_player.is_none() {
-                    let (ack_tx, ack_rx) = oneshot::channel();
-                    if state
-                        .ingress_tx
-                        .send(IngressEvent::Connect {
-                            player_id,
-                            outbound: outbound_tx.clone(),
-                            packet,
-                            ack: ack_tx,
-                        })
-                        .is_err()
-                    {
-                        send_direct_error(&outbound_tx, "server is shutting down");
-                        break;
-                    }
-
-                    match ack_rx.await {
-                        Ok(Ok(())) => {
-                            bound_player = Some(player_id);
-                        }
-                        Ok(Err(message)) => {
-                            send_direct_error(&outbound_tx, &message);
-                            break;
-                        }
-                        Err(_) => {
-                            send_direct_error(
-                                &outbound_tx,
-                                "server did not accept the connect request",
-                            );
-                            break;
-                        }
-                    }
-                } else if state
-                    .ingress_tx
-                    .send(IngressEvent::Packet { player_id, packet })
-                    .is_err()
-                {
+                let keep_open = handle_binary_message(
+                    &state,
+                    &outbound_tx,
+                    &mut guard,
+                    &mut bound_player,
+                    bytes.to_vec(),
+                )
+                .await;
+                if !keep_open {
                     break;
                 }
             }
             Message::Text(_) => {
-                send_direct_error(&outbound_tx, "text websocket messages are not accepted");
+                reject_socket(
+                    &outbound_tx,
+                    state.observability.as_ref(),
+                    "text websocket messages are not accepted",
+                );
                 break;
             }
             Message::Close(_) => break,
@@ -404,6 +461,9 @@ async fn handle_socket(state: DevServerState, socket: WebSocket) {
     }
 
     if let Some(player_id) = bound_player {
+        if let Some(observability) = &state.observability {
+            observability.record_websocket_disconnect();
+        }
         let _ = state
             .ingress_tx
             .send(IngressEvent::Disconnect { player_id });
@@ -411,6 +471,106 @@ async fn handle_socket(state: DevServerState, socket: WebSocket) {
 
     drop(outbound_tx);
     let _ = writer.await;
+    info!("websocket session closed");
+}
+
+async fn handle_binary_message(
+    state: &DevServerState,
+    outbound_tx: &mpsc::UnboundedSender<Vec<u8>>,
+    guard: &mut NetworkSessionGuard,
+    bound_player: &mut Option<PlayerId>,
+    packet: Vec<u8>,
+) -> bool {
+    let player_id = match guard.accept_packet(&packet) {
+        Ok(player_id) => player_id,
+        Err(error) => {
+            reject_socket(
+                outbound_tx,
+                state.observability.as_ref(),
+                &error.to_string(),
+            );
+            return false;
+        }
+    };
+
+    if bound_player.is_none() {
+        return bind_initial_player(state, outbound_tx, bound_player, player_id, packet).await;
+    }
+
+    forward_bound_packet(state, player_id, packet)
+}
+
+async fn bind_initial_player(
+    state: &DevServerState,
+    outbound_tx: &mpsc::UnboundedSender<Vec<u8>>,
+    bound_player: &mut Option<PlayerId>,
+    player_id: PlayerId,
+    packet: Vec<u8>,
+) -> bool {
+    let (ack_tx, ack_rx) = oneshot::channel();
+    if state
+        .ingress_tx
+        .send(IngressEvent::Connect {
+            player_id,
+            outbound: outbound_tx.clone(),
+            packet,
+            ack: ack_tx,
+        })
+        .is_err()
+    {
+        reject_socket(
+            outbound_tx,
+            state.observability.as_ref(),
+            "server is shutting down",
+        );
+        return false;
+    }
+
+    match ack_rx.await {
+        Ok(Ok(())) => {
+            if let Some(observability) = &state.observability {
+                observability.record_websocket_session_bound();
+            }
+            info!(
+                player_id = player_id.get(),
+                "websocket session bound to player"
+            );
+            *bound_player = Some(player_id);
+            true
+        }
+        Ok(Err(message)) => {
+            reject_socket(outbound_tx, state.observability.as_ref(), &message);
+            false
+        }
+        Err(_) => {
+            reject_socket(
+                outbound_tx,
+                state.observability.as_ref(),
+                "server did not accept the connect request",
+            );
+            false
+        }
+    }
+}
+
+fn forward_bound_packet(state: &DevServerState, player_id: PlayerId, packet: Vec<u8>) -> bool {
+    if state
+        .ingress_tx
+        .send(IngressEvent::Packet { player_id, packet })
+        .is_ok()
+    {
+        return true;
+    }
+
+    if let Some(observability) = &state.observability {
+        observability.record_websocket_rejection();
+        observability.record_ingress_packet(false);
+    }
+    error!(
+        player_id = player_id.get(),
+        "realtime ingress channel closed while forwarding packet"
+    );
+    false
 }
 
 fn send_direct_error(outbound: &mpsc::UnboundedSender<Vec<u8>>, message: &str) {
@@ -421,4 +581,17 @@ fn send_direct_error(outbound: &mpsc::UnboundedSender<Vec<u8>>, message: &str) {
     {
         let _ = outbound.send(packet);
     }
+}
+
+fn reject_socket(
+    outbound: &mpsc::UnboundedSender<Vec<u8>>,
+    observability: Option<&ServerObservability>,
+    message: &str,
+) {
+    if let Some(observability) = observability {
+        observability.record_websocket_rejection();
+        observability.record_ingress_packet(false);
+    }
+    warn!(%message, "rejecting websocket session");
+    send_direct_error(outbound, message);
 }

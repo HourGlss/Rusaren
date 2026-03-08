@@ -678,6 +678,33 @@ function Get-FuzzTargetCatalog {
             Scope = "crates/game_net/src/control.rs plus game_domain validation via decoded lobby snapshots and records."
             Description = "Server control event decode for lobby directory and full lobby snapshot payloads."
             Paths = @("crates/game_net/src/control.rs")
+        },
+        [pscustomobject]@{
+            Target = "http_route_classification"
+            Scope = "crates/game_api/src/observability.rs plus realtime HTTP route labeling."
+            Description = "HTTP route classification for observability and low-cardinality request labeling."
+            Paths = @("crates/game_api/src/observability.rs")
+        },
+        [pscustomobject]@{
+            Target = "observability_metrics_render"
+            Scope = "crates/game_api/src/observability.rs via Prometheus rendering, counters, gauges, and route-labeled request metrics."
+            Description = "Observability metric rendering and counter/gauge update flows exposed by the hosted ops surface."
+            Paths = @("crates/game_api/src/observability.rs")
+        }
+    )
+}
+
+function Get-FuzzReplaySuites {
+    return @(
+        [pscustomobject]@{
+            Package = "game_net"
+            Test = "fuzz_corpus_replay"
+            Description = "Replay hostile network packet corpora against packet decode and ingress validation."
+        },
+        [pscustomobject]@{
+            Package = "game_api"
+            Test = "observability_fuzz_corpus"
+            Description = "Replay HTTP route classification corpora against observability route labeling."
         }
     )
 }
@@ -1731,8 +1758,11 @@ function Invoke-FuzzCoverageReport {
         Invoke-CheckedCommand -Description "cargo llvm-cov clean fuzz replay" -Command {
             rustup run stable cargo llvm-cov clean --workspace | Out-Host
         }
-        Invoke-CheckedCommand -Description "cargo llvm-cov fuzz replay" -Command {
-            rustup run stable cargo llvm-cov test -p game_net --test fuzz_corpus_replay --no-report | Out-Host
+        foreach ($replaySuite in @(Get-FuzzReplaySuites)) {
+            $description = "cargo llvm-cov fuzz replay ($($replaySuite.Package)/$($replaySuite.Test))"
+            Invoke-CheckedCommand -Description $description -Command {
+                rustup run stable cargo llvm-cov test -p $replaySuite.Package --test $replaySuite.Test --no-report | Out-Host
+            }
         }
         Invoke-CheckedCommand -Description "cargo llvm-cov fuzz json report" -Command {
             rustup run stable cargo llvm-cov report --json --summary-only --output-path $summaryPath | Out-Host

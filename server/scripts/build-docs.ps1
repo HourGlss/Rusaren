@@ -176,6 +176,8 @@ $orderedSources = @(
     "12_rust_tooling.md",
     "13_verus_strategy.md",
     "14_buildability_assessment.md",
+    "15_deployment_ops.md",
+    "16_runbooks.md",
     "classes\warrior.md",
     "classes\rogue.md",
     "classes\mage.md",
@@ -244,6 +246,8 @@ $summaryContent = @"
 - [Rust Tooling](12_rust_tooling.md)
 - [Verus Strategy](13_verus_strategy.md)
 - [Buildability Assessment](14_buildability_assessment.md)
+- [Deployment and Ops](15_deployment_ops.md)
+- [Runbooks](16_runbooks.md)
 "@
 Set-Content -Path (Join-Path $bookSourceRoot "SUMMARY.md") -Value $summaryContent -Encoding UTF8
 

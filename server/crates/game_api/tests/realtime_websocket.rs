@@ -5,7 +5,9 @@ use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use futures_util::{SinkExt, StreamExt};
-use game_api::{spawn_dev_server, spawn_dev_server_with_options, DevServerOptions};
+use game_api::{
+    spawn_dev_server, spawn_dev_server_with_options, DevServerOptions, ServerObservability,
+};
 use game_domain::{MatchOutcome, PlayerId, PlayerName, ReadyState, TeamSide};
 use game_net::{ClientControlCommand, ServerControlEvent, ValidatedInputFrame, BUTTON_PRIMARY};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -81,22 +83,14 @@ async fn start_server() -> (game_api::DevServerHandle, String) {
     (server, base_url)
 }
 
-async fn start_server_fast() -> (game_api::DevServerHandle, String) {
+async fn start_server_with_options(
+    options: DevServerOptions,
+) -> (game_api::DevServerHandle, String) {
     let listener = match TcpListener::bind("127.0.0.1:0").await {
         Ok(listener) => listener,
         Err(error) => panic!("listener should bind: {error}"),
     };
-    let record_store_path = temp_record_store_path();
-    let server = match spawn_dev_server_with_options(
-        listener,
-        DevServerOptions {
-            tick_interval: Duration::from_millis(10),
-            record_store_path,
-            web_client_root: temp_web_client_root("fast-default", None),
-        },
-    )
-    .await
-    {
+    let server = match spawn_dev_server_with_options(listener, options).await {
         Ok(server) => server,
         Err(error) => panic!("server should spawn: {error}"),
     };
@@ -104,29 +98,26 @@ async fn start_server_fast() -> (game_api::DevServerHandle, String) {
     (server, base_url)
 }
 
+async fn start_server_fast() -> (game_api::DevServerHandle, String) {
+    start_server_with_options(DevServerOptions {
+        tick_interval: Duration::from_millis(10),
+        record_store_path: temp_record_store_path(),
+        web_client_root: temp_web_client_root("fast-default", None),
+        observability: Some(ServerObservability::new("test-fast")),
+    })
+    .await
+}
+
 async fn start_server_with_web_root(
     web_client_root: PathBuf,
 ) -> (game_api::DevServerHandle, String) {
-    let listener = match TcpListener::bind("127.0.0.1:0").await {
-        Ok(listener) => listener,
-        Err(error) => panic!("listener should bind: {error}"),
-    };
-    let record_store_path = temp_record_store_path();
-    let server = match spawn_dev_server_with_options(
-        listener,
-        DevServerOptions {
-            tick_interval: Duration::from_secs(1),
-            record_store_path,
-            web_client_root,
-        },
-    )
+    start_server_with_options(DevServerOptions {
+        tick_interval: Duration::from_secs(1),
+        record_store_path: temp_record_store_path(),
+        web_client_root,
+        observability: Some(ServerObservability::new("test-web-root")),
+    })
     .await
-    {
-        Ok(server) => server,
-        Err(error) => panic!("server should spawn: {error}"),
-    };
-    let base_url = format!("ws://{}/ws", server.local_addr());
-    (server, base_url)
 }
 
 async fn connect_socket(base_url: &str) -> ClientStream {
@@ -490,6 +481,7 @@ async fn websocket_adapter_rejects_zero_tick_intervals() {
             tick_interval: Duration::ZERO,
             record_store_path: temp_record_store_path(),
             web_client_root: temp_web_client_root("zero-tick", None),
+            observability: Some(ServerObservability::new("test-zero-tick")),
         },
     )
     .await;
@@ -538,6 +530,73 @@ async fn hosted_root_returns_a_clear_placeholder_when_the_web_bundle_is_missing(
     assert_eq!(status_code, 503);
     assert!(body.contains("Rusaren web client is not built yet."));
     assert!(body.contains("export-web-client.ps1"));
+
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn healthcheck_and_metrics_routes_report_expected_status_and_prometheus_text() {
+    let observability = ServerObservability::new("test-metrics");
+    let web_client_root = temp_web_client_root(
+        "metrics-shell",
+        Some("<!doctype html><html><body>metrics shell</body></html>"),
+    );
+    let (server, base_url) = start_server_with_options(DevServerOptions {
+        tick_interval: Duration::from_millis(10),
+        record_store_path: temp_record_store_path(),
+        web_client_root,
+        observability: Some(observability.clone()),
+    })
+    .await;
+
+    let (health_status, health_body) = http_get(&base_url, "/healthz").await;
+    assert_eq!(health_status, 200);
+    assert_eq!(health_body, "ok");
+
+    let (root_status, root_body) = http_get(&base_url, "/").await;
+    assert_eq!(root_status, 200);
+    assert!(root_body.contains("metrics shell"));
+
+    let mut socket = connect_socket(&base_url).await;
+    connect_player(&mut socket, 1, "Alice").await;
+    let _ = recv_events_until(&mut socket, 3, |event| {
+        matches!(event, ServerControlEvent::LobbyDirectorySnapshot { .. })
+    })
+    .await;
+    let _ = socket.close(None).await;
+
+    tokio::time::sleep(Duration::from_millis(20)).await;
+
+    let (metrics_status, metrics_body) = http_get(&base_url, "/metrics").await;
+    assert_eq!(metrics_status, 200);
+    assert!(metrics_body.contains("rarena_http_requests_total{route=\"healthz\"} 1"));
+    assert!(metrics_body.contains("rarena_http_requests_total{route=\"root\"} 1"));
+    assert!(metrics_body.contains("rarena_http_requests_total{route=\"metrics\"} 1"));
+    assert!(metrics_body.contains("rarena_websocket_upgrade_attempts_total 1"));
+    assert!(metrics_body.contains("rarena_websocket_sessions_bound_total 1"));
+    assert!(metrics_body.contains("rarena_websocket_disconnects_total 1"));
+    assert!(metrics_body.contains("rarena_build_info{version=\"test-metrics\"} 1"));
+
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn metrics_route_returns_service_unavailable_when_observability_is_disabled() {
+    let web_client_root = temp_web_client_root(
+        "metrics-disabled",
+        Some("<!doctype html><html><body>metrics disabled shell</body></html>"),
+    );
+    let (server, base_url) = start_server_with_options(DevServerOptions {
+        tick_interval: Duration::from_secs(1),
+        record_store_path: temp_record_store_path(),
+        web_client_root,
+        observability: None,
+    })
+    .await;
+
+    let (status_code, body) = http_get(&base_url, "/metrics").await;
+    assert_eq!(status_code, 503);
+    assert!(body.contains("Rusaren metrics are disabled"));
 
     server.shutdown().await;
 }
