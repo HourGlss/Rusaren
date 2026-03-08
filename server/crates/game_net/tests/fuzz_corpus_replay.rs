@@ -19,7 +19,9 @@ fn corpus_dir(target: &str) -> PathBuf {
 fn corpus_files(target: &str) -> Vec<Vec<u8>> {
     let dir = corpus_dir(target);
     let mut entries = fs::read_dir(&dir)
-        .unwrap_or_else(|error| panic!("failed to read corpus directory {}: {error}", dir.display()))
+        .unwrap_or_else(|error| {
+            panic!("failed to read corpus directory {}: {error}", dir.display())
+        })
         .map(|entry| {
             entry.unwrap_or_else(|error| {
                 panic!("failed to read corpus entry in {}: {error}", dir.display())
@@ -36,8 +38,12 @@ fn corpus_files(target: &str) -> Vec<Vec<u8>> {
     entries
         .into_iter()
         .map(|entry| {
-            fs::read(entry.path())
-                .unwrap_or_else(|error| panic!("failed to read corpus file {}: {error}", entry.path().display()))
+            fs::read(entry.path()).unwrap_or_else(|error| {
+                panic!(
+                    "failed to read corpus file {}: {error}",
+                    entry.path().display()
+                )
+            })
         })
         .collect()
 }

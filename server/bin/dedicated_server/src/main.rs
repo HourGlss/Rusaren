@@ -4,8 +4,10 @@
 #![cfg_attr(test, allow(clippy::expect_used))]
 
 use std::env;
+use std::path::PathBuf;
+use std::time::Duration;
 
-use game_api::spawn_dev_server;
+use game_api::{spawn_dev_server_with_options, DevServerOptions};
 use game_domain::{
     LobbyId, MatchId, PlayerId, PlayerName, PlayerRecord, ReadyState, SkillChoice, SkillTree,
     TeamSide,
@@ -286,7 +288,42 @@ async fn main() {
         }
     };
 
-    let server = match spawn_dev_server(listener).await {
+    let record_store_path = env::var_os("RARENA_RECORD_STORE_PATH").map_or_else(
+        || {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("..")
+                .join("..")
+                .join("var")
+                .join("player_records.tsv")
+        },
+        PathBuf::from,
+    );
+    let web_client_root = env::var_os("RARENA_WEB_CLIENT_ROOT").map_or_else(
+        || {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("..")
+                .join("..")
+                .join("static")
+                .join("webclient")
+        },
+        PathBuf::from,
+    );
+    let tick_interval = env::var("RARENA_TICK_INTERVAL_MS")
+        .ok()
+        .and_then(|raw| raw.parse::<u64>().ok())
+        .filter(|millis| *millis > 0)
+        .map_or_else(|| Duration::from_secs(1), Duration::from_millis);
+
+    let server = match spawn_dev_server_with_options(
+        listener,
+        DevServerOptions {
+            tick_interval,
+            record_store_path,
+            web_client_root,
+        },
+    )
+    .await
+    {
         Ok(server) => server,
         Err(error) => {
             eprintln!("dedicated_server failed to start websocket adapter: {error}");
@@ -295,7 +332,8 @@ async fn main() {
     };
 
     println!(
-        "dedicated_server websocket adapter listening on ws://{}/ws",
+        "dedicated_server listening on http://{} and ws://{}/ws",
+        server.local_addr(),
         server.local_addr()
     );
     std::future::pending::<()>().await;

@@ -1,5 +1,6 @@
 #![allow(clippy::expect_used, clippy::too_many_lines)]
 
+use std::fs;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -7,6 +8,7 @@ use futures_util::{SinkExt, StreamExt};
 use game_api::{spawn_dev_server, spawn_dev_server_with_options, DevServerOptions};
 use game_domain::{MatchOutcome, PlayerId, PlayerName, ReadyState, TeamSide};
 use game_net::{ClientControlCommand, ServerControlEvent, ValidatedInputFrame, BUTTON_PRIMARY};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message as ClientMessage;
@@ -90,6 +92,32 @@ async fn start_server_fast() -> (game_api::DevServerHandle, String) {
         DevServerOptions {
             tick_interval: Duration::from_millis(10),
             record_store_path,
+            web_client_root: temp_web_client_root("fast-default", None),
+        },
+    )
+    .await
+    {
+        Ok(server) => server,
+        Err(error) => panic!("server should spawn: {error}"),
+    };
+    let base_url = format!("ws://{}/ws", server.local_addr());
+    (server, base_url)
+}
+
+async fn start_server_with_web_root(
+    web_client_root: PathBuf,
+) -> (game_api::DevServerHandle, String) {
+    let listener = match TcpListener::bind("127.0.0.1:0").await {
+        Ok(listener) => listener,
+        Err(error) => panic!("listener should bind: {error}"),
+    };
+    let record_store_path = temp_record_store_path();
+    let server = match spawn_dev_server_with_options(
+        listener,
+        DevServerOptions {
+            tick_interval: Duration::from_secs(1),
+            record_store_path,
+            web_client_root,
         },
     )
     .await
@@ -149,6 +177,69 @@ fn temp_record_store_path() -> PathBuf {
     std::env::temp_dir().join(format!("rusaren-realtime-websocket-{unique}.tsv"))
 }
 
+fn temp_web_client_root(prefix: &str, index_html: Option<&str>) -> PathBuf {
+    let unique = match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(duration) => duration.as_nanos(),
+        Err(error) => panic!("system time should be after the unix epoch: {error}"),
+    };
+    let root = std::env::temp_dir().join(format!("rusaren-web-root-{prefix}-{unique}"));
+    if let Err(error) = fs::create_dir_all(&root) {
+        panic!("temporary web client root should be created: {error}");
+    }
+
+    if let Some(index_html) = index_html {
+        if let Err(error) = fs::write(root.join("index.html"), index_html) {
+            panic!("index.html should be written: {error}");
+        }
+        if let Err(error) = fs::write(root.join("index.js"), "console.log('rusaren shell');") {
+            panic!("index.js should be written: {error}");
+        }
+    }
+
+    root
+}
+
+fn http_authority_from_ws(base_url: &str) -> String {
+    let without_scheme = base_url
+        .strip_prefix("ws://")
+        .expect("ws:// prefix expected");
+    without_scheme.trim_end_matches("/ws").to_string()
+}
+
+async fn http_get(base_url: &str, path: &str) -> (u16, String) {
+    let authority = http_authority_from_ws(base_url);
+    let mut stream = match tokio::net::TcpStream::connect(&authority).await {
+        Ok(stream) => stream,
+        Err(error) => panic!("http connection should succeed: {error}"),
+    };
+    let request = format!("GET {path} HTTP/1.1\r\nHost: {authority}\r\nConnection: close\r\n\r\n");
+    if let Err(error) = stream.write_all(request.as_bytes()).await {
+        panic!("http request should be written: {error}");
+    }
+
+    let mut raw_response = Vec::new();
+    if let Err(error) = stream.read_to_end(&mut raw_response).await {
+        panic!("http response should be readable: {error}");
+    }
+
+    let response = match String::from_utf8(raw_response) {
+        Ok(response) => response,
+        Err(error) => panic!("http response should be valid utf8 for these tests: {error}"),
+    };
+    let (head, body) = response
+        .split_once("\r\n\r\n")
+        .expect("http response should contain a header/body split");
+    let status_line = head.lines().next().expect("http status line should exist");
+    let status_code = status_line
+        .split_whitespace()
+        .nth(1)
+        .expect("http status line should contain a status code")
+        .parse::<u16>()
+        .expect("http status code should be numeric");
+
+    (status_code, body.to_string())
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn websocket_adapter_accepts_binary_commands_and_broadcasts_events() {
     let (server, base_url) = start_server().await;
@@ -196,7 +287,12 @@ async fn websocket_adapter_accepts_binary_commands_and_broadcasts_events() {
             if *current == lobby_id && *joined_player == player_id(1)
     )));
 
-    send_command(&mut bob, ClientControlCommand::JoinGameLobby { lobby_id }, 2).await;
+    send_command(
+        &mut bob,
+        ClientControlCommand::JoinGameLobby { lobby_id },
+        2,
+    )
+    .await;
     let alice_join_events = recv_events_until(&mut alice, 4, |event| {
         matches!(event, ServerControlEvent::GameLobbySnapshot { .. })
     })
@@ -393,11 +489,57 @@ async fn websocket_adapter_rejects_zero_tick_intervals() {
         DevServerOptions {
             tick_interval: Duration::ZERO,
             record_store_path: temp_record_store_path(),
+            web_client_root: temp_web_client_root("zero-tick", None),
         },
     )
     .await;
 
     assert!(matches!(result, Err(error) if error.kind() == std::io::ErrorKind::InvalidInput));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn hosted_root_serves_the_exported_web_shell_and_keeps_websocket_routes_alive() {
+    let web_client_root = temp_web_client_root(
+        "hosted-shell",
+        Some(
+            "<!doctype html><html><head><title>Rusaren Control Shell</title></head><body><script src=\"index.js\"></script></body></html>",
+        ),
+    );
+    let (server, base_url) = start_server_with_web_root(web_client_root).await;
+
+    let (status_code, index_body) = http_get(&base_url, "/").await;
+    assert_eq!(status_code, 200);
+    assert!(index_body.contains("Rusaren Control Shell"));
+
+    let (asset_status_code, asset_body) = http_get(&base_url, "/index.js").await;
+    assert_eq!(asset_status_code, 200);
+    assert!(asset_body.contains("rusaren shell"));
+
+    let mut socket = connect_socket(&base_url).await;
+    connect_player(&mut socket, 1, "Alice").await;
+    let connect_events = recv_events_until(&mut socket, 3, |event| {
+        matches!(event, ServerControlEvent::LobbyDirectorySnapshot { .. })
+    })
+    .await;
+    assert!(connect_events
+        .iter()
+        .any(|event| matches!(event, ServerControlEvent::Connected { .. })));
+
+    let _ = socket.close(None).await;
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn hosted_root_returns_a_clear_placeholder_when_the_web_bundle_is_missing() {
+    let web_client_root = temp_web_client_root("missing-shell", None);
+    let (server, base_url) = start_server_with_web_root(web_client_root).await;
+
+    let (status_code, body) = http_get(&base_url, "/").await;
+    assert_eq!(status_code, 503);
+    assert!(body.contains("Rusaren web client is not built yet."));
+    assert!(body.contains("export-web-client.ps1"));
+
+    server.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -434,7 +576,12 @@ async fn websocket_adapter_finishes_a_full_match_loop_via_live_input_frames() {
     })
     .await;
 
-    send_command(&mut bob, ClientControlCommand::JoinGameLobby { lobby_id }, 2).await;
+    send_command(
+        &mut bob,
+        ClientControlCommand::JoinGameLobby { lobby_id },
+        2,
+    )
+    .await;
     let _ = recv_events_until(&mut alice, 4, |event| {
         matches!(event, ServerControlEvent::GameLobbySnapshot { .. })
     })
@@ -676,7 +823,12 @@ async fn websocket_adapter_rejects_input_frames_before_combat() {
     })
     .await;
 
-    send_command(&mut bob, ClientControlCommand::JoinGameLobby { lobby_id }, 2).await;
+    send_command(
+        &mut bob,
+        ClientControlCommand::JoinGameLobby { lobby_id },
+        2,
+    )
+    .await;
     let _ = recv_events_until(&mut alice, 4, |event| {
         matches!(event, ServerControlEvent::GameLobbySnapshot { .. })
     })

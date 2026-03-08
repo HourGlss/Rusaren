@@ -11,9 +11,8 @@ use game_domain::{
     TeamSide,
 };
 use game_net::{
-    ChannelId, ClientControlCommand, LobbyDirectoryEntry, LobbySnapshotPhase,
-    LobbySnapshotPlayer, PacketHeader, PacketKind, ServerControlEvent, ValidatedInputFrame,
-    BUTTON_CAST, BUTTON_PRIMARY,
+    ChannelId, ClientControlCommand, LobbyDirectoryEntry, LobbySnapshotPhase, LobbySnapshotPlayer,
+    PacketHeader, PacketKind, ServerControlEvent, ValidatedInputFrame, BUTTON_CAST, BUTTON_PRIMARY,
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -36,10 +35,10 @@ fn main() -> Result<(), Box<dyn Error>> {
 fn write_packet_header_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
     recreate_dir(dir)?;
 
-    let valid = PacketHeader::new(ChannelId::Control, PacketKind::ControlCommand, 0, 0, 1, 0)?
-        .encode(&[]);
-    let valid_input = PacketHeader::new(ChannelId::Input, PacketKind::InputFrame, 0, 16, 2, 3)?
-        .encode(&[0; 16]);
+    let valid =
+        PacketHeader::new(ChannelId::Control, PacketKind::ControlCommand, 0, 0, 1, 0)?.encode(&[]);
+    let valid_input =
+        PacketHeader::new(ChannelId::Input, PacketKind::InputFrame, 0, 16, 2, 3)?.encode(&[0; 16]);
     let mut bad_magic = valid.clone();
     bad_magic[0] = 0;
     let mut bad_version = valid.clone();
@@ -151,7 +150,8 @@ fn write_control_command_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
 fn write_input_frame_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
     recreate_dir(dir)?;
 
-    let cast = ValidatedInputFrame::new(3, 1, -1, 50, -50, BUTTON_CAST, 9)?.encode_packet(17, 99)?;
+    let cast =
+        ValidatedInputFrame::new(3, 1, -1, 50, -50, BUTTON_CAST, 9)?.encode_packet(17, 99)?;
     let movement =
         ValidatedInputFrame::new(4, 25, -25, 0, 0, BUTTON_PRIMARY, 0)?.encode_packet(18, 100)?;
     let primary_attack =
@@ -160,25 +160,42 @@ fn write_input_frame_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
 
     let mut bad_buttons_payload = [0_u8; 16];
     bad_buttons_payload[12..14].copy_from_slice(&0x8000_u16.to_le_bytes());
-    let bad_buttons =
-        PacketHeader::new(ChannelId::Input, PacketKind::InputFrame, 0, 16, 20, 102)?
-            .encode(&bad_buttons_payload);
+    let bad_buttons = PacketHeader::new(ChannelId::Input, PacketKind::InputFrame, 0, 16, 20, 102)?
+        .encode(&bad_buttons_payload);
     let [cast_button_low, cast_button_high] = BUTTON_CAST.to_le_bytes();
     let missing_context =
-        PacketHeader::new(ChannelId::Input, PacketKind::InputFrame, 0, 16, 21, 102)?
-            .encode(&[
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, cast_button_low, cast_button_high,
-                0, 0,
-            ]);
+        PacketHeader::new(ChannelId::Input, PacketKind::InputFrame, 0, 16, 21, 102)?.encode(&[
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            cast_button_low,
+            cast_button_high,
+            0,
+            0,
+        ]);
     let unexpected_context =
         PacketHeader::new(ChannelId::Input, PacketKind::InputFrame, 0, 16, 22, 102)?
             .encode(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 0]);
-    let wrong_packet_kind =
-        PacketHeader::new(ChannelId::Control, PacketKind::ControlCommand, 0, 16, 23, 102)?
-            .encode(&[0; 16]);
-    let bad_length =
-        PacketHeader::new(ChannelId::Input, PacketKind::InputFrame, 0, 15, 24, 102)?
-            .encode(&[0; 15]);
+    let wrong_packet_kind = PacketHeader::new(
+        ChannelId::Control,
+        PacketKind::ControlCommand,
+        0,
+        16,
+        23,
+        102,
+    )?
+    .encode(&[0; 16]);
+    let bad_length = PacketHeader::new(ChannelId::Input, PacketKind::InputFrame, 0, 15, 24, 102)?
+        .encode(&[0; 15]);
 
     write_seed(dir, "cast_valid.bin", &cast)?;
     write_seed(dir, "movement_valid.bin", &movement)?;
@@ -412,14 +429,18 @@ fn write_server_control_event_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
         )?
         .encode(&payload)
     };
-    let invalid_bool = PacketHeader::new(ChannelId::Control, PacketKind::ControlEvent, 0, 7, 6, 12)?
-        .encode(&[5, 8, 0, 0, 0, 2, 9]);
-    let invalid_ready = PacketHeader::new(ChannelId::Control, PacketKind::ControlEvent, 0, 6, 7, 12)?
-        .encode(&[6, 8, 0, 0, 0, 9]);
-    let invalid_team = PacketHeader::new(ChannelId::Control, PacketKind::ControlEvent, 0, 5, 8, 12)?
-        .encode(&[13, 1, 9, 1, 0]);
-    let invalid_match_outcome = PacketHeader::new(ChannelId::Control, PacketKind::ControlEvent, 0, 4, 9, 12)?
-        .encode(&[14, 9, 0, 0]);
+    let invalid_bool =
+        PacketHeader::new(ChannelId::Control, PacketKind::ControlEvent, 0, 7, 6, 12)?
+            .encode(&[5, 8, 0, 0, 0, 2, 9]);
+    let invalid_ready =
+        PacketHeader::new(ChannelId::Control, PacketKind::ControlEvent, 0, 6, 7, 12)?
+            .encode(&[6, 8, 0, 0, 0, 9]);
+    let invalid_team =
+        PacketHeader::new(ChannelId::Control, PacketKind::ControlEvent, 0, 5, 8, 12)?
+            .encode(&[13, 1, 9, 1, 0]);
+    let invalid_match_outcome =
+        PacketHeader::new(ChannelId::Control, PacketKind::ControlEvent, 0, 4, 9, 12)?
+            .encode(&[14, 9, 0, 0]);
 
     write_seed(dir, "connected_valid.bin", &connected)?;
     write_seed(dir, "created_valid.bin", &created)?;

@@ -399,11 +399,8 @@ mod tests {
                 .chars()
                 .collect();
 
-        proptest::collection::vec(
-            proptest::sample::select(alphabet),
-            1..=MAX_PLAYER_NAME_LEN,
-        )
-        .prop_map(|chars| chars.into_iter().collect())
+        proptest::collection::vec(proptest::sample::select(alphabet), 1..=MAX_PLAYER_NAME_LEN)
+            .prop_map(|chars| chars.into_iter().collect())
     }
 
     #[test]

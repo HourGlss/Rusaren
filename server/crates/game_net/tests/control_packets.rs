@@ -5,8 +5,8 @@ use game_domain::{
     SkillTree, TeamSide,
 };
 use game_net::{
-    ChannelId, ClientControlCommand, LobbyDirectoryEntry, LobbySnapshotPhase,
-    LobbySnapshotPlayer, PacketError, PacketHeader, PacketKind, ServerControlEvent,
+    ChannelId, ClientControlCommand, LobbyDirectoryEntry, LobbySnapshotPhase, LobbySnapshotPlayer,
+    PacketError, PacketHeader, PacketKind, ServerControlEvent,
 };
 
 fn player_id(raw: u32) -> PlayerId {
@@ -68,9 +68,8 @@ fn client_control_command_round_trips_all_variants() {
 
 #[test]
 fn client_control_command_rejects_invalid_ids_enums_and_trailing_bytes() {
-    let header =
-        PacketHeader::new(ChannelId::Control, PacketKind::ControlCommand, 0, 6, 1, 1)
-            .expect("header");
+    let header = PacketHeader::new(ChannelId::Control, PacketKind::ControlCommand, 0, 6, 1, 1)
+        .expect("header");
 
     let packet = header.encode(&[1, 0, 0, 0, 0, 0]);
     assert_eq!(
@@ -78,18 +77,16 @@ fn client_control_command_rejects_invalid_ids_enums_and_trailing_bytes() {
         Err(PacketError::InvalidEncodedPlayerId(0))
     );
 
-    let header =
-        PacketHeader::new(ChannelId::Control, PacketKind::ControlCommand, 0, 3, 1, 1)
-            .expect("header");
+    let header = PacketHeader::new(ChannelId::Control, PacketKind::ControlCommand, 0, 3, 1, 1)
+        .expect("header");
     let packet = header.encode(&[5, 9, 0]);
     assert_eq!(
         ClientControlCommand::decode_packet(&packet),
         Err(PacketError::InvalidEncodedTeam(9))
     );
 
-    let header =
-        PacketHeader::new(ChannelId::Control, PacketKind::ControlCommand, 0, 2, 1, 1)
-            .expect("header");
+    let header = PacketHeader::new(ChannelId::Control, PacketKind::ControlCommand, 0, 2, 1, 1)
+        .expect("header");
     let packet = header.encode(&[4, 99]);
     assert_eq!(
         ClientControlCommand::decode_packet(&packet),

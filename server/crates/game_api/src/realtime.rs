@@ -1,14 +1,16 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::io;
 use std::net::SocketAddr;
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
-use axum::response::IntoResponse;
-use axum::routing::get;
+use axum::http::StatusCode;
+use axum::response::{Html, IntoResponse, Response};
+use axum::routing::{get, get_service};
 use axum::Router;
 use futures_util::{SinkExt, StreamExt};
 use game_domain::PlayerId;
@@ -16,12 +18,14 @@ use game_net::{NetworkSessionGuard, ServerControlEvent};
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio::task::JoinHandle;
+use tower_http::services::ServeDir;
 
 use crate::{AppTransport, ServerApp};
 
 #[derive(Clone)]
 struct DevServerState {
     ingress_tx: mpsc::UnboundedSender<IngressEvent>,
+    web_client_root: PathBuf,
 }
 
 struct RuntimeState {
@@ -121,6 +125,7 @@ pub struct DevServerHandle {
 pub struct DevServerOptions {
     pub tick_interval: Duration,
     pub record_store_path: PathBuf,
+    pub web_client_root: PathBuf,
 }
 
 impl Default for DevServerOptions {
@@ -128,6 +133,7 @@ impl Default for DevServerOptions {
         Self {
             tick_interval: Duration::from_secs(1),
             record_store_path: default_record_store_path(),
+            web_client_root: default_web_client_root(),
         }
     }
 }
@@ -173,15 +179,13 @@ pub async fn spawn_dev_server_with_options(
     }));
     let state = DevServerState {
         ingress_tx: ingress_tx.clone(),
+        web_client_root: options.web_client_root.clone(),
     };
 
     let ingress_task = tokio::spawn(run_ingress_loop(runtime.clone(), ingress_rx));
     let tick_task = tokio::spawn(run_tick_loop(runtime.clone(), options.tick_interval));
 
-    let app = Router::new()
-        .route("/healthz", get(healthcheck))
-        .route("/ws", get(websocket_upgrade))
-        .with_state(state);
+    let app = build_router(state);
 
     let server_task = tokio::spawn(async move {
         let server = axum::serve(listener, app).with_graceful_shutdown(async {
@@ -205,6 +209,25 @@ fn default_record_store_path() -> PathBuf {
         .join("..")
         .join("var")
         .join("player_records.tsv")
+}
+
+fn default_web_client_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("static")
+        .join("webclient")
+}
+
+fn build_router(state: DevServerState) -> Router {
+    let static_assets = get_service(ServeDir::new(state.web_client_root.clone()));
+
+    Router::new()
+        .route("/", get(web_client_index))
+        .route("/healthz", get(healthcheck))
+        .route("/ws", get(websocket_upgrade))
+        .fallback_service(static_assets)
+        .with_state(state)
 }
 
 async fn run_ingress_loop(
@@ -256,6 +279,40 @@ async fn run_tick_loop(runtime: Arc<Mutex<RuntimeState>>, tick_interval: Duratio
 
 async fn healthcheck() -> &'static str {
     "ok"
+}
+
+async fn web_client_index(State(state): State<DevServerState>) -> Response {
+    let index_path = state.web_client_root.join("index.html");
+    match tokio::fs::read_to_string(&index_path).await {
+        Ok(contents) => Html(contents).into_response(),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Html(render_missing_web_client_page(&state.web_client_root)),
+        )
+            .into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Html(format!(
+                "<!doctype html><html><body><h1>Rusaren web client load failed</h1><p>{error}</p></body></html>"
+            )),
+        )
+            .into_response(),
+    }
+}
+
+fn render_missing_web_client_page(web_client_root: &Path) -> String {
+    format!(
+        concat!(
+            "<!doctype html><html><head><meta charset=\"utf-8\">",
+            "<title>Rusaren web client not built</title></head><body>",
+            "<h1>Rusaren web client is not built yet.</h1>",
+            "<p>Build the Godot Web export into the server static root, then reload this page.</p>",
+            "<p>Expected export root: <code>{}</code></p>",
+            "<p>Suggested command: <code>powershell -NoProfile -ExecutionPolicy Bypass -File server/scripts/export-web-client.ps1</code></p>",
+            "</body></html>"
+        ),
+        web_client_root.display()
+    )
 }
 
 async fn websocket_upgrade(

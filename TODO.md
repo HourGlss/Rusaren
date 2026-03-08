@@ -1,21 +1,13 @@
 # Rusaren TODO
 
 Current target release line: `1.0.0`
-Current repo version: `0.4.0`
-Current roadmap position: `0.5.0 Godot Web MVP`
+Current repo version: `0.5.0`
+Current roadmap position: `0.6.0 Hosting and Ops MVP`
 
 Completed:
 - `0.3.0 Quality Foundation`
 - `0.4.0 Backend MVP`
-
-## 0.5.0 Godot Web MVP
-
-- [ ] Make the Godot shell a real browser-playable MVP.
-- [ ] Add web export smoke checks in CI.
-- [ ] Host the static web client on the production domain.
-
-Release gate:
-- browser client can load from the hosted domain and finish a full match loop.
+- `0.5.0 Godot Web MVP`
 
 ## 0.6.0 Hosting and Ops MVP
 

@@ -1,0 +1,121 @@
+name: godot-web-smoke
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/godot-web-smoke.yml"
+      - "client/godot/**"
+      - "server/bin/dedicated_server/**"
+      - "server/crates/game_api/**"
+      - "server/scripts/export-web-client.ps1"
+      - "README.md"
+      - "TODO.md"
+      - "shared/docs/08_godot_client.md"
+      - "shared/docs/14_buildability_assessment.md"
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - ".github/workflows/godot-web-smoke.yml"
+      - "client/godot/**"
+      - "server/bin/dedicated_server/**"
+      - "server/crates/game_api/**"
+      - "server/scripts/export-web-client.ps1"
+      - "README.md"
+      - "TODO.md"
+      - "shared/docs/08_godot_client.md"
+      - "shared/docs/14_buildability_assessment.md"
+
+jobs:
+  web-smoke:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install stable toolchain
+        shell: pwsh
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Export Godot web client
+        shell: pwsh
+        run: |
+          ./server/scripts/export-web-client.ps1 -DownloadPortable -InstallTemplates
+
+      - name: Resolve Godot executable
+        id: godot
+        shell: pwsh
+        run: |
+          $godotExe = Get-ChildItem -Path server/tools/godot/4.6.1-stable -Recurse -File -Filter "Godot*_console.exe" |
+            Select-Object -First 1 -ExpandProperty FullName
+          if ([string]::IsNullOrWhiteSpace($godotExe)) {
+            throw "Godot console executable was not found after export setup."
+          }
+          "path=$godotExe" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Godot headless boot
+        shell: pwsh
+        run: |
+          & "${{ steps.godot.outputs.path }}" --headless --path client/godot --quit
+
+      - name: Godot protocol checks
+        shell: pwsh
+        run: |
+          & "${{ steps.godot.outputs.path }}" --headless --path client/godot -s res://tests/protocol_checks.gd
+          & "${{ steps.godot.outputs.path }}" --headless --path client/godot -s res://tests/web_export_checks.gd
+
+      - name: Build dedicated server
+        shell: pwsh
+        working-directory: server
+        run: |
+          rustup run stable cargo build -p dedicated_server --quiet
+
+      - name: Serve exported shell
+        shell: pwsh
+        run: |
+          $env:RARENA_BIND = "127.0.0.1:3000"
+          $env:RARENA_WEB_CLIENT_ROOT = (Resolve-Path "server/static/webclient")
+          $server = Start-Process -FilePath "rustup" -ArgumentList @("run", "stable", "cargo", "run", "-p", "dedicated_server", "--quiet") -WorkingDirectory (Resolve-Path "server") -PassThru
+          try {
+            $healthy = $false
+            for ($attempt = 0; $attempt -lt 30; $attempt++) {
+              Start-Sleep -Milliseconds 500
+              try {
+                $health = Invoke-WebRequest -Uri "http://127.0.0.1:3000/healthz" -UseBasicParsing
+                if ($health.StatusCode -eq 200) {
+                  $healthy = $true
+                  break
+                }
+              }
+              catch {
+              }
+            }
+
+            if (-not $healthy) {
+              throw "dedicated_server did not become healthy in time."
+            }
+
+            $index = Invoke-WebRequest -Uri "http://127.0.0.1:3000/" -UseBasicParsing
+            if ($index.StatusCode -ne 200) {
+              throw "expected GET / to succeed but received $($index.StatusCode)"
+            }
+            if ($index.Content -notmatch "Rusaren Control Shell") {
+              throw "served index.html did not contain the expected shell marker."
+            }
+          }
+          finally {
+            if ($null -ne $server -and -not $server.HasExited) {
+              Stop-Process -Id $server.Id -Force
+            }
+          }
+
+      - name: Upload exported web client
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: godot-webclient-${{ github.sha }}
+          path: server/static/webclient

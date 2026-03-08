@@ -75,7 +75,10 @@ fn header_rejects_unknown_channels_unknown_kinds_and_bad_lengths() {
     packet[0..2].copy_from_slice(&PACKET_MAGIC.to_le_bytes());
     packet[2] = PROTOCOL_VERSION;
     packet[3] = 9;
-    assert_eq!(PacketHeader::decode(&packet), Err(PacketError::UnknownChannel(9)));
+    assert_eq!(
+        PacketHeader::decode(&packet),
+        Err(PacketError::UnknownChannel(9))
+    );
 
     packet[3] = 1;
     packet[4] = 99;
@@ -228,7 +231,10 @@ fn packet_error_display_covers_all_formatter_groups() {
             },
             "ClientControlCommand payload contained 2 unexpected trailing bytes",
         ),
-        (PacketError::InvalidEncodedTeam(9), "encoded team 9 is invalid"),
+        (
+            PacketError::InvalidEncodedTeam(9),
+            "encoded team 9 is invalid",
+        ),
         (
             PacketError::FirstPacketMustBeConnect,
             "the first packet on a network session must be a connect command",

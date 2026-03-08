@@ -1022,7 +1022,11 @@ impl ServerApp {
         self.send_event(transport, player_id, event);
     }
 
-    fn broadcast_game_lobby_snapshot<T: AppTransport>(&mut self, transport: &mut T, lobby_id: LobbyId) {
+    fn broadcast_game_lobby_snapshot<T: AppTransport>(
+        &mut self,
+        transport: &mut T,
+        lobby_id: LobbyId,
+    ) {
         let recipients = self.lobby_members(lobby_id);
         if recipients.is_empty() {
             return;
@@ -1090,8 +1094,7 @@ impl ServerApp {
         match phase {
             LobbyPhase::Open => LobbySnapshotPhase::Open,
             LobbyPhase::LaunchCountdown {
-                seconds_remaining,
-                ..
+                seconds_remaining, ..
             } => LobbySnapshotPhase::LaunchCountdown {
                 seconds_remaining: *seconds_remaining,
             },
@@ -1885,11 +1888,17 @@ mod tests {
         let mut bob = connect_player(&mut server, &mut transport, 2, "Bob");
         let mut charlie = connect_player(&mut server, &mut transport, 3, "Charlie");
 
-        alice.create_game_lobby(&mut transport).expect("create lobby");
+        alice
+            .create_game_lobby(&mut transport)
+            .expect("create lobby");
         server.pump_transport(&mut transport);
-        let alice_events = alice.drain_events(&mut transport).expect("alice create events");
+        let alice_events = alice
+            .drain_events(&mut transport)
+            .expect("alice create events");
         let lobby_id = lobby_id_from(&alice_events);
-        let bob_events = bob.drain_events(&mut transport).expect("bob directory events");
+        let bob_events = bob
+            .drain_events(&mut transport)
+            .expect("bob directory events");
         let charlie_events = charlie
             .drain_events(&mut transport)
             .expect("charlie directory events");
@@ -1902,7 +1911,9 @@ mod tests {
         bob.join_game_lobby(&mut transport, lobby_id)
             .expect("join lobby");
         server.pump_transport(&mut transport);
-        let _ = alice.drain_events(&mut transport).expect("alice join events");
+        let _ = alice
+            .drain_events(&mut transport)
+            .expect("alice join events");
         let _ = bob.drain_events(&mut transport).expect("bob join events");
         let charlie_events = charlie
             .drain_events(&mut transport)
@@ -1913,15 +1924,16 @@ mod tests {
 
         bob.leave_game_lobby(&mut transport).expect("leave lobby");
         server.pump_transport(&mut transport);
-        let _ = alice.drain_events(&mut transport).expect("alice leave events");
+        let _ = alice
+            .drain_events(&mut transport)
+            .expect("alice leave events");
         let bob_events = bob.drain_events(&mut transport).expect("bob leave events");
         let charlie_events = charlie
             .drain_events(&mut transport)
             .expect("charlie leave directory");
-        assert!(bob_events.iter().any(|event| matches!(
-            event,
-            ServerControlEvent::ReturnedToCentralLobby { .. }
-        )));
+        assert!(bob_events
+            .iter()
+            .any(|event| matches!(event, ServerControlEvent::ReturnedToCentralLobby { .. })));
         let directory = lobby_directory(&charlie_events).expect("directory snapshot");
         assert_eq!(directory.len(), 1);
         assert_eq!(directory[0].player_count, 1);
@@ -1944,7 +1956,9 @@ mod tests {
             bob.choose_skill(&mut transport, skill(SkillTree::Rogue, tier))
                 .expect("bob skill");
             server.pump_transport(&mut transport);
-            let _ = alice.drain_events(&mut transport).expect("alice skill events");
+            let _ = alice
+                .drain_events(&mut transport)
+                .expect("alice skill events");
             let _ = bob.drain_events(&mut transport).expect("bob skill events");
             server.advance_seconds(&mut transport, 5);
             let _ = alice
@@ -1956,16 +1970,8 @@ mod tests {
             alice
                 .send_input(
                     &mut transport,
-                    ValidatedInputFrame::new(
-                        u32::from(tier),
-                        0,
-                        0,
-                        0,
-                        0,
-                        BUTTON_PRIMARY,
-                        0,
-                    )
-                    .expect("valid input"),
+                    ValidatedInputFrame::new(u32::from(tier), 0, 0, 0, 0, BUTTON_PRIMARY, 0)
+                        .expect("valid input"),
                     u32::from(tier),
                 )
                 .expect("attack packet");
@@ -1997,7 +2003,9 @@ mod tests {
         alice.connect(&mut transport).expect("connect packet");
         reloaded.pump_transport(&mut transport);
 
-        let events = alice.drain_events(&mut transport).expect("alice reconnect events");
+        let events = alice
+            .drain_events(&mut transport)
+            .expect("alice reconnect events");
         assert!(events.iter().any(|event| matches!(
             event,
             ServerControlEvent::Connected { record, .. }

@@ -301,7 +301,9 @@ fn is_test_function(full_name: &str, lines: &[String], start_line: usize) -> boo
 }
 
 fn looks_like_external_callable(symbol: &str) -> bool {
-    symbol.contains("().") && (symbol.contains('#') || symbol.contains('/')) && !symbol.contains("().(")
+    symbol.contains("().")
+        && (symbol.contains('#') || symbol.contains('/'))
+        && !symbol.contains("().(")
 }
 
 fn external_crate_name(symbol: &str) -> Option<String> {
@@ -407,9 +409,12 @@ fn reachable_from_roots(nodes: &BTreeMap<String, Node>, roots: &[String]) -> BTr
 
 #[allow(clippy::too_many_lines)]
 fn build_graph(index: &Index, args: &Args) -> Result<BuildResult, String> {
-    let project_root = parse_project_root(index.metadata.as_ref().map_or("", |metadata| {
-        metadata.project_root.as_str()
-    }));
+    let project_root = parse_project_root(
+        index
+            .metadata
+            .as_ref()
+            .map_or("", |metadata| metadata.project_root.as_str()),
+    );
 
     let mut source_lines_by_file = BTreeMap::new();
     let mut document_by_file = BTreeMap::new();
@@ -993,13 +998,11 @@ fn write_svg(path: &Path, result: &BuildResult) -> Result<(), Box<dyn Error>> {
     let row_gap = 18.0_f32;
     let margin_x = 36.0_f32;
     let margin_y = 48.0_f32;
-    let width = margin_x * 2.0
-        + (max_level as f32 + 1.0) * node_width
-        + (max_level as f32) * column_gap;
+    let width =
+        margin_x * 2.0 + (max_level as f32 + 1.0) * node_width + (max_level as f32) * column_gap;
     let tallest_column = columns.iter().map(Vec::len).max().unwrap_or(1) as f32;
-    let height = margin_y * 2.0
-        + tallest_column * node_height
-        + (tallest_column - 1.0).max(0.0) * row_gap;
+    let height =
+        margin_y * 2.0 + tallest_column * node_height + (tallest_column - 1.0).max(0.0) * row_gap;
 
     let mut positions = BTreeMap::<String, (f32, f32)>::new();
     for (level, column) in columns.iter().enumerate() {
@@ -1152,13 +1155,11 @@ fn write_overview_svg(path: &Path, overview: &OverviewGraph) -> Result<(), Box<d
     let row_gap = 28.0_f32;
     let margin_x = 36.0_f32;
     let margin_y = 52.0_f32;
-    let width = margin_x * 2.0
-        + (max_level as f32 + 1.0) * node_width
-        + (max_level as f32) * column_gap;
+    let width =
+        margin_x * 2.0 + (max_level as f32 + 1.0) * node_width + (max_level as f32) * column_gap;
     let tallest_column = columns.iter().map(Vec::len).max().unwrap_or(1) as f32;
-    let height = margin_y * 2.0
-        + tallest_column * node_height
-        + (tallest_column - 1.0).max(0.0) * row_gap;
+    let height =
+        margin_y * 2.0 + tallest_column * node_height + (tallest_column - 1.0).max(0.0) * row_gap;
 
     let mut positions = BTreeMap::<String, (f32, f32)>::new();
     for (level, column) in columns.iter().enumerate() {
@@ -1248,7 +1249,10 @@ fn run(args: &Args) -> Result<(), Box<dyn Error>> {
     fs::create_dir_all(&args.output_dir)?;
     write_dot(&args.output_dir.join("backend_core.dot"), &result)?;
     write_svg(&args.output_dir.join("backend_core.simple.svg"), &result)?;
-    write_overview_dot(&args.output_dir.join("backend_core.overview.dot"), &overview)?;
+    write_overview_dot(
+        &args.output_dir.join("backend_core.overview.dot"),
+        &overview,
+    )?;
     write_overview_svg(
         &args.output_dir.join("backend_core.overview.simple.svg"),
         &overview,
@@ -1281,30 +1285,29 @@ mod tests {
     use super::*;
     use protobuf::{EnumOrUnknown, MessageField};
     use scip::types::{
-        Metadata, PositionEncoding, SymbolInformation, TextEncoding, ToolInfo,
-        symbol_information,
+        symbol_information, Metadata, PositionEncoding, SymbolInformation, TextEncoding, ToolInfo,
     };
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn build_test_index(project_root: &Path) -> Index {
         let mut root_symbol = SymbolInformation::new();
-        root_symbol.symbol = String::from("rust-analyzer cargo game_api 0.4.0 app/root().");
+        root_symbol.symbol = String::from("rust-analyzer cargo game_api 0.5.0 app/root().");
         root_symbol.kind = EnumOrUnknown::new(symbol_information::Kind::Function);
         root_symbol.display_name = String::from("root");
 
         let mut helper_symbol = SymbolInformation::new();
-        helper_symbol.symbol = String::from("rust-analyzer cargo game_api 0.4.0 app/helper().");
+        helper_symbol.symbol = String::from("rust-analyzer cargo game_api 0.5.0 app/helper().");
         helper_symbol.kind = EnumOrUnknown::new(symbol_information::Kind::Function);
         helper_symbol.display_name = String::from("helper");
 
         let mut enum_symbol = SymbolInformation::new();
-        enum_symbol.symbol = String::from("rust-analyzer cargo game_api 0.4.0 app/RoundWon.");
+        enum_symbol.symbol = String::from("rust-analyzer cargo game_api 0.5.0 app/RoundWon.");
         enum_symbol.kind = EnumOrUnknown::new(symbol_information::Kind::EnumMember);
         enum_symbol.display_name = String::from("RoundWon");
 
         let mut test_symbol = SymbolInformation::new();
         test_symbol.symbol =
-            String::from("rust-analyzer cargo game_api 0.4.0 app/tests/root_test().");
+            String::from("rust-analyzer cargo game_api 0.5.0 app/tests/root_test().");
         test_symbol.kind = EnumOrUnknown::new(symbol_information::Kind::Function);
         test_symbol.display_name = String::from("root_test");
 
@@ -1329,16 +1332,16 @@ mod tests {
             EnumOrUnknown::new(PositionEncoding::UTF8CodeUnitOffsetFromLineStart);
         document.symbols = vec![root_symbol, helper_symbol, enum_symbol, test_symbol];
         document.occurrences = vec![
-            definition(0, "rust-analyzer cargo game_api 0.4.0 app/root()."),
-            reference(1, "rust-analyzer cargo game_api 0.4.0 app/helper()."),
+            definition(0, "rust-analyzer cargo game_api 0.5.0 app/root()."),
+            reference(1, "rust-analyzer cargo game_api 0.5.0 app/helper()."),
             reference(
                 2,
                 "rust-analyzer cargo core https://github.com/rust-lang/rust/library/core option/impl#[`Option<T>`]unwrap_or_else().",
             ),
-            reference(3, "rust-analyzer cargo game_api 0.4.0 app/RoundWon."),
-            definition(6, "rust-analyzer cargo game_api 0.4.0 app/helper()."),
-            definition(11, "rust-analyzer cargo game_api 0.4.0 app/tests/root_test()."),
-            reference(12, "rust-analyzer cargo game_api 0.4.0 app/helper()."),
+            reference(3, "rust-analyzer cargo game_api 0.5.0 app/RoundWon."),
+            definition(6, "rust-analyzer cargo game_api 0.5.0 app/helper()."),
+            definition(11, "rust-analyzer cargo game_api 0.5.0 app/tests/root_test()."),
+            reference(12, "rust-analyzer cargo game_api 0.5.0 app/helper()."),
         ];
 
         let mut tool_info = ToolInfo::new();
@@ -1393,9 +1396,7 @@ mod tests {
 
         let parsed = parse_args(&args).expect("arguments should parse");
         assert_eq!(parsed.input_path, PathBuf::from("index.scip"));
-        assert!(parsed
-            .backend_files
-            .contains("crates/game_api/src/app.rs"));
+        assert!(parsed.backend_files.contains("crates/game_api/src/app.rs"));
         assert!(parsed.entry_files.contains("crates/game_api/src/app.rs"));
     }
 
@@ -1432,11 +1433,13 @@ mod tests {
     #[test]
     fn normalize_symbol_name_formats_methods_and_functions() {
         assert_eq!(
-            normalize_symbol_name("rust-analyzer cargo game_api 0.4.0 app/ServerApp#handle_packet()."),
+            normalize_symbol_name(
+                "rust-analyzer cargo game_api 0.5.0 app/ServerApp#handle_packet()."
+            ),
             "game_api::app::ServerApp::handle_packet"
         );
         assert_eq!(
-            normalize_symbol_name("rust-analyzer cargo game_api 0.4.0 app/spawn_dev_server()."),
+            normalize_symbol_name("rust-analyzer cargo game_api 0.5.0 app/spawn_dev_server()."),
             "game_api::app::spawn_dev_server"
         );
     }
@@ -1486,10 +1489,7 @@ mod tests {
         assert_eq!(summary.edge_count, 1);
         assert_eq!(summary.omitted_test_nodes, 1);
         assert_eq!(summary.omitted_bodyless_nodes, 0);
-        assert_eq!(
-            summary.roots,
-            vec![String::from("game_api::app::root")]
-        );
+        assert_eq!(summary.roots, vec![String::from("game_api::app::root")]);
         assert_eq!(
             summary.hidden_external_references,
             vec![ExternalReference {
@@ -1505,7 +1505,7 @@ mod tests {
             .expect("root node should exist");
         assert!(root
             .outgoing
-            .contains("rust-analyzer cargo game_api 0.4.0 app/helper()."));
+            .contains("rust-analyzer cargo game_api 0.5.0 app/helper()."));
         assert!(result
             .nodes
             .values()
@@ -1636,9 +1636,7 @@ mod tests {
             nodes: BTreeMap::from([(
                 String::from("crates/game_api/src/impl<Option<Self>>.rs"),
                 OverviewNode {
-                    file_relative_path: String::from(
-                        "crates/game_api/src/impl<Option<Self>>.rs",
-                    ),
+                    file_relative_path: String::from("crates/game_api/src/impl<Option<Self>>.rs"),
                     function_count: 3,
                     outgoing: BTreeMap::new(),
                     incoming: BTreeMap::new(),

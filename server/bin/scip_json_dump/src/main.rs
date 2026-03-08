@@ -69,7 +69,10 @@ struct SignatureDocumentationJson {
 
 fn parse_paths(args: &[String]) -> Result<(PathBuf, PathBuf), String> {
     if args.len() != 3 {
-        return Err(format!("usage: {} <input-index.scip> <output-index.scip.json>", args[0]));
+        return Err(format!(
+            "usage: {} <input-index.scip> <output-index.scip.json>",
+            args[0]
+        ));
     }
 
     Ok((PathBuf::from(&args[1]), PathBuf::from(&args[2])))
@@ -77,9 +80,16 @@ fn parse_paths(args: &[String]) -> Result<(PathBuf, PathBuf), String> {
 
 fn normalize_index(index: Index) -> ScipIndexJson {
     let metadata = normalize_metadata(index.metadata.into_option().unwrap_or_default());
-    let documents = index.documents.into_iter().map(normalize_document).collect();
+    let documents = index
+        .documents
+        .into_iter()
+        .map(normalize_document)
+        .collect();
 
-    ScipIndexJson { metadata, documents }
+    ScipIndexJson {
+        metadata,
+        documents,
+    }
 }
 
 fn normalize_metadata(metadata: Metadata) -> MetadataJson {
@@ -138,7 +148,10 @@ fn normalize_symbol(symbol: SymbolInformation) -> SymbolJson {
             Some(symbol.documentation)
         },
         signature_documentation: normalize_signature_documentation(
-            symbol.signature_documentation.into_option().unwrap_or_default(),
+            symbol
+                .signature_documentation
+                .into_option()
+                .unwrap_or_default(),
         ),
         enclosing_symbol: if symbol.enclosing_symbol.is_empty() {
             None
@@ -193,7 +206,7 @@ fn main() {
 mod tests {
     use super::*;
     use protobuf::{EnumOrUnknown, MessageField};
-    use scip::types::{PositionEncoding, TextEncoding, symbol_information};
+    use scip::types::{symbol_information, PositionEncoding, TextEncoding};
     use serde_json::Value;
 
     fn build_minimal_index() -> Index {
@@ -204,7 +217,7 @@ mod tests {
             EnumOrUnknown::new(PositionEncoding::UTF8CodeUnitOffsetFromLineStart);
 
         let mut symbol = SymbolInformation::new();
-        symbol.symbol = String::from("rust-analyzer cargo sample 0.4.0 sample_fn().");
+        symbol.symbol = String::from("rust-analyzer cargo sample 0.5.0 sample_fn().");
         symbol.kind = EnumOrUnknown::new(symbol_information::Kind::Function);
         symbol.display_name = String::from("sample_fn");
         symbol.documentation.push(String::from("example symbol"));
@@ -212,7 +225,7 @@ mod tests {
 
         let mut occurrence = Occurrence::new();
         occurrence.range = vec![0, 0, 0, 8];
-        occurrence.symbol = String::from("rust-analyzer cargo sample 0.4.0 sample_fn().");
+        occurrence.symbol = String::from("rust-analyzer cargo sample 0.5.0 sample_fn().");
         occurrence.symbol_roles = 1;
 
         let mut document = Document::new();
@@ -268,7 +281,9 @@ mod tests {
     #[test]
     fn dump_scip_bytes_to_json_serializes_the_expected_callgraph_shape() {
         let index = build_minimal_index();
-        let bytes = index.write_to_bytes().expect("protobuf bytes should encode");
+        let bytes = index
+            .write_to_bytes()
+            .expect("protobuf bytes should encode");
 
         let json = dump_scip_bytes_to_json(&bytes).expect("json conversion should succeed");
         let parsed: Value = serde_json::from_str(&json).expect("json should parse");
@@ -287,7 +302,9 @@ mod tests {
     #[test]
     fn dump_scip_bytes_to_json_omits_optional_fields_when_they_are_empty() {
         let index = Index::new();
-        let bytes = index.write_to_bytes().expect("protobuf bytes should encode");
+        let bytes = index
+            .write_to_bytes()
+            .expect("protobuf bytes should encode");
 
         let json = dump_scip_bytes_to_json(&bytes).expect("json conversion should succeed");
         let parsed: Value = serde_json::from_str(&json).expect("json should parse");

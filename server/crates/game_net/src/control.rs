@@ -119,11 +119,7 @@ impl ClientControlCommand {
         }
     }
 
-    fn decode_body(
-        kind: u8,
-        payload: &[u8],
-        index: &mut usize,
-    ) -> Result<Self, PacketError> {
+    fn decode_body(kind: u8, payload: &[u8], index: &mut usize) -> Result<Self, PacketError> {
         match kind {
             1 => decode_connect_command(payload, index),
             2 => Ok(Self::CreateGameLobby),
@@ -244,9 +240,7 @@ pub struct LobbySnapshotPlayer {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LobbySnapshotPhase {
     Open,
-    LaunchCountdown {
-        seconds_remaining: u8,
-    },
+    LaunchCountdown { seconds_remaining: u8 },
 }
 
 impl ServerControlEvent {
@@ -408,7 +402,9 @@ impl ServerControlEvent {
                 encode_player_record(payload, record);
                 Ok(())
             }
-            Self::LobbyDirectorySnapshot { lobbies } => encode_lobby_directory_snapshot(payload, &lobbies),
+            Self::LobbyDirectorySnapshot { lobbies } => {
+                encode_lobby_directory_snapshot(payload, &lobbies)
+            }
             Self::GameLobbySnapshot {
                 lobby_id,
                 phase,
@@ -420,22 +416,30 @@ impl ServerControlEvent {
         }
     }
 
-    fn decode_body(
-        kind: u8,
-        payload: &[u8],
-        index: &mut usize,
-    ) -> Result<Self, PacketError> {
+    fn decode_body(kind: u8, payload: &[u8], index: &mut usize) -> Result<Self, PacketError> {
         match kind {
             1 => decode_connected_event(payload, index),
             2 => Ok(Self::GameLobbyCreated {
                 lobby_id: read_lobby_id(payload, index, "GameLobbyCreated")?,
             }),
-            3 => decode_lobby_and_player_event(payload, index, "GameLobbyJoined", |lobby_id, player_id| {
-                Self::GameLobbyJoined { lobby_id, player_id }
-            }),
-            4 => decode_lobby_and_player_event(payload, index, "GameLobbyLeft", |lobby_id, player_id| {
-                Self::GameLobbyLeft { lobby_id, player_id }
-            }),
+            3 => decode_lobby_and_player_event(
+                payload,
+                index,
+                "GameLobbyJoined",
+                |lobby_id, player_id| Self::GameLobbyJoined {
+                    lobby_id,
+                    player_id,
+                },
+            ),
+            4 => decode_lobby_and_player_event(
+                payload,
+                index,
+                "GameLobbyLeft",
+                |lobby_id, player_id| Self::GameLobbyLeft {
+                    lobby_id,
+                    player_id,
+                },
+            ),
             5 => decode_team_selected_event(payload, index),
             6 => Ok(Self::ReadyChanged {
                 player_id: read_player_id(payload, index, "ReadyChanged")?,

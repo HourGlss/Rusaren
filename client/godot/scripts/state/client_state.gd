@@ -2,13 +2,14 @@ extends RefCounted
 class_name ClientState
 
 const MAX_EVENT_LINES := 28
+const WebSocketConfigScript := preload("res://scripts/net/websocket_config.gd")
 
-var websocket_url := "ws://127.0.0.1:3000/ws"
+var websocket_url := WebSocketConfigScript.new().runtime_default_url()
 var local_player_id := 0
 var local_player_name := ""
 var transport_state := "closed"
 var screen := "central"
-var banner_message := "Connect to the Rust dev adapter to drive the shell."
+var banner_message := "Connect to the Rust dev adapter to drive the shell. Browser exports default to the same-origin /ws endpoint."
 var phase_label := "Central Lobby"
 var countdown_label := ""
 var outcome_label := ""
@@ -30,12 +31,12 @@ var recent_events: Array[String] = []
 
 
 func prepare_for_connection(url: String, player_id: int, player_name: String) -> void:
-	websocket_url = url
+	websocket_url = WebSocketConfigScript.new().runtime_default_url(url)
 	local_player_id = player_id
 	local_player_name = player_name.strip_edges()
 	transport_state = "connecting"
 	screen = "central"
-	banner_message = "Connecting to %s as %s (#%d)." % [url, local_player_name, local_player_id]
+	banner_message = "Connecting to %s as %s (#%d)." % [websocket_url, local_player_name, local_player_id]
 	phase_label = "Central Lobby"
 	countdown_label = ""
 	outcome_label = ""
@@ -320,6 +321,33 @@ func lobby_directory_lines() -> Array[String]:
 	return lines
 
 
+func lobby_directory_bbcode() -> String:
+	var lines: Array[String] = []
+	for lobby in lobby_directory:
+		var lobby_id := int(lobby.get("lobby_id", 0))
+		var phase: Dictionary = lobby.get("phase", {})
+		var phase_name := String(phase.get("name", "Open"))
+		var seconds_remaining := int(phase.get("seconds_remaining", 0))
+		var phase_text := phase_name
+		if phase_name == "Launch Countdown":
+			phase_text = "%s (%ds)" % [phase_name, seconds_remaining]
+		var join_text := "[url=%d]Join[/url]" % lobby_id if phase_name == "Open" else "[color=#c98e78]Locked[/color]"
+		lines.append(
+			"%s  Lobby #%d  |  players %d  |  A %d  B %d  |  ready %d  |  %s" % [
+				join_text,
+				lobby_id,
+				int(lobby.get("player_count", 0)),
+				int(lobby.get("team_a_count", 0)),
+				int(lobby.get("team_b_count", 0)),
+				int(lobby.get("ready_count", 0)),
+				phase_text,
+			]
+		)
+	if lines.is_empty():
+		lines.append("No active game lobbies.")
+	return "\n".join(lines)
+
+
 func record_text() -> String:
 	return "W-L-NC  %d-%d-%d" % [
 		int(record.get("wins", 0)),
@@ -337,7 +365,7 @@ func event_log_text() -> String:
 
 
 func lobby_note() -> String:
-	return "Join still accepts a manual lobby ID, but the backend now sends a lobby directory and full lobby snapshots so late joiners land on an authoritative roster."
+	return "Click an open lobby in the directory or enter a manual lobby ID. The backend sends authoritative directory and roster snapshots so late joiners land on current state."
 
 
 func can_join_or_create_lobby() -> bool:

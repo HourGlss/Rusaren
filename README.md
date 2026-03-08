@@ -1,6 +1,6 @@
 # Rarena
 
-Current repo version: `0.4.0`
+Current repo version: `0.5.0`
 
 Rarena is a server-authoritative arena game prototype. The current repository now contains a backend-first vertical slice for lobby, match flow, simulation, and packet validation, plus local and CI quality tooling around it.
 
@@ -11,13 +11,13 @@ Buildable now:
 - a scripted backend-only gameplay slice that exercises lobby -> match -> combat -> no-contest flow
 - a real websocket dev adapter on top of the backend app layer
 - a Godot 4 shell under `client/godot` that drives the websocket dev adapter with real binary control packets and live combat input frames
+- a same-origin Godot Web export path hosted directly by the Rust server at `/`
 - persistent player records under `server/var/player_records.tsv`
 - local quality scripts under `server/scripts`
-- GitHub Actions quality workflows
+- GitHub Actions quality workflows plus a Godot web export smoke workflow
 
 Not implemented yet:
 - real WebRTC transport integration
-- browser-hosted web export verification
 - full Godot gameplay rendering
 - content loading and validation
 - full combat/class implementation
@@ -41,6 +41,7 @@ rustup run stable cargo run -p dedicated_server --quiet
 The dev adapter listens on:
 - `http://127.0.0.1:3000/healthz`
 - `ws://127.0.0.1:3000/ws`
+- `http://127.0.0.1:3000/` for the exported Godot web shell when `server/static/webclient` exists
 
 The dev adapter persists player `W-L-NC` records at:
 - `server/var/player_records.tsv`
@@ -52,9 +53,9 @@ client/godot/project.godot
 ```
 
 The current Godot shell is wired to the websocket dev adapter first, not WebRTC yet.
-The project metadata version is currently `0.4.0`.
+The project metadata version is currently `0.5.0`.
 Known shell limitations:
-- joining a lobby currently requires a manual lobby ID
+- the final production transport is still planned as WebRTC, so browser play currently uses the websocket dev adapter
 - gameplay rendering is still placeholder-only even though the shell now consumes central lobby directory snapshots and full lobby snapshots
 - the current local combat slice resolves rounds with a placeholder primary attack button rather than final movement/casting gameplay
 
@@ -68,6 +69,30 @@ On this machine, the equivalent command is:
 
 ```powershell
 C:\Users\azbai\Documents\Rarena\Godot\Godot_v4.6.1-stable_win64_console.exe --headless --path client\godot -s res://tests/protocol_checks.gd
+```
+
+Run the browser-export checks headlessly:
+
+```powershell
+godot4 --headless --path client/godot -s res://tests/web_export_checks.gd
+```
+
+On this machine, the equivalent command is:
+
+```powershell
+C:\Users\azbai\Documents\Rarena\Godot\Godot_v4.6.1-stable_win64_console.exe --headless --path client\godot -s res://tests/web_export_checks.gd
+```
+
+Export the Godot web client into the Rust server static root:
+
+```powershell
+./server/scripts/export-web-client.ps1 -GodotExecutable C:\Users\azbai\Documents\Rarena\Godot\Godot_v4.6.1-stable_win64_console.exe -InstallTemplates
+```
+
+For CI or a machine without a local Godot install, the script can download a portable editor and export templates:
+
+```powershell
+./server/scripts/export-web-client.ps1 -DownloadPortable -InstallTemplates
 ```
 
 Run the backend-only demo slice instead:
@@ -239,11 +264,13 @@ Current local fallback behavior:
 - if `cargo-nextest` is not installed, the quality script falls back to `cargo test`
 - fuzzing uses `cargo-fuzz` under `server/fuzz/` and currently starts with packet-header, control-command, server-control-event, input-frame, and ingress-session targets
 - project docs are generated from `shared/docs` through `mdBook`, while Rust API docs are generated with `cargo doc --workspace --all-features --no-deps`
+- browser-export smoke checks run in `.github/workflows/godot-web-smoke.yml` and verify that the exported shell can be hosted by `dedicated_server`
 
 Current manual full-loop slice:
 - start the Rust backend
-- open two Godot clients
+- export the Godot web shell and open `http://127.0.0.1:3000/` in two browser tabs, or open two native Godot clients
 - connect both players, create/join a lobby, choose teams, ready up
+- click a lobby from the central directory or join by manual lobby ID
 - choose a skill each round
 - press `Primary Attack` during combat to resolve the current placeholder one-hit round flow
 - review the result screen and quit back to the central lobby

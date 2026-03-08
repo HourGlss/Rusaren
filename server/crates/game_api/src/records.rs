@@ -33,10 +33,12 @@ impl PlayerRecordStore {
     pub fn new_persistent(path: impl Into<PathBuf>) -> Result<Self, RecordStoreError> {
         let path = path.into();
         let records = if path.exists() {
-            parse_records(&fs::read_to_string(&path).map_err(|source| RecordStoreError::Read {
-                path: path.clone(),
-                source,
-            })?)?
+            parse_records(
+                &fs::read_to_string(&path).map_err(|source| RecordStoreError::Read {
+                    path: path.clone(),
+                    source,
+                })?,
+            )?
         } else {
             BTreeMap::new()
         };
@@ -120,21 +122,19 @@ pub enum RecordStoreError {
     Read { path: PathBuf, source: io::Error },
     Write { path: PathBuf, source: io::Error },
     CreateParentDir { path: PathBuf, source: io::Error },
-    MalformedLine {
-        line_number: usize,
-        reason: String,
-    },
-    DuplicatePlayerId {
-        line_number: usize,
-        player_id: u32,
-    },
+    MalformedLine { line_number: usize, reason: String },
+    DuplicatePlayerId { line_number: usize, player_id: u32 },
 }
 
 impl fmt::Display for RecordStoreError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Read { path, source } => {
-                write!(f, "failed to read player record store {}: {source}", path.display())
+                write!(
+                    f,
+                    "failed to read player record store {}: {source}",
+                    path.display()
+                )
             }
             Self::Write { path, source } => {
                 write!(
@@ -170,9 +170,7 @@ impl fmt::Display for RecordStoreError {
 
 impl std::error::Error for RecordStoreError {}
 
-fn parse_records(
-    input: &str,
-) -> Result<BTreeMap<PlayerId, StoredPlayerRecord>, RecordStoreError> {
+fn parse_records(input: &str) -> Result<BTreeMap<PlayerId, StoredPlayerRecord>, RecordStoreError> {
     let mut records = BTreeMap::new();
 
     for (line_index, raw_line) in input.lines().enumerate() {
@@ -193,12 +191,11 @@ fn parse_records(
         }
 
         let player_id = parse_player_id(fields[0], line_number)?;
-        let player_name = PlayerName::new(fields[1]).map_err(|error| {
-            RecordStoreError::MalformedLine {
+        let player_name =
+            PlayerName::new(fields[1]).map_err(|error| RecordStoreError::MalformedLine {
                 line_number,
                 reason: error.to_string(),
-            }
-        })?;
+            })?;
         let wins = parse_counter(fields[2], line_number, "wins")?;
         let losses = parse_counter(fields[3], line_number, "losses")?;
         let no_contests = parse_counter(fields[4], line_number, "no_contests")?;
@@ -227,10 +224,12 @@ fn parse_records(
 }
 
 fn parse_player_id(raw: &str, line_number: usize) -> Result<PlayerId, RecordStoreError> {
-    let parsed = raw.parse::<u32>().map_err(|error| RecordStoreError::MalformedLine {
-        line_number,
-        reason: format!("player_id '{raw}' is not a valid u32: {error}"),
-    })?;
+    let parsed = raw
+        .parse::<u32>()
+        .map_err(|error| RecordStoreError::MalformedLine {
+            line_number,
+            reason: format!("player_id '{raw}' is not a valid u32: {error}"),
+        })?;
 
     PlayerId::new(parsed).map_err(|error| RecordStoreError::MalformedLine {
         line_number,
@@ -243,10 +242,11 @@ fn parse_counter(
     line_number: usize,
     field: &'static str,
 ) -> Result<u16, RecordStoreError> {
-    raw.parse::<u16>().map_err(|error| RecordStoreError::MalformedLine {
-        line_number,
-        reason: format!("{field} '{raw}' is not a valid u16: {error}"),
-    })
+    raw.parse::<u16>()
+        .map_err(|error| RecordStoreError::MalformedLine {
+            line_number,
+            reason: format!("{field} '{raw}' is not a valid u16: {error}"),
+        })
 }
 
 fn serialize_records(records: &BTreeMap<PlayerId, StoredPlayerRecord>) -> String {
@@ -364,10 +364,7 @@ mod tests {
         let bad_line = parse_records("1\tAlice\t1\t2\n");
         assert!(matches!(
             bad_line,
-            Err(RecordStoreError::MalformedLine {
-                line_number: 1,
-                ..
-            })
+            Err(RecordStoreError::MalformedLine { line_number: 1, .. })
         ));
 
         let duplicate = parse_records("1\tAlice\t0\t0\t0\n1\tBob\t1\t1\t1\n");

@@ -226,7 +226,7 @@ func _build_central_panel() -> PanelContainer:
 	body.add_child(title)
 
 	var summary := Label.new()
-	summary.text = "Create a game lobby or join one by ID. The backend now publishes a central lobby directory, so this shell can show active game lobbies before you join."
+	summary.text = "Create a game lobby or click one from the directory below to join it. Browser exports default to the same-origin /ws endpoint when you leave the URL field on its default value."
 	summary.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	summary.add_theme_color_override("font_color", Color8(187, 196, 203))
 	body.add_child(summary)
@@ -243,10 +243,13 @@ func _build_central_panel() -> PanelContainer:
 	body.add_child(list_title)
 
 	central_directory_log = RichTextLabel.new()
+	central_directory_log.bbcode_enabled = true
 	central_directory_log.fit_content = true
+	central_directory_log.meta_underlined = true
 	central_directory_log.scroll_active = true
 	central_directory_log.custom_minimum_size = Vector2(0, 150)
 	central_directory_log.add_theme_color_override("default_color", Color8(222, 230, 236))
+	central_directory_log.meta_clicked.connect(_on_lobby_directory_meta_clicked)
 	body.add_child(central_directory_log)
 
 	return panel
@@ -544,8 +547,9 @@ func _on_connect_pressed() -> void:
 	var player_name := player_name_input.text.strip_edges()
 	_next_client_input_tick = 1
 	app_state.prepare_for_connection(url, player_id, player_name)
+	ws_url_input.text = app_state.websocket_url
 	_refresh_ui()
-	if not transport.open(url):
+	if not transport.open(app_state.websocket_url):
 		app_state.mark_transport_error("Unable to start the websocket connection.")
 		_refresh_ui()
 
@@ -565,6 +569,16 @@ func _on_create_lobby_pressed() -> void:
 
 func _on_join_lobby_pressed() -> void:
 	var lobby_id := int(join_lobby_input.text.strip_edges())
+	_try_join_lobby(lobby_id)
+
+
+func _on_lobby_directory_meta_clicked(meta: Variant) -> void:
+	var lobby_id := int(meta)
+	join_lobby_input.text = str(lobby_id)
+	_try_join_lobby(lobby_id)
+
+
+func _try_join_lobby(lobby_id: int) -> void:
 	if lobby_id <= 0:
 		app_state.mark_transport_error("Lobby ID must be a positive integer.")
 		_refresh_ui()
@@ -673,7 +687,7 @@ func _refresh_ui() -> void:
 	score_label.text = app_state.score_text()
 	countdown_value_label.text = app_state.countdown_label
 	outcome_label.text = result_text
-	central_directory_log.text = "\n".join(app_state.lobby_directory_lines())
+	central_directory_log.text = app_state.lobby_directory_bbcode()
 	roster_log.text = "\n".join(app_state.roster_lines())
 	event_log.text = app_state.event_log_text()
 

@@ -11,9 +11,11 @@ server/fuzz/coverage/
 server/fuzz/target/
 
 # Godot
-Godot/
+/Godot/
 client/godot/.godot/
 client/godot/export/
+*.uid
+server/static/webclient/
 
 # Python tooling
 .venv/

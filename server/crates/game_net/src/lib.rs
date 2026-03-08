@@ -552,9 +552,7 @@ impl PacketError {
             )),
             Self::UnknownControlCommand(raw) => Some(write!(f, "unknown control command {raw}")),
             Self::UnknownServerEvent(raw) => Some(write!(f, "unknown server event {raw}")),
-            Self::InvalidUtf8String { field } => {
-                Some(write!(f, "{field} contained invalid utf-8"))
-            }
+            Self::InvalidUtf8String { field } => Some(write!(f, "{field} contained invalid utf-8")),
             Self::StringLengthOutOfBounds { field, len, max } => {
                 Some(write!(f, "{field} length {len} exceeds maximum {max}"))
             }
@@ -564,9 +562,15 @@ impl PacketError {
 
     fn fmt_encoded_value_error(&self, f: &mut fmt::Formatter<'_>) -> Option<fmt::Result> {
         match self {
-            Self::InvalidEncodedPlayerId(raw) => Some(write!(f, "encoded player id {raw} is invalid")),
-            Self::InvalidEncodedLobbyId(raw) => Some(write!(f, "encoded lobby id {raw} is invalid")),
-            Self::InvalidEncodedMatchId(raw) => Some(write!(f, "encoded match id {raw} is invalid")),
+            Self::InvalidEncodedPlayerId(raw) => {
+                Some(write!(f, "encoded player id {raw} is invalid"))
+            }
+            Self::InvalidEncodedLobbyId(raw) => {
+                Some(write!(f, "encoded lobby id {raw} is invalid"))
+            }
+            Self::InvalidEncodedMatchId(raw) => {
+                Some(write!(f, "encoded match id {raw} is invalid"))
+            }
             Self::InvalidEncodedRound(raw) => Some(write!(f, "encoded round {raw} is invalid")),
             Self::InvalidEncodedTeam(raw) => Some(write!(f, "encoded team {raw} is invalid")),
             Self::InvalidEncodedOptionalTeam(raw) => {
@@ -599,9 +603,9 @@ impl PacketError {
             Self::FirstPacketMustBeConnect => {
                 Some(f.write_str("the first packet on a network session must be a connect command"))
             }
-            Self::ConnectCommandAfterBinding => {
-                Some(f.write_str("connect commands are not accepted after a network session is bound"))
-            }
+            Self::ConnectCommandAfterBinding => Some(
+                f.write_str("connect commands are not accepted after a network session is bound"),
+            ),
             _ => None,
         }
     }
