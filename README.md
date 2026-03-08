@@ -66,6 +66,14 @@ cd server
 rustup run stable cargo test --workspace
 ```
 
+Build the initial fuzz targets:
+
+```powershell
+cd server
+./scripts/install-tools.ps1 -IncludeNightly -IncludeFuzzTools
+./scripts/quality.ps1 fuzz
+```
+
 Install the configured quality tools:
 
 ```powershell
@@ -155,6 +163,14 @@ rustup run stable cargo build --workspace
 ./scripts/quality.ps1 reports
 ```
 
+Recommended advanced local flow before touching network-boundary code:
+
+```powershell
+cd server
+./scripts/install-tools.ps1 -IncludeNightly -IncludeFuzzTools
+./scripts/quality.ps1 fuzz
+```
+
 Then commit from the repo root:
 
 ```powershell
@@ -172,6 +188,7 @@ Hook behavior:
 Current local fallback behavior:
 - if `cargo-nextest` is installed, the quality script uses it for the normal test task
 - if `cargo-nextest` is not installed, the quality script falls back to `cargo test`
+- fuzzing uses `cargo-fuzz` under `server/fuzz/` and currently starts with packet-header, control-command, input-frame, and ingress-session targets
 
 ## Docs
 

@@ -5,6 +5,9 @@
 # Rust
 server/target/
 server/tools/
+server/fuzz/artifacts/
+server/fuzz/coverage/
+server/fuzz/target/
 
 # Godot
 Godot/

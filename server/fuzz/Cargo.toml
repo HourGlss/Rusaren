@@ -1,0 +1,43 @@
+[package]
+name = "rarena-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+game_net = { path = "../crates/game_net" }
+libfuzzer-sys = { version = "0.4", features = ["arbitrary-derive"] }
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "packet_header_decode"
+path = "fuzz_targets/packet_header_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "control_command_decode"
+path = "fuzz_targets/control_command_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "input_frame_decode"
+path = "fuzz_targets/input_frame_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "session_ingress"
+path = "fuzz_targets/session_ingress.rs"
+test = false
+doc = false
+bench = false

@@ -23,7 +23,7 @@ jobs:
           rustup component add clippy rustfmt llvm-tools-preview --toolchain stable
 
       - name: Install advanced tools
-        run: ./scripts/install-tools.ps1 -IncludeNightly
+        run: ./scripts/install-tools.ps1 -IncludeNightly -IncludeFuzzTools
 
       - name: Unused dependencies
         run: ./scripts/quality.ps1 udeps
@@ -36,6 +36,9 @@ jobs:
 
       - name: Complexity report
         run: ./scripts/quality.ps1 complexity
+
+      - name: Fuzz target build
+        run: ./scripts/quality.ps1 fuzz
 
       - name: Upload advanced reports
         if: always()

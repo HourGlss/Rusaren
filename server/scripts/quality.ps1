@@ -60,7 +60,17 @@ function Invoke-QualityTask {
                 return
             }
 
-            rustup run nightly cargo fuzz build
+            $targets = Get-ChildItem -Path "fuzz/fuzz_targets" -Filter *.rs -File |
+                ForEach-Object { [System.IO.Path]::GetFileNameWithoutExtension($_.Name) }
+
+            if ($targets.Count -eq 0) {
+                Write-Host "The fuzz workspace exists, but no fuzz targets are defined yet."
+                return
+            }
+
+            foreach ($target in $targets) {
+                rustup run nightly cargo fuzz build $target
+            }
         }
         "typos" {
             Push-Location $repoRoot

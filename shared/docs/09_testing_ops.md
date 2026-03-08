@@ -37,3 +37,4 @@ Replay:
 - disconnect after launch countdown immediately ends the match
 - no reconnect-to-match flow in v1
 - fuzz protocol decode and invalid client command sequences in `game_net`
+- initial fuzz targets should stay live for packet headers, control-command decode, input-frame decode, and ingress/session sequencing

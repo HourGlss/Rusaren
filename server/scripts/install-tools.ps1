@@ -155,10 +155,13 @@ foreach ($tool in $stableTools) {
 
 Install-Verus
 
-if ($IncludeNightly) {
+if ($IncludeNightly -or $IncludeFuzzTools) {
     rustup toolchain install nightly --profile minimal | Out-Host
     rustup component add miri --toolchain nightly | Out-Host
-    rustup run nightly cargo install --locked cargo-udeps | Out-Host
+
+    if ($IncludeNightly) {
+        rustup run nightly cargo install --locked cargo-udeps | Out-Host
+    }
 }
 
 if ($IncludeFuzzTools) {

@@ -25,7 +25,7 @@ Primary quality tools:
 - `rust-code-analysis-cli` for complexity and maintainability metrics
 - `cargo-geiger` for unsafe usage reporting
 - `miri` for undefined-behavior checks
-- `cargo-fuzz` for Linux or WSL2 fuzzing once targets exist
+- `cargo-fuzz` for coverage-guided fuzzing against the network boundary and future content loaders
 - `typos-cli` for docs and source spelling checks
 - `taplo-cli` for TOML formatting checks
 - `zizmor` for GitHub Actions security analysis
@@ -81,10 +81,16 @@ There is no single mainstream Rust tool that automatically picks fuzz targets fr
 4. build or expand `cargo-fuzz` targets for the top-ranked modules
 
 For this repo, the first target order should be:
-1. content loaders and validators in `game_content`
-2. protocol decoding and snapshot parsing in `game_net`
+1. protocol decoding and ingress sequencing in `game_net`
+2. content loaders and validators in `game_content`
 3. tick input streams and state transitions in `game_sim`
 4. line-of-sight and stealth visibility logic described in [10_maps.md](10_maps.md)
+
+The initial real fuzz targets now live under `server/fuzz/` and cover:
+- packet header decode
+- client control command decode
+- validated input frame decode
+- ingress/session sequencing
 
 ## Commands
 
@@ -108,6 +114,7 @@ Run advanced checks after installing nightly:
 ./server/scripts/quality.ps1 miri
 ./server/scripts/quality.ps1 complexity
 ./server/scripts/quality.ps1 bench
+./server/scripts/quality.ps1 fuzz
 ```
 
 Additional repo-wide checks:
