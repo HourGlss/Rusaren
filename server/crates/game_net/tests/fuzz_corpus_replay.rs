@@ -45,21 +45,21 @@ fn corpus_files(target: &str) -> Vec<Vec<u8>> {
 #[test]
 fn replay_packet_header_corpus() {
     for bytes in corpus_files("packet_header_decode") {
-        let _ = PacketHeader::decode(&bytes);
+        consume_result(PacketHeader::decode(&bytes));
     }
 }
 
 #[test]
 fn replay_control_command_corpus() {
     for bytes in corpus_files("control_command_decode") {
-        let _ = ClientControlCommand::decode_packet(&bytes);
+        consume_result(ClientControlCommand::decode_packet(&bytes));
     }
 }
 
 #[test]
 fn replay_input_frame_corpus() {
     for bytes in corpus_files("input_frame_decode") {
-        let _ = ValidatedInputFrame::decode_packet(&bytes);
+        consume_result(ValidatedInputFrame::decode_packet(&bytes));
     }
 }
 
@@ -77,7 +77,7 @@ fn replay_session_ingress_corpus() {
             let remaining = bytes.len().saturating_sub(index);
             let packet_len = declared_len.min(remaining);
             let packet = &bytes[index..index + packet_len];
-            let _ = guard.accept_packet(packet);
+            consume_result(guard.accept_packet(packet));
 
             index += packet_len;
             packets_seen = packets_seen.saturating_add(1);
@@ -88,6 +88,12 @@ fn replay_session_ingress_corpus() {
 #[test]
 fn replay_server_control_event_corpus() {
     for bytes in corpus_files("server_control_event_decode") {
-        let _ = ServerControlEvent::decode_packet(&bytes);
+        consume_result(ServerControlEvent::decode_packet(&bytes));
+    }
+}
+
+fn consume_result<T, E: std::fmt::Display>(result: Result<T, E>) {
+    if let Err(error) = result {
+        let _ = error.to_string();
     }
 }

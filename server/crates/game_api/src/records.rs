@@ -286,16 +286,14 @@ mod tests {
             .as_nanos();
         std::env::temp_dir()
             .join("rusaren-tests")
-            .join(format!("{label}-{}-{unique}.tsv", std::process::id()))
+            .join(format!("{label}-{}-{unique}", std::process::id()))
+            .join("player-records.tsv")
     }
 
     fn remove_if_exists(path: &Path) {
-        if path.exists() {
-            fs::remove_file(path).expect("temp file should be removable");
-        }
         if let Some(parent) = path.parent() {
             if parent.exists() {
-                let _ = fs::remove_dir(parent);
+                let _ = fs::remove_dir_all(parent);
             }
         }
     }

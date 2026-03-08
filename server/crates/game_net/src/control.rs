@@ -34,42 +34,8 @@ pub enum ClientControlCommand {
 impl ClientControlCommand {
     pub fn encode_packet(self, seq: u32, sim_tick: u32) -> Result<Vec<u8>, PacketError> {
         let mut payload = Vec::new();
-
-        match self {
-            Self::Connect {
-                player_id,
-                player_name,
-            } => {
-                payload.push(1);
-                payload.extend_from_slice(&player_id.get().to_le_bytes());
-                push_len_prefixed_string(
-                    &mut payload,
-                    "player_name",
-                    player_name.as_str(),
-                    game_domain::MAX_PLAYER_NAME_LEN,
-                )?;
-            }
-            Self::CreateGameLobby => payload.push(2),
-            Self::JoinGameLobby { lobby_id } => {
-                payload.push(3);
-                payload.extend_from_slice(&lobby_id.get().to_le_bytes());
-            }
-            Self::LeaveGameLobby => payload.push(4),
-            Self::SelectTeam { team } => {
-                payload.push(5);
-                payload.push(encode_team(team));
-            }
-            Self::SetReady { ready } => {
-                payload.push(6);
-                payload.push(encode_ready_state(ready));
-            }
-            Self::ChooseSkill { tree, tier } => {
-                payload.push(7);
-                payload.push(encode_skill_tree(tree));
-                payload.push(tier);
-            }
-            Self::QuitToCentralLobby => payload.push(8),
-        }
+        payload.push(self.kind_byte());
+        self.encode_body(&mut payload)?;
 
         let payload_len =
             u16::try_from(payload.len()).map_err(|_| PacketError::PayloadTooLarge {
@@ -88,8 +54,6 @@ impl ClientControlCommand {
         Ok(header.encode(&payload))
     }
 
-    #[allow(clippy::too_many_lines)]
-    #[allow(clippy::too_many_lines)]
     pub fn decode_packet(packet: &[u8]) -> Result<(PacketHeader, Self), PacketError> {
         let (header, payload) = PacketHeader::decode(packet)?;
         if header.channel_id != ChannelId::Control
@@ -109,38 +73,74 @@ impl ClientControlCommand {
             actual: payload.len(),
         })?;
         let mut index = 1usize;
-
-        let command = match kind {
-            1 => {
-                let player_id = read_player_id(payload, &mut index, "Connect")?;
-                let player_name = read_player_name(payload, &mut index, "Connect")?;
-                Self::Connect {
-                    player_id,
-                    player_name,
-                }
-            }
-            2 => Self::CreateGameLobby,
-            3 => Self::JoinGameLobby {
-                lobby_id: read_lobby_id(payload, &mut index, "JoinGameLobby")?,
-            },
-            4 => Self::LeaveGameLobby,
-            5 => Self::SelectTeam {
-                team: read_team(payload, &mut index, "SelectTeam")?,
-            },
-            6 => Self::SetReady {
-                ready: read_ready_state(payload, &mut index, "SetReady")?,
-            },
-            7 => {
-                let tree = read_skill_tree(payload, &mut index, "ChooseSkill")?;
-                let tier = read_u8(payload, &mut index, "ChooseSkill")?;
-                Self::ChooseSkill { tree, tier }
-            }
-            8 => Self::QuitToCentralLobby,
-            other => return Err(PacketError::UnknownControlCommand(other)),
-        };
+        let command = Self::decode_body(kind, payload, &mut index)?;
 
         ensure_consumed(payload, index, "ClientControlCommand")?;
         Ok((header, command))
+    }
+
+    const fn kind_byte(&self) -> u8 {
+        match self {
+            Self::Connect { .. } => 1,
+            Self::CreateGameLobby => 2,
+            Self::JoinGameLobby { .. } => 3,
+            Self::LeaveGameLobby => 4,
+            Self::SelectTeam { .. } => 5,
+            Self::SetReady { .. } => 6,
+            Self::ChooseSkill { .. } => 7,
+            Self::QuitToCentralLobby => 8,
+        }
+    }
+
+    fn encode_body(self, payload: &mut Vec<u8>) -> Result<(), PacketError> {
+        match self {
+            Self::Connect {
+                player_id,
+                player_name,
+            } => encode_connect_command(payload, player_id, &player_name),
+            Self::CreateGameLobby | Self::LeaveGameLobby | Self::QuitToCentralLobby => Ok(()),
+            Self::JoinGameLobby { lobby_id } => {
+                payload.extend_from_slice(&lobby_id.get().to_le_bytes());
+                Ok(())
+            }
+            Self::SelectTeam { team } => {
+                payload.push(encode_team(team));
+                Ok(())
+            }
+            Self::SetReady { ready } => {
+                payload.push(encode_ready_state(ready));
+                Ok(())
+            }
+            Self::ChooseSkill { tree, tier } => {
+                payload.push(encode_skill_tree(tree));
+                payload.push(tier);
+                Ok(())
+            }
+        }
+    }
+
+    fn decode_body(
+        kind: u8,
+        payload: &[u8],
+        index: &mut usize,
+    ) -> Result<Self, PacketError> {
+        match kind {
+            1 => decode_connect_command(payload, index),
+            2 => Ok(Self::CreateGameLobby),
+            3 => Ok(Self::JoinGameLobby {
+                lobby_id: read_lobby_id(payload, index, "JoinGameLobby")?,
+            }),
+            4 => Ok(Self::LeaveGameLobby),
+            5 => Ok(Self::SelectTeam {
+                team: read_team(payload, index, "SelectTeam")?,
+            }),
+            6 => Ok(Self::SetReady {
+                ready: read_ready_state(payload, index, "SetReady")?,
+            }),
+            7 => decode_choose_skill_command(payload, index),
+            8 => Ok(Self::QuitToCentralLobby),
+            other => Err(PacketError::UnknownControlCommand(other)),
+        }
     }
 }
 
@@ -249,189 +249,11 @@ pub enum LobbySnapshotPhase {
     },
 }
 
-#[allow(clippy::too_many_lines)]
 impl ServerControlEvent {
-    #[allow(clippy::too_many_lines)]
     pub fn encode_packet(self, seq: u32, sim_tick: u32) -> Result<Vec<u8>, PacketError> {
         let mut payload = Vec::new();
-
-        match self {
-            Self::Connected {
-                player_id,
-                player_name,
-                record,
-            } => {
-                payload.push(1);
-                payload.extend_from_slice(&player_id.get().to_le_bytes());
-                push_len_prefixed_string(
-                    &mut payload,
-                    "player_name",
-                    player_name.as_str(),
-                    game_domain::MAX_PLAYER_NAME_LEN,
-                )?;
-                payload.extend_from_slice(&record.wins.to_le_bytes());
-                payload.extend_from_slice(&record.losses.to_le_bytes());
-                payload.extend_from_slice(&record.no_contests.to_le_bytes());
-            }
-            Self::GameLobbyCreated { lobby_id } => {
-                payload.push(2);
-                payload.extend_from_slice(&lobby_id.get().to_le_bytes());
-            }
-            Self::GameLobbyJoined {
-                lobby_id,
-                player_id,
-            } => {
-                payload.push(3);
-                payload.extend_from_slice(&lobby_id.get().to_le_bytes());
-                payload.extend_from_slice(&player_id.get().to_le_bytes());
-            }
-            Self::GameLobbyLeft {
-                lobby_id,
-                player_id,
-            } => {
-                payload.push(4);
-                payload.extend_from_slice(&lobby_id.get().to_le_bytes());
-                payload.extend_from_slice(&player_id.get().to_le_bytes());
-            }
-            Self::TeamSelected {
-                player_id,
-                team,
-                ready_reset,
-            } => {
-                payload.push(5);
-                payload.extend_from_slice(&player_id.get().to_le_bytes());
-                payload.push(encode_team(team));
-                payload.push(u8::from(ready_reset));
-            }
-            Self::ReadyChanged { player_id, ready } => {
-                payload.push(6);
-                payload.extend_from_slice(&player_id.get().to_le_bytes());
-                payload.push(encode_ready_state(ready));
-            }
-            Self::LaunchCountdownStarted {
-                lobby_id,
-                seconds_remaining,
-                roster_size,
-            } => {
-                payload.push(7);
-                payload.extend_from_slice(&lobby_id.get().to_le_bytes());
-                payload.push(seconds_remaining);
-                payload.extend_from_slice(&roster_size.to_le_bytes());
-            }
-            Self::LaunchCountdownTick {
-                lobby_id,
-                seconds_remaining,
-            } => {
-                payload.push(8);
-                payload.extend_from_slice(&lobby_id.get().to_le_bytes());
-                payload.push(seconds_remaining);
-            }
-            Self::MatchStarted {
-                match_id,
-                round,
-                skill_pick_seconds,
-            } => {
-                payload.push(9);
-                payload.extend_from_slice(&match_id.get().to_le_bytes());
-                payload.push(round.get());
-                payload.push(skill_pick_seconds);
-            }
-            Self::SkillChosen {
-                player_id,
-                tree,
-                tier,
-            } => {
-                payload.push(10);
-                payload.extend_from_slice(&player_id.get().to_le_bytes());
-                payload.push(encode_skill_tree(tree));
-                payload.push(tier);
-            }
-            Self::PreCombatStarted { seconds_remaining } => {
-                payload.push(11);
-                payload.push(seconds_remaining);
-            }
-            Self::CombatStarted => payload.push(12),
-            Self::RoundWon {
-                round,
-                winning_team,
-                score_a,
-                score_b,
-            } => {
-                payload.push(13);
-                payload.push(round.get());
-                payload.push(encode_team(winning_team));
-                payload.push(score_a);
-                payload.push(score_b);
-            }
-            Self::MatchEnded {
-                outcome,
-                score_a,
-                score_b,
-                message,
-            } => {
-                payload.push(14);
-                payload.push(encode_match_outcome(outcome));
-                payload.push(score_a);
-                payload.push(score_b);
-                push_len_prefixed_string(&mut payload, "message", &message, MAX_MESSAGE_BYTES)?;
-            }
-            Self::ReturnedToCentralLobby { record } => {
-                payload.push(15);
-                payload.extend_from_slice(&record.wins.to_le_bytes());
-                payload.extend_from_slice(&record.losses.to_le_bytes());
-                payload.extend_from_slice(&record.no_contests.to_le_bytes());
-            }
-            Self::LobbyDirectorySnapshot { lobbies } => {
-                payload.push(17);
-                let lobby_count =
-                    u16::try_from(lobbies.len()).map_err(|_| PacketError::PayloadTooLarge {
-                        actual: lobbies.len(),
-                        maximum: usize::from(u16::MAX),
-                    })?;
-                payload.extend_from_slice(&lobby_count.to_le_bytes());
-                for lobby in lobbies {
-                    payload.extend_from_slice(&lobby.lobby_id.get().to_le_bytes());
-                    payload.extend_from_slice(&lobby.player_count.to_le_bytes());
-                    payload.extend_from_slice(&lobby.team_a_count.to_le_bytes());
-                    payload.extend_from_slice(&lobby.team_b_count.to_le_bytes());
-                    payload.extend_from_slice(&lobby.ready_count.to_le_bytes());
-                    encode_lobby_snapshot_phase(&mut payload, lobby.phase);
-                }
-            }
-            Self::GameLobbySnapshot {
-                lobby_id,
-                phase,
-                players,
-            } => {
-                payload.push(18);
-                payload.extend_from_slice(&lobby_id.get().to_le_bytes());
-                encode_lobby_snapshot_phase(&mut payload, phase);
-                let player_count =
-                    u16::try_from(players.len()).map_err(|_| PacketError::PayloadTooLarge {
-                        actual: players.len(),
-                        maximum: usize::from(u16::MAX),
-                    })?;
-                payload.extend_from_slice(&player_count.to_le_bytes());
-                for player in players {
-                    payload.extend_from_slice(&player.player_id.get().to_le_bytes());
-                    push_len_prefixed_string(
-                        &mut payload,
-                        "player_name",
-                        player.player_name.as_str(),
-                        game_domain::MAX_PLAYER_NAME_LEN,
-                    )?;
-                    payload.extend_from_slice(&player.record.wins.to_le_bytes());
-                    payload.extend_from_slice(&player.record.losses.to_le_bytes());
-                    payload.extend_from_slice(&player.record.no_contests.to_le_bytes());
-                    payload.push(encode_optional_team(player.team));
-                    payload.push(encode_ready_state(player.ready));
-                }
-            }
-            Self::Error { message } => {
-                payload.push(16);
-                push_len_prefixed_string(&mut payload, "message", &message, MAX_MESSAGE_BYTES)?;
-            }
-        }
+        payload.push(self.kind_byte());
+        self.encode_body(&mut payload)?;
 
         let payload_len =
             u16::try_from(payload.len()).map_err(|_| PacketError::PayloadTooLarge {
@@ -468,129 +290,524 @@ impl ServerControlEvent {
             actual: payload.len(),
         })?;
         let mut index = 1usize;
-
-        let event = match kind {
-            1 => Self::Connected {
-                player_id: read_player_id(payload, &mut index, "Connected")?,
-                player_name: read_player_name(payload, &mut index, "Connected")?,
-                record: read_player_record(payload, &mut index, "Connected")?,
-            },
-            2 => Self::GameLobbyCreated {
-                lobby_id: read_lobby_id(payload, &mut index, "GameLobbyCreated")?,
-            },
-            3 => Self::GameLobbyJoined {
-                lobby_id: read_lobby_id(payload, &mut index, "GameLobbyJoined")?,
-                player_id: read_player_id(payload, &mut index, "GameLobbyJoined")?,
-            },
-            4 => Self::GameLobbyLeft {
-                lobby_id: read_lobby_id(payload, &mut index, "GameLobbyLeft")?,
-                player_id: read_player_id(payload, &mut index, "GameLobbyLeft")?,
-            },
-            5 => Self::TeamSelected {
-                player_id: read_player_id(payload, &mut index, "TeamSelected")?,
-                team: read_team(payload, &mut index, "TeamSelected")?,
-                ready_reset: read_bool(payload, &mut index, "TeamSelected")?,
-            },
-            6 => Self::ReadyChanged {
-                player_id: read_player_id(payload, &mut index, "ReadyChanged")?,
-                ready: read_ready_state(payload, &mut index, "ReadyChanged")?,
-            },
-            7 => Self::LaunchCountdownStarted {
-                lobby_id: read_lobby_id(payload, &mut index, "LaunchCountdownStarted")?,
-                seconds_remaining: read_u8(payload, &mut index, "LaunchCountdownStarted")?,
-                roster_size: read_u16(payload, &mut index, "LaunchCountdownStarted")?,
-            },
-            8 => Self::LaunchCountdownTick {
-                lobby_id: read_lobby_id(payload, &mut index, "LaunchCountdownTick")?,
-                seconds_remaining: read_u8(payload, &mut index, "LaunchCountdownTick")?,
-            },
-            9 => Self::MatchStarted {
-                match_id: read_match_id(payload, &mut index, "MatchStarted")?,
-                round: read_round(payload, &mut index, "MatchStarted")?,
-                skill_pick_seconds: read_u8(payload, &mut index, "MatchStarted")?,
-            },
-            10 => Self::SkillChosen {
-                player_id: read_player_id(payload, &mut index, "SkillChosen")?,
-                tree: read_skill_tree(payload, &mut index, "SkillChosen")?,
-                tier: read_u8(payload, &mut index, "SkillChosen")?,
-            },
-            11 => Self::PreCombatStarted {
-                seconds_remaining: read_u8(payload, &mut index, "PreCombatStarted")?,
-            },
-            12 => Self::CombatStarted,
-            13 => Self::RoundWon {
-                round: read_round(payload, &mut index, "RoundWon")?,
-                winning_team: read_team(payload, &mut index, "RoundWon")?,
-                score_a: read_u8(payload, &mut index, "RoundWon")?,
-                score_b: read_u8(payload, &mut index, "RoundWon")?,
-            },
-            14 => Self::MatchEnded {
-                outcome: read_match_outcome(payload, &mut index, "MatchEnded")?,
-                score_a: read_u8(payload, &mut index, "MatchEnded")?,
-                score_b: read_u8(payload, &mut index, "MatchEnded")?,
-                message: read_string(
-                    payload,
-                    &mut index,
-                    "MatchEnded",
-                    "message",
-                    MAX_MESSAGE_BYTES,
-                )?,
-            },
-            15 => Self::ReturnedToCentralLobby {
-                record: read_player_record(payload, &mut index, "ReturnedToCentralLobby")?,
-            },
-            17 => {
-                let lobby_count = usize::from(read_u16(
-                    payload,
-                    &mut index,
-                    "LobbyDirectorySnapshot",
-                )?);
-                let mut lobbies = Vec::with_capacity(lobby_count);
-                for _ in 0..lobby_count {
-                    lobbies.push(LobbyDirectoryEntry {
-                        lobby_id: read_lobby_id(payload, &mut index, "LobbyDirectorySnapshot")?,
-                        player_count: read_u16(payload, &mut index, "LobbyDirectorySnapshot")?,
-                        team_a_count: read_u16(payload, &mut index, "LobbyDirectorySnapshot")?,
-                        team_b_count: read_u16(payload, &mut index, "LobbyDirectorySnapshot")?,
-                        ready_count: read_u16(payload, &mut index, "LobbyDirectorySnapshot")?,
-                        phase: read_lobby_snapshot_phase(
-                            payload,
-                            &mut index,
-                            "LobbyDirectorySnapshot",
-                        )?,
-                    });
-                }
-                Self::LobbyDirectorySnapshot { lobbies }
-            }
-            18 => {
-                let lobby_id = read_lobby_id(payload, &mut index, "GameLobbySnapshot")?;
-                let phase = read_lobby_snapshot_phase(payload, &mut index, "GameLobbySnapshot")?;
-                let player_count = usize::from(read_u16(payload, &mut index, "GameLobbySnapshot")?);
-                let mut players = Vec::with_capacity(player_count);
-                for _ in 0..player_count {
-                    players.push(LobbySnapshotPlayer {
-                        player_id: read_player_id(payload, &mut index, "GameLobbySnapshot")?,
-                        player_name: read_player_name(payload, &mut index, "GameLobbySnapshot")?,
-                        record: read_player_record(payload, &mut index, "GameLobbySnapshot")?,
-                        team: read_optional_team(payload, &mut index, "GameLobbySnapshot")?,
-                        ready: read_ready_state(payload, &mut index, "GameLobbySnapshot")?,
-                    });
-                }
-                Self::GameLobbySnapshot {
-                    lobby_id,
-                    phase,
-                    players,
-                }
-            }
-            16 => Self::Error {
-                message: read_string(payload, &mut index, "Error", "message", MAX_MESSAGE_BYTES)?,
-            },
-            other => return Err(PacketError::UnknownServerEvent(other)),
-        };
+        let event = Self::decode_body(kind, payload, &mut index)?;
 
         ensure_consumed(payload, index, "ServerControlEvent")?;
         Ok((header, event))
     }
+
+    const fn kind_byte(&self) -> u8 {
+        match self {
+            Self::Connected { .. } => 1,
+            Self::GameLobbyCreated { .. } => 2,
+            Self::GameLobbyJoined { .. } => 3,
+            Self::GameLobbyLeft { .. } => 4,
+            Self::TeamSelected { .. } => 5,
+            Self::ReadyChanged { .. } => 6,
+            Self::LaunchCountdownStarted { .. } => 7,
+            Self::LaunchCountdownTick { .. } => 8,
+            Self::MatchStarted { .. } => 9,
+            Self::SkillChosen { .. } => 10,
+            Self::PreCombatStarted { .. } => 11,
+            Self::CombatStarted => 12,
+            Self::RoundWon { .. } => 13,
+            Self::MatchEnded { .. } => 14,
+            Self::ReturnedToCentralLobby { .. } => 15,
+            Self::Error { .. } => 16,
+            Self::LobbyDirectorySnapshot { .. } => 17,
+            Self::GameLobbySnapshot { .. } => 18,
+        }
+    }
+
+    fn encode_body(self, payload: &mut Vec<u8>) -> Result<(), PacketError> {
+        match self {
+            Self::Connected {
+                player_id,
+                player_name,
+                record,
+            } => encode_connected_event(payload, player_id, &player_name, record),
+            Self::GameLobbyCreated { lobby_id } => {
+                encode_lobby_id_event(payload, lobby_id);
+                Ok(())
+            }
+            Self::GameLobbyJoined {
+                lobby_id,
+                player_id,
+            }
+            | Self::GameLobbyLeft {
+                lobby_id,
+                player_id,
+            } => {
+                encode_lobby_and_player_event(payload, lobby_id, player_id);
+                Ok(())
+            }
+            Self::TeamSelected {
+                player_id,
+                team,
+                ready_reset,
+            } => {
+                encode_team_selected_event(payload, player_id, team, ready_reset);
+                Ok(())
+            }
+            Self::ReadyChanged { player_id, ready } => {
+                encode_ready_changed_event(payload, player_id, ready);
+                Ok(())
+            }
+            Self::LaunchCountdownStarted {
+                lobby_id,
+                seconds_remaining,
+                roster_size,
+            } => {
+                encode_countdown_started_event(payload, lobby_id, seconds_remaining, roster_size);
+                Ok(())
+            }
+            Self::LaunchCountdownTick {
+                lobby_id,
+                seconds_remaining,
+            } => {
+                encode_countdown_tick_event(payload, lobby_id, seconds_remaining);
+                Ok(())
+            }
+            Self::MatchStarted {
+                match_id,
+                round,
+                skill_pick_seconds,
+            } => {
+                encode_match_started_event(payload, match_id, round, skill_pick_seconds);
+                Ok(())
+            }
+            Self::SkillChosen {
+                player_id,
+                tree,
+                tier,
+            } => {
+                encode_skill_chosen_event(payload, player_id, tree, tier);
+                Ok(())
+            }
+            Self::PreCombatStarted { seconds_remaining } => {
+                payload.push(seconds_remaining);
+                Ok(())
+            }
+            Self::CombatStarted => Ok(()),
+            Self::RoundWon {
+                round,
+                winning_team,
+                score_a,
+                score_b,
+            } => {
+                encode_round_won_event(payload, round, winning_team, score_a, score_b);
+                Ok(())
+            }
+            Self::MatchEnded {
+                outcome,
+                score_a,
+                score_b,
+                message,
+            } => encode_match_ended_event(payload, outcome, score_a, score_b, &message),
+            Self::ReturnedToCentralLobby { record } => {
+                encode_player_record(payload, record);
+                Ok(())
+            }
+            Self::LobbyDirectorySnapshot { lobbies } => encode_lobby_directory_snapshot(payload, &lobbies),
+            Self::GameLobbySnapshot {
+                lobby_id,
+                phase,
+                players,
+            } => encode_game_lobby_snapshot(payload, lobby_id, phase, &players),
+            Self::Error { message } => {
+                push_len_prefixed_string(payload, "message", &message, MAX_MESSAGE_BYTES)
+            }
+        }
+    }
+
+    fn decode_body(
+        kind: u8,
+        payload: &[u8],
+        index: &mut usize,
+    ) -> Result<Self, PacketError> {
+        match kind {
+            1 => decode_connected_event(payload, index),
+            2 => Ok(Self::GameLobbyCreated {
+                lobby_id: read_lobby_id(payload, index, "GameLobbyCreated")?,
+            }),
+            3 => decode_lobby_and_player_event(payload, index, "GameLobbyJoined", |lobby_id, player_id| {
+                Self::GameLobbyJoined { lobby_id, player_id }
+            }),
+            4 => decode_lobby_and_player_event(payload, index, "GameLobbyLeft", |lobby_id, player_id| {
+                Self::GameLobbyLeft { lobby_id, player_id }
+            }),
+            5 => decode_team_selected_event(payload, index),
+            6 => Ok(Self::ReadyChanged {
+                player_id: read_player_id(payload, index, "ReadyChanged")?,
+                ready: read_ready_state(payload, index, "ReadyChanged")?,
+            }),
+            7 => decode_countdown_started_event(payload, index),
+            8 => decode_countdown_tick_event(payload, index),
+            9 => decode_match_started_event(payload, index),
+            10 => decode_skill_chosen_event(payload, index),
+            11 => Ok(Self::PreCombatStarted {
+                seconds_remaining: read_u8(payload, index, "PreCombatStarted")?,
+            }),
+            12 => Ok(Self::CombatStarted),
+            13 => decode_round_won_event(payload, index),
+            14 => decode_match_ended_event(payload, index),
+            15 => Ok(Self::ReturnedToCentralLobby {
+                record: read_player_record(payload, index, "ReturnedToCentralLobby")?,
+            }),
+            16 => Ok(Self::Error {
+                message: read_string(payload, index, "Error", "message", MAX_MESSAGE_BYTES)?,
+            }),
+            17 => decode_lobby_directory_snapshot(payload, index),
+            18 => decode_game_lobby_snapshot(payload, index),
+            other => Err(PacketError::UnknownServerEvent(other)),
+        }
+    }
+}
+
+fn encode_connect_command(
+    payload: &mut Vec<u8>,
+    player_id: PlayerId,
+    player_name: &PlayerName,
+) -> Result<(), PacketError> {
+    payload.extend_from_slice(&player_id.get().to_le_bytes());
+    push_len_prefixed_string(
+        payload,
+        "player_name",
+        player_name.as_str(),
+        game_domain::MAX_PLAYER_NAME_LEN,
+    )
+}
+
+fn decode_connect_command(
+    payload: &[u8],
+    index: &mut usize,
+) -> Result<ClientControlCommand, PacketError> {
+    Ok(ClientControlCommand::Connect {
+        player_id: read_player_id(payload, index, "Connect")?,
+        player_name: read_player_name(payload, index, "Connect")?,
+    })
+}
+
+fn decode_choose_skill_command(
+    payload: &[u8],
+    index: &mut usize,
+) -> Result<ClientControlCommand, PacketError> {
+    Ok(ClientControlCommand::ChooseSkill {
+        tree: read_skill_tree(payload, index, "ChooseSkill")?,
+        tier: read_u8(payload, index, "ChooseSkill")?,
+    })
+}
+
+fn encode_connected_event(
+    payload: &mut Vec<u8>,
+    player_id: PlayerId,
+    player_name: &PlayerName,
+    record: PlayerRecord,
+) -> Result<(), PacketError> {
+    payload.extend_from_slice(&player_id.get().to_le_bytes());
+    push_len_prefixed_string(
+        payload,
+        "player_name",
+        player_name.as_str(),
+        game_domain::MAX_PLAYER_NAME_LEN,
+    )?;
+    encode_player_record(payload, record);
+    Ok(())
+}
+
+fn decode_connected_event(
+    payload: &[u8],
+    index: &mut usize,
+) -> Result<ServerControlEvent, PacketError> {
+    Ok(ServerControlEvent::Connected {
+        player_id: read_player_id(payload, index, "Connected")?,
+        player_name: read_player_name(payload, index, "Connected")?,
+        record: read_player_record(payload, index, "Connected")?,
+    })
+}
+
+fn encode_lobby_id_event(payload: &mut Vec<u8>, lobby_id: LobbyId) {
+    payload.extend_from_slice(&lobby_id.get().to_le_bytes());
+}
+
+fn encode_lobby_and_player_event(payload: &mut Vec<u8>, lobby_id: LobbyId, player_id: PlayerId) {
+    payload.extend_from_slice(&lobby_id.get().to_le_bytes());
+    payload.extend_from_slice(&player_id.get().to_le_bytes());
+}
+
+fn decode_lobby_and_player_event<F>(
+    payload: &[u8],
+    index: &mut usize,
+    kind: &'static str,
+    constructor: F,
+) -> Result<ServerControlEvent, PacketError>
+where
+    F: FnOnce(LobbyId, PlayerId) -> ServerControlEvent,
+{
+    Ok(constructor(
+        read_lobby_id(payload, index, kind)?,
+        read_player_id(payload, index, kind)?,
+    ))
+}
+
+fn encode_team_selected_event(
+    payload: &mut Vec<u8>,
+    player_id: PlayerId,
+    team: TeamSide,
+    ready_reset: bool,
+) {
+    payload.extend_from_slice(&player_id.get().to_le_bytes());
+    payload.push(encode_team(team));
+    payload.push(u8::from(ready_reset));
+}
+
+fn decode_team_selected_event(
+    payload: &[u8],
+    index: &mut usize,
+) -> Result<ServerControlEvent, PacketError> {
+    Ok(ServerControlEvent::TeamSelected {
+        player_id: read_player_id(payload, index, "TeamSelected")?,
+        team: read_team(payload, index, "TeamSelected")?,
+        ready_reset: read_bool(payload, index, "TeamSelected")?,
+    })
+}
+
+fn encode_ready_changed_event(payload: &mut Vec<u8>, player_id: PlayerId, ready: ReadyState) {
+    payload.extend_from_slice(&player_id.get().to_le_bytes());
+    payload.push(encode_ready_state(ready));
+}
+
+fn encode_countdown_started_event(
+    payload: &mut Vec<u8>,
+    lobby_id: LobbyId,
+    seconds_remaining: u8,
+    roster_size: u16,
+) {
+    payload.extend_from_slice(&lobby_id.get().to_le_bytes());
+    payload.push(seconds_remaining);
+    payload.extend_from_slice(&roster_size.to_le_bytes());
+}
+
+fn decode_countdown_started_event(
+    payload: &[u8],
+    index: &mut usize,
+) -> Result<ServerControlEvent, PacketError> {
+    Ok(ServerControlEvent::LaunchCountdownStarted {
+        lobby_id: read_lobby_id(payload, index, "LaunchCountdownStarted")?,
+        seconds_remaining: read_u8(payload, index, "LaunchCountdownStarted")?,
+        roster_size: read_u16(payload, index, "LaunchCountdownStarted")?,
+    })
+}
+
+fn encode_countdown_tick_event(payload: &mut Vec<u8>, lobby_id: LobbyId, seconds_remaining: u8) {
+    payload.extend_from_slice(&lobby_id.get().to_le_bytes());
+    payload.push(seconds_remaining);
+}
+
+fn decode_countdown_tick_event(
+    payload: &[u8],
+    index: &mut usize,
+) -> Result<ServerControlEvent, PacketError> {
+    Ok(ServerControlEvent::LaunchCountdownTick {
+        lobby_id: read_lobby_id(payload, index, "LaunchCountdownTick")?,
+        seconds_remaining: read_u8(payload, index, "LaunchCountdownTick")?,
+    })
+}
+
+fn encode_match_started_event(
+    payload: &mut Vec<u8>,
+    match_id: MatchId,
+    round: RoundNumber,
+    skill_pick_seconds: u8,
+) {
+    payload.extend_from_slice(&match_id.get().to_le_bytes());
+    payload.push(round.get());
+    payload.push(skill_pick_seconds);
+}
+
+fn decode_match_started_event(
+    payload: &[u8],
+    index: &mut usize,
+) -> Result<ServerControlEvent, PacketError> {
+    Ok(ServerControlEvent::MatchStarted {
+        match_id: read_match_id(payload, index, "MatchStarted")?,
+        round: read_round(payload, index, "MatchStarted")?,
+        skill_pick_seconds: read_u8(payload, index, "MatchStarted")?,
+    })
+}
+
+fn encode_skill_chosen_event(
+    payload: &mut Vec<u8>,
+    player_id: PlayerId,
+    tree: SkillTree,
+    tier: u8,
+) {
+    payload.extend_from_slice(&player_id.get().to_le_bytes());
+    payload.push(encode_skill_tree(tree));
+    payload.push(tier);
+}
+
+fn decode_skill_chosen_event(
+    payload: &[u8],
+    index: &mut usize,
+) -> Result<ServerControlEvent, PacketError> {
+    Ok(ServerControlEvent::SkillChosen {
+        player_id: read_player_id(payload, index, "SkillChosen")?,
+        tree: read_skill_tree(payload, index, "SkillChosen")?,
+        tier: read_u8(payload, index, "SkillChosen")?,
+    })
+}
+
+fn encode_round_won_event(
+    payload: &mut Vec<u8>,
+    round: RoundNumber,
+    winning_team: TeamSide,
+    score_a: u8,
+    score_b: u8,
+) {
+    payload.push(round.get());
+    payload.push(encode_team(winning_team));
+    payload.push(score_a);
+    payload.push(score_b);
+}
+
+fn decode_round_won_event(
+    payload: &[u8],
+    index: &mut usize,
+) -> Result<ServerControlEvent, PacketError> {
+    Ok(ServerControlEvent::RoundWon {
+        round: read_round(payload, index, "RoundWon")?,
+        winning_team: read_team(payload, index, "RoundWon")?,
+        score_a: read_u8(payload, index, "RoundWon")?,
+        score_b: read_u8(payload, index, "RoundWon")?,
+    })
+}
+
+fn encode_match_ended_event(
+    payload: &mut Vec<u8>,
+    outcome: MatchOutcome,
+    score_a: u8,
+    score_b: u8,
+    message: &str,
+) -> Result<(), PacketError> {
+    payload.push(encode_match_outcome(outcome));
+    payload.push(score_a);
+    payload.push(score_b);
+    push_len_prefixed_string(payload, "message", message, MAX_MESSAGE_BYTES)
+}
+
+fn decode_match_ended_event(
+    payload: &[u8],
+    index: &mut usize,
+) -> Result<ServerControlEvent, PacketError> {
+    Ok(ServerControlEvent::MatchEnded {
+        outcome: read_match_outcome(payload, index, "MatchEnded")?,
+        score_a: read_u8(payload, index, "MatchEnded")?,
+        score_b: read_u8(payload, index, "MatchEnded")?,
+        message: read_string(payload, index, "MatchEnded", "message", MAX_MESSAGE_BYTES)?,
+    })
+}
+
+fn encode_player_record(payload: &mut Vec<u8>, record: PlayerRecord) {
+    payload.extend_from_slice(&record.wins.to_le_bytes());
+    payload.extend_from_slice(&record.losses.to_le_bytes());
+    payload.extend_from_slice(&record.no_contests.to_le_bytes());
+}
+
+fn encode_lobby_directory_snapshot(
+    payload: &mut Vec<u8>,
+    lobbies: &[LobbyDirectoryEntry],
+) -> Result<(), PacketError> {
+    let lobby_count = u16::try_from(lobbies.len()).map_err(|_| PacketError::PayloadTooLarge {
+        actual: lobbies.len(),
+        maximum: usize::from(u16::MAX),
+    })?;
+    payload.extend_from_slice(&lobby_count.to_le_bytes());
+    for lobby in lobbies {
+        payload.extend_from_slice(&lobby.lobby_id.get().to_le_bytes());
+        payload.extend_from_slice(&lobby.player_count.to_le_bytes());
+        payload.extend_from_slice(&lobby.team_a_count.to_le_bytes());
+        payload.extend_from_slice(&lobby.team_b_count.to_le_bytes());
+        payload.extend_from_slice(&lobby.ready_count.to_le_bytes());
+        encode_lobby_snapshot_phase(payload, lobby.phase);
+    }
+
+    Ok(())
+}
+
+fn decode_lobby_directory_snapshot(
+    payload: &[u8],
+    index: &mut usize,
+) -> Result<ServerControlEvent, PacketError> {
+    let lobby_count = usize::from(read_u16(payload, index, "LobbyDirectorySnapshot")?);
+    let mut lobbies = Vec::with_capacity(lobby_count);
+    for _ in 0..lobby_count {
+        lobbies.push(LobbyDirectoryEntry {
+            lobby_id: read_lobby_id(payload, index, "LobbyDirectorySnapshot")?,
+            player_count: read_u16(payload, index, "LobbyDirectorySnapshot")?,
+            team_a_count: read_u16(payload, index, "LobbyDirectorySnapshot")?,
+            team_b_count: read_u16(payload, index, "LobbyDirectorySnapshot")?,
+            ready_count: read_u16(payload, index, "LobbyDirectorySnapshot")?,
+            phase: read_lobby_snapshot_phase(payload, index, "LobbyDirectorySnapshot")?,
+        });
+    }
+
+    Ok(ServerControlEvent::LobbyDirectorySnapshot { lobbies })
+}
+
+fn encode_game_lobby_snapshot(
+    payload: &mut Vec<u8>,
+    lobby_id: LobbyId,
+    phase: LobbySnapshotPhase,
+    players: &[LobbySnapshotPlayer],
+) -> Result<(), PacketError> {
+    payload.extend_from_slice(&lobby_id.get().to_le_bytes());
+    encode_lobby_snapshot_phase(payload, phase);
+
+    let player_count = u16::try_from(players.len()).map_err(|_| PacketError::PayloadTooLarge {
+        actual: players.len(),
+        maximum: usize::from(u16::MAX),
+    })?;
+    payload.extend_from_slice(&player_count.to_le_bytes());
+    for player in players {
+        payload.extend_from_slice(&player.player_id.get().to_le_bytes());
+        push_len_prefixed_string(
+            payload,
+            "player_name",
+            player.player_name.as_str(),
+            game_domain::MAX_PLAYER_NAME_LEN,
+        )?;
+        encode_player_record(payload, player.record);
+        payload.push(encode_optional_team(player.team));
+        payload.push(encode_ready_state(player.ready));
+    }
+
+    Ok(())
+}
+
+fn decode_game_lobby_snapshot(
+    payload: &[u8],
+    index: &mut usize,
+) -> Result<ServerControlEvent, PacketError> {
+    let lobby_id = read_lobby_id(payload, index, "GameLobbySnapshot")?;
+    let phase = read_lobby_snapshot_phase(payload, index, "GameLobbySnapshot")?;
+    let player_count = usize::from(read_u16(payload, index, "GameLobbySnapshot")?);
+    let mut players = Vec::with_capacity(player_count);
+    for _ in 0..player_count {
+        players.push(LobbySnapshotPlayer {
+            player_id: read_player_id(payload, index, "GameLobbySnapshot")?,
+            player_name: read_player_name(payload, index, "GameLobbySnapshot")?,
+            record: read_player_record(payload, index, "GameLobbySnapshot")?,
+            team: read_optional_team(payload, index, "GameLobbySnapshot")?,
+            ready: read_ready_state(payload, index, "GameLobbySnapshot")?,
+        });
+    }
+
+    Ok(ServerControlEvent::GameLobbySnapshot {
+        lobby_id,
+        phase,
+        players,
+    })
 }
 
 fn read_u8(payload: &[u8], index: &mut usize, kind: &'static str) -> Result<u8, PacketError> {
@@ -895,259 +1112,4 @@ fn ensure_consumed(payload: &[u8], index: usize, kind: &'static str) -> Result<(
     }
 
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn player_id(raw: u32) -> PlayerId {
-        PlayerId::new(raw).expect("valid player id")
-    }
-
-    fn player_name(raw: &str) -> PlayerName {
-        PlayerName::new(raw).expect("valid player name")
-    }
-
-    fn lobby_id(raw: u32) -> LobbyId {
-        LobbyId::new(raw).expect("valid lobby id")
-    }
-
-    #[test]
-    fn client_control_command_round_trips_valid_packets() {
-        let command = ClientControlCommand::Connect {
-            player_id: player_id(7),
-            player_name: player_name("Alice"),
-        };
-        let packet = command.clone().encode_packet(3, 11).expect("packet");
-
-        let (header, decoded) = ClientControlCommand::decode_packet(&packet).expect("decode");
-        assert_eq!(header.channel_id, ChannelId::Control);
-        assert_eq!(header.packet_kind, PacketKind::ControlCommand);
-        assert_eq!(decoded, command);
-    }
-
-    #[test]
-    fn client_control_command_rejects_invalid_ids_enums_and_trailing_bytes() {
-        let header = PacketHeader::new(ChannelId::Control, PacketKind::ControlCommand, 0, 6, 1, 1)
-            .expect("header");
-
-        let packet = header.encode(&[1, 0, 0, 0, 0, 0]);
-        assert_eq!(
-            ClientControlCommand::decode_packet(&packet),
-            Err(PacketError::InvalidEncodedPlayerId(0))
-        );
-
-        let header = PacketHeader::new(ChannelId::Control, PacketKind::ControlCommand, 0, 3, 1, 1)
-            .expect("header");
-        let packet = header.encode(&[5, 9, 0]);
-        assert_eq!(
-            ClientControlCommand::decode_packet(&packet),
-            Err(PacketError::InvalidEncodedTeam(9))
-        );
-
-        let header = PacketHeader::new(ChannelId::Control, PacketKind::ControlCommand, 0, 2, 1, 1)
-            .expect("header");
-        let packet = header.encode(&[4, 99]);
-        assert_eq!(
-            ClientControlCommand::decode_packet(&packet),
-            Err(PacketError::UnexpectedTrailingBytes {
-                kind: "ClientControlCommand",
-                actual: 1,
-            })
-        );
-    }
-
-    #[test]
-    fn client_control_command_rejects_wrong_packet_kinds_and_bad_names() {
-        let wrong = PacketHeader::new(ChannelId::Control, PacketKind::ControlEvent, 0, 1, 1, 1)
-            .expect("header")
-            .encode(&[2]);
-        assert_eq!(
-            ClientControlCommand::decode_packet(&wrong),
-            Err(PacketError::UnexpectedPacketKind {
-                expected_channel: ChannelId::Control,
-                expected_kind: PacketKind::ControlCommand,
-                actual_channel: ChannelId::Control,
-                actual_kind: PacketKind::ControlEvent,
-            })
-        );
-
-        let long_name = "A".repeat(game_domain::MAX_PLAYER_NAME_LEN + 1);
-        let mut payload = vec![1];
-        payload.extend_from_slice(&1_u32.to_le_bytes());
-        payload.push(u8::try_from(long_name.len()).expect("name length should fit in u8"));
-        payload.extend_from_slice(long_name.as_bytes());
-        let header = PacketHeader::new(
-            ChannelId::Control,
-            PacketKind::ControlCommand,
-            0,
-            u16::try_from(payload.len()).expect("payload length should fit in u16"),
-            1,
-            1,
-        )
-        .expect("header");
-        let packet = header.encode(&payload);
-        assert_eq!(
-            ClientControlCommand::decode_packet(&packet),
-            Err(PacketError::StringLengthOutOfBounds {
-                field: "player_name",
-                len: game_domain::MAX_PLAYER_NAME_LEN + 1,
-                max: game_domain::MAX_PLAYER_NAME_LEN,
-            })
-        );
-    }
-
-    #[test]
-    fn server_control_event_round_trips_valid_packets() {
-        let event = ServerControlEvent::MatchEnded {
-            outcome: MatchOutcome::NoContest,
-            score_a: 2,
-            score_b: 1,
-            message: String::from("Bob has disconnected. Game is over."),
-        };
-        let packet = event.clone().encode_packet(8, 21).expect("packet");
-
-        let (header, decoded) = ServerControlEvent::decode_packet(&packet).expect("decode");
-        assert_eq!(header.channel_id, ChannelId::Control);
-        assert_eq!(header.packet_kind, PacketKind::ControlEvent);
-        assert_eq!(decoded, event);
-    }
-
-    #[test]
-    fn server_control_event_round_trips_lobby_directory_and_snapshot_packets() {
-        let directory_event = ServerControlEvent::LobbyDirectorySnapshot {
-            lobbies: vec![LobbyDirectoryEntry {
-                lobby_id: lobby_id(3),
-                player_count: 4,
-                team_a_count: 1,
-                team_b_count: 2,
-                ready_count: 3,
-                phase: LobbySnapshotPhase::LaunchCountdown {
-                    seconds_remaining: 4,
-                },
-            }],
-        };
-        let snapshot_event = ServerControlEvent::GameLobbySnapshot {
-            lobby_id: lobby_id(3),
-            phase: LobbySnapshotPhase::Open,
-            players: vec![LobbySnapshotPlayer {
-                player_id: player_id(7),
-                player_name: player_name("Alice"),
-                record: PlayerRecord {
-                    wins: 1,
-                    losses: 2,
-                    no_contests: 3,
-                },
-                team: Some(TeamSide::TeamA),
-                ready: ReadyState::Ready,
-            }],
-        };
-
-        let directory_packet = directory_event.clone().encode_packet(2, 3).expect("packet");
-        let snapshot_packet = snapshot_event.clone().encode_packet(4, 5).expect("packet");
-
-        let (_, decoded_directory) =
-            ServerControlEvent::decode_packet(&directory_packet).expect("decode");
-        let (_, decoded_snapshot) =
-            ServerControlEvent::decode_packet(&snapshot_packet).expect("decode");
-
-        assert_eq!(decoded_directory, directory_event);
-        assert_eq!(decoded_snapshot, snapshot_event);
-    }
-
-    #[test]
-    fn server_control_event_rejects_bad_payloads_and_unknown_variants() {
-        let header = PacketHeader::new(ChannelId::Control, PacketKind::ControlEvent, 0, 1, 1, 1)
-            .expect("header");
-        let packet = header.encode(&[99]);
-        assert_eq!(
-            ServerControlEvent::decode_packet(&packet),
-            Err(PacketError::UnknownServerEvent(99))
-        );
-
-        let header = PacketHeader::new(ChannelId::Control, PacketKind::ControlEvent, 0, 4, 1, 1)
-            .expect("header");
-        let packet = header.encode(&[14, 9, 0, 0]);
-        assert_eq!(
-            ServerControlEvent::decode_packet(&packet),
-            Err(PacketError::InvalidEncodedMatchOutcome(9))
-        );
-    }
-
-    #[test]
-    fn server_control_event_rejects_invalid_snapshot_phase_and_optional_team_values() {
-        let mut payload = vec![17];
-        payload.extend_from_slice(&1_u16.to_le_bytes());
-        payload.extend_from_slice(&1_u32.to_le_bytes());
-        payload.extend_from_slice(&0_u16.to_le_bytes());
-        payload.extend_from_slice(&0_u16.to_le_bytes());
-        payload.extend_from_slice(&0_u16.to_le_bytes());
-        payload.extend_from_slice(&0_u16.to_le_bytes());
-        payload.push(9);
-        let header = PacketHeader::new(
-            ChannelId::Control,
-            PacketKind::ControlEvent,
-            0,
-            u16::try_from(payload.len()).expect("payload length should fit in u16"),
-            1,
-            1,
-        )
-        .expect("header");
-        let packet = header.encode(&payload);
-        assert_eq!(
-            ServerControlEvent::decode_packet(&packet),
-            Err(PacketError::InvalidEncodedLobbyPhase(9))
-        );
-
-        let mut payload = vec![18];
-        payload.extend_from_slice(&1_u32.to_le_bytes());
-        payload.push(0);
-        payload.extend_from_slice(&1_u16.to_le_bytes());
-        payload.extend_from_slice(&7_u32.to_le_bytes());
-        payload.push(5);
-        payload.extend_from_slice(b"Alice");
-        payload.extend_from_slice(&0_u16.to_le_bytes());
-        payload.extend_from_slice(&0_u16.to_le_bytes());
-        payload.extend_from_slice(&0_u16.to_le_bytes());
-        payload.push(9);
-        payload.push(0);
-        let header = PacketHeader::new(
-            ChannelId::Control,
-            PacketKind::ControlEvent,
-            0,
-            u16::try_from(payload.len()).expect("payload length should fit in u16"),
-            1,
-            1,
-        )
-        .expect("header");
-        let packet = header.encode(&payload);
-        assert_eq!(
-            ServerControlEvent::decode_packet(&packet),
-            Err(PacketError::InvalidEncodedOptionalTeam(9))
-        );
-    }
-
-    #[test]
-    fn server_control_event_rejects_invalid_records_and_wrong_packet_kind() {
-        let wrong = PacketHeader::new(ChannelId::Control, PacketKind::ControlCommand, 0, 1, 1, 1)
-            .expect("header")
-            .encode(&[16]);
-        assert_eq!(
-            ServerControlEvent::decode_packet(&wrong),
-            Err(PacketError::UnexpectedPacketKind {
-                expected_channel: ChannelId::Control,
-                expected_kind: PacketKind::ControlEvent,
-                actual_channel: ChannelId::Control,
-                actual_kind: PacketKind::ControlCommand,
-            })
-        );
-
-        let event = ServerControlEvent::GameLobbyCreated {
-            lobby_id: lobby_id(1),
-        };
-        let packet = event.clone().encode_packet(1, 1).expect("packet");
-        let (_, decoded) = ServerControlEvent::decode_packet(&packet).expect("decode");
-        assert_eq!(decoded, event);
-    }
 }

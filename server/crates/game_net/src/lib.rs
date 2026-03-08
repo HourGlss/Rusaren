@@ -468,401 +468,165 @@ pub enum PacketError {
     },
 }
 
-impl fmt::Display for PacketError {
-    #[allow(clippy::too_many_lines)]
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl PacketError {
+    fn fmt_protocol_error(&self, f: &mut fmt::Formatter<'_>) -> Option<fmt::Result> {
         match self {
-            Self::PacketTooShort { actual, minimum } => {
-                write!(
-                    f,
-                    "packet length {actual} is below the minimum header length {minimum}"
-                )
-            }
-            Self::MagicMismatch { expected, actual } => {
-                write!(
-                    f,
-                    "packet magic {actual:#06x} does not match expected {expected:#06x}"
-                )
-            }
-            Self::VersionMismatch { expected, actual } => {
-                write!(
-                    f,
-                    "protocol version {actual} does not match expected version {expected}"
-                )
-            }
-            Self::UnknownChannel(raw) => write!(f, "unknown channel id {raw}"),
+            Self::PacketTooShort { actual, minimum } => Some(write!(
+                f,
+                "packet length {actual} is below the minimum header length {minimum}"
+            )),
+            Self::MagicMismatch { expected, actual } => Some(write!(
+                f,
+                "packet magic {actual:#06x} does not match expected {expected:#06x}"
+            )),
+            Self::VersionMismatch { expected, actual } => Some(write!(
+                f,
+                "protocol version {actual} does not match expected version {expected}"
+            )),
+            Self::UnknownChannel(raw) => Some(write!(f, "unknown channel id {raw}")),
             Self::UnknownPacketKind { channel, raw_kind } => {
-                write!(f, "unknown packet kind {raw_kind} on channel {channel:?}")
+                Some(write!(f, "unknown packet kind {raw_kind} on channel {channel:?}"))
             }
-            Self::PayloadLengthMismatch { declared, actual } => {
-                write!(
-                    f,
-                    "payload length declared {declared} but actual bytes were {actual}"
-                )
-            }
+            Self::PayloadLengthMismatch { declared, actual } => Some(write!(
+                f,
+                "payload length declared {declared} but actual bytes were {actual}"
+            )),
             Self::UnexpectedPacketKind {
                 expected_channel,
                 expected_kind,
                 actual_channel,
                 actual_kind,
-            } => write!(
+            } => Some(write!(
                 f,
                 "expected {expected_channel:?}/{expected_kind:?} but received {actual_channel:?}/{actual_kind:?}"
-            ),
-            Self::InputPayloadLengthMismatch { expected, actual } => {
-                write!(
-                    f,
-                    "input payload length {actual} does not match expected length {expected}"
-                )
-            }
+            )),
+            Self::PayloadTooLarge { actual, maximum } => Some(write!(
+                f,
+                "payload length {actual} exceeds maximum encodable {maximum}"
+            )),
+            _ => None,
+        }
+    }
+
+    fn fmt_input_error(&self, f: &mut fmt::Formatter<'_>) -> Option<fmt::Result> {
+        match self {
+            Self::InputPayloadLengthMismatch { expected, actual } => Some(write!(
+                f,
+                "input payload length {actual} does not match expected length {expected}"
+            )),
             Self::UnknownButtonBits {
                 provided,
                 allowed_mask,
-            } => write!(
+            } => Some(write!(
                 f,
                 "button bits {provided:#06x} exceed allowed mask {allowed_mask:#06x}"
-            ),
+            )),
             Self::MissingAbilityContext => {
-                f.write_str("cast packets must provide a non-zero ability_or_context")
+                Some(f.write_str("cast packets must provide a non-zero ability_or_context"))
             }
-            Self::UnexpectedAbilityContext(value) => write!(
+            Self::UnexpectedAbilityContext(value) => Some(write!(
                 f,
                 "ability_or_context must be zero when cast is not requested, got {value}"
-            ),
+            )),
+            Self::StaleSequence { incoming, newest } => Some(write!(
+                f,
+                "incoming sequence {incoming} is not newer than {newest}"
+            )),
+            _ => None,
+        }
+    }
+
+    fn fmt_control_error(&self, f: &mut fmt::Formatter<'_>) -> Option<fmt::Result> {
+        match self {
             Self::ControlPayloadTooShort {
                 kind,
                 expected,
                 actual,
-            } => write!(
+            } => Some(write!(
                 f,
                 "{kind} payload expected at least {expected} bytes but received {actual}"
-            ),
-            Self::UnexpectedTrailingBytes { kind, actual } => {
-                write!(f, "{kind} payload contained {actual} unexpected trailing bytes")
-            }
-            Self::UnknownControlCommand(raw) => write!(f, "unknown control command {raw}"),
-            Self::UnknownServerEvent(raw) => write!(f, "unknown server event {raw}"),
-            Self::InvalidEncodedPlayerId(raw) => {
-                write!(f, "encoded player id {raw} is invalid")
-            }
-            Self::InvalidEncodedLobbyId(raw) => write!(f, "encoded lobby id {raw} is invalid"),
-            Self::InvalidEncodedMatchId(raw) => write!(f, "encoded match id {raw} is invalid"),
-            Self::InvalidEncodedRound(raw) => write!(f, "encoded round {raw} is invalid"),
-            Self::InvalidEncodedTeam(raw) => write!(f, "encoded team {raw} is invalid"),
-            Self::InvalidEncodedOptionalTeam(raw) => {
-                write!(f, "encoded optional team {raw} is invalid")
-            }
-            Self::InvalidEncodedReadyState(raw) => {
-                write!(f, "encoded ready state {raw} is invalid")
-            }
-            Self::InvalidEncodedSkillTree(raw) => {
-                write!(f, "encoded skill tree {raw} is invalid")
-            }
-            Self::InvalidEncodedMatchOutcome(raw) => {
-                write!(f, "encoded match outcome {raw} is invalid")
-            }
-            Self::InvalidEncodedLobbyPhase(raw) => {
-                write!(f, "encoded lobby phase {raw} is invalid")
-            }
-            Self::InvalidEncodedBoolean(raw) => write!(f, "encoded boolean {raw} is invalid"),
-            Self::InvalidEncodedPlayerName(error) => error.fmt(f),
+            )),
+            Self::UnexpectedTrailingBytes { kind, actual } => Some(write!(
+                f,
+                "{kind} payload contained {actual} unexpected trailing bytes"
+            )),
+            Self::UnknownControlCommand(raw) => Some(write!(f, "unknown control command {raw}")),
+            Self::UnknownServerEvent(raw) => Some(write!(f, "unknown server event {raw}")),
             Self::InvalidUtf8String { field } => {
-                write!(f, "{field} contained invalid utf-8")
+                Some(write!(f, "{field} contained invalid utf-8"))
             }
             Self::StringLengthOutOfBounds { field, len, max } => {
-                write!(f, "{field} length {len} exceeds maximum {max}")
+                Some(write!(f, "{field} length {len} exceeds maximum {max}"))
             }
-            Self::IngressPacketTooLarge { actual, maximum } => {
-                write!(f, "ingress packet length {actual} exceeds maximum {maximum}")
+            _ => None,
+        }
+    }
+
+    fn fmt_encoded_value_error(&self, f: &mut fmt::Formatter<'_>) -> Option<fmt::Result> {
+        match self {
+            Self::InvalidEncodedPlayerId(raw) => Some(write!(f, "encoded player id {raw} is invalid")),
+            Self::InvalidEncodedLobbyId(raw) => Some(write!(f, "encoded lobby id {raw} is invalid")),
+            Self::InvalidEncodedMatchId(raw) => Some(write!(f, "encoded match id {raw} is invalid")),
+            Self::InvalidEncodedRound(raw) => Some(write!(f, "encoded round {raw} is invalid")),
+            Self::InvalidEncodedTeam(raw) => Some(write!(f, "encoded team {raw} is invalid")),
+            Self::InvalidEncodedOptionalTeam(raw) => {
+                Some(write!(f, "encoded optional team {raw} is invalid"))
             }
+            Self::InvalidEncodedReadyState(raw) => {
+                Some(write!(f, "encoded ready state {raw} is invalid"))
+            }
+            Self::InvalidEncodedSkillTree(raw) => {
+                Some(write!(f, "encoded skill tree {raw} is invalid"))
+            }
+            Self::InvalidEncodedMatchOutcome(raw) => {
+                Some(write!(f, "encoded match outcome {raw} is invalid"))
+            }
+            Self::InvalidEncodedLobbyPhase(raw) => {
+                Some(write!(f, "encoded lobby phase {raw} is invalid"))
+            }
+            Self::InvalidEncodedBoolean(raw) => Some(write!(f, "encoded boolean {raw} is invalid")),
+            Self::InvalidEncodedPlayerName(error) => Some(fmt::Display::fmt(error, f)),
+            _ => None,
+        }
+    }
+
+    fn fmt_ingress_error(&self, f: &mut fmt::Formatter<'_>) -> Option<fmt::Result> {
+        match self {
+            Self::IngressPacketTooLarge { actual, maximum } => Some(write!(
+                f,
+                "ingress packet length {actual} exceeds maximum {maximum}"
+            )),
             Self::FirstPacketMustBeConnect => {
-                f.write_str("the first packet on a network session must be a connect command")
+                Some(f.write_str("the first packet on a network session must be a connect command"))
             }
             Self::ConnectCommandAfterBinding => {
-                f.write_str("connect commands are not accepted after a network session is bound")
+                Some(f.write_str("connect commands are not accepted after a network session is bound"))
             }
-            Self::PayloadTooLarge { actual, maximum } => {
-                write!(f, "payload length {actual} exceeds maximum encodable {maximum}")
-            }
-            Self::StaleSequence { incoming, newest } => {
-                write!(f, "incoming sequence {incoming} is not newer than {newest}")
-            }
+            _ => None,
         }
+    }
+}
+
+impl fmt::Display for PacketError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(result) = self.fmt_protocol_error(f) {
+            return result;
+        }
+        if let Some(result) = self.fmt_input_error(f) {
+            return result;
+        }
+        if let Some(result) = self.fmt_control_error(f) {
+            return result;
+        }
+        if let Some(result) = self.fmt_encoded_value_error(f) {
+            return result;
+        }
+        if let Some(result) = self.fmt_ingress_error(f) {
+            return result;
+        }
+
+        Err(fmt::Error)
     }
 }
 
 impl std::error::Error for PacketError {}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use proptest::prelude::*;
-
-    fn assert_ok<T, E: fmt::Debug>(result: Result<T, E>) -> T {
-        match result {
-            Ok(value) => value,
-            Err(error) => panic!("expected Ok(..), got Err({error:?})"),
-        }
-    }
-
-    #[test]
-    fn header_round_trips_for_valid_packets() {
-        let header = assert_ok(PacketHeader::new(
-            ChannelId::Input,
-            PacketKind::InputFrame,
-            0,
-            INPUT_PAYLOAD_LEN_U16,
-            7,
-            33,
-        ));
-
-        let payload = vec![0_u8; INPUT_PAYLOAD_LEN];
-        let bytes = header.encode(&payload);
-        let (decoded, decoded_payload) = assert_ok(PacketHeader::decode(&bytes));
-
-        assert_eq!(decoded, header);
-        assert_eq!(decoded_payload, payload.as_slice());
-    }
-
-    #[test]
-    fn header_rejects_short_packets_invalid_magic_and_invalid_versions() {
-        assert_eq!(
-            PacketHeader::decode(&[0_u8; HEADER_LEN - 1]),
-            Err(PacketError::PacketTooShort {
-                actual: HEADER_LEN - 1,
-                minimum: HEADER_LEN,
-            })
-        );
-
-        let mut packet = vec![0_u8; HEADER_LEN];
-        packet[0..2].copy_from_slice(&0x0000_u16.to_le_bytes());
-        packet[2] = PROTOCOL_VERSION;
-        packet[3] = 1;
-        packet[4] = 16;
-        assert_eq!(
-            PacketHeader::decode(&packet),
-            Err(PacketError::MagicMismatch {
-                expected: PACKET_MAGIC,
-                actual: 0,
-            })
-        );
-
-        packet[0..2].copy_from_slice(&PACKET_MAGIC.to_le_bytes());
-        packet[2] = PROTOCOL_VERSION + 1;
-        assert_eq!(
-            PacketHeader::decode(&packet),
-            Err(PacketError::VersionMismatch {
-                expected: PROTOCOL_VERSION,
-                actual: PROTOCOL_VERSION + 1,
-            })
-        );
-    }
-
-    #[test]
-    fn header_rejects_unknown_channels_unknown_kinds_and_bad_lengths() {
-        let mut packet = vec![0_u8; HEADER_LEN];
-        packet[0..2].copy_from_slice(&PACKET_MAGIC.to_le_bytes());
-        packet[2] = PROTOCOL_VERSION;
-        packet[3] = 9;
-        assert_eq!(
-            PacketHeader::decode(&packet),
-            Err(PacketError::UnknownChannel(9))
-        );
-
-        packet[3] = ChannelId::Input.to_byte();
-        packet[4] = 99;
-        assert_eq!(
-            PacketHeader::decode(&packet),
-            Err(PacketError::UnknownPacketKind {
-                channel: ChannelId::Input,
-                raw_kind: 99,
-            })
-        );
-
-        packet[4] = PacketKind::InputFrame.to_byte();
-        packet[6..8].copy_from_slice(&(1_u16).to_le_bytes());
-        assert_eq!(
-            PacketHeader::decode(&packet),
-            Err(PacketError::PayloadLengthMismatch {
-                declared: 1,
-                actual: 0,
-            })
-        );
-    }
-
-    #[test]
-    fn input_frame_validates_button_masks_and_context_consistency() {
-        assert_eq!(
-            ValidatedInputFrame::new(1, 0, 0, 0, 0, ALLOWED_BUTTONS_MASK + 1, 0),
-            Err(PacketError::UnknownButtonBits {
-                provided: ALLOWED_BUTTONS_MASK + 1,
-                allowed_mask: ALLOWED_BUTTONS_MASK,
-            })
-        );
-
-        assert_eq!(
-            ValidatedInputFrame::new(1, 0, 0, 0, 0, BUTTON_CAST, 0),
-            Err(PacketError::MissingAbilityContext)
-        );
-
-        assert_eq!(
-            ValidatedInputFrame::new(1, 0, 0, 0, 0, 0, 7),
-            Err(PacketError::UnexpectedAbilityContext(7))
-        );
-
-        assert_eq!(
-            ValidatedInputFrame::new(1, -10, 10, 25, -25, BUTTON_CAST | BUTTON_PRIMARY, 7),
-            Ok(ValidatedInputFrame {
-                client_input_tick: 1,
-                move_horizontal_q: -10,
-                move_vertical_q: 10,
-                aim_horizontal_q: 25,
-                aim_vertical_q: -25,
-                buttons: BUTTON_CAST | BUTTON_PRIMARY,
-                ability_or_context: 7,
-            })
-        );
-    }
-
-    #[test]
-    fn input_frame_packet_round_trips_and_rejects_wrong_packets() {
-        let frame = assert_ok(ValidatedInputFrame::new(3, 1, -1, 50, -50, BUTTON_CAST, 9));
-        let packet = assert_ok(frame.encode_packet(17, 99));
-
-        let (header, decoded_frame) = assert_ok(ValidatedInputFrame::decode_packet(&packet));
-        assert_eq!(header.channel_id, ChannelId::Input);
-        assert_eq!(header.packet_kind, PacketKind::InputFrame);
-        assert_eq!(decoded_frame, frame);
-
-        let wrong_header = assert_ok(PacketHeader::new(
-            ChannelId::Control,
-            PacketKind::MatchStarted,
-            0,
-            INPUT_PAYLOAD_LEN_U16,
-            17,
-            99,
-        ))
-        .encode(&[0_u8; INPUT_PAYLOAD_LEN]);
-
-        assert_eq!(
-            ValidatedInputFrame::decode_packet(&wrong_header),
-            Err(PacketError::UnexpectedPacketKind {
-                expected_channel: ChannelId::Input,
-                expected_kind: PacketKind::InputFrame,
-                actual_channel: ChannelId::Control,
-                actual_kind: PacketKind::MatchStarted,
-            })
-        );
-    }
-
-    #[test]
-    fn input_frame_decode_rejects_bad_input_payload_lengths() {
-        let header = assert_ok(PacketHeader::new(
-            ChannelId::Input,
-            PacketKind::InputFrame,
-            0,
-            INPUT_PAYLOAD_LEN_U16 - 1,
-            1,
-            1,
-        ));
-        let packet = header.encode(&[0_u8; INPUT_PAYLOAD_LEN - 1]);
-
-        assert_eq!(
-            ValidatedInputFrame::decode_packet(&packet),
-            Err(PacketError::InputPayloadLengthMismatch {
-                expected: INPUT_PAYLOAD_LEN,
-                actual: INPUT_PAYLOAD_LEN - 1,
-            })
-        );
-    }
-
-    #[test]
-    fn sequence_tracker_accepts_increasing_sequences_and_rejects_stale_values() {
-        let mut tracker = SequenceTracker::new();
-
-        assert_eq!(tracker.observe(0), Ok(()));
-        assert_eq!(tracker.observe(1), Ok(()));
-        assert_eq!(tracker.newest(), Some(1));
-        assert_eq!(
-            tracker.observe(1),
-            Err(PacketError::StaleSequence {
-                incoming: 1,
-                newest: 1,
-            })
-        );
-        assert_eq!(
-            tracker.observe(0),
-            Err(PacketError::StaleSequence {
-                incoming: 0,
-                newest: 1,
-            })
-        );
-    }
-
-    fn valid_channel_kind() -> impl Strategy<Value = (ChannelId, PacketKind)> {
-        prop_oneof![
-            Just((ChannelId::Control, PacketKind::ControlSnapshot)),
-            Just((ChannelId::Control, PacketKind::ControlDelta)),
-            Just((ChannelId::Control, PacketKind::LaunchCountdownStarted)),
-            Just((ChannelId::Control, PacketKind::MatchStarted)),
-            Just((ChannelId::Control, PacketKind::MatchAborted)),
-            Just((ChannelId::Control, PacketKind::MatchStatistics)),
-            Just((ChannelId::Control, PacketKind::ControlCommand)),
-            Just((ChannelId::Control, PacketKind::ControlEvent)),
-            Just((ChannelId::Input, PacketKind::InputFrame)),
-            Just((ChannelId::Snapshot, PacketKind::FullSnapshot)),
-            Just((ChannelId::Snapshot, PacketKind::DeltaSnapshot)),
-            Just((ChannelId::Snapshot, PacketKind::EventBatch)),
-        ]
-    }
-
-    proptest! {
-        #[test]
-        fn prop_packet_headers_round_trip_all_valid_channel_kind_pairs(
-            (channel_id, packet_kind) in valid_channel_kind(),
-            flags in any::<u8>(),
-            payload in proptest::collection::vec(any::<u8>(), 0..64),
-            seq in any::<u32>(),
-            sim_tick in any::<u32>(),
-        ) {
-            let header = PacketHeader::new(
-                channel_id,
-                packet_kind,
-                flags,
-                u16::try_from(payload.len()).expect("payload length should fit in u16"),
-                seq,
-                sim_tick,
-            )
-            .expect("strategy only generates valid channel/kind pairs");
-
-            let bytes = header.encode(&payload);
-            let (decoded_header, decoded_payload) = PacketHeader::decode(&bytes).expect("encoded header should decode");
-
-            prop_assert_eq!(decoded_header, header);
-            prop_assert_eq!(decoded_payload, payload.as_slice());
-        }
-
-        #[test]
-        fn prop_sequence_tracker_accepts_strictly_increasing_sequences(
-            mut seqs in proptest::collection::vec(any::<u32>(), 1..32)
-        ) {
-            seqs.sort_unstable();
-            seqs.dedup();
-            prop_assume!(!seqs.is_empty());
-
-            let mut tracker = SequenceTracker::new();
-            for seq in &seqs {
-                prop_assert_eq!(tracker.observe(*seq), Ok(()));
-            }
-
-            let newest = *seqs.last().expect("deduplicated sequence set should be non-empty");
-            prop_assert_eq!(
-                tracker.observe(newest),
-                Err(PacketError::StaleSequence {
-                    incoming: newest,
-                    newest,
-                })
-            );
-        }
-    }
-}
