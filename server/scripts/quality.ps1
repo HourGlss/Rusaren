@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("all", "fmt", "lint", "hack", "test", "doc", "coverage", "reports", "deny", "audit", "udeps", "miri", "complexity", "bench", "fuzz", "typos", "taplo", "zizmor")]
+    [ValidateSet("all", "fmt", "lint", "hack", "test", "doc", "coverage", "reports", "deny", "audit", "udeps", "miri", "complexity", "bench", "fuzz", "typos", "taplo", "zizmor", "verus")]
     [string]$Task = "all"
 )
 
@@ -41,6 +41,7 @@ function Invoke-QualityTask {
         "udeps" { rustup run nightly cargo udeps --workspace --all-targets }
         "miri" { rustup run nightly cargo miri test --workspace }
         "complexity" { & (Join-Path $PSScriptRoot "generate-reports.ps1") -Report complexity -FailOnCommandFailure }
+        "verus" { & (Join-Path $PSScriptRoot "verus.ps1") }
         "bench" {
             $benchTargets = Get-ChildItem -Path $serverRoot -Recurse -File -Filter *.rs |
                 Where-Object { $_.DirectoryName -like "*\\benches" } |

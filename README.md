@@ -7,12 +7,13 @@ Rarena is a server-authoritative arena game prototype. The current repository no
 Buildable now:
 - the `server/` Cargo workspace scaffold
 - a scripted backend-only gameplay slice that exercises lobby -> match -> combat -> no-contest flow
+- a real websocket dev adapter on top of the backend app layer
 - local quality scripts under `server/scripts`
 - GitHub Actions quality workflows
 
 Not implemented yet:
-- real WebRTC transport integration
 - Godot browser client
+- real WebRTC transport integration
 - content loading and validation
 - full combat/class implementation
 
@@ -25,11 +26,22 @@ cd server
 rustup run stable cargo build --workspace
 ```
 
-Run the backend demo slice:
+Run the websocket dev adapter:
 
 ```powershell
 cd server
 rustup run stable cargo run -p dedicated_server --quiet
+```
+
+The dev adapter listens on:
+- `http://127.0.0.1:3000/healthz`
+- `ws://127.0.0.1:3000/ws`
+
+Run the backend-only demo slice instead:
+
+```powershell
+cd server
+rustup run stable cargo run -p dedicated_server --quiet -- --demo
 ```
 
 Run the test suite:
@@ -51,6 +63,13 @@ Run the configured quality checks:
 ```powershell
 cd server
 ./scripts/quality.ps1
+```
+
+Run the Verus network-boundary models explicitly if Verus is installed:
+
+```powershell
+cd server
+./scripts/quality.ps1 verus
 ```
 
 Generate the HTML reports locally:

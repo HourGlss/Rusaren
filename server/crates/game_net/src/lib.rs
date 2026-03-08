@@ -8,8 +8,10 @@ use std::fmt;
 use game_domain::DomainError;
 
 mod control;
+mod ingress;
 
 pub use control::{ClientControlCommand, ServerControlEvent};
+pub use ingress::{NetworkSessionGuard, MAX_INGRESS_PACKET_BYTES};
 
 pub const PACKET_MAGIC: u16 = 0x5241;
 pub const PROTOCOL_VERSION: u8 = 1;
@@ -445,6 +447,12 @@ pub enum PacketError {
         len: usize,
         max: usize,
     },
+    IngressPacketTooLarge {
+        actual: usize,
+        maximum: usize,
+    },
+    FirstPacketMustBeConnect,
+    ConnectCommandAfterBinding,
     PayloadTooLarge {
         actual: usize,
         maximum: usize,
@@ -552,6 +560,15 @@ impl fmt::Display for PacketError {
             }
             Self::StringLengthOutOfBounds { field, len, max } => {
                 write!(f, "{field} length {len} exceeds maximum {max}")
+            }
+            Self::IngressPacketTooLarge { actual, maximum } => {
+                write!(f, "ingress packet length {actual} exceeds maximum {maximum}")
+            }
+            Self::FirstPacketMustBeConnect => {
+                f.write_str("the first packet on a network session must be a connect command")
+            }
+            Self::ConnectCommandAfterBinding => {
+                f.write_str("connect commands are not accepted after a network session is bound")
             }
             Self::PayloadTooLarge { actual, maximum } => {
                 write!(f, "payload length {actual} exceeds maximum encodable {maximum}")

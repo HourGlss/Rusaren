@@ -3,6 +3,9 @@
 #![forbid(unsafe_code)]
 #![cfg_attr(test, allow(clippy::expect_used))]
 
+use std::env;
+
+use game_api::spawn_dev_server;
 use game_domain::{
     LobbyId, MatchId, PlayerId, PlayerName, PlayerRecord, ReadyState, SkillChoice, SkillTree,
     TeamSide,
@@ -256,18 +259,46 @@ fn run_demo() -> Result<Vec<String>, String> {
     Ok(lines)
 }
 
-fn main() {
-    match run_demo() {
-        Ok(lines) => {
-            for line in lines {
-                println!("{line}");
+#[tokio::main]
+async fn main() {
+    let mode = env::args().nth(1);
+    if matches!(mode.as_deref(), Some("--demo")) {
+        match run_demo() {
+            Ok(lines) => {
+                for line in lines {
+                    println!("{line}");
+                }
+            }
+            Err(error) => {
+                eprintln!("dedicated_server demo failed: {error}");
+                std::process::exit(1);
             }
         }
+        return;
+    }
+
+    let bind_address = env::var("RARENA_BIND").unwrap_or_else(|_| String::from("127.0.0.1:3000"));
+    let listener = match tokio::net::TcpListener::bind(&bind_address).await {
+        Ok(listener) => listener,
         Err(error) => {
-            eprintln!("dedicated_server demo failed: {error}");
+            eprintln!("dedicated_server failed to bind {bind_address}: {error}");
             std::process::exit(1);
         }
-    }
+    };
+
+    let server = match spawn_dev_server(listener).await {
+        Ok(server) => server,
+        Err(error) => {
+            eprintln!("dedicated_server failed to start websocket adapter: {error}");
+            std::process::exit(1);
+        }
+    };
+
+    println!(
+        "dedicated_server websocket adapter listening on ws://{}/ws",
+        server.local_addr()
+    );
+    std::future::pending::<()>().await;
 }
 
 #[cfg(test)]

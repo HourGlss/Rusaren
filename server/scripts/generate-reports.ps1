@@ -569,7 +569,7 @@ function Invoke-CoverageReport {
         $files = @($files | Sort-Object LinePercent, DisplayPath)
         $totals = $coverageData.totals
         $notes.Add("Doctests are validated separately by ./scripts/quality.ps1 doc but are not included here because stable doctest coverage is still unavailable in this workflow.")
-        $notes.Add("Browser, Godot, and live WebRTC integration coverage do not exist yet because the frontend client and transport adapter have not been implemented.")
+        $notes.Add("Browser, Godot, and live WebRTC integration coverage do not exist yet because only the websocket dev adapter exists today; the frontend client and WebRTC transport are still unimplemented.")
 
         foreach ($sourceFile in ($SourceInventory.Keys | Sort-Object)) {
             if ($coveredPaths.ContainsKey($sourceFile)) {

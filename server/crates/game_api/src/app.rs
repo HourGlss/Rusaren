@@ -1256,7 +1256,9 @@ impl ServerApp {
         match value {
             -1..=1 => match i8::try_from(value) {
                 Ok(value) => Ok(value),
-                Err(_) => Err(format!("{field}={value} is outside the allowed range -1..=1")),
+                Err(_) => Err(format!(
+                    "{field}={value} is outside the allowed range -1..=1"
+                )),
             },
             _ => Err(format!(
                 "{field}={value} is outside the allowed range -1..=1"
