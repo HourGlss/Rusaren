@@ -1,0 +1,57 @@
+default_install_hook_types:
+  - pre-commit
+  - pre-push
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: mixed-line-ending
+      - id: check-yaml
+      - id: check-toml
+      - id: check-added-large-files
+
+  - repo: local
+    hooks:
+      - id: repo-typos
+        name: typos
+        entry: powershell -NoProfile -ExecutionPolicy Bypass -File server/scripts/quality.ps1 typos
+        language: system
+        pass_filenames: false
+        files: \.(md|toml|ya?ml|json|rs|ps1)$
+
+      - id: repo-taplo
+        name: taplo
+        entry: powershell -NoProfile -ExecutionPolicy Bypass -File server/scripts/quality.ps1 taplo
+        language: system
+        pass_filenames: false
+        files: \.toml$
+
+      - id: rust-fmt
+        name: rust fmt
+        entry: powershell -NoProfile -ExecutionPolicy Bypass -File server/scripts/quality.ps1 fmt
+        language: system
+        pass_filenames: false
+        files: ^server/.*\.rs$
+
+      - id: rust-lint
+        name: rust lint
+        entry: powershell -NoProfile -ExecutionPolicy Bypass -File server/scripts/quality.ps1 lint
+        language: system
+        pass_filenames: false
+        files: ^server/
+        stages:
+          - pre-push
+
+      - id: rust-test
+        name: rust test
+        entry: powershell -NoProfile -ExecutionPolicy Bypass -File server/scripts/quality.ps1 test
+        language: system
+        pass_filenames: false
+        files: ^server/
+        stages:
+          - pre-push

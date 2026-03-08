@@ -1,0 +1,6 @@
+avoid-breaking-exported-api = false
+cognitive-complexity-threshold = 20
+doc-valid-idents = ["Godot", "LoS", "QUIC", "StarCraft"]
+enum-variant-name-threshold = 4
+too-many-arguments-threshold = 8
+type-complexity-threshold = 300

@@ -1,0 +1,8 @@
+[alias]
+xfmt = "fmt --all -- --check"
+xlint = "clippy --workspace --all-targets --all-features -- -D warnings -W clippy::pedantic -W clippy::cargo -W clippy::unwrap_used -W clippy::expect_used -W clippy::todo -W clippy::dbg_macro"
+xtest = "nextest run --workspace --all-features"
+xdoc = "test --workspace --all-features --doc"
+xcov = "llvm-cov nextest --workspace --all-features --lcov --output-path target/coverage/lcov.info"
+xdeny = "deny check"
+xaudit = "audit"

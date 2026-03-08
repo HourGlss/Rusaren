@@ -1,0 +1,18 @@
+.tmp_remote_inspect/
+.pre-commit-cache/
+.obsidian/
+
+# Rust
+server/target/
+
+# Godot
+client/godot/.godot/
+client/godot/export/
+
+# Python tooling
+.venv/
+venv/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db

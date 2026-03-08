@@ -1,0 +1,8 @@
+[default]
+extend-ignore-re = ["(?i)LoS"]
+
+[default.extend-words]
+godot = "godot"
+los = "los"
+WoW = "WoW"
+StarCraft = "StarCraft"

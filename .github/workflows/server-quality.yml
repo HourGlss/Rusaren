@@ -1,0 +1,79 @@
+name: server-quality
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/server-quality.yml"
+      - ".vscode/**"
+      - "server/**"
+      - "shared/docs/**"
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - ".github/workflows/server-quality.yml"
+      - ".vscode/**"
+      - "server/**"
+      - "shared/docs/**"
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: server
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install stable toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup component add clippy rustfmt llvm-tools-preview --toolchain stable
+
+      - name: Install quality tools
+        run: ./scripts/install-tools.ps1
+
+      - name: Format
+        run: ./scripts/quality.ps1 fmt
+
+      - name: Lint
+        run: ./scripts/quality.ps1 lint
+
+      - name: Feature matrix
+        run: ./scripts/quality.ps1 hack
+
+      - name: Tests
+        run: ./scripts/quality.ps1 test
+
+      - name: Doc tests
+        run: ./scripts/quality.ps1 doc
+
+      - name: Coverage
+        run: ./scripts/quality.ps1 coverage
+
+      - name: Dependency policy
+        run: ./scripts/quality.ps1 deny
+
+      - name: Security audit
+        run: ./scripts/quality.ps1 audit
+
+      - name: Spelling
+        run: ./scripts/quality.ps1 typos
+
+      - name: TOML formatting
+        run: ./scripts/quality.ps1 taplo
+
+      - name: GitHub Actions security
+        run: ./scripts/quality.ps1 zizmor
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-coverage
+          path: server/target/coverage

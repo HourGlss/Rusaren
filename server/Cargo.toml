@@ -1,0 +1,20 @@
+[workspace]
+members = [
+  "bin/dedicated_server",
+  "crates/game_api",
+  "crates/game_content",
+  "crates/game_domain",
+  "crates/game_lobby",
+  "crates/game_match",
+  "crates/game_net",
+  "crates/game_sim",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[workspace.dependencies]
+criterion = "0.5.1"

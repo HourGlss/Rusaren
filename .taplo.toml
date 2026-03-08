@@ -1,0 +1,18 @@
+include = ["**/*.toml"]
+exclude = ["**/target/**", "**/.git/**"]
+
+[formatting]
+align_entries = false
+align_comments = false
+array_trailing_comma = true
+array_auto_expand = true
+array_auto_collapse = false
+column_width = 100
+compact_inline_tables = false
+indent_string = "  "
+indent_tables = false
+reorder_keys = false
+reorder_arrays = false
+allowed_blank_lines = 1
+trailing_newline = true
+crlf = false
