@@ -3,6 +3,7 @@ class_name ClientState
 
 const MAX_EVENT_LINES := 28
 const WebSocketConfigScript := preload("res://scripts/net/websocket_config.gd")
+const KNOWN_SKILL_TREES := ["Warrior", "Rogue", "Mage", "Cleric"]
 
 var websocket_url := WebSocketConfigScript.new().runtime_default_url()
 var local_player_id := 0
@@ -28,6 +29,8 @@ var record := {
 var lobby_directory: Array[Dictionary] = []
 var roster := {}
 var recent_events: Array[String] = []
+var local_skill_progress := {}
+var local_round_skill_locked := false
 
 
 func prepare_for_connection(url: String, player_name: String) -> void:
@@ -53,6 +56,8 @@ func prepare_for_connection(url: String, player_name: String) -> void:
 	lobby_directory.clear()
 	roster.clear()
 	recent_events.clear()
+	_reset_local_skill_progress()
+	local_round_skill_locked = false
 	_append_event("Connecting to %s." % websocket_url)
 
 
@@ -101,6 +106,8 @@ func apply_server_event(event: Dictionary) -> void:
 			outcome_label = ""
 			lobby_directory.clear()
 			roster.clear()
+			_reset_local_skill_progress()
+			local_round_skill_locked = false
 			banner_message = "Connected as %s." % local_player_name
 			_append_event("Connected as %s (#%d)." % [local_player_name, local_player_id])
 		"LobbyDirectorySnapshot":
@@ -195,6 +202,8 @@ func apply_server_event(event: Dictionary) -> void:
 			current_match_id = int(event.get("match_id", 0))
 			current_round = int(event.get("round", 0))
 			match_phase = "skill_pick"
+			_reset_local_skill_progress()
+			local_round_skill_locked = false
 			phase_label = "Match #%d, Round %d" % [current_match_id, current_round]
 			countdown_label = "Choose one skill in %ds." % int(event.get("skill_pick_seconds", 0))
 			lobby_locked = false
@@ -206,10 +215,12 @@ func apply_server_event(event: Dictionary) -> void:
 		"SkillChosen":
 			var skill_player_id := int(event.get("player_id", 0))
 			var skill_member := _ensure_roster_entry(skill_player_id)
-			skill_member["skill"] = "%s %d" % [
-				String(event.get("tree", "Unknown")),
-				int(event.get("tier", 0)),
-			]
+			var tree_name := String(event.get("tree", "Unknown"))
+			var tier := int(event.get("tier", 0))
+			skill_member["skill"] = "%s %d" % [tree_name, tier]
+			if skill_player_id == local_player_id and KNOWN_SKILL_TREES.has(tree_name):
+				local_skill_progress[tree_name] = tier
+				local_round_skill_locked = true
 			banner_message = "%s locked %s." % [_display_name(skill_player_id), skill_member["skill"]]
 			_append_event("%s locked %s." % [_display_name(skill_player_id), skill_member["skill"]])
 		"PreCombatStarted":
@@ -228,6 +239,7 @@ func apply_server_event(event: Dictionary) -> void:
 			score_a = int(event.get("score_a", score_a))
 			score_b = int(event.get("score_b", score_b))
 			countdown_label = "Round %d ended. Choose the next skill when ready." % current_round
+			local_round_skill_locked = false
 			banner_message = "%s won round %d." % [
 				String(event.get("winning_team", "Unknown Team")),
 				current_round,
@@ -384,7 +396,25 @@ func can_leave_lobby() -> bool:
 
 
 func can_choose_skill() -> bool:
-	return transport_state == "open" and screen == "match" and match_phase == "skill_pick"
+	return (
+		transport_state == "open"
+		and screen == "match"
+		and match_phase == "skill_pick"
+		and not local_round_skill_locked
+	)
+
+
+func next_skill_tier_for(tree_name: String) -> int:
+	if not KNOWN_SKILL_TREES.has(tree_name):
+		return 0
+	var current_tier := int(local_skill_progress.get(tree_name, 0))
+	if current_tier >= 5:
+		return 0
+	return current_tier + 1
+
+
+func can_choose_skill_option(tree_name: String, tier: int) -> bool:
+	return can_choose_skill() and tier == next_skill_tier_for(tree_name)
 
 
 func can_quit_results() -> bool:
@@ -409,6 +439,8 @@ func _reset_to_central() -> void:
 	match_phase = "idle"
 	lobby_directory.clear()
 	roster.clear()
+	_reset_local_skill_progress()
+	local_round_skill_locked = false
 
 
 func _ensure_roster_entry(player_id: int, suggested_name: String = "") -> Dictionary:
@@ -442,3 +474,12 @@ func _clear_round_skills() -> void:
 	for player_id in roster.keys():
 		var member: Dictionary = roster[player_id]
 		member["skill"] = "Awaiting next pick"
+
+
+func _reset_local_skill_progress() -> void:
+	local_skill_progress = {
+		"Warrior": 0,
+		"Rogue": 0,
+		"Mage": 0,
+		"Cleric": 0,
+	}

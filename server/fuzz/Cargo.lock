@@ -566,6 +566,7 @@ name = "rarena-fuzz"
 version = "0.0.0"
 dependencies = [
  "game_api",
+ "game_domain",
  "game_net",
  "libfuzzer-sys",
 ]

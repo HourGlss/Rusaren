@@ -11,6 +11,9 @@ At the start of each round, a player may pick:
 - Tier 1 of any tree with tier=0 (start that tree), OR
 - Tier (n+1) of a tree already started at tier n (advance it)
 
+Client UX rule:
+- The client should only enable these currently legal picks; invalid future tiers may still be attempted by a hostile client, so the server must continue to reject them authoritatively.
+
 Example valid sequence:
 - R1: Rogue 1
 - R2: Cleric 1

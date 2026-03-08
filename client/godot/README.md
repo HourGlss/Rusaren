@@ -6,6 +6,7 @@ What it does:
 - connects to the websocket dev adapter at `ws://127.0.0.1:3000/ws`
 - defaults browser exports to the same-origin `/ws` endpoint automatically
 - lets the server assign the runtime player ID after connect instead of exposing a player-id field in the UI
+- only enables legal skill buttons for the current round: tier 1 on unstarted trees or the next tier on started trees
 - sends real binary control packets
 - sends real binary combat input frames during the current placeholder combat slice
 - decodes real binary server control events

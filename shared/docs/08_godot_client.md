@@ -27,6 +27,7 @@ Current implementation status:
 - The current shell renders central lobby, game lobby, launch countdown, match skill-pick state, results, and central-lobby directory snapshots.
 - The current shell now consumes authoritative full game-lobby snapshots, including late-joiner roster state and `W-L-NC`.
 - The current shell now sends real binary `InputFrame` packets for a placeholder combat action over the websocket dev adapter.
+- The current shell only enables legal skill picks for the local player: tier 1 for unstarted trees or the next tier in a tree already started this match.
 - The current shell now exports to Web and defaults browser builds to the same-origin `/ws` endpoint.
 - The Rust dev server can now host the exported shell directly at `/`.
 - The documented production path now places Caddy in front of the Rust server for same-origin TLS while preserving the `/ws` websocket endpoint.

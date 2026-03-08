@@ -11,6 +11,7 @@ func _init() -> void:
 	success = _assert_custom_url_preserved() and success
 	success = _assert_blank_origin_falls_back_to_local_default() and success
 	success = _assert_directory_bbcode_exposes_join_links_for_open_lobbies() and success
+	success = _assert_skill_buttons_only_unlock_next_tiers() and success
 	quit(0 if success else 1)
 
 
@@ -89,6 +90,47 @@ func _assert_directory_bbcode_exposes_join_links_for_open_lobbies() -> bool:
 		return _fail("open lobbies should expose a click-to-join link")
 	if not actual.contains("Locked"):
 		return _fail("locked lobbies should render as locked")
+	return true
+
+
+func _assert_skill_buttons_only_unlock_next_tiers() -> bool:
+	var state := ClientStateScript.new()
+	state.mark_transport_state("open")
+	state.local_player_id = 11
+	state.local_player_name = "Alice"
+	state.apply_server_event({
+		"type": "MatchStarted",
+		"match_id": 3,
+		"round": 1,
+		"skill_pick_seconds": 25,
+	})
+	if not state.can_choose_skill_option("Mage", 1):
+		return _fail("a new player should be allowed to choose tier 1")
+	if state.can_choose_skill_option("Mage", 5):
+		return _fail("a new player must not be allowed to choose tier 5")
+
+	state.apply_server_event({
+		"type": "SkillChosen",
+		"player_id": 11,
+		"tree": "Mage",
+		"tier": 1,
+	})
+	if state.can_choose_skill():
+		return _fail("local players should not be able to choose another skill in the same round")
+
+	state.apply_server_event({
+		"type": "RoundWon",
+		"round": 1,
+		"winning_team": "Team A",
+		"score_a": 1,
+		"score_b": 0,
+	})
+	if not state.can_choose_skill_option("Mage", 2):
+		return _fail("the next tier in a started tree should unlock next round")
+	if not state.can_choose_skill_option("Warrior", 1):
+		return _fail("tier 1 in an unstarted tree should still be available")
+	if state.can_choose_skill_option("Mage", 3):
+		return _fail("skipping from tier 1 to tier 3 should remain blocked")
 	return true
 
 

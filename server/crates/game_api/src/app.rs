@@ -1959,6 +1959,91 @@ mod tests {
     }
 
     #[test]
+    fn end_to_end_skill_pick_rejects_tier_skips_but_accepts_the_next_valid_tier() {
+        let mut server = ServerApp::new();
+        let mut transport = InMemoryTransport::new();
+        let (mut alice, mut bob) = connect_pair(&mut server, &mut transport);
+
+        let _ = launch_match(&mut server, &mut transport, &mut alice, &mut bob);
+
+        alice
+            .choose_skill(&mut transport, skill(SkillTree::Mage, 5))
+            .expect("invalid skill packet should still encode");
+        server.pump_transport(&mut transport);
+        let alice_events = alice
+            .drain_events(&mut transport)
+            .expect("alice invalid skill response");
+        assert!(alice_events.iter().any(|event| matches!(
+            event,
+            ServerControlEvent::Error { message }
+                if message == "skill progression for Mage expected tier 1 but received tier 5"
+        )));
+
+        alice
+            .choose_skill(&mut transport, skill(SkillTree::Mage, 1))
+            .expect("alice valid tier one");
+        bob.choose_skill(&mut transport, skill(SkillTree::Rogue, 1))
+            .expect("bob valid tier one");
+        server.pump_transport(&mut transport);
+        let _ = alice
+            .drain_events(&mut transport)
+            .expect("alice first-round skill events");
+        let _ = bob
+            .drain_events(&mut transport)
+            .expect("bob first-round skill events");
+        server.advance_seconds(&mut transport, 5);
+        let _ = alice
+            .drain_events(&mut transport)
+            .expect("alice first-round pre-combat events");
+        let _ = bob
+            .drain_events(&mut transport)
+            .expect("bob first-round pre-combat events");
+        alice
+            .send_input(
+                &mut transport,
+                ValidatedInputFrame::new(1, 0, 0, 0, 0, BUTTON_PRIMARY, 0).expect("valid input"),
+                1,
+            )
+            .expect("attack packet");
+        server.pump_transport(&mut transport);
+        let _ = alice
+            .drain_events(&mut transport)
+            .expect("alice first-round combat events");
+        let _ = bob
+            .drain_events(&mut transport)
+            .expect("bob first-round combat events");
+
+        alice
+            .choose_skill(&mut transport, skill(SkillTree::Mage, 3))
+            .expect("invalid second-round skill packet should still encode");
+        server.pump_transport(&mut transport);
+        let alice_events = alice
+            .drain_events(&mut transport)
+            .expect("alice second invalid skill response");
+        assert!(alice_events.iter().any(|event| matches!(
+            event,
+            ServerControlEvent::Error { message }
+                if message == "skill progression for Mage expected tier 2 but received tier 3"
+        )));
+
+        alice
+            .choose_skill(&mut transport, skill(SkillTree::Mage, 2))
+            .expect("alice valid tier two");
+        bob.choose_skill(&mut transport, skill(SkillTree::Rogue, 2))
+            .expect("bob valid tier two");
+        server.pump_transport(&mut transport);
+        let alice_events = alice
+            .drain_events(&mut transport)
+            .expect("alice second-round skill events");
+        assert!(alice_events.iter().any(|event| matches!(
+            event,
+            ServerControlEvent::PreCombatStarted {
+                seconds_remaining: 5
+            }
+        )));
+    }
+
+    #[test]
     fn end_to_end_disconnect_ends_the_match_as_no_contest() {
         let mut server = ServerApp::new();
         let mut transport = InMemoryTransport::new();

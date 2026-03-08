@@ -856,6 +856,165 @@ async fn websocket_adapter_finishes_a_full_match_loop_via_live_input_frames() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn websocket_adapter_rejects_skill_tier_skips_and_accepts_the_next_valid_pick() {
+    let (server, base_url) = start_server_fast().await;
+    let mut alice = connect_socket(&base_url).await;
+    let mut bob = connect_socket(&base_url).await;
+
+    connect_player(&mut alice, "Alice").await;
+    connect_player(&mut bob, "Bob").await;
+    let _ = recv_events_until(&mut alice, 3, |event| {
+        matches!(event, ServerControlEvent::LobbyDirectorySnapshot { .. })
+    })
+    .await;
+    let _ = recv_events_until(&mut bob, 3, |event| {
+        matches!(event, ServerControlEvent::LobbyDirectorySnapshot { .. })
+    })
+    .await;
+
+    send_command(&mut alice, ClientControlCommand::CreateGameLobby, 2).await;
+    let created_events = recv_events_until(&mut alice, 4, |event| {
+        matches!(event, ServerControlEvent::GameLobbyCreated { .. })
+    })
+    .await;
+    let lobby_id = created_events
+        .into_iter()
+        .find_map(|event| match event {
+            ServerControlEvent::GameLobbyCreated { lobby_id } => Some(lobby_id),
+            _ => None,
+        })
+        .expect("create flow should include GameLobbyCreated");
+    let _ = recv_events_until(&mut alice, 4, |event| {
+        matches!(event, ServerControlEvent::GameLobbySnapshot { .. })
+    })
+    .await;
+
+    send_command(
+        &mut bob,
+        ClientControlCommand::JoinGameLobby { lobby_id },
+        2,
+    )
+    .await;
+    let _ = recv_events_until(&mut alice, 4, |event| {
+        matches!(event, ServerControlEvent::GameLobbySnapshot { .. })
+    })
+    .await;
+    let _ = recv_events_until(&mut bob, 4, |event| {
+        matches!(event, ServerControlEvent::GameLobbySnapshot { .. })
+    })
+    .await;
+
+    send_command(
+        &mut alice,
+        ClientControlCommand::SelectTeam {
+            team: TeamSide::TeamA,
+        },
+        3,
+    )
+    .await;
+    send_command(
+        &mut bob,
+        ClientControlCommand::SelectTeam {
+            team: TeamSide::TeamB,
+        },
+        3,
+    )
+    .await;
+    let _ = recv_event(&mut alice).await;
+    let _ = recv_event(&mut alice).await;
+    let _ = recv_event(&mut bob).await;
+    let _ = recv_event(&mut bob).await;
+
+    send_command(
+        &mut alice,
+        ClientControlCommand::SetReady {
+            ready: ReadyState::Ready,
+        },
+        4,
+    )
+    .await;
+    send_command(
+        &mut bob,
+        ClientControlCommand::SetReady {
+            ready: ReadyState::Ready,
+        },
+        4,
+    )
+    .await;
+    let _ = recv_events_until(&mut alice, 16, |event| {
+        matches!(event, ServerControlEvent::MatchStarted { .. })
+    })
+    .await;
+    let _ = recv_events_until(&mut bob, 16, |event| {
+        matches!(event, ServerControlEvent::MatchStarted { .. })
+    })
+    .await;
+
+    send_command(
+        &mut alice,
+        ClientControlCommand::ChooseSkill {
+            tree: game_domain::SkillTree::Mage,
+            tier: 5,
+        },
+        5,
+    )
+    .await;
+    assert!(matches!(
+        recv_event(&mut alice).await,
+        ServerControlEvent::Error { message }
+            if message == "skill progression for Mage expected tier 1 but received tier 5"
+    ));
+
+    send_command(
+        &mut alice,
+        ClientControlCommand::ChooseSkill {
+            tree: game_domain::SkillTree::Mage,
+            tier: 1,
+        },
+        6,
+    )
+    .await;
+    send_command(
+        &mut bob,
+        ClientControlCommand::ChooseSkill {
+            tree: game_domain::SkillTree::Rogue,
+            tier: 1,
+        },
+        5,
+    )
+    .await;
+
+    let alice_events = recv_events_until(&mut alice, 6, |event| {
+        matches!(event, ServerControlEvent::PreCombatStarted { .. })
+    })
+    .await;
+    let bob_events = recv_events_until(&mut bob, 6, |event| {
+        matches!(event, ServerControlEvent::PreCombatStarted { .. })
+    })
+    .await;
+    assert!(alice_events.iter().any(|event| matches!(
+        event,
+        ServerControlEvent::SkillChosen {
+            tree: game_domain::SkillTree::Mage,
+            tier: 1,
+            ..
+        }
+    )));
+    assert!(bob_events.iter().any(|event| matches!(
+        event,
+        ServerControlEvent::SkillChosen {
+            tree: game_domain::SkillTree::Rogue,
+            tier: 1,
+            ..
+        }
+    )));
+
+    let _ = alice.close(None).await;
+    let _ = bob.close(None).await;
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn websocket_adapter_rejects_input_frames_before_combat() {
     let (server, base_url) = start_server_fast().await;
     let mut alice = connect_socket(&base_url).await;

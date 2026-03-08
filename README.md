@@ -59,6 +59,8 @@ The dev adapter persists player `W-L-NC` records at:
 The client no longer chooses its own runtime player ID.
 The connect packet now sends only the player name, the Rust backend assigns a random player ID,
 and the current persistent `W-L-NC` store is keyed by player name.
+The skill-pick flow is server-gated by tree progression, and the Godot shell only enables tier 1
+for unstarted trees or the next tier for trees the player has already advanced.
 
 Open the Godot shell:
 

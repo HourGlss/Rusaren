@@ -370,6 +370,8 @@ func _build_match_panel() -> PanelContainer:
 
 		for tier in range(1, 6):
 			var button := _action_button("Tier %d" % tier, Color8(74, 61, 52))
+			button.set_meta("tree_name", tree_name)
+			button.set_meta("tier", tier)
 			button.pressed.connect(_on_skill_pressed.bind(tree_name, tier))
 			column.add_child(button)
 			skill_buttons.append(button)
@@ -698,7 +700,20 @@ func _refresh_ui() -> void:
 	quit_results_button.disabled = not app_state.can_quit_results()
 	primary_attack_button.disabled = not app_state.can_send_combat_input()
 	for button in skill_buttons:
-		button.disabled = not app_state.can_choose_skill()
+		var tree_name := String(button.get_meta("tree_name", ""))
+		var tier := int(button.get_meta("tier", 0))
+		var selectable := app_state.can_choose_skill_option(tree_name, tier)
+		button.disabled = not selectable
+		if app_state.can_choose_skill():
+			var next_tier := app_state.next_skill_tier_for(tree_name)
+			if next_tier == 0:
+				button.tooltip_text = "%s is fully unlocked." % tree_name
+			elif tier == next_tier:
+				button.tooltip_text = "Select %s tier %d." % [tree_name, tier]
+			else:
+				button.tooltip_text = "Only tier %d is currently available for %s." % [next_tier, tree_name]
+		else:
+			button.tooltip_text = "Skill selection is only available during your active skill-pick window."
 
 	central_panel.visible = app_state.screen == "central"
 	lobby_panel.visible = app_state.screen == "lobby"

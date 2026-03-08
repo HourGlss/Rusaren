@@ -9,6 +9,7 @@ cargo-fuzz = true
 
 [dependencies]
 game_api = { path = "../crates/game_api" }
+game_domain = { path = "../crates/game_domain" }
 game_net = { path = "../crates/game_net" }
 libfuzzer-sys = { version = "0.4", features = ["arbitrary-derive"] }
 
@@ -67,6 +68,13 @@ bench = false
 [[bin]]
 name = "player_record_store_parse"
 path = "fuzz_targets/player_record_store_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "skill_progression"
+path = "fuzz_targets/skill_progression.rs"
 test = false
 doc = false
 bench = false

@@ -30,6 +30,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     write_http_route_classification_corpus(&corpus_root.join("http_route_classification"))?;
     write_observability_metrics_render_corpus(&corpus_root.join("observability_metrics_render"))?;
     write_player_record_store_parse_corpus(&corpus_root.join("player_record_store_parse"))?;
+    write_skill_progression_corpus(&corpus_root.join("skill_progression"))?;
 
     println!("Seed corpora written under {}", corpus_root.display());
     Ok(())
@@ -544,6 +545,18 @@ fn write_player_record_store_parse_corpus(dir: &Path) -> Result<(), Box<dyn Erro
     write_seed(dir, "bad_player_id.tsv", b"0\tAlice\t0\t0\t0\n")?;
     write_seed(dir, "bad_counter.tsv", b"Alice\t999999\t0\t0\n")?;
     write_seed(dir, "bad_name.tsv", b"bad name with spaces\t0\t0\t0\n")?;
+    Ok(())
+}
+
+fn write_skill_progression_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
+    recreate_dir(dir)?;
+
+    write_seed(dir, "valid_opening.bin", &[2, 1])?;
+    write_seed(dir, "invalid_new_player_skip.bin", &[2, 5])?;
+    write_seed(dir, "valid_then_gap.bin", &[2, 1, 2, 3])?;
+    write_seed(dir, "valid_switch_tree.bin", &[2, 1, 0, 1, 2, 2])?;
+    write_seed(dir, "repeated_same_tier.bin", &[1, 1, 1, 1])?;
+    write_seed(dir, "out_of_range_tier.bin", &[3, 0, 3, 6])?;
     Ok(())
 }
 
