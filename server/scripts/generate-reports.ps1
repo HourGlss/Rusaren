@@ -127,6 +127,12 @@ a {
     margin-top: 0.35rem;
 }
 
+.metric .detail {
+    margin-top: 0.5rem;
+    font-size: 0.9rem;
+    color: var(--muted);
+}
+
 .badge {
     display: inline-block;
     border-radius: 999px;
@@ -283,6 +289,56 @@ function Format-Percent {
     return ("{0:N2}%" -f $Value)
 }
 
+function Clamp-Score {
+    param([double]$Value)
+
+    return [math]::Max(0, [math]::Min(100, [math]::Round($Value, 2)))
+}
+
+function Get-PercentGrade {
+    param([double]$Score)
+
+    if ($Score -ge 90) {
+        return "A"
+    }
+    elseif ($Score -ge 80) {
+        return "B"
+    }
+    elseif ($Score -ge 70) {
+        return "C"
+    }
+    elseif ($Score -ge 60) {
+        return "D"
+    }
+    elseif ($Score -ge 50) {
+        return "E"
+    }
+
+    return "F"
+}
+
+function Format-Score {
+    param([double]$Score)
+
+    return ("{0:N2}/100" -f (Clamp-Score -Value $Score))
+}
+
+function New-ScoreSummary {
+    param(
+        [double]$Score,
+        [string]$Formula,
+        [string[]]$Breakdown
+    )
+
+    $boundedScore = Clamp-Score -Value $Score
+    return [pscustomobject]@{
+        Score = $boundedScore
+        Grade = Get-PercentGrade -Score $boundedScore
+        Formula = $Formula
+        Breakdown = @($Breakdown)
+    }
+}
+
 function Get-StatusBadgeClass {
     param([string]$Status)
 
@@ -353,6 +409,20 @@ function Get-GradeSeverity {
         "E" { return 5 }
         "F" { return 6 }
         default { return 0 }
+    }
+}
+
+function Get-CyclomaticGradeScore {
+    param([string]$Grade)
+
+    switch ($Grade) {
+        "A" { return 100.0 }
+        "B" { return 85.0 }
+        "C" { return 70.0 }
+        "D" { return 55.0 }
+        "E" { return 40.0 }
+        "F" { return 20.0 }
+        default { return 0.0 }
     }
 }
 
@@ -572,6 +642,14 @@ function Invoke-CoverageReport {
 
         $files = @($files | Sort-Object LinePercent, DisplayPath)
         $totals = $coverageData.totals
+        $scoreSummary = New-ScoreSummary `
+            -Score (([double]$totals.lines.percent * 0.5) + ([double]$totals.functions.percent * 0.3) + ([double]$totals.regions.percent * 0.2)) `
+            -Formula "50% line + 30% function + 20% region coverage" `
+            -Breakdown @(
+                "Lines: $(Format-Percent -Value ([double]$totals.lines.percent))",
+                "Functions: $(Format-Percent -Value ([double]$totals.functions.percent))",
+                "Regions: $(Format-Percent -Value ([double]$totals.regions.percent))"
+            )
         $notes.Add("Doctests are validated separately by ./scripts/quality.ps1 doc but are not included here because stable doctest coverage is still unavailable in this workflow.")
         $notes.Add("Browser, Godot, and live WebRTC integration coverage do not exist yet because only the websocket dev adapter exists today; the frontend client and WebRTC transport are still unimplemented.")
 
@@ -610,6 +688,7 @@ function Invoke-CoverageReport {
 <h1>Coverage Report</h1>
 <p class="muted">Commit <code>$(Escape-Html (Get-GitValue -CommandArgs @("rev-parse", "--short", "HEAD") -Fallback "unknown"))</code>. Detailed line-by-line report: <a href="./html/index.html">coverage/html/index.html</a>.</p>
 <div class="grid">
+  <div class="metric"><span class="muted">Coverage score</span><strong>$(Format-Score -Score $scoreSummary.Score) $(Format-GradeBadge -Grade $scoreSummary.Grade)</strong><div class="detail">$(Escape-Html $scoreSummary.Formula)</div></div>
   <div class="metric"><span class="muted">Line coverage</span><strong>$(Format-Percent -Value ([double]$totals.lines.percent))</strong></div>
   <div class="metric"><span class="muted">Function coverage</span><strong>$(Format-Percent -Value ([double]$totals.functions.percent))</strong></div>
   <div class="metric"><span class="muted">Region coverage</span><strong>$(Format-Percent -Value ([double]$totals.regions.percent))</strong></div>
@@ -651,6 +730,7 @@ $(($noteItems -join "`n"))
             Notes = @($notes | Sort-Object -Unique)
             IndexPath = "coverage/index.html"
             ErrorMessage = $null
+            ScoreSummary = $scoreSummary
             Summary = [pscustomobject]@{
                 Lines = [double]$totals.lines.percent
                 Functions = [double]$totals.functions.percent
@@ -788,6 +868,34 @@ function Invoke-ComplexityReport {
 
         $fileMetrics = @($fileMetrics | Sort-Object @{ Expression = { Get-GradeSeverity -Grade $_.WorstFunctionGrade }; Descending = $true }, @{ Expression = "Mi"; Descending = $false }, DisplayPath)
 
+        $averageMi = if ($fileMetrics.Count -gt 0) {
+            [double](($fileMetrics | Measure-Object -Property Mi -Average).Average)
+        }
+        else {
+            0.0
+        }
+        $filesWithFunctions = @($fileMetrics | Where-Object { $null -ne $_.AverageFunctionGrade })
+        $averageWorstFunctionScore = if ($filesWithFunctions.Count -gt 0) {
+            [double](($filesWithFunctions | ForEach-Object { Get-CyclomaticGradeScore -Grade $_.WorstFunctionGrade } | Measure-Object -Average).Average)
+        }
+        else {
+            0.0
+        }
+        $averageFunctionScore = if ($filesWithFunctions.Count -gt 0) {
+            [double](($filesWithFunctions | ForEach-Object { Get-CyclomaticGradeScore -Grade $_.AverageFunctionGrade } | Measure-Object -Average).Average)
+        }
+        else {
+            0.0
+        }
+        $scoreSummary = New-ScoreSummary `
+            -Score (($averageMi * 0.5) + ($averageFunctionScore * 0.3) + ($averageWorstFunctionScore * 0.2)) `
+            -Formula "50% average maintainability index + 30% average per-file function complexity grade + 20% worst-function grade per file" `
+            -Breakdown @(
+                "Average MI: $("{0:N2}" -f $averageMi)",
+                "Average function grade score: $("{0:N2}" -f $averageFunctionScore)",
+                "Worst-function grade score: $("{0:N2}" -f $averageWorstFunctionScore)"
+            )
+
         $notes.Add("These metrics include inline test modules because the analyzer works on whole Rust source files.")
         $notes.Add("Placeholder crates with only crate-level docs and attributes have no meaningful complexity data yet.")
         $notes.Add("Cyclomatic grades use Xenon/Radon bands: A 1-5, B 6-10, C 11-20, D 21-30, E 31-40, F 41+.")
@@ -846,6 +954,7 @@ function Invoke-ComplexityReport {
 <h1>Complexity Report</h1>
 <p class="muted">Commit <code>$(Escape-Html (Get-GitValue -CommandArgs @("rev-parse", "--short", "HEAD") -Fallback "unknown"))</code>. Raw analyzer output lives under <code>target/reports/complexity/data</code>.</p>
 <div class="grid">
+  <div class="metric"><span class="muted">Complexity score</span><strong>$(Format-Score -Score $scoreSummary.Score) $(Format-GradeBadge -Grade $scoreSummary.Grade)</strong><div class="detail">$(Escape-Html $scoreSummary.Formula)</div></div>
   <div class="metric"><span class="muted">Analyzed files</span><strong>$($fileMetrics.Count)</strong></div>
   <div class="metric"><span class="muted">Tracked functions</span><strong>$($functionMetrics.Count)</strong></div>
   <div class="metric"><span class="muted">Worst function CC</span><strong>$(if ($null -ne $worstFunction) { '{0} ({1:N0})' -f $worstFunction.CyclomaticGrade, $worstFunction.Cyclomatic } else { 'n/a' })</strong></div>
@@ -912,6 +1021,7 @@ $(($noteItems -join "`n"))
             Notes = @($notes | Sort-Object -Unique)
             IndexPath = "complexity/index.html"
             ErrorMessage = $null
+            ScoreSummary = $scoreSummary
         }
     }
     catch {
@@ -1294,6 +1404,7 @@ function Invoke-FuzzCoverageReport {
     $reportPath = Join-Path $fuzzRoot "index.html"
     $outputPath = Join-Path $fuzzRoot "output.html"
     $detailRoot = $fuzzRoot
+    $artifactRoot = Join-Path $serverRoot "fuzz\artifacts"
 
     if (-not (Test-ToolAvailable -CommandName "cargo-llvm-cov")) {
         $notes.Add("Fuzz corpus coverage was skipped because cargo-llvm-cov is not installed.")
@@ -1358,6 +1469,7 @@ function Invoke-FuzzCoverageReport {
         }
 
         $files = @($files | Sort-Object LinePercent, DisplayPath)
+        $totals = $coverageData.totals
 
         $targetScopes = @(
             [pscustomobject]@{
@@ -1420,12 +1532,15 @@ function Invoke-FuzzCoverageReport {
         $coreFiles = @(
             $SourceInventory.Keys |
                 Where-Object {
-                    $_ -like "crates/game_net/*" -or $_ -like "crates/game_domain/*"
+                    $normalizedPath = ($_ -replace '\\', '/')
+                    $normalizedPath -like "crates/game_net/*" -or $normalizedPath -like "crates/game_domain/*"
                 } |
                 Sort-Object
         )
+        $coveredCoreCount = 0
         $uncoveredRows = foreach ($path in $coreFiles) {
             if ($coveredPaths.ContainsKey($path)) {
+                $coveredCoreCount += 1
                 continue
             }
 
@@ -1437,20 +1552,87 @@ function Invoke-FuzzCoverageReport {
 "@
         }
 
+        $coreFileHitPercent = if ($coreFiles.Count -eq 0) {
+            0.0
+        }
+        else {
+            ($coveredCoreCount / $coreFiles.Count) * 100.0
+        }
+        $seededTargetCount = @($targetScopes | Where-Object {
+            Test-Path (Join-Path $serverRoot ("fuzz\corpus\" + $_.Target))
+        }).Count
+        $seededTargetPercent = if ($targetScopes.Count -eq 0) {
+            0.0
+        }
+        else {
+            ($seededTargetCount / $targetScopes.Count) * 100.0
+        }
+        $scoreSummary = New-ScoreSummary `
+            -Score (([double]$totals.lines.percent * 0.4) + ([double]$totals.functions.percent * 0.25) + ([double]$totals.regions.percent * 0.15) + ($coreFileHitPercent * 0.1) + ($seededTargetPercent * 0.1)) `
+            -Formula "40% line + 25% function + 15% region corpus replay coverage + 10% core-file hit rate + 10% seeded target coverage" `
+            -Breakdown @(
+                "Lines: $(Format-Percent -Value ([double]$totals.lines.percent))",
+                "Functions: $(Format-Percent -Value ([double]$totals.functions.percent))",
+                "Regions: $(Format-Percent -Value ([double]$totals.regions.percent))",
+                "Core files hit: $(Format-Percent -Value $coreFileHitPercent)",
+                "Seeded fuzz targets: $(Format-Percent -Value $seededTargetPercent)"
+            )
+
+        $findings = @()
+        if (Test-Path $artifactRoot) {
+            $findings = @(
+                Get-ChildItem -Path $artifactRoot -Recurse -File |
+                    Sort-Object FullName |
+                    ForEach-Object {
+                        $targetName = Split-Path -Parent $_.FullName | Split-Path -Leaf
+                        [pscustomobject]@{
+                            Target = $targetName
+                            FileName = $_.Name
+                            RelativePath = Convert-ToDisplayPath -Path $_.FullName
+                            Size = $_.Length
+                            LastWriteTime = $_.LastWriteTimeUtc
+                            ReproCommand = "cd server; rustup run nightly cargo fuzz run $targetName fuzz/artifacts/$targetName/$($_.Name)"
+                        }
+                    }
+            )
+        }
+
         $notes.Add("This report measures corpus replay coverage, not live libFuzzer exploration coverage.")
+        $notes.Add("Saved crash artifacts are reviewed on this page under Findings and reproductions, and are stored under server/fuzz/artifacts.")
         $notes.Add("Seed corpora are generated by fuzz_seed_builder and replayed through the same decode and ingress APIs that the fuzz targets call.")
         $notes.Add("The checked-in corpus currently focuses on hostile packet decoding and ingress validation.")
         $notes.Add("This Windows/MSVC host does not currently emit native cargo fuzz coverage HTML for this repo, so corpus replay coverage is used instead.")
+        if ($findings.Count -eq 0) {
+            $notes.Add("No saved crash artifacts are present under server/fuzz/artifacts. The current per-commit workflow builds fuzz targets and replays the checked-in corpus, but it does not run long live exploration campaigns.")
+        }
+        else {
+            $notes.Add("$($findings.Count) saved fuzz finding artifact(s) were found under server/fuzz/artifacts.")
+        }
 
-        $totals = $coverageData.totals
+        $findingRows = foreach ($finding in $findings) {
+@"
+<tr>
+  <td><code>$(Escape-Html $finding.Target)</code></td>
+  <td><code>$(Escape-Html $finding.FileName)</code></td>
+  <td><code>$(Escape-Html $finding.RelativePath)</code></td>
+  <td>$([int]$finding.Size)</td>
+  <td>$(Escape-Html ($finding.LastWriteTime.ToString("u")))</td>
+  <td><code>$(Escape-Html $finding.ReproCommand)</code></td>
+</tr>
+"@
+        }
+
         $body = @"
 <h1>Fuzz Corpus Coverage</h1>
 <p class="muted">This report replays the checked-in fuzz corpus through the backend decode and ingress surfaces, then measures the exercised lines with <code>cargo llvm-cov</code>. Detailed line-by-line output: <a href="./html/index.html">fuzz/html/index.html</a>.</p>
 <div class="grid">
+  <div class="metric"><span class="muted">Fuzzing score</span><strong>$(Format-Score -Score $scoreSummary.Score) $(Format-GradeBadge -Grade $scoreSummary.Grade)</strong><div class="detail">$(Escape-Html $scoreSummary.Formula)</div></div>
   <div class="metric"><span class="muted">Line coverage</span><strong>$(Format-Percent -Value ([double]$totals.lines.percent))</strong></div>
   <div class="metric"><span class="muted">Function coverage</span><strong>$(Format-Percent -Value ([double]$totals.functions.percent))</strong></div>
   <div class="metric"><span class="muted">Region coverage</span><strong>$(Format-Percent -Value ([double]$totals.regions.percent))</strong></div>
   <div class="metric"><span class="muted">Coverage mode</span><strong>Corpus replay</strong></div>
+  <div class="metric"><span class="muted">Saved findings</span><strong>$($findings.Count)</strong></div>
+  <div class="metric"><span class="muted">Findings directory</span><strong><code>server/fuzz/artifacts</code></strong></div>
 </div>
 <div class="panel">
   <h2>Fuzz targets and scope</h2>
@@ -1500,6 +1682,34 @@ $(if ($uncoveredRows) { $uncoveredRows -join "`n" } else { '<tr><td colspan="2">
     </tbody>
   </table>
 </div>
+<div class="panel">
+  <h2>Findings and reproductions</h2>
+  <p class="muted">Saved crash artifacts live under <code>server/fuzz/artifacts/&lt;target&gt;/</code>. Review them here and rerun the listed reproduction command to confirm and debug each finding.</p>
+$(if ($findingRows) {
+@"
+  <table>
+    <thead>
+      <tr>
+        <th>Target</th>
+        <th>Artifact</th>
+        <th>Path</th>
+        <th>Bytes</th>
+        <th>Updated</th>
+        <th>Reproduce</th>
+      </tr>
+    </thead>
+    <tbody>
+$(($findingRows -join "`n"))
+    </tbody>
+  </table>
+"@
+} else {
+@"
+  <p>No saved fuzz findings are currently present under <code>server/fuzz/artifacts</code>.</p>
+  <p class="muted">Current automation builds fuzz targets and replays the checked-in corpus. To create finding artifacts, run a longer <code>cargo fuzz run &lt;target&gt;</code> campaign manually or in scheduled CI.</p>
+"@
+})
+</div>
 <p class="footer"><a href="../index.html">Back to report index</a></p>
 "@
 
@@ -1508,14 +1718,18 @@ $(if ($uncoveredRows) { $uncoveredRows -join "`n" } else { '<tr><td colspan="2">
 
         return [pscustomobject]@{
             Name = "Fuzz Coverage"
-            Status = "warning"
+            Status = "ok"
             Notes = @($notes | Sort-Object -Unique)
             IndexPath = "fuzz/index.html"
             ErrorMessage = $null
+            ScoreSummary = $scoreSummary
             Summary = [pscustomobject]@{
                 Lines = [double]$totals.lines.percent
                 Functions = [double]$totals.functions.percent
                 Regions = [double]$totals.regions.percent
+                CoreFileHitPercent = $coreFileHitPercent
+                SeededTargetPercent = $seededTargetPercent
+                Findings = $findings.Count
             }
         }
     }
@@ -1573,6 +1787,34 @@ function Invoke-DocsReport {
     try {
         & (Join-Path $PSScriptRoot "build-docs.ps1")
 
+        $docsSummaryPath = Join-Path $docsArtifactRoot "summary.json"
+        $docEntries = @()
+        if (Test-Path $docsSummaryPath) {
+            $docEntries = @(
+                Get-Content -Path $docsSummaryPath -Raw |
+                    ConvertFrom-Json |
+                    ForEach-Object { $_ }
+            )
+        }
+        $publishedDocs = @($docEntries | Where-Object { $_.Published })
+        $publicationPercent = if ($docEntries.Count -eq 0) {
+            0.0
+        }
+        else {
+            ($publishedDocs.Count / $docEntries.Count) * 100.0
+        }
+        $rustdocIndexPath = Join-Path $rustdocArtifactRoot "index.html"
+        $rustdocOutputPath = Join-Path $rustdocArtifactRoot "output.html"
+        $rustdocPublished = (Test-Path $rustdocIndexPath) -or (Test-Path $rustdocOutputPath)
+        $scoreSummary = New-ScoreSummary `
+            -Score (($publicationPercent * 0.85) + ($(if ($rustdocPublished) { 100.0 } else { 0.0 }) * 0.15)) `
+            -Formula "85% Markdown publication coverage + 15% rustdoc availability" `
+            -Breakdown @(
+                "Published docs: $($publishedDocs.Count) / $($docEntries.Count)",
+                "Publication coverage: $(Format-Percent -Value $publicationPercent)",
+                "Rustdoc index: $(if ($rustdocPublished) { 'present' } else { 'missing' })"
+            )
+
         $notes.Add("mdBook site generated from shared/docs and published under target/reports/docs/site.")
         $notes.Add("Rust API docs generated with cargo doc --workspace --all-features --no-deps and published under target/reports/rustdoc.")
         $notes.Add("The post-commit hook now regenerates the docs site and API docs alongside coverage, complexity, and callgraph artifacts.")
@@ -1583,6 +1825,13 @@ function Invoke-DocsReport {
             Notes = @($notes)
             IndexPath = "docs/index.html"
             ErrorMessage = $null
+            ScoreSummary = $scoreSummary
+            Summary = [pscustomobject]@{
+                PublicationPercent = $publicationPercent
+                PublishedDocs = $publishedDocs.Count
+                TotalDocs = $docEntries.Count
+                RustdocPublished = $rustdocPublished
+            }
         }
     }
     catch {
@@ -1648,13 +1897,42 @@ function Invoke-ReportGeneration {
         }
     }
 
+    $scoredResults = @($results | Where-Object { $null -ne $_.ScoreSummary })
+    $overallScoreSummary = if ($scoredResults.Count -gt 0) {
+        $averageScore = [double](($scoredResults | ForEach-Object { $_.ScoreSummary.Score } | Measure-Object -Average).Average)
+        New-ScoreSummary -Score $averageScore -Formula "Average of Coverage, Fuzzing, Docs, and Complexity scores" -Breakdown @()
+    }
+    else {
+        $null
+    }
+
     $cards = foreach ($result in $results) {
+        $scoreBlock = if ($null -ne $result.ScoreSummary) {
+            @"
+  <p><strong>$(Format-Score -Score $result.ScoreSummary.Score)</strong> $(Format-GradeBadge -Grade $result.ScoreSummary.Grade)</p>
+  <p class="muted">$(Escape-Html $result.ScoreSummary.Formula)</p>
+"@
+        }
+        else {
+            @"
+  <p><strong>Informational</strong></p>
+"@
+        }
+        $breakdownBlock = if (($null -ne $result.ScoreSummary) -and $result.ScoreSummary.Breakdown) {
+            "<p class=`"muted`">$(Escape-Html (($result.ScoreSummary.Breakdown -join ' | ')))</p>"
+        }
+        else {
+            ""
+        }
+
         @"
 <div class="metric">
   <span class="badge $(Get-StatusBadgeClass -Status $result.Status)">$(Escape-Html $result.Status.ToUpperInvariant())</span>
   <strong>$(Escape-Html $result.Name)</strong>
+  $scoreBlock
   <p><a href="./$(Escape-Html $result.IndexPath)">Open $(Escape-Html $result.Name.ToLowerInvariant()) report</a></p>
   <p class="muted">$(Escape-Html $(if ($result.ErrorMessage) { $result.ErrorMessage } else { "Report generated successfully." }))</p>
+  $breakdownBlock
 </div>
 "@
     }
@@ -1674,6 +1952,7 @@ function Invoke-ReportGeneration {
 <p class="muted">Commit <code>$(Escape-Html $commitShort)</code> on <code>$(Escape-Html $branchName)</code>. Generated at $generatedAt.</p>
 <div class="panel">
   <div class="grid">
+    <div class="metric"><span class="muted">Overall quality score</span><strong>$(if ($null -ne $overallScoreSummary) { '{0} {1}' -f (Format-Score -Score $overallScoreSummary.Score), (Format-GradeBadge -Grade $overallScoreSummary.Grade) } else { 'n/a' })</strong></div>
     <div class="metric"><span class="muted">Commit</span><strong><code>$(Escape-Html $commitShort)</code></strong></div>
     <div class="metric"><span class="muted">Branch</span><strong>$(Escape-Html $branchName)</strong></div>
     <div class="metric"><span class="muted">Report root</span><strong><code>server/target/reports/output.html</code></strong></div>

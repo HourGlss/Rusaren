@@ -279,6 +279,18 @@ Invoke-CheckedCommand -Description "cargo doc" -Command {
 
 Copy-Item -Path (Join-Path $rustdocBuildRoot "doc\*") -Destination $rustdocRoot -Recurse -Force
 
+$rustdocEntries = @(
+    Get-ChildItem -Path $rustdocRoot -Directory |
+        Where-Object { Test-Path (Join-Path $_.FullName "index.html") } |
+        Sort-Object Name |
+        ForEach-Object {
+            [pscustomobject]@{
+                Name = $_.Name
+                RelativeIndex = "./$($_.Name)/index.html"
+            }
+        }
+)
+
 $docEntries = @()
 foreach ($docFile in Get-ChildItem -Path $sharedDocsRoot -Recurse -File -Filter *.md | Sort-Object FullName) {
     $relativePath = $docFile.FullName.Substring($sharedDocsRoot.Length).TrimStart('\', '/')
@@ -336,6 +348,26 @@ $coveragePercent = if ($docEntries.Count -eq 0) {
 else {
     [math]::Round(($publishedDocs.Count / $docEntries.Count) * 100, 2)
 }
+$rustdocPublished = $rustdocEntries.Count -gt 0
+$docsScore = [math]::Round(($coveragePercent * 0.85) + ($(if ($rustdocPublished) { 100.0 } else { 0.0 }) * 0.15), 2)
+$docsGrade = if ($docsScore -ge 90) {
+    "A"
+}
+elseif ($docsScore -ge 80) {
+    "B"
+}
+elseif ($docsScore -ge 70) {
+    "C"
+}
+elseif ($docsScore -ge 60) {
+    "D"
+}
+elseif ($docsScore -ge 50) {
+    "E"
+}
+else {
+    "F"
+}
 $docRows = foreach ($entry in $docEntries) {
     $statusLabel = if ($entry.Published) { "Published" } else { "Missing" }
     $statusClass = if ($entry.Published) { "badge-ok" } else { "badge-warn" }
@@ -374,6 +406,10 @@ $docsBody = @"
     <strong><a href="./site/index.html">Open mdBook site</a></strong>
   </div>
   <div class="metric">
+    <span>Docs score</span>
+    <strong>$docsScore/100 ($docsGrade)</strong>
+  </div>
+  <div class="metric">
     <span>API docs</span>
     <strong><a href="../rustdoc/index.html">Open rustdoc</a></strong>
   </div>
@@ -393,6 +429,7 @@ $docsBody = @"
 <div class="panel">
   <h2>Source of truth</h2>
   <p>The authored project documentation remains under <code>shared/docs</code>. This site is a generated view intended for local review and CI artifacts.</p>
+  <p>Score formula: 85% Markdown publication coverage plus 15% rustdoc availability.</p>
 </div>
 <div class="panel">
   <h2>Per-file docs inventory</h2>
@@ -419,14 +456,30 @@ $(($docRows -join "`n"))
 Write-ArtifactHtml -Path (Join-Path $docsRoot "index.html") -Title "Rusaren Documentation" -Body $docsBody
 Write-ArtifactHtml -Path (Join-Path $docsRoot "output.html") -Title "Rusaren Documentation" -Body $docsBody
 
+if ($rustdocEntries.Count -gt 0) {
+    $rustdocEntryItems = foreach ($entry in $rustdocEntries) {
+        "<li><a href=`"$(Escape-Html $entry.RelativeIndex)`"><code>$(Escape-Html $entry.Name)</code></a></li>"
+    }
+    $rustdocListBody = @"
+<p>Available crate and binary documentation:</p>
+<ul>
+$(($rustdocEntryItems -join "`n"))
+</ul>
+"@
+}
+else {
+    $rustdocListBody = '<p>No rustdoc crate indexes were generated.</p>'
+}
+
 $rustdocBody = @"
 <h1>Rusaren Rust API Docs</h1>
 <p>Workspace API documentation generated with <code>cargo doc --workspace --all-features --no-deps</code>.</p>
 <div class="panel">
-  <p><a href="./index.html">Open the generated rustdoc index</a></p>
+  $rustdocListBody
 </div>
 "@
 
+Write-ArtifactHtml -Path (Join-Path $rustdocRoot "index.html") -Title "Rusaren Rust API Docs" -Body $rustdocBody
 Write-ArtifactHtml -Path (Join-Path $rustdocRoot "output.html") -Title "Rusaren Rust API Docs" -Body $rustdocBody
 
 Write-Host "Documentation artifacts written to $docsRoot and $rustdocRoot"
