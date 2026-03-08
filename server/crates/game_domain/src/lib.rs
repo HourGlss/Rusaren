@@ -384,12 +384,26 @@ pub struct TeamAssignment {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     fn assert_ok<T, E: fmt::Debug>(result: Result<T, E>) -> T {
         match result {
             Ok(value) => value,
             Err(error) => panic!("expected Ok(..), got Err({error:?})"),
         }
+    }
+
+    fn valid_player_name_strategy() -> impl Strategy<Value = String> {
+        let alphabet: Vec<char> =
+            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+                .chars()
+                .collect();
+
+        proptest::collection::vec(
+            proptest::sample::select(alphabet),
+            1..=MAX_PLAYER_NAME_LEN,
+        )
+        .prop_map(|chars| chars.into_iter().collect())
     }
 
     #[test]
@@ -537,5 +551,20 @@ mod tests {
             })
         );
         assert_eq!(assert_ok(RoundNumber::new(MAX_ROUNDS)).next(), None);
+    }
+
+    proptest! {
+        #[test]
+        fn prop_player_name_accepts_all_valid_ascii_identifiers(
+            raw in valid_player_name_strategy()
+        ) {
+            let name = PlayerName::new(raw.clone());
+            prop_assert_eq!(name.as_ref().map(PlayerName::as_str), Ok(raw.as_str()));
+        }
+
+        #[test]
+        fn prop_player_id_accepts_all_positive_values(raw in 1_u32..) {
+            prop_assert_eq!(PlayerId::new(raw).map(PlayerId::get), Ok(raw));
+        }
     }
 }

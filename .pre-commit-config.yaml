@@ -39,6 +39,13 @@ repos:
         pass_filenames: false
         files: ^server/.*\.rs$
 
+      - id: rust-fuzz
+        name: rust fuzz build
+        entry: powershell -NoProfile -ExecutionPolicy Bypass -File server/scripts/quality.ps1 fuzz
+        language: system
+        pass_filenames: false
+        files: ^server/(Cargo\.toml|Cargo\.lock|fuzz/|crates/(game_domain|game_net)/|scripts/(quality|install-tools)\.ps1)
+
       - id: rust-lint
         name: rust lint
         entry: powershell -NoProfile -ExecutionPolicy Bypass -File server/scripts/quality.ps1 lint

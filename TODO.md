@@ -7,15 +7,16 @@ Current repo version: `0.2.0`
 
 - [x] Add a real `server/fuzz/` workspace with `cargo-fuzz`.
 - [x] Add first fuzz targets for packet-header decode, control-command decode, input-frame decode, and ingress/session sequencing.
-- [ ] Add `proptest` for parser and state-machine boundary testing.
-- [ ] Stand up `mdBook` for project docs and architecture notes.
-- [ ] Publish `cargo doc --workspace --no-deps` as API docs in CI.
-- [ ] Make reports, docs, and callgraph available as per-commit artifacts.
+- [x] Add `proptest` for parser and state-machine boundary testing.
+- [x] Stand up `mdBook` for project docs and architecture notes.
+- [x] Publish `cargo doc --workspace --no-deps` as API docs in CI.
+- [x] Make reports, docs, and callgraph available as per-commit artifacts.
+- [x] Make fuzz-target builds part of the pre-commit workflow for network-boundary changes.
 
 Release gate:
-- `quality.ps1 fuzz` builds real targets.
-- docs site builds in CI.
-- reports and docs are generated automatically.
+- [x] `quality.ps1 fuzz` builds real targets.
+- [x] docs site builds in CI.
+- [x] reports and docs are generated automatically.
 
 ## 0.4.0 Backend MVP
 

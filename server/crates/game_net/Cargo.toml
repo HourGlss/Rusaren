@@ -7,3 +7,6 @@ publish.workspace = true
 
 [dependencies]
 game_domain = { path = "../game_domain" }
+
+[dev-dependencies]
+proptest = "1"

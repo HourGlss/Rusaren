@@ -25,9 +25,11 @@ $stableTools = @(
     "cargo-llvm-cov",
     "cargo-deny",
     "cargo-audit",
+    "cargo-fuzz",
     "cargo-hack",
     "cargo-mutants",
     "cargo-geiger",
+    "mdbook",
     "rust-code-analysis-cli",
     "taplo-cli",
     "typos-cli",
@@ -144,6 +146,7 @@ if ($CallgraphOnly) {
 }
 
 rustup toolchain install stable --profile minimal | Out-Host
+rustup toolchain install nightly --profile minimal | Out-Host
 
 foreach ($component in $stableComponents) {
     rustup component add $component --toolchain stable | Out-Host
@@ -155,15 +158,8 @@ foreach ($tool in $stableTools) {
 
 Install-Verus
 
-if ($IncludeNightly -or $IncludeFuzzTools) {
-    rustup toolchain install nightly --profile minimal | Out-Host
+if ($IncludeNightly) {
     rustup component add miri --toolchain nightly | Out-Host
 
-    if ($IncludeNightly) {
-        rustup run nightly cargo install --locked cargo-udeps | Out-Host
-    }
-}
-
-if ($IncludeFuzzTools) {
-    rustup run stable cargo install --locked cargo-fuzz | Out-Host
+    rustup run nightly cargo install --locked cargo-udeps | Out-Host
 }

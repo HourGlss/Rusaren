@@ -82,6 +82,7 @@ cd server
 ```
 
 That script now installs Verus into the repo-local cache at `server/tools/verus/current`.
+It also installs `mdbook`, `cargo-fuzz`, and the nightly toolchain required by the pre-commit fuzz hook.
 The backend call-graph report now uses the repo-local `backend_callgraph` binary in this workspace plus `rust-analyzer`, so there is no separate call-graph tool checkout to manage.
 
 Run the configured quality checks:
@@ -103,6 +104,13 @@ Generate the HTML reports locally:
 ```powershell
 cd server
 ./scripts/quality.ps1 reports
+```
+
+Generate the documentation artifacts only:
+
+```powershell
+cd server
+./scripts/quality.ps1 docs-artifacts
 ```
 
 Generate only the backend call-graph report:
@@ -142,6 +150,11 @@ The call-graph report always writes DOT plus safe SVG output:
 - `server/target/reports/callgraph/backend_core.dot`
 - `server/target/reports/callgraph/backend_core.simple.svg`
 
+The documentation artifacts live at:
+- `server/target/reports/docs/index.html`
+- `server/target/reports/docs/site/index.html`
+- `server/target/reports/rustdoc/index.html`
+
 Do not run `./scripts/quality.ps1 test` and `./scripts/quality.ps1 reports` in parallel. The coverage step uses its own target directory and those commands can interfere with each other if started at the same time.
 
 ## Commit workflow
@@ -158,6 +171,7 @@ Recommended local flow for each change:
 cd server
 rustup run stable cargo build --workspace
 ./scripts/quality.ps1 lint
+./scripts/quality.ps1 fuzz
 ./scripts/quality.ps1 verus
 ./scripts/quality.ps1 test
 ./scripts/quality.ps1 reports
@@ -180,8 +194,9 @@ git commit -m "Describe the change"
 
 Hook behavior:
 - `pre-commit` runs fast repo checks such as whitespace, TOML/YAML validation, `typos`, `taplo`, and Rust formatting.
+- `pre-commit` also builds the current fuzz targets when network-boundary or fuzz-target files change.
 - `post-commit` generates the HTML reports and writes them to `server/target/reports/output.html`.
-- `post-commit` also refreshes the backend call graph under `server/target/reports/callgraph/`.
+- `post-commit` also refreshes the docs site, Rust API docs, and backend call graph under `server/target/reports/`.
 - `pre-push` runs Rust linting and tests before the branch leaves your machine.
 - each push to `main` uploads a GitHub Actions artifact named `server-reports-<commit-sha>` that contains `server/target/reports/output.html`
 
@@ -189,6 +204,7 @@ Current local fallback behavior:
 - if `cargo-nextest` is installed, the quality script uses it for the normal test task
 - if `cargo-nextest` is not installed, the quality script falls back to `cargo test`
 - fuzzing uses `cargo-fuzz` under `server/fuzz/` and currently starts with packet-header, control-command, input-frame, and ingress-session targets
+- project docs are generated from `shared/docs` through `mdBook`, while Rust API docs are generated with `cargo doc --workspace --all-features --no-deps`
 
 ## Docs
 

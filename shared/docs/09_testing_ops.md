@@ -30,6 +30,7 @@ Replay:
 - metrics: tick duration, packet rates, disconnects
 - tracing for slow ticks / overload
 - collect coverage and complexity reports for `game_sim`, `game_net`, and `game_content`
+- publish generated docs and API docs per commit so test/coverage output has architecture context beside it
 
 ## Abuse resistance
 - input rate limits

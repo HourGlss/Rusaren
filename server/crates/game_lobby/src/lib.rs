@@ -326,6 +326,7 @@ impl Lobby {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     fn player_id(raw: u32) -> PlayerId {
         PlayerId::new(raw).expect("valid player id")
@@ -613,5 +614,66 @@ mod tests {
             lobby.advance_countdown(),
             Err(LobbyError::CountdownNotRunning)
         );
+    }
+
+    fn maybe_team() -> impl Strategy<Value = Option<TeamSide>> {
+        prop_oneof![
+            Just(None),
+            Just(Some(TeamSide::TeamA)),
+            Just(Some(TeamSide::TeamB)),
+        ]
+    }
+
+    proptest! {
+        #[test]
+        fn prop_launch_countdown_requires_two_ready_players_on_opposing_teams(
+            team_one in maybe_team(),
+            team_two in maybe_team(),
+            ready_one in any::<bool>(),
+            ready_two in any::<bool>(),
+        ) {
+            let mut lobby = lobby();
+            lobby
+                .add_player(player_id(1), player_name("Alice"), PlayerRecord::new())
+                .expect("player should join");
+            lobby
+                .add_player(player_id(2), player_name("Bob"), PlayerRecord::new())
+                .expect("player should join");
+
+            if let Some(team) = team_one {
+                lobby
+                    .select_team(player_id(1), team)
+                    .expect("team selection should work");
+                if ready_one {
+                    lobby
+                        .set_ready(player_id(1), ReadyState::Ready)
+                        .expect("ready should work with a team");
+                }
+            }
+
+            if let Some(team) = team_two {
+                lobby
+                    .select_team(player_id(2), team)
+                    .expect("team selection should work");
+                if ready_two {
+                    lobby
+                        .set_ready(player_id(2), ReadyState::Ready)
+                        .expect("ready should work with a team");
+                }
+            }
+
+            let should_start = ready_one
+                && ready_two
+                && matches!(
+                    (team_one, team_two),
+                    (Some(TeamSide::TeamA), Some(TeamSide::TeamB))
+                        | (Some(TeamSide::TeamB), Some(TeamSide::TeamA))
+                );
+
+            prop_assert_eq!(
+                matches!(lobby.phase(), LobbyPhase::LaunchCountdown { .. }),
+                should_start
+            );
+        }
     }
 }

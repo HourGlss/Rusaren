@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("all", "coverage", "complexity", "callgraph")]
+    [ValidateSet("all", "coverage", "complexity", "callgraph", "docs")]
     [string]$Report = "all",
     [switch]$FailOnCommandFailure
 )
@@ -20,6 +20,8 @@ $reportsRoot = Join-Path $serverRoot "target\reports"
 $coverageRoot = Join-Path $reportsRoot "coverage"
 $complexityRoot = Join-Path $reportsRoot "complexity"
 $callgraphRoot = Join-Path $reportsRoot "callgraph"
+$docsArtifactRoot = Join-Path $reportsRoot "docs"
+$rustdocArtifactRoot = Join-Path $reportsRoot "rustdoc"
 
 function Escape-Html {
     param([AllowNull()][string]$Value)
@@ -1281,6 +1283,72 @@ $(($noteItems -join "`n"))
     }
 }
 
+function Invoke-DocsReport {
+    $notes = [System.Collections.Generic.List[string]]::new()
+    $reportPath = Join-Path $docsArtifactRoot "index.html"
+    $outputPath = Join-Path $docsArtifactRoot "output.html"
+
+    if (-not (Test-ToolAvailable -CommandName "mdbook")) {
+        $notes.Add("Documentation artifacts were skipped because mdbook is not installed.")
+        $body = @"
+<h1>Documentation Artifacts Unavailable</h1>
+<div class="panel">
+  <p>mdbook is not installed, so the project docs site could not be generated.</p>
+  <p class="muted">Install it with <code>./scripts/install-tools.ps1</code>.</p>
+</div>
+<p class="footer"><a href="../index.html">Back to report index</a></p>
+"@
+        Write-ReportHtml -Path $reportPath -Title "Documentation Artifacts Unavailable" -Body $body
+        Write-ReportHtml -Path $outputPath -Title "Documentation Artifacts Unavailable" -Body $body
+
+        return [pscustomobject]@{
+            Name = "Docs"
+            Status = "failed"
+            Notes = @($notes)
+            IndexPath = "docs/index.html"
+            ErrorMessage = "mdbook is not installed."
+        }
+    }
+
+    try {
+        & (Join-Path $PSScriptRoot "build-docs.ps1")
+
+        $notes.Add("mdBook site generated from shared/docs and published under target/reports/docs/site.")
+        $notes.Add("Rust API docs generated with cargo doc --workspace --all-features --no-deps and published under target/reports/rustdoc.")
+        $notes.Add("The post-commit hook now regenerates the docs site and API docs alongside coverage, complexity, and callgraph artifacts.")
+
+        return [pscustomobject]@{
+            Name = "Docs"
+            Status = "ok"
+            Notes = @($notes)
+            IndexPath = "docs/index.html"
+            ErrorMessage = $null
+        }
+    }
+    catch {
+        $errorMessage = $_.Exception.Message
+        $notes.Add("Documentation artifact generation failed: $errorMessage")
+        $body = @"
+<h1>Documentation Artifacts Failed</h1>
+<div class="panel">
+  <p>The documentation build step could not complete.</p>
+  <p><code>$(Escape-Html $errorMessage)</code></p>
+</div>
+<p class="footer"><a href="../index.html">Back to report index</a></p>
+"@
+        Write-ReportHtml -Path $reportPath -Title "Documentation Artifacts Failed" -Body $body
+        Write-ReportHtml -Path $outputPath -Title "Documentation Artifacts Failed" -Body $body
+
+        return [pscustomobject]@{
+            Name = "Docs"
+            Status = "failed"
+            Notes = @($notes)
+            IndexPath = "docs/index.html"
+            ErrorMessage = $errorMessage
+        }
+    }
+}
+
 function Invoke-ReportGeneration {
     $commitShort = Get-GitValue -CommandArgs @("rev-parse", "--short", "HEAD") -Fallback "unknown"
     $commitLong = Get-GitValue -CommandArgs @("rev-parse", "HEAD") -Fallback "unknown"
@@ -1299,6 +1367,9 @@ function Invoke-ReportGeneration {
         "coverage" {
             $results += Invoke-CoverageReport -SourceInventory $sourceInventory
         }
+        "docs" {
+            $results += Invoke-DocsReport
+        }
         "callgraph" {
             $results += Invoke-CallgraphReport -SourceInventory $sourceInventory
         }
@@ -1307,6 +1378,7 @@ function Invoke-ReportGeneration {
         }
         default {
             $results += Invoke-CoverageReport -SourceInventory $sourceInventory
+            $results += Invoke-DocsReport
             $results += Invoke-CallgraphReport -SourceInventory $sourceInventory
             $results += Invoke-ComplexityReport -SourceInventory $sourceInventory
         }

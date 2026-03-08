@@ -585,6 +585,7 @@ impl std::error::Error for PacketError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     fn assert_ok<T, E: fmt::Debug>(result: Result<T, E>) -> T {
         match result {
@@ -785,5 +786,72 @@ mod tests {
                 newest: 1,
             })
         );
+    }
+
+    fn valid_channel_kind() -> impl Strategy<Value = (ChannelId, PacketKind)> {
+        prop_oneof![
+            Just((ChannelId::Control, PacketKind::ControlSnapshot)),
+            Just((ChannelId::Control, PacketKind::ControlDelta)),
+            Just((ChannelId::Control, PacketKind::LaunchCountdownStarted)),
+            Just((ChannelId::Control, PacketKind::MatchStarted)),
+            Just((ChannelId::Control, PacketKind::MatchAborted)),
+            Just((ChannelId::Control, PacketKind::MatchStatistics)),
+            Just((ChannelId::Control, PacketKind::ControlCommand)),
+            Just((ChannelId::Control, PacketKind::ControlEvent)),
+            Just((ChannelId::Input, PacketKind::InputFrame)),
+            Just((ChannelId::Snapshot, PacketKind::FullSnapshot)),
+            Just((ChannelId::Snapshot, PacketKind::DeltaSnapshot)),
+            Just((ChannelId::Snapshot, PacketKind::EventBatch)),
+        ]
+    }
+
+    proptest! {
+        #[test]
+        fn prop_packet_headers_round_trip_all_valid_channel_kind_pairs(
+            (channel_id, packet_kind) in valid_channel_kind(),
+            flags in any::<u8>(),
+            payload in proptest::collection::vec(any::<u8>(), 0..64),
+            seq in any::<u32>(),
+            sim_tick in any::<u32>(),
+        ) {
+            let header = PacketHeader::new(
+                channel_id,
+                packet_kind,
+                flags,
+                u16::try_from(payload.len()).expect("payload length should fit in u16"),
+                seq,
+                sim_tick,
+            )
+            .expect("strategy only generates valid channel/kind pairs");
+
+            let bytes = header.encode(&payload);
+            let (decoded_header, decoded_payload) = PacketHeader::decode(&bytes).expect("encoded header should decode");
+
+            prop_assert_eq!(decoded_header, header);
+            prop_assert_eq!(decoded_payload, payload.as_slice());
+        }
+
+        #[test]
+        fn prop_sequence_tracker_accepts_strictly_increasing_sequences(
+            mut seqs in proptest::collection::vec(any::<u32>(), 1..32)
+        ) {
+            seqs.sort_unstable();
+            seqs.dedup();
+            prop_assume!(!seqs.is_empty());
+
+            let mut tracker = SequenceTracker::new();
+            for seq in &seqs {
+                prop_assert_eq!(tracker.observe(*seq), Ok(()));
+            }
+
+            let newest = *seqs.last().expect("deduplicated sequence set should be non-empty");
+            prop_assert_eq!(
+                tracker.observe(newest),
+                Err(PacketError::StaleSequence {
+                    incoming: newest,
+                    newest,
+                })
+            );
+        }
     }
 }

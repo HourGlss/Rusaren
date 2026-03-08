@@ -56,6 +56,9 @@ jobs:
       - name: Doc tests
         run: ./scripts/quality.ps1 doc
 
+      - name: Fuzz target build
+        run: ./scripts/quality.ps1 fuzz
+
       - name: HTML reports
         run: ./scripts/quality.ps1 reports
 
@@ -90,6 +93,9 @@ jobs:
           Commit: `${{ github.sha }}`
           Artifact: `server-reports-${{ github.sha }}`
           Main file inside artifact: `server/target/reports/output.html`
+          Docs file inside artifact: `server/target/reports/docs/index.html`
+          Docs site file inside artifact: `server/target/reports/docs/site/index.html`
+          Rust API docs file inside artifact: `server/target/reports/rustdoc/index.html`
           Call graph file inside artifact: `server/target/reports/callgraph/output.html`
           Backend overview graph inside artifact: `server/target/reports/callgraph/backend_core.overview.simple.svg`
           Detailed backend graph inside artifact: `server/target/reports/callgraph/backend_core.simple.svg`
