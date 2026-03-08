@@ -59,7 +59,7 @@ cd server
 ```
 
 That script now installs Verus into the repo-local cache at `server/tools/verus/current`.
-It also installs the repo-local `scip-callgraph` binaries used for backend call-graph reports.
+The backend call-graph report now uses the repo-local `backend_callgraph` binary in this workspace plus `rust-analyzer`, so there is no separate call-graph tool checkout to manage.
 
 Run the configured quality checks:
 
@@ -104,10 +104,20 @@ server/target/reports/callgraph/output.html
 The quickest curated backend artifact is:
 
 ```text
+server/target/reports/callgraph/backend_core.overview.simple.svg
+```
+
+The detailed function-level graph is still available at:
+
+```text
 server/target/reports/callgraph/backend_core.simple.svg
 ```
 
-If Graphviz is available, the report also writes `backend_core.svg` and `backend_core.png`. Without Graphviz, it still writes `backend_core.dot` and `backend_core.simple.svg`.
+The call-graph report always writes DOT plus safe SVG output:
+- `server/target/reports/callgraph/backend_core.overview.dot`
+- `server/target/reports/callgraph/backend_core.overview.simple.svg`
+- `server/target/reports/callgraph/backend_core.dot`
+- `server/target/reports/callgraph/backend_core.simple.svg`
 
 Do not run `./scripts/quality.ps1 test` and `./scripts/quality.ps1 reports` in parallel. The coverage step uses its own target directory and those commands can interfere with each other if started at the same time.
 

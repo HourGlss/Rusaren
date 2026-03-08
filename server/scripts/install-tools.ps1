@@ -10,11 +10,6 @@ $ErrorActionPreference = "Stop"
 
 $serverRoot = Split-Path -Parent $PSScriptRoot
 $toolRoot = Join-Path $serverRoot "tools"
-$scipCallgraphRepo = "https://github.com/Beneficial-AI-Foundation/scip-callgraph.git"
-$scipCallgraphCommit = "060ae43b054bfb255bc0867cbf2740e20d530725"
-$scipCallgraphRoot = Join-Path $toolRoot "scip-callgraph"
-$scipCallgraphCurrentRoot = Join-Path $scipCallgraphRoot "current"
-$scipCallgraphSourceRoot = Join-Path $scipCallgraphCurrentRoot "src"
 $verusRoot = Join-Path $toolRoot "verus"
 $verusCurrentRoot = Join-Path $verusRoot "current"
 $verusRelease = "0.2026.03.01.25809cb"
@@ -68,58 +63,6 @@ function Get-VerusExecutableName {
     }
 
     return "verus"
-}
-
-function Get-ExecutableSuffix {
-    if ($isWindows) {
-        return ".exe"
-    }
-
-    return ""
-}
-
-function Install-ScipCallgraph {
-    $suffix = Get-ExecutableSuffix
-    $versionMarker = Join-Path $scipCallgraphCurrentRoot ".installed-commit"
-    $requiredBins = @(
-        (Join-Path $scipCallgraphSourceRoot "target\release\generate_call_graph_dot$suffix"),
-        (Join-Path $scipCallgraphSourceRoot "target\release\generate_files_subgraph_dot$suffix"),
-        (Join-Path $scipCallgraphSourceRoot "target\release\write_atoms_to_svg$suffix")
-    )
-
-    if ((Test-Path $versionMarker) -and ((Get-Content $versionMarker -Raw).Trim() -eq $scipCallgraphCommit)) {
-        $allBinsPresent = $true
-        foreach ($requiredBin in $requiredBins) {
-            if (-not (Test-Path $requiredBin)) {
-                $allBinsPresent = $false
-                break
-            }
-        }
-
-        if ($allBinsPresent) {
-            Write-Host "scip-callgraph $scipCallgraphCommit is already installed at $scipCallgraphSourceRoot"
-            return
-        }
-    }
-
-    if (Test-Path $scipCallgraphCurrentRoot) {
-        Remove-Item -Recurse -Force -Path $scipCallgraphCurrentRoot
-    }
-
-    New-Item -ItemType Directory -Force -Path $scipCallgraphRoot | Out-Null
-    git clone $scipCallgraphRepo $scipCallgraphSourceRoot | Out-Host
-    git -C $scipCallgraphSourceRoot checkout $scipCallgraphCommit | Out-Host
-
-    rustup run stable cargo build --release `
-        --manifest-path (Join-Path $scipCallgraphSourceRoot "Cargo.toml") `
-        --target-dir (Join-Path $scipCallgraphSourceRoot "target") `
-        -p metrics-cli `
-        --bin generate_call_graph_dot `
-        --bin generate_files_subgraph_dot `
-        --bin write_atoms_to_svg | Out-Host
-
-    Set-Content -Path $versionMarker -Value $scipCallgraphCommit -Encoding ASCII
-    Write-Host "Installed scip-callgraph $scipCallgraphCommit to $scipCallgraphSourceRoot"
 }
 
 function Install-VerusToolchain {
@@ -197,7 +140,6 @@ if ($CallgraphOnly) {
     foreach ($component in $stableComponents) {
         rustup component add $component --toolchain stable | Out-Host
     }
-    Install-ScipCallgraph
     return
 }
 
@@ -211,7 +153,6 @@ foreach ($tool in $stableTools) {
     rustup run stable cargo install --locked $tool | Out-Host
 }
 
-Install-ScipCallgraph
 Install-Verus
 
 if ($IncludeNightly) {

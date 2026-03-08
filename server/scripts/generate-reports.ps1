@@ -260,27 +260,6 @@ function Test-ToolAvailable {
     return $null -ne (Get-Command $CommandName -ErrorAction SilentlyContinue)
 }
 
-function Get-ExecutableSuffix {
-    $runtime = [System.Runtime.InteropServices.RuntimeInformation]
-    if ($runtime::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Windows)) {
-        return ".exe"
-    }
-
-    return ""
-}
-
-function Get-RepoLocalCallgraphBinary {
-    param([string]$BinaryName)
-
-    $suffix = Get-ExecutableSuffix
-    $candidate = Join-Path $serverRoot "tools\scip-callgraph\current\src\target\release\$BinaryName$suffix"
-    if (Test-Path $candidate) {
-        return $candidate
-    }
-
-    return $null
-}
-
 function Invoke-CheckedCommand {
     param(
         [Parameter(Mandatory)]
@@ -966,29 +945,23 @@ function Invoke-CallgraphReport {
     $outputPath = Join-Path $callgraphRoot "output.html"
     $fullScipPath = Join-Path $callgraphRoot "index.scip"
     $fullScipJsonPath = Join-Path $callgraphRoot "index.scip.json"
-    $backendCoreScipJsonPath = Join-Path $callgraphRoot "backend_core.index.scip.json"
-    $fullDotPath = Join-Path $callgraphRoot "call_graph.dot"
-    $fullSvgPath = Join-Path $callgraphRoot "call_graph.svg"
-    $fullPngPath = Join-Path $callgraphRoot "call_graph.png"
-    $fallbackSvgPath = Join-Path $callgraphRoot "call_graph.simple.svg"
-    $coreDotPath = Join-Path $callgraphRoot "backend_core.dot"
-    $coreSvgPath = Join-Path $callgraphRoot "backend_core.svg"
-    $corePngPath = Join-Path $callgraphRoot "backend_core.png"
     $coreFallbackSvgPath = Join-Path $callgraphRoot "backend_core.simple.svg"
-    $generateCallGraph = Get-RepoLocalCallgraphBinary -BinaryName "generate_call_graph_dot"
-    $generateFilesSubgraph = Get-RepoLocalCallgraphBinary -BinaryName "generate_files_subgraph_dot"
-    $writeAtomsToSvg = Get-RepoLocalCallgraphBinary -BinaryName "write_atoms_to_svg"
+    $overviewFallbackSvgPath = Join-Path $callgraphRoot "backend_core.overview.simple.svg"
+    $summaryJsonPath = Join-Path $callgraphRoot "backend_core.summary.json"
     $backendCoreFiles = @(
-        "bin/dedicated_server/src/main.rs",
         "crates/game_api/src/app.rs",
         "crates/game_api/src/realtime.rs",
         "crates/game_api/src/transport.rs",
+        "crates/game_domain/src/lib.rs",
         "crates/game_net/src/lib.rs",
         "crates/game_net/src/control.rs",
         "crates/game_net/src/ingress.rs",
         "crates/game_lobby/src/lib.rs",
         "crates/game_match/src/lib.rs",
         "crates/game_sim/src/lib.rs"
+    )
+    $entryFiles = @(
+        "crates/game_api/src/realtime.rs"
     )
 
     if (-not (Test-ToolAvailable -CommandName "rust-analyzer")) {
@@ -1008,26 +981,6 @@ function Invoke-CallgraphReport {
             Notes = @($notes)
             IndexPath = "callgraph/index.html"
             ErrorMessage = "rust-analyzer is not installed."
-        }
-    }
-
-    if ($null -eq $generateCallGraph -or $null -eq $generateFilesSubgraph -or $null -eq $writeAtomsToSvg) {
-        $notes.Add("Call graph report was skipped because the repo-local scip-callgraph binaries are missing.")
-        $body = @"
-<h1>Call Graph Unavailable</h1>
-<div class="panel">
-  <p>The repo-local scip-callgraph binaries are missing, so the backend call graph could not be generated.</p>
-  <p class="muted">Install them with <code>./scripts/install-tools.ps1 -CallgraphOnly</code>.</p>
-</div>
-"@
-        Write-ReportHtml -Path $reportPath -Title "Call Graph Unavailable" -Body $body
-        Write-ReportHtml -Path $outputPath -Title "Call Graph Unavailable" -Body $body
-        return [pscustomobject]@{
-            Name = "Call Graph"
-            Status = "failed"
-            Notes = @($notes)
-            IndexPath = "callgraph/index.html"
-            ErrorMessage = "scip-callgraph binaries are not installed."
         }
     }
 
@@ -1061,112 +1014,55 @@ function Invoke-CallgraphReport {
             rustup run stable cargo run -p scip_json_dump --quiet -- $fullScipPath $fullScipJsonPath | Out-Host
         }
 
-        $scipJson = Get-Content -Path $fullScipJsonPath -Raw | ConvertFrom-Json
-        $documents = @($scipJson.documents)
-        $normalizedBackendCoreFiles = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        $callgraphArgs = @("run", "-p", "backend_callgraph", "--quiet", "--", $fullScipPath, $callgraphRoot)
         foreach ($backendCoreFile in $backendCoreFiles) {
-            [void]$normalizedBackendCoreFiles.Add(($backendCoreFile -replace "/", "\"))
+            $callgraphArgs += @("--backend-file", $backendCoreFile)
+        }
+        foreach ($entryFile in $entryFiles) {
+            $callgraphArgs += @("--entry-file", $entryFile)
         }
 
-        $backendCoreDocuments = @(
-            $documents |
-                Where-Object {
-                    $normalizedRelativePath = ([string]$_.relative_path) -replace "/", "\"
-                    $normalizedBackendCoreFiles.Contains($normalizedRelativePath)
-                }
-        )
-
-        $backendCoreScipJson = [ordered]@{
-            metadata = $scipJson.metadata
-            documents = $backendCoreDocuments
-        }
-        $backendCoreScipJsonText = $backendCoreScipJson | ConvertTo-Json -Depth 100 -Compress
-        [System.IO.File]::WriteAllText(
-            $backendCoreScipJsonPath,
-            $backendCoreScipJsonText,
-            [System.Text.UTF8Encoding]::new($false)
-        )
-
-        $graphvizAvailable = $true
-        try {
-            & $generateCallGraph $fullScipJsonPath $fullDotPath | Out-Host
-            if ($LASTEXITCODE -ne 0) {
-                throw "generate_call_graph_dot failed with exit code $LASTEXITCODE."
-            }
-        }
-        catch {
-            $graphvizAvailable = $false
-            if (-not (Test-Path $fullDotPath)) {
-                throw $_
-            }
-
-            $notes.Add("Graphviz 'dot' is not installed; the full call graph DOT was generated and a simple SVG fallback was used instead.")
-            Invoke-CheckedCommand -Description "write_atoms_to_svg" -Command {
-                & $writeAtomsToSvg $fullScipJsonPath $fallbackSvgPath | Out-Host
-            }
+        Invoke-CheckedCommand -Description "backend_callgraph" -Command {
+            & rustup run stable cargo @callgraphArgs | Out-Host
         }
 
-        try {
-            & $generateFilesSubgraph $fullScipJsonPath $coreDotPath @($backendCoreFiles) | Out-Host
-            if ($LASTEXITCODE -ne 0) {
-                throw "generate_files_subgraph_dot failed with exit code $LASTEXITCODE."
-            }
-        }
-        catch {
-            if (Test-Path $coreDotPath) {
-                $notes.Add("The curated backend_core DOT was generated, but Graphviz 'dot' is not installed so no backend_core SVG was rendered.")
-            }
-            else {
-                $notes.Add("Curated backend core subgraph generation failed: $($_.Exception.Message)")
-            }
+        if (-not (Test-Path $summaryJsonPath)) {
+            throw "backend call graph generation did not produce backend_core.summary.json."
         }
 
-        if ($backendCoreDocuments.Count -gt 0) {
-            try {
-                Invoke-CheckedCommand -Description "write_atoms_to_svg backend_core" -Command {
-                    & $writeAtomsToSvg $backendCoreScipJsonPath $coreFallbackSvgPath | Out-Host
-                }
-            }
-            catch {
-                $notes.Add("Curated backend core simple SVG generation failed: $($_.Exception.Message)")
-            }
-        }
+        $summary = Get-Content -Path $summaryJsonPath -Raw | ConvertFrom-Json
+        $documents = @((Get-Content -Path $fullScipJsonPath -Raw | ConvertFrom-Json).documents)
 
         $documentCount = $documents.Count
         $symbolCount = @($documents | ForEach-Object { @($_.symbols).Count } | Measure-Object -Sum).Sum
         $occurrenceCount = @($documents | ForEach-Object { @($_.occurrences).Count } | Measure-Object -Sum).Sum
-        $coreEmbedAsset = if (Test-Path $coreSvgPath) {
-            "backend_core.svg"
-        }
-        elseif (Test-Path $coreFallbackSvgPath) {
-            "backend_core.simple.svg"
+        $overviewEmbedAsset = if (Test-Path $overviewFallbackSvgPath) {
+            "backend_core.overview.simple.svg"
         }
         else {
             $null
         }
 
-        $fullEmbedAsset = if (Test-Path $fullSvgPath) {
-            "call_graph.svg"
+        $notes.Add("The backend call graph is now local-only: tests, enum members, bodyless declarations, and external dependency nodes are excluded from the rendered graphs.")
+        $notes.Add("The overview graph groups the backend by source file, while the detailed graph retains function-level edges for debugging.")
+        $notes.Add("The curated graphs root from runtime entry files in game_api and keep only functions reachable from those entrypoints.")
+        if ($summary.omitted_unreachable_nodes -gt 0) {
+            $notes.Add("$($summary.omitted_unreachable_nodes) local helper functions were omitted because they are not reachable from the selected runtime entrypoints.")
         }
-        elseif (Test-Path $fallbackSvgPath) {
-            "call_graph.simple.svg"
+        if ($summary.omitted_test_nodes -gt 0) {
+            $notes.Add("$($summary.omitted_test_nodes) test functions were omitted from the rendered graph.")
         }
-        else {
-            $null
-        }
-
-        $notes.Add("The full backend call graph currently covers the entire Rust workspace under server/.")
-        $notes.Add("backend_core.dot is the curated main-backend subgraph for the dedicated server, app layer, transport boundary, and core simulation crates.")
-        if ($graphvizAvailable) {
-            $notes.Add("Graphviz 'dot' was available, so DOT, SVG, and PNG were generated from the full call graph.")
+        if ($summary.omitted_bodyless_nodes -gt 0) {
+            $notes.Add("$($summary.omitted_bodyless_nodes) callable-looking definitions were omitted because no executable body could be located.")
         }
 
-        $embedBlock = if ($null -ne $coreEmbedAsset) {
+        $embedBlock = if ($null -ne $overviewEmbedAsset) {
             @"
 <div class="panel">
-  <h2>Main Backend Preview</h2>
-  <object data="./$(Escape-Html $coreEmbedAsset)" type="image/svg+xml" style="width: 100%; min-height: 48rem; border: 1px solid var(--line); border-radius: 12px;">
-    <p>SVG preview could not be embedded. Open <a href="./$(Escape-Html $coreEmbedAsset)">the SVG directly</a>.</p>
+  <h2>Main Backend Overview</h2>
+  <p class="muted">Condensed view grouped by backend source file. Use the detailed function graph from the artifact list when you need exact per-function edges.</p>
+  <object data="./$(Escape-Html $overviewEmbedAsset)" type="image/svg+xml" style="width: 100%; min-height: 32rem; border: 1px solid var(--line); border-radius: 12px;">
+    <p>SVG preview could not be embedded. Open <a href="./$(Escape-Html $overviewEmbedAsset)">the overview SVG directly</a>.</p>
   </object>
 </div>
 "@
@@ -1175,70 +1071,170 @@ function Invoke-CallgraphReport {
             @"
 <div class="panel">
   <h2>Preview Unavailable</h2>
-  <p>No curated backend SVG preview could be generated.</p>
+  <p>No curated backend overview SVG preview could be generated.</p>
 </div>
 "@
-        }
-
-        $fullEmbedBlock = if ($null -ne $fullEmbedAsset) {
-            @"
-<div class="panel">
-  <h2>Full Workspace Preview</h2>
-  <object data="./$(Escape-Html $fullEmbedAsset)" type="image/svg+xml" style="width: 100%; min-height: 48rem; border: 1px solid var(--line); border-radius: 12px;">
-    <p>SVG preview could not be embedded. Open <a href="./$(Escape-Html $fullEmbedAsset)">the SVG directly</a>.</p>
-  </object>
-</div>
-"@
-        }
-        else {
-            ""
         }
 
         $artifactItems = @(
             '<li><a href="./index.scip">Raw SCIP index</a></li>',
             '<li><a href="./index.scip.json">SCIP JSON</a></li>',
-            '<li><a href="./call_graph.dot">Full call graph DOT</a></li>',
-            '<li><a href="./backend_core.index.scip.json">Curated backend core SCIP JSON</a></li>',
+            '<li><a href="./backend_core.summary.json">Curated backend summary JSON</a></li>',
+            '<li><a href="./backend_core.overview.dot">Backend overview DOT</a></li>',
+            '<li><a href="./backend_core.overview.simple.svg">Backend overview SVG</a></li>',
             '<li><a href="./backend_core.dot">Curated backend core DOT</a></li>'
         )
-        if (Test-Path $fullSvgPath) {
-            $artifactItems += '<li><a href="./call_graph.svg">Full call graph SVG</a></li>'
-        }
-        if (Test-Path $fallbackSvgPath) {
-            $artifactItems += '<li><a href="./call_graph.simple.svg">Full call graph simple SVG</a></li>'
-        }
-        if (Test-Path $fullPngPath) {
-            $artifactItems += '<li><a href="./call_graph.png">Full call graph PNG</a></li>'
-        }
-        if (Test-Path $coreSvgPath) {
-            $artifactItems += '<li><a href="./backend_core.svg">Curated backend core SVG</a></li>'
-        }
         if (Test-Path $coreFallbackSvgPath) {
             $artifactItems += '<li><a href="./backend_core.simple.svg">Curated backend core simple SVG</a></li>'
-        }
-        if (Test-Path $corePngPath) {
-            $artifactItems += '<li><a href="./backend_core.png">Curated backend core PNG</a></li>'
         }
 
         $noteItems = foreach ($note in ($notes | Sort-Object -Unique)) {
             "<li>$(Escape-Html $note)</li>"
         }
 
+        $rootItems = foreach ($root in @($summary.roots)) {
+            "<li><code>$(Escape-Html ([string]$root))</code></li>"
+        }
+
+        $fanOutRows = foreach ($item in @($summary.top_fan_out)) {
+            @"
+<tr>
+  <td><code>$(Escape-Html ([string]$item.label))</code></td>
+  <td><code>$(Escape-Html ([string]$item.file))</code></td>
+  <td>$([int]$item.count)</td>
+</tr>
+"@
+        }
+
+        $fanInRows = foreach ($item in @($summary.top_fan_in)) {
+            @"
+<tr>
+  <td><code>$(Escape-Html ([string]$item.label))</code></td>
+  <td><code>$(Escape-Html ([string]$item.file))</code></td>
+  <td>$([int]$item.count)</td>
+</tr>
+"@
+        }
+
+        $externalItems = foreach ($item in @($summary.hidden_external_references)) {
+            "<li><code>$(Escape-Html ([string]$item.crate_name))</code>: $([int]$item.count) hidden call-site references</li>"
+        }
+
         $body = @"
 <h1>Call Graph Report</h1>
-<p class="muted">Commit <code>$(Escape-Html (Get-GitValue -CommandArgs @("rev-parse", "--short", "HEAD") -Fallback "unknown"))</code>. Generated from <code>rust-analyzer scip .</code> plus repo-local <code>scip-callgraph</code>.</p>
+<p class="muted">Commit <code>$(Escape-Html (Get-GitValue -CommandArgs @("rev-parse", "--short", "HEAD") -Fallback "unknown"))</code>. Generated from <code>rust-analyzer scip .</code> plus the repo-local <code>backend_callgraph</code> filter.</p>
 <div class="grid">
   <div class="metric"><span class="muted">SCIP documents</span><strong>$documentCount</strong></div>
   <div class="metric"><span class="muted">Symbol definitions</span><strong>$symbolCount</strong></div>
   <div class="metric"><span class="muted">Occurrences</span><strong>$occurrenceCount</strong></div>
-  <div class="metric"><span class="muted">Renderer</span><strong>$(if ($graphvizAvailable) { "Graphviz DOT + SVG" } elseif (($null -ne $coreEmbedAsset) -or ($null -ne $fullEmbedAsset)) { "DOT + simple SVG fallback" } else { "DOT only" })</strong></div>
+  <div class="metric"><span class="muted">Overview files</span><strong>$([int]$summary.overview_file_count)</strong></div>
+  <div class="metric"><span class="muted">Overview edges</span><strong>$([int]$summary.overview_edge_count)</strong></div>
+  <div class="metric"><span class="muted">Rendered nodes</span><strong>$([int]$summary.node_count)</strong></div>
+  <div class="metric"><span class="muted">Rendered edges</span><strong>$([int]$summary.edge_count)</strong></div>
+  <div class="metric"><span class="muted">Entry roots</span><strong>$([int]$summary.root_count)</strong></div>
+  <div class="metric"><span class="muted">Renderer</span><strong>Repo-local DOT + safe SVG</strong></div>
 </div>
 $embedBlock
-$fullEmbedBlock
 <div class="panel">
   <h2>Artifacts</h2>
   <ul>
 $(($artifactItems -join "`n"))
+  </ul>
+</div>
+<div class="panel">
+  <h2>Selected Runtime Roots</h2>
+  <ul>
+$(($rootItems -join "`n"))
+  </ul>
+</div>
+<div class="panel">
+  <h2>Functions Per Backend File</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>File</th>
+        <th>Functions</th>
+      </tr>
+    </thead>
+    <tbody>
+$(
+    (
+        @($summary.file_function_counts) |
+            ForEach-Object {
+@"
+<tr>
+  <td><code>$(Escape-Html ([string]$_.file))</code></td>
+  <td>$([int]$_.function_count)</td>
+</tr>
+"@
+            }
+    ) -join "`n"
+)
+    </tbody>
+  </table>
+</div>
+<div class="panel">
+  <h2>Top Cross-File Edges</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>From</th>
+        <th>To</th>
+        <th>Calls</th>
+      </tr>
+    </thead>
+    <tbody>
+$(
+    (
+        @($summary.top_file_edges) |
+            ForEach-Object {
+@"
+<tr>
+  <td><code>$(Escape-Html ([string]$_.source_file))</code></td>
+  <td><code>$(Escape-Html ([string]$_.target_file))</code></td>
+  <td>$([int]$_.count)</td>
+</tr>
+"@
+            }
+    ) -join "`n"
+)
+    </tbody>
+  </table>
+</div>
+<div class="panel">
+  <h2>Top Fan-Out</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Function</th>
+        <th>File</th>
+        <th>Outgoing edges</th>
+      </tr>
+    </thead>
+    <tbody>
+$(($fanOutRows -join "`n"))
+    </tbody>
+  </table>
+</div>
+<div class="panel">
+  <h2>Top Fan-In</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Function</th>
+        <th>File</th>
+        <th>Incoming edges</th>
+      </tr>
+    </thead>
+    <tbody>
+$(($fanInRows -join "`n"))
+    </tbody>
+  </table>
+</div>
+<div class="panel">
+  <h2>Hidden External References</h2>
+  <ul>
+$(($externalItems -join "`n"))
   </ul>
 </div>
 <div class="panel">

@@ -91,7 +91,8 @@ jobs:
           Artifact: `server-reports-${{ github.sha }}`
           Main file inside artifact: `server/target/reports/output.html`
           Call graph file inside artifact: `server/target/reports/callgraph/output.html`
-          Curated backend graph inside artifact: `server/target/reports/callgraph/backend_core.simple.svg`
+          Backend overview graph inside artifact: `server/target/reports/callgraph/backend_core.overview.simple.svg`
+          Detailed backend graph inside artifact: `server/target/reports/callgraph/backend_core.simple.svg`
           Coverage file inside artifact: `server/target/reports/coverage/output.html`
           Complexity file inside artifact: `server/target/reports/complexity/output.html`
           "@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
