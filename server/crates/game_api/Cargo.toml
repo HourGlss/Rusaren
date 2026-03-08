@@ -6,3 +6,8 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+game_domain = { path = "../game_domain" }
+game_lobby = { path = "../game_lobby" }
+game_match = { path = "../game_match" }
+game_net = { path = "../game_net" }
+game_sim = { path = "../game_sim" }

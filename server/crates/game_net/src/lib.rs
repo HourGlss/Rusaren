@@ -1,8 +1,15 @@
 //! Protocol, transport, and snapshot replication code.
 
 #![forbid(unsafe_code)]
+#![cfg_attr(test, allow(clippy::expect_used))]
 
 use std::fmt;
+
+use game_domain::DomainError;
+
+mod control;
+
+pub use control::{ClientControlCommand, ServerControlEvent};
 
 pub const PACKET_MAGIC: u16 = 0x5241;
 pub const PROTOCOL_VERSION: u8 = 1;
@@ -52,6 +59,8 @@ pub enum PacketKind {
     MatchStarted,
     MatchAborted,
     MatchStatistics,
+    ControlCommand,
+    ControlEvent,
     InputFrame,
     FullSnapshot,
     DeltaSnapshot,
@@ -67,6 +76,8 @@ impl PacketKind {
             (ChannelId::Control, 3) => Ok(Self::MatchStarted),
             (ChannelId::Control, 4) => Ok(Self::MatchAborted),
             (ChannelId::Control, 5) => Ok(Self::MatchStatistics),
+            (ChannelId::Control, 6) => Ok(Self::ControlCommand),
+            (ChannelId::Control, 7) => Ok(Self::ControlEvent),
             (ChannelId::Input, 16) => Ok(Self::InputFrame),
             (ChannelId::Snapshot, 32) => Ok(Self::FullSnapshot),
             (ChannelId::Snapshot, 33) => Ok(Self::DeltaSnapshot),
@@ -86,6 +97,8 @@ impl PacketKind {
             Self::MatchStarted => 3,
             Self::MatchAborted => 4,
             Self::MatchStatistics => 5,
+            Self::ControlCommand => 6,
+            Self::ControlEvent => 7,
             Self::InputFrame => 16,
             Self::FullSnapshot => 32,
             Self::DeltaSnapshot => 33,
@@ -403,6 +416,39 @@ pub enum PacketError {
     },
     MissingAbilityContext,
     UnexpectedAbilityContext(u16),
+    ControlPayloadTooShort {
+        kind: &'static str,
+        expected: usize,
+        actual: usize,
+    },
+    UnexpectedTrailingBytes {
+        kind: &'static str,
+        actual: usize,
+    },
+    UnknownControlCommand(u8),
+    UnknownServerEvent(u8),
+    InvalidEncodedPlayerId(u32),
+    InvalidEncodedLobbyId(u32),
+    InvalidEncodedMatchId(u32),
+    InvalidEncodedRound(u8),
+    InvalidEncodedTeam(u8),
+    InvalidEncodedReadyState(u8),
+    InvalidEncodedSkillTree(u8),
+    InvalidEncodedMatchOutcome(u8),
+    InvalidEncodedBoolean(u8),
+    InvalidEncodedPlayerName(DomainError),
+    InvalidUtf8String {
+        field: &'static str,
+    },
+    StringLengthOutOfBounds {
+        field: &'static str,
+        len: usize,
+        max: usize,
+    },
+    PayloadTooLarge {
+        actual: usize,
+        maximum: usize,
+    },
     StaleSequence {
         incoming: u32,
         newest: u32,
@@ -410,6 +456,7 @@ pub enum PacketError {
 }
 
 impl fmt::Display for PacketError {
+    #[allow(clippy::too_many_lines)]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::PacketTooShort { actual, minimum } => {
@@ -469,6 +516,46 @@ impl fmt::Display for PacketError {
                 f,
                 "ability_or_context must be zero when cast is not requested, got {value}"
             ),
+            Self::ControlPayloadTooShort {
+                kind,
+                expected,
+                actual,
+            } => write!(
+                f,
+                "{kind} payload expected at least {expected} bytes but received {actual}"
+            ),
+            Self::UnexpectedTrailingBytes { kind, actual } => {
+                write!(f, "{kind} payload contained {actual} unexpected trailing bytes")
+            }
+            Self::UnknownControlCommand(raw) => write!(f, "unknown control command {raw}"),
+            Self::UnknownServerEvent(raw) => write!(f, "unknown server event {raw}"),
+            Self::InvalidEncodedPlayerId(raw) => {
+                write!(f, "encoded player id {raw} is invalid")
+            }
+            Self::InvalidEncodedLobbyId(raw) => write!(f, "encoded lobby id {raw} is invalid"),
+            Self::InvalidEncodedMatchId(raw) => write!(f, "encoded match id {raw} is invalid"),
+            Self::InvalidEncodedRound(raw) => write!(f, "encoded round {raw} is invalid"),
+            Self::InvalidEncodedTeam(raw) => write!(f, "encoded team {raw} is invalid"),
+            Self::InvalidEncodedReadyState(raw) => {
+                write!(f, "encoded ready state {raw} is invalid")
+            }
+            Self::InvalidEncodedSkillTree(raw) => {
+                write!(f, "encoded skill tree {raw} is invalid")
+            }
+            Self::InvalidEncodedMatchOutcome(raw) => {
+                write!(f, "encoded match outcome {raw} is invalid")
+            }
+            Self::InvalidEncodedBoolean(raw) => write!(f, "encoded boolean {raw} is invalid"),
+            Self::InvalidEncodedPlayerName(error) => error.fmt(f),
+            Self::InvalidUtf8String { field } => {
+                write!(f, "{field} contained invalid utf-8")
+            }
+            Self::StringLengthOutOfBounds { field, len, max } => {
+                write!(f, "{field} length {len} exceeds maximum {max}")
+            }
+            Self::PayloadTooLarge { actual, maximum } => {
+                write!(f, "payload length {actual} exceeds maximum encodable {maximum}")
+            }
             Self::StaleSequence { incoming, newest } => {
                 write!(f, "incoming sequence {incoming} is not newer than {newest}")
             }
