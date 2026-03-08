@@ -416,6 +416,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "fuzz_seed_builder"
+version = "0.2.0"
+dependencies = [
+ "game_domain",
+ "game_net",
+]
+
+[[package]]
 name = "game_api"
 version = "0.2.0"
 dependencies = [

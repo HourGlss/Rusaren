@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("all", "fmt", "lint", "hack", "test", "doc", "docs-artifacts", "coverage", "reports", "deny", "audit", "udeps", "miri", "complexity", "callgraph", "bench", "fuzz", "typos", "taplo", "zizmor", "verus")]
+    [ValidateSet("all", "fmt", "lint", "hack", "test", "doc", "docs-artifacts", "coverage", "fuzz-coverage", "reports", "deny", "audit", "udeps", "miri", "complexity", "callgraph", "bench", "fuzz", "typos", "taplo", "zizmor", "verus")]
     [string]$Task = "all"
 )
 
@@ -36,6 +36,7 @@ function Invoke-QualityTask {
         "doc" { rustup run stable cargo xdoc }
         "docs-artifacts" { & (Join-Path $PSScriptRoot "build-docs.ps1") }
         "coverage" { & (Join-Path $PSScriptRoot "generate-reports.ps1") -Report coverage -FailOnCommandFailure }
+        "fuzz-coverage" { & (Join-Path $PSScriptRoot "generate-reports.ps1") -Report fuzz -FailOnCommandFailure }
         "reports" { & (Join-Path $PSScriptRoot "generate-reports.ps1") -Report all -FailOnCommandFailure }
         "deny" { rustup run stable cargo xdeny }
         "audit" { rustup run stable cargo xaudit }

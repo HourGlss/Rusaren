@@ -93,7 +93,9 @@ jobs:
           Commit: `${{ github.sha }}`
           Artifact: `server-reports-${{ github.sha }}`
           Main file inside artifact: `server/target/reports/output.html`
+          Fuzz coverage file inside artifact: `server/target/reports/fuzz/output.html`
           Docs file inside artifact: `server/target/reports/docs/index.html`
+          Docs summary file inside artifact: `server/target/reports/docs/summary.json`
           Docs site file inside artifact: `server/target/reports/docs/site/index.html`
           Rust API docs file inside artifact: `server/target/reports/rustdoc/index.html`
           Call graph file inside artifact: `server/target/reports/callgraph/output.html`

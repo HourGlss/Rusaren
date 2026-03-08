@@ -126,6 +126,12 @@ Open the combined report:
 server/target/reports/output.html
 ```
 
+Open the fuzz corpus coverage report directly:
+
+```text
+server/target/reports/fuzz/output.html
+```
+
 Open the main backend call graph directly:
 
 ```text
@@ -152,8 +158,12 @@ The call-graph report always writes DOT plus safe SVG output:
 
 The documentation artifacts live at:
 - `server/target/reports/docs/index.html`
+- `server/target/reports/docs/summary.json`
 - `server/target/reports/docs/site/index.html`
 - `server/target/reports/rustdoc/index.html`
+
+The docs report includes a per-file publication table for every Markdown file under `shared/docs`.
+The fuzz report shows corpus replay coverage, which means line coverage measured by replaying the checked-in seed corpus through the same decode and ingress APIs used by the fuzz targets.
 
 Do not run `./scripts/quality.ps1 test` and `./scripts/quality.ps1 reports` in parallel. The coverage step uses its own target directory and those commands can interfere with each other if started at the same time.
 

@@ -17,6 +17,16 @@ $bookSourceRoot = Join-Path $bookRoot "src"
 $rustdocBuildRoot = Join-Path $serverRoot "target\rustdoc-build"
 $sharedDocsRoot = Join-Path $repoRoot "shared\docs"
 
+function Escape-Html {
+    param([AllowNull()][string]$Value)
+
+    if ($null -eq $Value) {
+        return ""
+    }
+
+    return [System.Net.WebUtility]::HtmlEncode($Value)
+}
+
 function Test-ToolAvailable {
     param([string]$CommandName)
 
@@ -95,11 +105,43 @@ main {
     margin-top: 0.35rem;
     font-size: 1.2rem;
 }
+.badge {
+    display: inline-block;
+    border-radius: 999px;
+    padding: 0.2rem 0.65rem;
+    font-size: 0.85rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+}
+.badge-ok {
+    background: #d1fae5;
+    color: #065f46;
+}
+.badge-warn {
+    background: #fef3c7;
+    color: #92400e;
+}
 a {
     color: #1d4ed8;
 }
 code {
     font-family: "Cascadia Code", Consolas, monospace;
+}
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 1rem;
+    font-size: 0.95rem;
+}
+th,
+td {
+    text-align: left;
+    padding: 0.75rem;
+    border-bottom: 1px solid #d7dadd;
+    vertical-align: top;
+}
+th {
+    background: #f8fafc;
 }
 </style>
 </head>
@@ -140,6 +182,10 @@ $orderedSources = @(
     "classes\cleric.md",
     "maps\_template.md"
 )
+$orderedSourceSet = @{}
+foreach ($relativePath in $orderedSources) {
+    $orderedSourceSet[$relativePath.Replace('\', '/')] = $true
+}
 
 if (Test-Path $docsRoot) {
     Remove-Item -Recurse -Force -Path $docsRoot
@@ -233,12 +279,90 @@ Invoke-CheckedCommand -Description "cargo doc" -Command {
 
 Copy-Item -Path (Join-Path $rustdocBuildRoot "doc\*") -Destination $rustdocRoot -Recurse -Force
 
+$docEntries = @()
+foreach ($docFile in Get-ChildItem -Path $sharedDocsRoot -Recurse -File -Filter *.md | Sort-Object FullName) {
+    $relativePath = $docFile.FullName.Substring($sharedDocsRoot.Length).TrimStart('\', '/')
+    $relativePath = $relativePath.Replace('\', '/')
+    $lines = @(Get-Content -Path $docFile.FullName)
+    $nonEmptyLineCount = @($lines | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }).Count
+    $wordCount = ([regex]::Matches((Get-Content -Path $docFile.FullName -Raw), '\S+')).Count
+    $included = $orderedSourceSet.ContainsKey($relativePath)
+    $outputRelative = $null
+    if ($included) {
+        $outputRelative = if ($relativePath -eq "00_index.md") {
+            "index.html"
+        }
+        else {
+            ($relativePath -replace '\.md$', '.html')
+        }
+    }
+
+    $published = $included -and (Test-Path (Join-Path $docsSiteRoot $outputRelative))
+    $docEntries += [pscustomobject]@{
+        SourcePath = $relativePath
+        LineCount = $lines.Count
+        NonEmptyLineCount = $nonEmptyLineCount
+        WordCount = $wordCount
+        Included = $included
+        Published = $published
+        OutputPath = if ($published) { $outputRelative } else { $null }
+        Note = if ($published) {
+            $null
+        }
+        elseif ($included) {
+            "Included in SUMMARY, but the HTML output was not found."
+        }
+        else {
+            "Not included in the mdBook SUMMARY."
+        }
+    }
+}
+
+$docEntries | ConvertTo-Json -Depth 4 | Set-Content -Path (Join-Path $docsRoot "summary.json") -Encoding UTF8
+
 $commitShort = "unknown"
 try {
     $commitShort = (git rev-parse --short HEAD 2>$null | Select-Object -First 1).Trim()
 }
 catch {
     $commitShort = "unknown"
+}
+
+$publishedDocs = @($docEntries | Where-Object { $_.Published })
+$missingDocs = @($docEntries | Where-Object { -not $_.Published })
+$coveragePercent = if ($docEntries.Count -eq 0) {
+    0
+}
+else {
+    [math]::Round(($publishedDocs.Count / $docEntries.Count) * 100, 2)
+}
+$docRows = foreach ($entry in $docEntries) {
+    $statusLabel = if ($entry.Published) { "Published" } else { "Missing" }
+    $statusClass = if ($entry.Published) { "badge-ok" } else { "badge-warn" }
+    $outputCell = if ($entry.OutputPath) {
+        '<a href="./site/{0}"><code>{0}</code></a>' -f (Escape-Html $entry.OutputPath)
+    }
+    else {
+        '<span style="color: #6b7280;">Not published</span>'
+    }
+    $noteCell = if ([string]::IsNullOrWhiteSpace([string]$entry.Note)) {
+        ""
+    }
+    else {
+        Escape-Html $entry.Note
+    }
+
+@"
+<tr>
+  <td><code>$(Escape-Html $entry.SourcePath)</code></td>
+  <td><span class="badge $statusClass">$statusLabel</span></td>
+  <td>$outputCell</td>
+  <td>$($entry.LineCount)</td>
+  <td>$($entry.NonEmptyLineCount)</td>
+  <td>$($entry.WordCount)</td>
+  <td>$noteCell</td>
+</tr>
+"@
 }
 
 $docsBody = @"
@@ -257,10 +381,38 @@ $docsBody = @"
     <span>Commit</span>
     <strong><code>$commitShort</code></strong>
   </div>
+  <div class="metric">
+    <span>Docs published</span>
+    <strong>$($publishedDocs.Count) / $($docEntries.Count)</strong>
+  </div>
+  <div class="metric">
+    <span>Per-file docs coverage</span>
+    <strong>$coveragePercent%</strong>
+  </div>
 </div>
 <div class="panel">
   <h2>Source of truth</h2>
   <p>The authored project documentation remains under <code>shared/docs</code>. This site is a generated view intended for local review and CI artifacts.</p>
+</div>
+<div class="panel">
+  <h2>Per-file docs inventory</h2>
+  <p>Coverage here means publication coverage: each Markdown file under <code>shared/docs</code> is checked for inclusion in the generated <code>mdBook</code> site.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Source file</th>
+        <th>Status</th>
+        <th>Published output</th>
+        <th>Lines</th>
+        <th>Non-empty lines</th>
+        <th>Words</th>
+        <th>Note</th>
+      </tr>
+    </thead>
+    <tbody>
+$(($docRows -join "`n"))
+    </tbody>
+  </table>
 </div>
 "@
 

@@ -1,5 +1,6 @@
 [workspace]
 members = [
+  "bin/fuzz_seed_builder",
   "bin/backend_callgraph",
   "bin/scip_json_dump",
   "bin/dedicated_server",

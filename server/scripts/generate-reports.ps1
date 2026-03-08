@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("all", "coverage", "complexity", "callgraph", "docs")]
+    [ValidateSet("all", "coverage", "complexity", "callgraph", "docs", "fuzz")]
     [string]$Report = "all",
     [switch]$FailOnCommandFailure
 )
@@ -18,6 +18,7 @@ if (Test-Path $cargoBin) {
 
 $reportsRoot = Join-Path $serverRoot "target\reports"
 $coverageRoot = Join-Path $reportsRoot "coverage"
+$fuzzRoot = Join-Path $reportsRoot "fuzz"
 $complexityRoot = Join-Path $reportsRoot "complexity"
 $callgraphRoot = Join-Path $reportsRoot "callgraph"
 $docsArtifactRoot = Join-Path $reportsRoot "docs"
@@ -1283,6 +1284,260 @@ $(($noteItems -join "`n"))
     }
 }
 
+function Invoke-FuzzCoverageReport {
+    param(
+        [hashtable]$SourceInventory
+    )
+
+    $notes = [System.Collections.Generic.List[string]]::new()
+    $summaryPath = Join-Path $fuzzRoot "summary.json"
+    $reportPath = Join-Path $fuzzRoot "index.html"
+    $outputPath = Join-Path $fuzzRoot "output.html"
+    $detailRoot = $fuzzRoot
+
+    if (-not (Test-ToolAvailable -CommandName "cargo-llvm-cov")) {
+        $notes.Add("Fuzz corpus coverage was skipped because cargo-llvm-cov is not installed.")
+        $body = @"
+<h1>Fuzz Corpus Coverage Unavailable</h1>
+<div class="panel">
+  <p>cargo-llvm-cov is not installed, so no fuzz corpus coverage report could be generated.</p>
+  <p class="muted">Install it with <code>./scripts/install-tools.ps1</code>.</p>
+</div>
+<p class="footer"><a href="../index.html">Back to report index</a></p>
+"@
+        Write-ReportHtml -Path $reportPath -Title "Fuzz Corpus Coverage Unavailable" -Body $body
+        Write-ReportHtml -Path $outputPath -Title "Fuzz Corpus Coverage Unavailable" -Body $body
+        return [pscustomobject]@{
+            Name = "Fuzz Coverage"
+            Status = "failed"
+            Notes = @($notes)
+            IndexPath = "fuzz/index.html"
+            ErrorMessage = "cargo-llvm-cov is not installed."
+        }
+    }
+
+    try {
+        if (Test-Path $fuzzRoot) {
+            Remove-Item -Recurse -Force -Path $fuzzRoot
+        }
+
+        New-Item -ItemType Directory -Force -Path $fuzzRoot | Out-Null
+
+        Invoke-CheckedCommand -Description "seed fuzz corpus" -Command {
+            rustup run stable cargo run -p fuzz_seed_builder --quiet | Out-Host
+        }
+        Invoke-CheckedCommand -Description "cargo llvm-cov clean fuzz replay" -Command {
+            rustup run stable cargo llvm-cov clean --workspace | Out-Host
+        }
+        Invoke-CheckedCommand -Description "cargo llvm-cov fuzz replay" -Command {
+            rustup run stable cargo llvm-cov test -p game_net --test fuzz_corpus_replay --no-report | Out-Host
+        }
+        Invoke-CheckedCommand -Description "cargo llvm-cov fuzz json report" -Command {
+            rustup run stable cargo llvm-cov report --json --summary-only --output-path $summaryPath | Out-Host
+        }
+        Invoke-CheckedCommand -Description "cargo llvm-cov fuzz html report" -Command {
+            rustup run stable cargo llvm-cov report --html --output-dir $detailRoot | Out-Host
+        }
+
+        $coverageJson = Get-Content -Path $summaryPath -Raw | ConvertFrom-Json
+        $coverageData = $coverageJson.data | Select-Object -First 1
+        $files = @()
+        $coveredPaths = @{}
+
+        foreach ($file in @($coverageData.files)) {
+            $displayPath = Convert-ToDisplayPath -Path $file.filename
+            $coveredPaths[$displayPath] = $true
+            $files += [pscustomobject]@{
+                DisplayPath = $displayPath
+                LinePercent = [double]$file.summary.lines.percent
+                FunctionPercent = [double]$file.summary.functions.percent
+                RegionPercent = [double]$file.summary.regions.percent
+                CoveredLines = [int]$file.summary.lines.covered
+                TotalLines = [int]$file.summary.lines.count
+            }
+        }
+
+        $files = @($files | Sort-Object LinePercent, DisplayPath)
+
+        $targetScopes = @(
+            [pscustomobject]@{
+                Target = "packet_header_decode"
+                Scope = "crates/game_net/src/lib.rs"
+                Description = "Packet framing and header validation."
+            },
+            [pscustomobject]@{
+                Target = "control_command_decode"
+                Scope = "crates/game_net/src/control.rs plus game_domain validation via decoded identifiers and names."
+                Description = "Control command decode and validation."
+            },
+            [pscustomobject]@{
+                Target = "input_frame_decode"
+                Scope = "crates/game_net/src/lib.rs"
+                Description = "Input packet decode and button/context validation."
+            },
+            [pscustomobject]@{
+                Target = "session_ingress"
+                Scope = "crates/game_net/src/ingress.rs plus control decode and domain validation."
+                Description = "Session binding and hostile ingress sequencing."
+            }
+        )
+
+        $scopeRows = foreach ($scope in $targetScopes) {
+            $corpusDir = Join-Path $serverRoot ("fuzz\corpus\" + $scope.Target)
+            $seeds = @()
+            if (Test-Path $corpusDir) {
+                $seeds = @(Get-ChildItem -Path $corpusDir -File | Sort-Object Name)
+            }
+
+@"
+<tr>
+  <td><code>$(Escape-Html $scope.Target)</code></td>
+  <td>$($seeds.Count)</td>
+  <td><code>$(Escape-Html (Convert-ToDisplayPath -Path $corpusDir))</code></td>
+  <td>$(Escape-Html $scope.Scope)</td>
+  <td>$(Escape-Html $scope.Description)</td>
+</tr>
+"@
+        }
+
+        $fileRows = foreach ($file in $files) {
+@"
+<tr>
+  <td><code>$(Escape-Html $file.DisplayPath)</code></td>
+  <td>$(Format-Percent -Value $file.LinePercent)</td>
+  <td>$($file.CoveredLines) / $($file.TotalLines)</td>
+  <td>$(Format-Percent -Value $file.FunctionPercent)</td>
+  <td>$(Format-Percent -Value $file.RegionPercent)</td>
+</tr>
+"@
+        }
+
+        $coreFiles = @(
+            $SourceInventory.Keys |
+                Where-Object {
+                    $_ -like "crates/game_net/*" -or $_ -like "crates/game_domain/*"
+                } |
+                Sort-Object
+        )
+        $uncoveredRows = foreach ($path in $coreFiles) {
+            if ($coveredPaths.ContainsKey($path)) {
+                continue
+            }
+
+@"
+<tr>
+  <td><code>$(Escape-Html $path)</code></td>
+  <td>Not hit by the checked-in fuzz corpus replay yet.</td>
+</tr>
+"@
+        }
+
+        $notes.Add("This report measures corpus replay coverage, not live libFuzzer exploration coverage.")
+        $notes.Add("Seed corpora are generated by fuzz_seed_builder and replayed through the same decode and ingress APIs that the fuzz targets call.")
+        $notes.Add("The checked-in corpus currently focuses on hostile packet decoding and ingress validation.")
+        $notes.Add("This Windows/MSVC host does not currently emit native cargo fuzz coverage HTML for this repo, so corpus replay coverage is used instead.")
+
+        $totals = $coverageData.totals
+        $body = @"
+<h1>Fuzz Corpus Coverage</h1>
+<p class="muted">This report replays the checked-in fuzz corpus through the backend decode and ingress surfaces, then measures the exercised lines with <code>cargo llvm-cov</code>. Detailed line-by-line output: <a href="./html/index.html">fuzz/html/index.html</a>.</p>
+<div class="grid">
+  <div class="metric"><span class="muted">Line coverage</span><strong>$(Format-Percent -Value ([double]$totals.lines.percent))</strong></div>
+  <div class="metric"><span class="muted">Function coverage</span><strong>$(Format-Percent -Value ([double]$totals.functions.percent))</strong></div>
+  <div class="metric"><span class="muted">Region coverage</span><strong>$(Format-Percent -Value ([double]$totals.regions.percent))</strong></div>
+  <div class="metric"><span class="muted">Coverage mode</span><strong>Corpus replay</strong></div>
+</div>
+<div class="panel">
+  <h2>Fuzz targets and scope</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Target</th>
+        <th>Seed files</th>
+        <th>Corpus directory</th>
+        <th>Expected source scope</th>
+        <th>Focus</th>
+      </tr>
+    </thead>
+    <tbody>
+$(($scopeRows -join "`n"))
+    </tbody>
+  </table>
+</div>
+<div class="panel">
+  <h2>Per-file corpus replay coverage</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>File</th>
+        <th>Lines</th>
+        <th>Covered lines</th>
+        <th>Functions</th>
+        <th>Regions</th>
+      </tr>
+    </thead>
+    <tbody>
+$(($fileRows -join "`n"))
+    </tbody>
+  </table>
+</div>
+<div class="panel">
+  <h2>Core files not currently hit</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>File</th>
+        <th>Reason</th>
+      </tr>
+    </thead>
+    <tbody>
+$(if ($uncoveredRows) { $uncoveredRows -join "`n" } else { '<tr><td colspan="2">All current game_domain and game_net source files were hit by corpus replay.</td></tr>' })
+    </tbody>
+  </table>
+</div>
+<p class="footer"><a href="../index.html">Back to report index</a></p>
+"@
+
+        Write-ReportHtml -Path $reportPath -Title "Fuzz Corpus Coverage" -Body $body
+        Write-ReportHtml -Path $outputPath -Title "Fuzz Corpus Coverage" -Body $body
+
+        return [pscustomobject]@{
+            Name = "Fuzz Coverage"
+            Status = "warning"
+            Notes = @($notes | Sort-Object -Unique)
+            IndexPath = "fuzz/index.html"
+            ErrorMessage = $null
+            Summary = [pscustomobject]@{
+                Lines = [double]$totals.lines.percent
+                Functions = [double]$totals.functions.percent
+                Regions = [double]$totals.regions.percent
+            }
+        }
+    }
+    catch {
+        $errorMessage = $_.Exception.Message
+        $notes.Add("Fuzz corpus coverage generation failed: $errorMessage")
+        $body = @"
+<h1>Fuzz Corpus Coverage Failed</h1>
+<div class="panel">
+  <p>The fuzz corpus coverage step could not complete.</p>
+  <p><code>$(Escape-Html $errorMessage)</code></p>
+</div>
+<p class="footer"><a href="../index.html">Back to report index</a></p>
+"@
+        Write-ReportHtml -Path $reportPath -Title "Fuzz Corpus Coverage Failed" -Body $body
+        Write-ReportHtml -Path $outputPath -Title "Fuzz Corpus Coverage Failed" -Body $body
+
+        return [pscustomobject]@{
+            Name = "Fuzz Coverage"
+            Status = "failed"
+            Notes = @($notes)
+            IndexPath = "fuzz/index.html"
+            ErrorMessage = $errorMessage
+        }
+    }
+}
+
 function Invoke-DocsReport {
     $notes = [System.Collections.Generic.List[string]]::new()
     $reportPath = Join-Path $docsArtifactRoot "index.html"
@@ -1367,6 +1622,9 @@ function Invoke-ReportGeneration {
         "coverage" {
             $results += Invoke-CoverageReport -SourceInventory $sourceInventory
         }
+        "fuzz" {
+            $results += Invoke-FuzzCoverageReport -SourceInventory $sourceInventory
+        }
         "docs" {
             $results += Invoke-DocsReport
         }
@@ -1378,6 +1636,7 @@ function Invoke-ReportGeneration {
         }
         default {
             $results += Invoke-CoverageReport -SourceInventory $sourceInventory
+            $results += Invoke-FuzzCoverageReport -SourceInventory $sourceInventory
             $results += Invoke-DocsReport
             $results += Invoke-CallgraphReport -SourceInventory $sourceInventory
             $results += Invoke-ComplexityReport -SourceInventory $sourceInventory
