@@ -1,0 +1,12 @@
+
+tree: Mage
+skills:
+  - tier: 1
+    id: mage_arc
+    name: Arc
+    description: Unknown behavior.
+    behavior:
+      kind: wall
+      effect: skill_shot
+      range: 10
+      damage: 1

@@ -9,6 +9,7 @@ cargo-fuzz = true
 
 [dependencies]
 game_api = { path = "../crates/game_api" }
+game_content = { path = "../crates/game_content" }
 game_domain = { path = "../crates/game_domain" }
 game_net = { path = "../crates/game_net" }
 libfuzzer-sys = { version = "0.4", features = ["arbitrary-derive"] }
@@ -75,6 +76,20 @@ bench = false
 [[bin]]
 name = "skill_progression"
 path = "fuzz_targets/skill_progression.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ascii_map_parse"
+path = "fuzz_targets/ascii_map_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "skill_yaml_parse"
+path = "fuzz_targets/skill_yaml_parse.rs"
 test = false
 doc = false
 bench = false

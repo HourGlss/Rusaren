@@ -33,12 +33,13 @@ Current implementation status:
 - The current shell now exports to Web and defaults browser builds to the same-origin `/ws` endpoint.
 - The Rust dev server can now host the exported shell directly at `/`.
 - The documented production path now places Caddy in front of the Rust server for same-origin TLS while preserving the `/ws` websocket endpoint.
+- The current runtime skills and prototype map load from `server/content/skills/*.yaml` and `server/content/maps/prototype_arena.txt`.
 - Combat rendering is still placeholder-only.
 - The current shell is intentionally websocket-first while the WebRTC transport stays in planning.
 
 Current backend limitations the shell must expose honestly:
-- Combat content is still placeholder-only even though the shell now shows a real arena.
-- The current combat slice is intentionally narrow: once combat starts, the shell supports `WASD` movement, mouse aim, left-click melee, and placeholder slot skills on `1`-`5`, but not final authored class abilities yet.
+- Combat content is still prototype-level even though the shell now shows a real arena and consumes authored YAML/ASCII content.
+- The current combat slice is intentionally narrow: once combat starts, the shell supports `WASD` movement, mouse aim, left-click melee, and authored slot skills on `1`-`5`, but not the final class set yet.
 
 Disconnect UX:
 - If a match is aborted because a player disconnects, show: `<PLAYER_NAME> has disconnected. Game is over.`

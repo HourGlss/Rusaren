@@ -17,6 +17,7 @@ What it does:
 - consumes authoritative arena snapshots and arena effect batches
 - lets players click an open lobby directly from the central directory
 - can be hosted behind the documented Caddy reverse-proxy path from `deploy/`
+- consumes a runtime arena and skill set authored under `server/content/`
 
 What it does not do yet:
 - WebRTC gameplay transport
@@ -24,7 +25,7 @@ What it does not do yet:
 - interpolation
 
 Current shell limitation:
-- the combat loop is still placeholder-only, with generic slot skills instead of real authored class abilities
+- the combat loop is still prototype-level, even though the current map and slot skills now load from authored YAML and ASCII content files
 
 Run flow:
 1. start the Rust backend with `cd server && rustup run stable cargo run -p dedicated_server --quiet`
@@ -34,6 +35,11 @@ Run flow:
 5. open `http://127.0.0.1:3000/` in a browser, or run `res://scenes/main.tscn` in Godot 4
 6. connect, create or join a lobby, pick teams, ready up, choose skills, then use `WASD`, mouse aim, left click, and `1`-`5` during combat to drive the current backend slice end to end
    The shell asks for a player name only; the backend assigns the runtime player ID.
+
+Fast content iteration:
+1. edit `server/content/skills/*.yaml` or `server/content/maps/prototype_arena.txt`
+2. rerun `server/scripts/play-local.ps1` or restart `dedicated_server`
+3. reload the browser shell
 
 Fastest local browser path:
 1. run `powershell -NoProfile -ExecutionPolicy Bypass -File server/scripts/play-local.ps1 -GodotExecutable C:\Users\azbai\Documents\Rarena\Godot\Godot_v4.6.1-stable_win64_console.exe`

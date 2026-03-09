@@ -1,0 +1,12 @@
+
+tree: Druid
+skills:
+  - tier: 1
+    id: druid_sprout
+    name: Sprout
+    description: nope
+    behavior:
+      kind: line
+      effect: skill_shot
+      range: 10
+      damage: 1

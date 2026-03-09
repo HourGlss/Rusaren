@@ -9,6 +9,7 @@ publish.workspace = true
 axum.workspace = true
 futures-util.workspace = true
 getrandom.workspace = true
+game_content = { path = "../game_content" }
 game_domain = { path = "../game_domain" }
 game_lobby = { path = "../game_lobby" }
 game_match = { path = "../game_match" }

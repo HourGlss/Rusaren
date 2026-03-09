@@ -6,6 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use game_content::{parse_ascii_map, parse_skill_yaml};
 use game_domain::{
     LobbyId, MatchId, MatchOutcome, PlayerId, PlayerName, ReadyState, RoundNumber, SkillTree,
     TeamSide,
@@ -16,6 +17,9 @@ use game_net::{
     LobbySnapshotPhase, LobbySnapshotPlayer, PacketHeader, PacketKind, ServerControlEvent,
     ValidatedInputFrame, BUTTON_CAST, BUTTON_PRIMARY,
 };
+
+const PROTOTYPE_ARENA_ASCII: &str = include_str!("../../../content/maps/prototype_arena.txt");
+const MAGE_SKILLS_YAML: &str = include_str!("../../../content/skills/mage.yaml");
 
 fn main() -> Result<(), Box<dyn Error>> {
     let corpus_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -33,6 +37,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     write_observability_metrics_render_corpus(&corpus_root.join("observability_metrics_render"))?;
     write_player_record_store_parse_corpus(&corpus_root.join("player_record_store_parse"))?;
     write_skill_progression_corpus(&corpus_root.join("skill_progression"))?;
+    write_ascii_map_parse_corpus(&corpus_root.join("ascii_map_parse"))?;
+    write_skill_yaml_parse_corpus(&corpus_root.join("skill_yaml_parse"))?;
 
     println!("Seed corpora written under {}", corpus_root.display());
     Ok(())
@@ -703,6 +709,100 @@ fn write_skill_progression_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
     write_seed(dir, "valid_switch_tree.bin", &[2, 1, 0, 1, 2, 2])?;
     write_seed(dir, "repeated_same_tier.bin", &[1, 1, 1, 1])?;
     write_seed(dir, "out_of_range_tier.bin", &[3, 0, 3, 6])?;
+    Ok(())
+}
+
+fn write_ascii_map_parse_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
+    recreate_dir(dir)?;
+
+    let missing_team_b = "....\n.A..\n.##.\n....\n";
+    let ragged = "A..\n..B\n.\n";
+    let invalid_glyph = "A..\n.%.\n..B\n";
+    let duplicate_anchor = "A..B\n.A..\n....\n";
+
+    let _ = parse_ascii_map("maps/prototype_arena.txt", PROTOTYPE_ARENA_ASCII)?;
+
+    write_seed(dir, "prototype_arena.txt", PROTOTYPE_ARENA_ASCII.as_bytes())?;
+    write_seed(dir, "missing_team_b.txt", missing_team_b.as_bytes())?;
+    write_seed(dir, "ragged.txt", ragged.as_bytes())?;
+    write_seed(dir, "invalid_glyph.txt", invalid_glyph.as_bytes())?;
+    write_seed(dir, "duplicate_anchor.txt", duplicate_anchor.as_bytes())?;
+    write_seed(dir, "empty.bin", &[])?;
+    Ok(())
+}
+
+fn write_skill_yaml_parse_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
+    recreate_dir(dir)?;
+
+    let unknown_tree = r"
+tree: Druid
+skills:
+  - tier: 1
+    id: druid_sprout
+    name: Sprout
+    description: nope
+    behavior:
+      kind: line
+      effect: skill_shot
+      range: 10
+      damage: 1
+";
+    let duplicate_tier = r"
+tree: Mage
+skills:
+  - tier: 1
+    id: mage_a
+    name: A
+    description: A
+    behavior:
+      kind: line
+      effect: skill_shot
+      range: 10
+      damage: 1
+  - tier: 1
+    id: mage_b
+    name: B
+    description: B
+    behavior:
+      kind: line
+      effect: beam
+      range: 20
+      damage: 2
+";
+    let missing_damage = r"
+tree: Mage
+skills:
+  - tier: 1
+    id: mage_arc
+    name: Arc
+    description: Missing damage.
+    behavior:
+      kind: line
+      effect: skill_shot
+      range: 10
+";
+    let invalid_behavior = r"
+tree: Mage
+skills:
+  - tier: 1
+    id: mage_arc
+    name: Arc
+    description: Unknown behavior.
+    behavior:
+      kind: wall
+      effect: skill_shot
+      range: 10
+      damage: 1
+";
+
+    let _ = parse_skill_yaml("skills/mage.yaml", MAGE_SKILLS_YAML)?;
+
+    write_seed(dir, "mage.yaml", MAGE_SKILLS_YAML.as_bytes())?;
+    write_seed(dir, "unknown_tree.yaml", unknown_tree.as_bytes())?;
+    write_seed(dir, "duplicate_tier.yaml", duplicate_tier.as_bytes())?;
+    write_seed(dir, "missing_damage.yaml", missing_damage.as_bytes())?;
+    write_seed(dir, "invalid_behavior.yaml", invalid_behavior.as_bytes())?;
+    write_seed(dir, "empty.bin", &[])?;
     Ok(())
 }
 

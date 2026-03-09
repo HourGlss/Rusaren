@@ -1,0 +1,47 @@
+tree: Mage
+skills:
+  - tier: 1
+    id: mage_arc_bolt
+    name: Arc Bolt
+    description: A fast magical bolt fired straight toward the cursor.
+    behavior:
+      kind: line
+      effect: skill_shot
+      range: 1600
+      damage: 100
+  - tier: 2
+    id: mage_blink_step
+    name: Blink Step
+    description: A short blink-like dash used to reposition.
+    behavior:
+      kind: dash
+      effect: dash_trail
+      distance: 200
+  - tier: 3
+    id: mage_frost_burst
+    name: Frost Burst
+    description: A delayed icy burst detonated at medium range.
+    behavior:
+      kind: burst
+      effect: burst
+      range: 280
+      radius: 100
+      damage: 26
+  - tier: 4
+    id: mage_crystal_nova
+    name: Crystal Nova
+    description: A defensive nova that erupts from the caster.
+    behavior:
+      kind: nova
+      effect: nova
+      radius: 160
+      damage: 22
+  - tier: 5
+    id: mage_prism_beam
+    name: Prism Beam
+    description: A long beam that can punish exposed targets across the arena.
+    behavior:
+      kind: line
+      effect: beam
+      range: 1200
+      damage: 62

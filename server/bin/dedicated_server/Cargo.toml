@@ -7,6 +7,7 @@ publish.workspace = true
 
 [dependencies]
 game_api = { path = "../../crates/game_api" }
+game_content = { path = "../../crates/game_content" }
 game_domain = { path = "../../crates/game_domain" }
 game_lobby = { path = "../../crates/game_lobby" }
 game_match = { path = "../../crates/game_match" }

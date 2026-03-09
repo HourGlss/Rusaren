@@ -97,6 +97,7 @@ async fn start_server_fast() -> (game_api::DevServerHandle, String) {
     start_server_with_options(DevServerOptions {
         tick_interval: Duration::from_millis(10),
         record_store_path: temp_record_store_path(),
+        content_root: repo_content_root(),
         web_client_root: temp_web_client_root("fast-default", None),
         observability: Some(ServerObservability::new("test-fast")),
     })
@@ -109,6 +110,7 @@ async fn start_server_with_web_root(
     start_server_with_options(DevServerOptions {
         tick_interval: Duration::from_secs(1),
         record_store_path: temp_record_store_path(),
+        content_root: repo_content_root(),
         web_client_root,
         observability: Some(ServerObservability::new("test-web-root")),
     })
@@ -179,6 +181,13 @@ fn temp_record_store_path() -> PathBuf {
         Err(error) => panic!("system time should be after the unix epoch: {error}"),
     };
     std::env::temp_dir().join(format!("rusaren-realtime-websocket-{unique}.tsv"))
+}
+
+fn repo_content_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("content")
 }
 
 fn temp_web_client_root(prefix: &str, index_html: Option<&str>) -> PathBuf {
@@ -494,6 +503,7 @@ async fn websocket_adapter_rejects_zero_tick_intervals() {
         DevServerOptions {
             tick_interval: Duration::ZERO,
             record_store_path: temp_record_store_path(),
+            content_root: repo_content_root(),
             web_client_root: temp_web_client_root("zero-tick", None),
             observability: Some(ServerObservability::new("test-zero-tick")),
         },
@@ -558,6 +568,7 @@ async fn healthcheck_and_metrics_routes_report_expected_status_and_prometheus_te
     let (server, base_url) = start_server_with_options(DevServerOptions {
         tick_interval: Duration::from_millis(10),
         record_store_path: temp_record_store_path(),
+        content_root: repo_content_root(),
         web_client_root,
         observability: Some(observability.clone()),
     })
@@ -603,6 +614,7 @@ async fn metrics_route_returns_service_unavailable_when_observability_is_disable
     let (server, base_url) = start_server_with_options(DevServerOptions {
         tick_interval: Duration::from_secs(1),
         record_store_path: temp_record_store_path(),
+        content_root: repo_content_root(),
         web_client_root,
         observability: None,
     })
@@ -723,7 +735,7 @@ async fn websocket_adapter_finishes_a_full_match_loop_via_live_input_frames() {
     assert!(alice_snapshot_events.iter().any(|event| matches!(
         event,
         ServerControlEvent::ArenaStateSnapshot { snapshot }
-            if snapshot.players.len() == 2 && snapshot.obstacles.len() == 8
+            if snapshot.players.len() == 2 && snapshot.obstacles.len() == 100
     )));
 
     for round in 1..=5 {
@@ -1008,11 +1020,11 @@ async fn websocket_adapter_rejects_skill_tier_skips_and_accepts_the_next_valid_p
     )
     .await;
 
-    let alice_events = recv_events_until(&mut alice, 6, |event| {
+    let alice_events = recv_events_until(&mut alice, 10, |event| {
         matches!(event, ServerControlEvent::PreCombatStarted { .. })
     })
     .await;
-    let bob_events = recv_events_until(&mut bob, 6, |event| {
+    let bob_events = recv_events_until(&mut bob, 10, |event| {
         matches!(event, ServerControlEvent::PreCombatStarted { .. })
     })
     .await;

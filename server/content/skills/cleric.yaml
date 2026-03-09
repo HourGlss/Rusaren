@@ -1,0 +1,47 @@
+tree: Cleric
+skills:
+  - tier: 1
+    id: cleric_smite
+    name: Smite
+    description: A radiant bolt used as the cleric's basic ranged attack.
+    behavior:
+      kind: line
+      effect: skill_shot
+      range: 1600
+      damage: 100
+  - tier: 2
+    id: cleric_zeal_step
+    name: Zeal Step
+    description: A short surge forward to keep spacing favorable.
+    behavior:
+      kind: dash
+      effect: dash_trail
+      distance: 180
+  - tier: 3
+    id: cleric_consecrate
+    name: Consecrate
+    description: A holy burst placed at medium range.
+    behavior:
+      kind: burst
+      effect: burst
+      range: 240
+      radius: 110
+      damage: 22
+  - tier: 4
+    id: cleric_halo
+    name: Halo
+    description: A circular pulse centered on the caster.
+    behavior:
+      kind: nova
+      effect: nova
+      radius: 160
+      damage: 20
+  - tier: 5
+    id: cleric_solar_lance
+    name: Solar Lance
+    description: A focused beam of light that reaches across open lanes.
+    behavior:
+      kind: line
+      effect: beam
+      range: 1000
+      damage: 54

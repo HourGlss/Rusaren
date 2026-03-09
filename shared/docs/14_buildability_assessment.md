@@ -11,6 +11,7 @@ Buildable today:
 - the websocket dev adapter and binary control protocol
 - the backend app layer, lobby flow, match flow, persistent `W-L-NC`, fake-client tests, and live websocket integration tests
 - the thin Godot shell under `client/godot`, including manual placeholder combat input over the live websocket adapter
+- runtime content loading from `server/content/skills/*.yaml` and `server/content/maps/prototype_arena.txt`
 - a Godot Web export pipeline plus CI smoke checks
 - same-origin static hosting of the exported web shell from `dedicated_server`
 - structured logs, `/healthz`, `/metrics`, and Prometheus-friendly observability on the Rust server
@@ -20,7 +21,7 @@ Buildable today:
 Not buildable yet:
 - the final WebRTC gameplay transport
 - full combat rendering and snapshot-driven gameplay presentation in Godot
-- authored content loading
+- a broad final class/spell content set
 
 ## What is specified well enough to start coding
 

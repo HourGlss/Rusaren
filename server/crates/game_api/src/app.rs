@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::PathBuf;
 
+use game_content::GameContent;
 use game_domain::{
     LobbyId, MatchId, MatchOutcome, PlayerId, PlayerName, PlayerRecord, ReadyState, SkillChoice,
     TeamAssignment, TeamSide,
@@ -23,8 +24,7 @@ use game_net::{
     ValidatedInputFrame, BUTTON_CAST, BUTTON_PRIMARY, BUTTON_QUIT_TO_LOBBY,
 };
 use game_sim::{
-    arena_obstacles, ArenaEffect, ArenaObstacle, MovementIntent, SimPlayerSeed, SimulationEvent,
-    SimulationWorld, ARENA_HEIGHT_UNITS, ARENA_WIDTH_UNITS,
+    ArenaEffect, ArenaObstacle, MovementIntent, SimPlayerSeed, SimulationEvent, SimulationWorld,
 };
 use getrandom::fill as fill_random;
 
@@ -92,13 +92,14 @@ struct MatchRuntime {
 }
 
 impl MatchRuntime {
-    fn rebuild_world(&mut self) {
-        self.world = build_world(&self.roster);
+    fn rebuild_world(&mut self, content: &GameContent) {
+        self.world = build_world(&self.roster, content);
     }
 }
 
 #[derive(Debug)]
 pub struct ServerApp {
+    content: GameContent,
     next_lobby_id: u32,
     next_match_id: u32,
     clock_seconds: u32,
@@ -119,17 +120,49 @@ impl Default for ServerApp {
 impl ServerApp {
     #[must_use]
     pub fn new() -> Self {
-        Self::from_record_store(PlayerRecordStore::new_ephemeral())
+        let content = match GameContent::bundled() {
+            Ok(content) => content,
+            Err(error) => {
+                panic!("bundled content must load for tests and local development: {error}")
+            }
+        };
+        Self::from_content_and_record_store(content, PlayerRecordStore::new_ephemeral())
     }
 
     pub fn new_persistent(path: impl Into<PathBuf>) -> Result<Self, RecordStoreError> {
-        Ok(Self::from_record_store(PlayerRecordStore::new_persistent(
-            path.into(),
-        )?))
+        let content = match GameContent::bundled() {
+            Ok(content) => content,
+            Err(error) => {
+                panic!("bundled content must load for tests and local development: {error}")
+            }
+        };
+        Ok(Self::from_content_and_record_store(
+            content,
+            PlayerRecordStore::new_persistent(path.into())?,
+        ))
     }
 
-    fn from_record_store(record_store: PlayerRecordStore) -> Self {
+    #[must_use]
+    pub fn new_with_content(content: GameContent) -> Self {
+        Self::from_content_and_record_store(content, PlayerRecordStore::new_ephemeral())
+    }
+
+    pub fn new_persistent_with_content(
+        content: GameContent,
+        path: impl Into<PathBuf>,
+    ) -> Result<Self, RecordStoreError> {
+        Ok(Self::from_content_and_record_store(
+            content,
+            PlayerRecordStore::new_persistent(path.into())?,
+        ))
+    }
+
+    fn from_content_and_record_store(
+        content: GameContent,
+        record_store: PlayerRecordStore,
+    ) -> Self {
         Self {
+            content,
             next_lobby_id: 1,
             next_match_id: 1,
             clock_seconds: 0,
@@ -662,6 +695,14 @@ impl ServerApp {
                 return;
             }
         };
+        if self.content.skills().resolve(choice).is_none() {
+            self.send_error(
+                transport,
+                sender_id,
+                &format!("no authored skill exists for {tree} tier {tier}"),
+            );
+            return;
+        }
 
         let events = match self.matches.get_mut(&match_id) {
             Some(runtime) => runtime.session.submit_skill_pick(sender_id, choice),
@@ -835,8 +876,27 @@ impl ServerApp {
                 );
                 return;
             }
+            let Some(choice) = runtime.session.equipped_choice(sender_id, slot) else {
+                self.send_error(
+                    transport,
+                    sender_id,
+                    &format!("skill slot {slot} is not equipped"),
+                );
+                return;
+            };
+            let Some(skill) = self.content.skills().resolve(choice) else {
+                self.send_error(
+                    transport,
+                    sender_id,
+                    &format!(
+                        "authored skill data is missing for {} tier {}",
+                        choice.tree, choice.tier
+                    ),
+                );
+                return;
+            };
 
-            let combat_events = match runtime.world.cast_skill(sender_id, slot) {
+            let combat_events = match runtime.world.cast_skill(sender_id, slot, skill) {
                 Ok(events) => events,
                 Err(error) => {
                     self.send_error(transport, sender_id, &error.to_string());
@@ -861,7 +921,7 @@ impl ServerApp {
         if matches!(runtime.session.phase(), MatchPhase::SkillPick { .. })
             && !matches!(runtime.session.phase(), MatchPhase::MatchEnd { .. })
         {
-            runtime.rebuild_world();
+            runtime.rebuild_world(&self.content);
             state_dirty = true;
         }
 
@@ -1225,7 +1285,9 @@ impl ServerApp {
     fn build_arena_state_snapshot(&self, match_id: MatchId) -> Option<ArenaStateSnapshot> {
         let runtime = self.matches.get(&match_id)?;
         let unlocked_skill_slots = runtime.session.current_round().get();
-        let obstacles = arena_obstacles()
+        let obstacles = runtime
+            .world
+            .obstacles()
             .iter()
             .map(Self::arena_obstacle_snapshot)
             .collect();
@@ -1243,8 +1305,8 @@ impl ServerApp {
             .collect();
 
         Some(ArenaStateSnapshot {
-            width: ARENA_WIDTH_UNITS,
-            height: ARENA_HEIGHT_UNITS,
+            width: runtime.world.arena_width_units(),
+            height: runtime.world.arena_height_units(),
             obstacles,
             players,
         })
@@ -1420,7 +1482,7 @@ impl ServerApp {
         self.matches.insert(
             match_id,
             MatchRuntime {
-                world: build_world(&roster),
+                world: build_world(&roster, &self.content),
                 roster,
                 participants: participants.clone(),
                 session,
@@ -1817,7 +1879,7 @@ impl ServerApp {
     }
 }
 
-fn build_world(roster: &[TeamAssignment]) -> SimulationWorld {
+fn build_world(roster: &[TeamAssignment], content: &GameContent) -> SimulationWorld {
     match SimulationWorld::new(
         roster
             .iter()
@@ -1827,6 +1889,7 @@ fn build_world(roster: &[TeamAssignment]) -> SimulationWorld {
                 hit_points: DEFAULT_HIT_POINTS,
             })
             .collect(),
+        content.map(),
     ) {
         Ok(world) => world,
         Err(error) => panic!("valid match roster should build a simulation world: {error}"),
@@ -1906,6 +1969,35 @@ mod tests {
     fn slot_one_cast_input(client_input_tick: u32) -> ValidatedInputFrame {
         ValidatedInputFrame::new(client_input_tick, 0, 0, 0, 0, BUTTON_CAST, 1)
             .expect("slot one cast input should be valid")
+    }
+
+    fn cast_until_round_won(
+        server: &mut ServerApp,
+        transport: &mut InMemoryTransport,
+        alice: &mut HeadlessClient,
+        bob: &mut HeadlessClient,
+        round: u8,
+    ) -> (Vec<ServerControlEvent>, Vec<ServerControlEvent>) {
+        let mut alice_events = Vec::new();
+        let mut bob_events = Vec::new();
+
+        for offset in 0_u32..8 {
+            let sequence = u32::from(round) * 10 + offset + 1;
+            alice
+                .send_input(transport, slot_one_cast_input(sequence), sequence)
+                .expect("attack packet");
+            server.pump_transport(transport);
+            alice_events.extend(alice.drain_events(transport).expect("alice combat events"));
+            bob_events.extend(bob.drain_events(transport).expect("bob combat events"));
+            if alice_events.iter().any(|event| matches!(
+                event,
+                ServerControlEvent::RoundWon { round: won_round, .. } if won_round.get() == round
+            )) {
+                return (alice_events, bob_events);
+            }
+        }
+
+        panic!("expected round {round} to end after repeated slot-one casts");
     }
 
     fn lobby_snapshot_players(entries: &[ServerControlEvent]) -> Option<&[LobbySnapshotPlayer]> {
@@ -2040,7 +2132,8 @@ mod tests {
         assert!(alice_events.iter().any(|event| matches!(
             event,
             ServerControlEvent::ArenaStateSnapshot { snapshot }
-                if snapshot.players.len() == 2 && snapshot.obstacles.len() == arena_obstacles().len()
+                if snapshot.players.len() == 2
+                    && snapshot.obstacles.len() == server.content.map().obstacles.len()
         )));
         assert!(bob_events.iter().any(|event| matches!(
             event,
@@ -2104,19 +2197,8 @@ mod tests {
                 .drain_events(&mut transport)
                 .expect("bob pre-combat events");
 
-            alice
-                .send_input(
-                    &mut transport,
-                    slot_one_cast_input(u32::from(tier)),
-                    u32::from(tier),
-                )
-                .expect("attack packet");
-            server.pump_transport(&mut transport);
-
-            let alice_events = alice
-                .drain_events(&mut transport)
-                .expect("alice combat events");
-            let bob_events = bob.drain_events(&mut transport).expect("bob combat events");
+            let (alice_events, bob_events) =
+                cast_until_round_won(&mut server, &mut transport, &mut alice, &mut bob, tier);
             assert!(alice_events.iter().any(|event| matches!(
                 event,
                 ServerControlEvent::ArenaEffectBatch { effects }
@@ -2217,16 +2299,7 @@ mod tests {
         let _ = bob
             .drain_events(&mut transport)
             .expect("bob first-round pre-combat events");
-        alice
-            .send_input(&mut transport, slot_one_cast_input(1), 1)
-            .expect("attack packet");
-        server.pump_transport(&mut transport);
-        let _ = alice
-            .drain_events(&mut transport)
-            .expect("alice first-round combat events");
-        let _ = bob
-            .drain_events(&mut transport)
-            .expect("bob first-round combat events");
+        let _ = cast_until_round_won(&mut server, &mut transport, &mut alice, &mut bob, 1);
 
         alice
             .choose_skill(&mut transport, skill(SkillTree::Mage, 3))
@@ -2416,18 +2489,7 @@ mod tests {
             let _ = bob
                 .drain_events(&mut transport)
                 .expect("bob pre-combat events");
-            alice
-                .send_input(
-                    &mut transport,
-                    slot_one_cast_input(u32::from(tier)),
-                    u32::from(tier),
-                )
-                .expect("attack packet");
-            server.pump_transport(&mut transport);
-            let _ = alice
-                .drain_events(&mut transport)
-                .expect("alice combat events");
-            let _ = bob.drain_events(&mut transport).expect("bob combat events");
+            let _ = cast_until_round_won(&mut server, &mut transport, &mut alice, &mut bob, tier);
         }
 
         alice

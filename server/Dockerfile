@@ -5,6 +5,7 @@ WORKDIR /app/server
 COPY server/Cargo.toml server/Cargo.lock ./
 COPY server/.cargo ./.cargo
 COPY server/bin ./bin
+COPY server/content ./content
 COPY server/crates ./crates
 COPY server/static ./static
 
@@ -21,6 +22,7 @@ RUN useradd --system --create-home --uid 10001 rarena
 WORKDIR /app/server
 
 COPY --from=builder /app/server/target/release/dedicated_server /usr/local/bin/dedicated_server
+COPY --from=builder /app/server/content ./content
 COPY --from=builder /app/server/static ./static
 
 RUN mkdir -p /app/server/var /app/server/static/webclient \
@@ -29,6 +31,7 @@ RUN mkdir -p /app/server/var /app/server/static/webclient \
 USER rarena
 
 ENV RARENA_BIND=0.0.0.0:3000
+ENV RARENA_CONTENT_ROOT=/app/server/content
 ENV RARENA_RECORD_STORE_PATH=/app/server/var/player_records.tsv
 ENV RARENA_WEB_CLIENT_ROOT=/app/server/static/webclient
 ENV RARENA_LOG_FORMAT=json

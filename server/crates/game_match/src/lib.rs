@@ -67,6 +67,7 @@ pub struct MatchPlayer {
     pub assignment: TeamAssignment,
     pub loadout_progress: LoadoutProgress,
     pub selected_for_round: Option<SkillChoice>,
+    pub equipped_slots: [Option<SkillChoice>; 5],
     pub alive: bool,
 }
 
@@ -198,6 +199,7 @@ impl MatchSession {
                     assignment,
                     loadout_progress: LoadoutProgress::new(),
                     selected_for_round: None,
+                    equipped_slots: [None; 5],
                     alive: true,
                 },
             );
@@ -243,6 +245,7 @@ impl MatchSession {
             .apply(choice)
             .map_err(MatchError::InvalidSkillChoice)?;
         player.selected_for_round = Some(choice);
+        player.equipped_slots[usize::from(self.current_round.get() - 1)] = Some(choice);
 
         let mut events = vec![MatchEvent::SkillChosen { player_id, choice }];
         if self
@@ -429,6 +432,17 @@ impl MatchSession {
     #[must_use]
     pub fn player(&self, player_id: PlayerId) -> Option<&MatchPlayer> {
         self.players.get(&player_id)
+    }
+
+    #[must_use]
+    pub fn equipped_choice(&self, player_id: PlayerId, slot: u8) -> Option<SkillChoice> {
+        if !(1..=5).contains(&slot) {
+            return None;
+        }
+
+        self.players
+            .get(&player_id)
+            .and_then(|player| player.equipped_slots[usize::from(slot - 1)])
     }
 
     fn phase_name(&self) -> &'static str {
@@ -699,6 +713,45 @@ mod tests {
         assert!(session.player(player_id(1)).expect("alice exists").alive);
         assert!(session.player(player_id(2)).expect("bob exists").alive);
         assert_eq!(session.score().team_a, 1);
+    }
+
+    #[test]
+    fn chosen_skills_are_bound_to_round_slots_and_persist_across_rounds() {
+        let mut session = session();
+        session
+            .submit_skill_pick(player_id(1), skill(SkillTree::Mage, 1))
+            .expect("alice round one pick");
+        session
+            .submit_skill_pick(player_id(2), skill(SkillTree::Rogue, 1))
+            .expect("bob round one pick");
+        session
+            .advance_phase_by(PRE_COMBAT_SECONDS)
+            .expect("combat should start");
+        session
+            .mark_player_defeated(player_id(2))
+            .expect("round one should end");
+
+        assert_eq!(
+            session.equipped_choice(player_id(1), 1),
+            Some(skill(SkillTree::Mage, 1))
+        );
+        assert_eq!(session.equipped_choice(player_id(1), 2), None);
+
+        session
+            .submit_skill_pick(player_id(1), skill(SkillTree::Warrior, 1))
+            .expect("alice round two pick");
+        session
+            .submit_skill_pick(player_id(2), skill(SkillTree::Cleric, 1))
+            .expect("bob round two pick");
+
+        assert_eq!(
+            session.equipped_choice(player_id(1), 1),
+            Some(skill(SkillTree::Mage, 1))
+        );
+        assert_eq!(
+            session.equipped_choice(player_id(1), 2),
+            Some(skill(SkillTree::Warrior, 1))
+        );
     }
 
     #[test]

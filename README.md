@@ -12,6 +12,7 @@ Buildable now:
 - a real websocket dev adapter on top of the backend app layer
 - a Godot 4 shell under `client/godot` that drives the websocket dev adapter with real binary control packets and live combat input frames
 - a first playable arena slice with a mostly empty map, four central square pillars, shrub collars, authoritative player snapshots, WASD movement, mouse aim, left-click melee, and placeholder skills on `1`-`5`
+- runtime-loaded authored content under `server/content/skills/*.yaml` and `server/content/maps/prototype_arena.txt`
 - a same-origin Godot Web export path hosted directly by the Rust server at `/`
 - a documented production-style deploy path with Caddy, Prometheus, and `coturn`
 - persistent player records under `server/var/player_records.tsv`
@@ -21,8 +22,7 @@ Buildable now:
 Not implemented yet:
 - real WebRTC transport integration
 - polished Godot gameplay rendering and interpolation
-- content loading and validation
-- content-driven combat/class implementation
+- a broad final class/spell set and tuned combat balance
 
 ## Build and run
 
@@ -62,6 +62,12 @@ The connect packet now sends only the player name, the Rust backend assigns a ra
 and the current persistent `W-L-NC` store is keyed by player name.
 The skill-pick flow is server-gated by tree progression, and the Godot shell only enables tier 1
 for unstarted trees or the next tier for trees the player has already advanced.
+The runtime game content now lives under:
+- `server/content/skills/*.yaml` for authored class/skill definitions
+- `server/content/maps/prototype_arena.txt` for the current ASCII arena map
+
+Those files are the live source of truth for the backend. The Markdown docs under `shared/docs/`
+document the design, but they are no longer treated as runtime content.
 
 Open the Godot shell:
 
@@ -73,8 +79,8 @@ The current Godot shell is wired to the websocket dev adapter first, not WebRTC 
 The project metadata version is currently `0.6.0`.
 Known shell limitations:
 - the final production transport is still planned as WebRTC, so browser play currently uses the websocket dev adapter
-- the arena slice is intentionally simple and uses placeholder slot skills instead of real authored classes/spells
-- projectile collision/visibility rules are still early and not content-driven yet
+- the arena slice is intentionally simple, even though the current skills and map now load from authored content files
+- projectile collision/visibility rules are still early and only cover the current YAML/ASCII prototype content
 
 Run the Godot protocol checks headlessly:
 
@@ -118,6 +124,15 @@ Run the backend-only demo slice instead:
 cd server
 rustup run stable cargo run -p dedicated_server --quiet -- --demo
 ```
+
+Edit gameplay content quickly:
+
+```text
+server/content/skills/*.yaml
+server/content/maps/prototype_arena.txt
+```
+
+Restart the server or rerun `./server/scripts/play-local.ps1` after editing those files.
 
 Run the test suite:
 
@@ -288,6 +303,7 @@ Current local fallback behavior:
 - if `cargo-nextest` is installed, the quality script uses it for the normal test task
 - if `cargo-nextest` is not installed, the quality script falls back to `cargo test`
 - fuzzing uses `cargo-fuzz` under `server/fuzz/` and currently starts with packet-header, control-command, server-control-event, input-frame, ingress-session, HTTP-route-classification, observability-metrics-render, and player-record-store-parse targets
+- fuzzing uses `cargo-fuzz` under `server/fuzz/` and currently covers packet-header, control-command, server-control-event, input-frame, ingress-session, HTTP-route-classification, observability-metrics-render, player-record-store parsing, ASCII map parsing, and YAML skill parsing
 - project docs are generated from `shared/docs` through `mdBook`, while Rust API docs are generated with `cargo doc --workspace --all-features --no-deps`
 - browser-export smoke checks run in `.github/workflows/godot-web-smoke.yml` and verify that the exported shell can be hosted by `dedicated_server`
 - deploy smoke checks run in `.github/workflows/deploy-stack-smoke.yml` and through `./server/scripts/docker-smoke.ps1`, validating the Docker image plus the checked-in compose path
@@ -301,7 +317,7 @@ Current manual full-loop slice:
 - use `WASD` to move during combat
 - aim with the mouse inside the arena
 - left click for melee
-- use `1`-`5` for the currently unlocked placeholder skill slots
+- use `1`-`5` for the currently unlocked authored skill slots loaded from YAML
 - review the result screen and quit back to the central lobby
 
 Current easiest full-loop slice:

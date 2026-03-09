@@ -6,6 +6,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+game_content = { path = "../game_content" }
 game_domain = { path = "../game_domain" }
 
 [dev-dependencies]

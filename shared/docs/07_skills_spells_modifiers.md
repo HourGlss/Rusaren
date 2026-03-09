@@ -2,9 +2,10 @@
 
 ## Content goals
 - Designers (you) can add/adjust abilities by editing data files.
-- Authored content uses TOML in v1.
+- Authored content uses YAML in v1.
 - Server loads content on boot, validates, then treats it as read-only.
 - Client loads the same content for UI text only (never authoritative).
+- The current runtime source of truth lives under `server/content/skills/*.yaml`.
 
 ## Skill tree structure
 Tree: Rogue | Mage | Cleric

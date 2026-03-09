@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use game_api::{spawn_dev_server_with_options, DevServerOptions};
+use game_content::GameContent;
 use game_domain::{
     LobbyId, MatchId, PlayerId, PlayerName, PlayerRecord, ReadyState, SkillChoice, SkillTree,
     TeamSide,
@@ -178,6 +179,13 @@ fn default_record_store_path() -> PathBuf {
         .join("player_records.tsv")
 }
 
+fn default_content_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("content")
+}
+
 fn default_web_client_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
@@ -253,6 +261,7 @@ fn run_demo() -> Result<Vec<String>, String> {
     let mut lines = Vec::new();
     let alice_id = player_id(1);
     let bob_id = player_id(2);
+    let content = GameContent::bundled().map_err(|error| error.to_string())?;
 
     let mut lobby = Lobby::new(LobbyId::new(1).map_err(|error| error.to_string())?);
     lines.push(render_lobby_event(
@@ -313,14 +322,17 @@ fn run_demo() -> Result<Vec<String>, String> {
     )
     .map_err(|error| error.to_string())?;
 
+    let alice_choice = skill(SkillTree::Mage, 1);
+    let bob_choice = skill(SkillTree::Rogue, 1);
+
     for event in session
-        .submit_skill_pick(alice_id, skill(SkillTree::Mage, 1))
+        .submit_skill_pick(alice_id, alice_choice)
         .map_err(|error| error.to_string())?
     {
         lines.push(render_match_event(&event));
     }
     for event in session
-        .submit_skill_pick(bob_id, skill(SkillTree::Rogue, 1))
+        .submit_skill_pick(bob_id, bob_choice)
         .map_err(|error| error.to_string())?
     {
         lines.push(render_match_event(&event));
@@ -332,16 +344,19 @@ fn run_demo() -> Result<Vec<String>, String> {
         lines.push(render_match_event(&event));
     }
 
-    let mut world = SimulationWorld::new(vec![
-        SimPlayerSeed {
-            assignment: roster[0].clone(),
-            hit_points: 100,
-        },
-        SimPlayerSeed {
-            assignment: roster[1].clone(),
-            hit_points: 100,
-        },
-    ])
+    let mut world = SimulationWorld::new(
+        vec![
+            SimPlayerSeed {
+                assignment: roster[0].clone(),
+                hit_points: 100,
+            },
+            SimPlayerSeed {
+                assignment: roster[1].clone(),
+                hit_points: 100,
+            },
+        ],
+        content.map(),
+    )
     .map_err(|error| error.to_string())?;
 
     world
@@ -355,7 +370,14 @@ fn run_demo() -> Result<Vec<String>, String> {
     }
 
     for event in world
-        .cast_skill(alice_id, 1)
+        .cast_skill(
+            alice_id,
+            1,
+            content
+                .skills()
+                .resolve(alice_choice)
+                .ok_or_else(|| String::from("demo skill content should exist"))?,
+        )
         .map_err(|error| error.to_string())?
     {
         lines.push(render_sim_event(&event));
@@ -417,6 +439,8 @@ async fn main() {
 
     let record_store_path = env::var_os("RARENA_RECORD_STORE_PATH")
         .map_or_else(default_record_store_path, PathBuf::from);
+    let content_root =
+        env::var_os("RARENA_CONTENT_ROOT").map_or_else(default_content_root, PathBuf::from);
     let web_client_root =
         env::var_os("RARENA_WEB_CLIENT_ROOT").map_or_else(default_web_client_root, PathBuf::from);
     let tick_interval = parse_tick_interval(env::var("RARENA_TICK_INTERVAL_MS").ok());
@@ -426,6 +450,7 @@ async fn main() {
         DevServerOptions {
             tick_interval,
             record_store_path,
+            content_root,
             web_client_root,
             observability: DevServerOptions::default().observability,
         },

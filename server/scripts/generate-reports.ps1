@@ -696,6 +696,18 @@ function Get-FuzzTargetCatalog {
             Scope = "crates/game_api/src/records.rs via persisted record parsing, validation, and canonicalization."
             Description = "Persisted player-record TSV parsing and canonicalization at the storage boundary."
             Paths = @("crates/game_api/src/records.rs")
+        },
+        [pscustomobject]@{
+            Target = "ascii_map_parse"
+            Scope = "crates/game_content/src/lib.rs via authored ASCII map parsing and validation."
+            Description = "ASCII map parsing for the server-authored arena layout."
+            Paths = @("crates/game_content/src/lib.rs")
+        },
+        [pscustomobject]@{
+            Target = "skill_yaml_parse"
+            Scope = "crates/game_content/src/lib.rs via authored YAML skill parsing and validation."
+            Description = "YAML skill parsing for runtime-loaded class and skill definitions."
+            Paths = @("crates/game_content/src/lib.rs")
         }
     )
 }
@@ -716,6 +728,11 @@ function Get-FuzzReplaySuites {
             Package = "game_api"
             Test = "records_fuzz_corpus"
             Description = "Replay persisted record-store corpora against TSV parsing and canonicalization."
+        },
+        [pscustomobject]@{
+            Package = "game_content"
+            Test = "fuzz_corpus_replay"
+            Description = "Replay authored content corpora against ASCII map parsing and YAML skill validation."
         }
     )
 }

@@ -1,0 +1,21 @@
+
+tree: Mage
+skills:
+  - tier: 1
+    id: mage_a
+    name: A
+    description: A
+    behavior:
+      kind: line
+      effect: skill_shot
+      range: 10
+      damage: 1
+  - tier: 1
+    id: mage_b
+    name: B
+    description: B
+    behavior:
+      kind: line
+      effect: beam
+      range: 20
+      damage: 2

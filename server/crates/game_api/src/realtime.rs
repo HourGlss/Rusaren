@@ -14,6 +14,7 @@ use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, get_service};
 use axum::Router;
 use futures_util::{SinkExt, StreamExt};
+use game_content::GameContent;
 use game_domain::PlayerId;
 use game_net::{NetworkSessionGuard, ServerControlEvent};
 use tokio::net::TcpListener;
@@ -132,6 +133,7 @@ pub struct DevServerHandle {
 pub struct DevServerOptions {
     pub tick_interval: Duration,
     pub record_store_path: PathBuf,
+    pub content_root: PathBuf,
     pub web_client_root: PathBuf,
     pub observability: Option<ServerObservability>,
 }
@@ -141,6 +143,7 @@ impl Default for DevServerOptions {
         Self {
             tick_interval: Duration::from_secs(1),
             record_store_path: default_record_store_path(),
+            content_root: default_content_root(),
             web_client_root: default_web_client_root(),
             observability: Some(ServerObservability::new(env!("CARGO_PKG_VERSION"))),
         }
@@ -180,11 +183,13 @@ pub async fn spawn_dev_server_with_options(
     }
 
     let local_addr = listener.local_addr()?;
+    let content = GameContent::load_from_root(&options.content_root).map_err(io::Error::other)?;
     let (ingress_tx, ingress_rx) = mpsc::unbounded_channel();
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let next_connection_id = Arc::new(AtomicU64::new(1));
     let runtime = Arc::new(Mutex::new(RuntimeState {
-        app: ServerApp::new_persistent(options.record_store_path).map_err(io::Error::other)?,
+        app: ServerApp::new_persistent_with_content(content, options.record_store_path)
+            .map_err(io::Error::other)?,
         transport: RealtimeTransport::new(),
         observability: options.observability.clone(),
     }));
@@ -222,6 +227,13 @@ fn default_record_store_path() -> PathBuf {
         .join("..")
         .join("var")
         .join("player_records.tsv")
+}
+
+fn default_content_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("content")
 }
 
 fn default_web_client_root() -> PathBuf {

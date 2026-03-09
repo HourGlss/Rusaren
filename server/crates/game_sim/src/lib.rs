@@ -6,30 +6,21 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
+use game_content::{
+    ArenaMapDefinition, ArenaMapObstacle, ArenaMapObstacleKind, SkillBehavior, SkillDefinition,
+    SkillEffectKind,
+};
 use game_domain::{PlayerId, TeamAssignment, TeamSide};
 
-pub const ARENA_WIDTH_UNITS: u16 = 1800;
-pub const ARENA_HEIGHT_UNITS: u16 = 1200;
 pub const PLAYER_RADIUS_UNITS: u16 = 28;
 pub const PLAYER_MOVE_SPEED_UNITS: i16 = 18;
+const SPAWN_SPACING_UNITS: i16 = 120;
 
 const DEFAULT_AIM_X: i16 = 120;
 const DEFAULT_AIM_Y: i16 = 0;
 const MELEE_RANGE_UNITS: u16 = 110;
 const MELEE_HIT_RADIUS_UNITS: u16 = 48;
 const MELEE_DAMAGE: u16 = 40;
-const SLOT1_RANGE_UNITS: u16 = 1600;
-const SLOT1_DAMAGE: u16 = 100;
-const SLOT2_DASH_DISTANCE_UNITS: u16 = 180;
-const SLOT3_CAST_RANGE_UNITS: u16 = 260;
-const SLOT3_RADIUS_UNITS: u16 = 96;
-const SLOT3_DAMAGE: u16 = 42;
-const SLOT4_RADIUS_UNITS: u16 = 132;
-const SLOT4_DAMAGE: u16 = 36;
-const SLOT5_RANGE_UNITS: u16 = 1600;
-const SLOT5_DAMAGE: u16 = 100;
-const PILLAR_HALF_EXTENT_UNITS: u16 = 70;
-const SHRUB_HALF_EXTENT_UNITS: u16 = 92;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MovementIntent {
@@ -198,6 +189,9 @@ impl std::error::Error for SimulationError {}
 
 #[derive(Clone, Debug)]
 pub struct SimulationWorld {
+    arena_width_units: u16,
+    arena_height_units: u16,
+    obstacles: Vec<ArenaObstacle>,
     players: BTreeMap<PlayerId, SimPlayer>,
     pending_inputs: BTreeMap<PlayerId, MovementIntent>,
 }
@@ -215,83 +209,11 @@ struct SimPlayer {
     moving: bool,
 }
 
-const ARENA_OBSTACLES: [ArenaObstacle; 8] = [
-    obstacle(
-        ArenaObstacleKind::Shrub,
-        -220,
-        -150,
-        SHRUB_HALF_EXTENT_UNITS,
-        SHRUB_HALF_EXTENT_UNITS,
-    ),
-    obstacle(
-        ArenaObstacleKind::Pillar,
-        -220,
-        -150,
-        PILLAR_HALF_EXTENT_UNITS,
-        PILLAR_HALF_EXTENT_UNITS,
-    ),
-    obstacle(
-        ArenaObstacleKind::Shrub,
-        220,
-        -150,
-        SHRUB_HALF_EXTENT_UNITS,
-        SHRUB_HALF_EXTENT_UNITS,
-    ),
-    obstacle(
-        ArenaObstacleKind::Pillar,
-        220,
-        -150,
-        PILLAR_HALF_EXTENT_UNITS,
-        PILLAR_HALF_EXTENT_UNITS,
-    ),
-    obstacle(
-        ArenaObstacleKind::Shrub,
-        -220,
-        150,
-        SHRUB_HALF_EXTENT_UNITS,
-        SHRUB_HALF_EXTENT_UNITS,
-    ),
-    obstacle(
-        ArenaObstacleKind::Pillar,
-        -220,
-        150,
-        PILLAR_HALF_EXTENT_UNITS,
-        PILLAR_HALF_EXTENT_UNITS,
-    ),
-    obstacle(
-        ArenaObstacleKind::Shrub,
-        220,
-        150,
-        SHRUB_HALF_EXTENT_UNITS,
-        SHRUB_HALF_EXTENT_UNITS,
-    ),
-    obstacle(
-        ArenaObstacleKind::Pillar,
-        220,
-        150,
-        PILLAR_HALF_EXTENT_UNITS,
-        PILLAR_HALF_EXTENT_UNITS,
-    ),
-];
-
-const fn obstacle(
-    kind: ArenaObstacleKind,
-    center_x: i16,
-    center_y: i16,
-    half_width: u16,
-    half_height: u16,
-) -> ArenaObstacle {
-    ArenaObstacle {
-        kind,
-        center_x,
-        center_y,
-        half_width,
-        half_height,
-    }
-}
-
 impl SimulationWorld {
-    pub fn new(players: Vec<SimPlayerSeed>) -> Result<Self, SimulationError> {
+    pub fn new(
+        players: Vec<SimPlayerSeed>,
+        map: &ArenaMapDefinition,
+    ) -> Result<Self, SimulationError> {
         let mut world_players = BTreeMap::new();
         let mut team_a_index = 0_u16;
         let mut team_b_index = 0_u16;
@@ -316,7 +238,8 @@ impl SimulationWorld {
                     current
                 }
             };
-            let (spawn_x, spawn_y, aim_x) = spawn_position(player.assignment.team, spawn_index);
+            let (spawn_x, spawn_y, aim_x) =
+                spawn_position(player.assignment.team, spawn_index, map);
 
             if world_players
                 .insert(
@@ -342,6 +265,13 @@ impl SimulationWorld {
         }
 
         Ok(Self {
+            arena_width_units: map.width_units,
+            arena_height_units: map.height_units,
+            obstacles: map
+                .obstacles
+                .iter()
+                .map(map_obstacle_to_sim_obstacle)
+                .collect(),
             players: world_players,
             pending_inputs: BTreeMap::new(),
         })
@@ -392,6 +322,9 @@ impl SimulationWorld {
 
     pub fn tick(&mut self) -> Vec<SimulationEvent> {
         let mut events = Vec::new();
+        let arena_width_units = self.arena_width_units;
+        let arena_height_units = self.arena_height_units;
+        let obstacles = self.obstacles.clone();
 
         for (player_id, player) in &mut self.players {
             if !player.alive {
@@ -412,7 +345,15 @@ impl SimulationWorld {
                 i32::from(player.x) + i32::from(movement.x) * i32::from(PLAYER_MOVE_SPEED_UNITS);
             let next_y =
                 i32::from(player.y) + i32::from(movement.y) * i32::from(PLAYER_MOVE_SPEED_UNITS);
-            let (resolved_x, resolved_y) = resolve_movement(player.x, player.y, next_x, next_y);
+            let (resolved_x, resolved_y) = resolve_movement(
+                player.x,
+                player.y,
+                next_x,
+                next_y,
+                arena_width_units,
+                arena_height_units,
+                &obstacles,
+            );
 
             if resolved_x != player.x || resolved_y != player.y {
                 player.x = resolved_x;
@@ -466,30 +407,60 @@ impl SimulationWorld {
         &mut self,
         attacker: PlayerId,
         slot: u8,
+        skill: &SkillDefinition,
     ) -> Result<Vec<SimulationEvent>, SimulationError> {
+        if !(1..=5).contains(&slot) {
+            return Err(SimulationError::InvalidSkillSlot(slot));
+        }
+
         let attacker_state = self.require_live_player(attacker)?;
 
-        match slot {
-            1 => Ok(self.cast_line_skill(
+        match skill.behavior {
+            SkillBehavior::Line {
+                range,
+                damage,
+                effect,
+            } => Ok(self.cast_line_skill(
                 attacker,
                 attacker_state,
                 slot,
-                SLOT1_RANGE_UNITS,
-                SLOT1_DAMAGE,
-                ArenaEffectKind::SkillShot,
+                range,
+                damage,
+                arena_effect_kind(effect),
             )),
-            2 => Ok(self.cast_dash_skill(attacker, attacker_state, slot)),
-            3 => Ok(self.cast_burst_skill(attacker, attacker_state, slot)),
-            4 => Ok(self.cast_nova_skill(attacker, attacker_state, slot)),
-            5 => Ok(self.cast_line_skill(
+            SkillBehavior::Dash { distance, effect } => Ok(self.cast_dash_skill(
                 attacker,
                 attacker_state,
                 slot,
-                SLOT5_RANGE_UNITS,
-                SLOT5_DAMAGE,
-                ArenaEffectKind::Beam,
+                distance,
+                arena_effect_kind(effect),
             )),
-            other => Err(SimulationError::InvalidSkillSlot(other)),
+            SkillBehavior::Burst {
+                range,
+                radius,
+                damage,
+                effect,
+            } => Ok(self.cast_burst_skill(
+                attacker,
+                attacker_state,
+                slot,
+                range,
+                radius,
+                damage,
+                arena_effect_kind(effect),
+            )),
+            SkillBehavior::Nova {
+                radius,
+                damage,
+                effect,
+            } => Ok(self.cast_nova_skill(
+                attacker,
+                attacker_state,
+                slot,
+                radius,
+                damage,
+                arena_effect_kind(effect),
+            )),
         }
     }
 
@@ -519,6 +490,21 @@ impl SimulationWorld {
     }
 
     #[must_use]
+    pub const fn arena_width_units(&self) -> u16 {
+        self.arena_width_units
+    }
+
+    #[must_use]
+    pub const fn arena_height_units(&self) -> u16 {
+        self.arena_height_units
+    }
+
+    #[must_use]
+    pub fn obstacles(&self) -> &[ArenaObstacle] {
+        &self.obstacles
+    }
+
+    #[must_use]
     pub fn is_team_defeated(&self, team: TeamSide) -> bool {
         self.players
             .values()
@@ -535,12 +521,17 @@ impl SimulationWorld {
         damage: u16,
         effect_kind: ArenaEffectKind,
     ) -> Vec<SimulationEvent> {
-        let end = project_from_aim(
+        let desired_end = project_from_aim(
             attacker_state.x,
             attacker_state.y,
             attacker_state.aim_x,
             attacker_state.aim_y,
             range,
+        );
+        let end = truncate_line_to_obstacles(
+            (attacker_state.x, attacker_state.y),
+            desired_end,
+            &self.obstacles,
         );
         let mut events = vec![SimulationEvent::EffectSpawned {
             effect: ArenaEffect {
@@ -572,19 +563,24 @@ impl SimulationWorld {
         attacker: PlayerId,
         attacker_state: SimPlayerState,
         slot: u8,
+        distance: u16,
+        effect_kind: ArenaEffectKind,
     ) -> Vec<SimulationEvent> {
         let desired = project_from_aim(
             attacker_state.x,
             attacker_state.y,
             attacker_state.aim_x,
             attacker_state.aim_y,
-            SLOT2_DASH_DISTANCE_UNITS,
+            distance,
         );
         let (resolved_x, resolved_y) = resolve_movement(
             attacker_state.x,
             attacker_state.y,
             i32::from(desired.0),
             i32::from(desired.1),
+            self.arena_width_units,
+            self.arena_height_units,
+            &self.obstacles,
         );
 
         if let Some(player) = self.players.get_mut(&attacker) {
@@ -596,7 +592,7 @@ impl SimulationWorld {
         vec![
             SimulationEvent::EffectSpawned {
                 effect: ArenaEffect {
-                    kind: ArenaEffectKind::DashTrail,
+                    kind: effect_kind,
                     owner: attacker,
                     slot,
                     x: attacker_state.x,
@@ -619,29 +615,33 @@ impl SimulationWorld {
         attacker: PlayerId,
         attacker_state: SimPlayerState,
         slot: u8,
+        range: u16,
+        radius: u16,
+        damage: u16,
+        effect_kind: ArenaEffectKind,
     ) -> Vec<SimulationEvent> {
         let center = project_from_aim(
             attacker_state.x,
             attacker_state.y,
             attacker_state.aim_x,
             attacker_state.aim_y,
-            SLOT3_CAST_RANGE_UNITS,
+            range,
         );
         let mut events = vec![SimulationEvent::EffectSpawned {
             effect: ArenaEffect {
-                kind: ArenaEffectKind::Burst,
+                kind: effect_kind,
                 owner: attacker,
                 slot,
                 x: center.0,
                 y: center.1,
                 target_x: center.0,
                 target_y: center.1,
-                radius: SLOT3_RADIUS_UNITS,
+                radius,
             },
         }];
 
-        let targets = self.find_players_in_radius(center, SLOT3_RADIUS_UNITS, Some(attacker));
-        events.extend(self.apply_damage_internal(attacker, &targets, SLOT3_DAMAGE));
+        let targets = self.find_players_in_radius(center, radius, Some(attacker));
+        events.extend(self.apply_damage_internal(attacker, &targets, damage));
         events
     }
 
@@ -650,23 +650,26 @@ impl SimulationWorld {
         attacker: PlayerId,
         attacker_state: SimPlayerState,
         slot: u8,
+        radius: u16,
+        damage: u16,
+        effect_kind: ArenaEffectKind,
     ) -> Vec<SimulationEvent> {
         let center = (attacker_state.x, attacker_state.y);
         let mut events = vec![SimulationEvent::EffectSpawned {
             effect: ArenaEffect {
-                kind: ArenaEffectKind::Nova,
+                kind: effect_kind,
                 owner: attacker,
                 slot,
                 x: center.0,
                 y: center.1,
                 target_x: center.0,
                 target_y: center.1,
-                radius: SLOT4_RADIUS_UNITS,
+                radius,
             },
         }];
 
-        let targets = self.find_players_in_radius(center, SLOT4_RADIUS_UNITS, Some(attacker));
-        events.extend(self.apply_damage_internal(attacker, &targets, SLOT4_DAMAGE));
+        let targets = self.find_players_in_radius(center, radius, Some(attacker));
+        events.extend(self.apply_damage_internal(attacker, &targets, damage));
         events
     }
 
@@ -816,56 +819,83 @@ impl SimulationWorld {
     }
 }
 
-#[must_use]
-pub const fn arena_obstacles() -> &'static [ArenaObstacle] {
-    &ARENA_OBSTACLES
+fn map_obstacle_to_sim_obstacle(obstacle: &ArenaMapObstacle) -> ArenaObstacle {
+    ArenaObstacle {
+        kind: match obstacle.kind {
+            ArenaMapObstacleKind::Pillar => ArenaObstacleKind::Pillar,
+            ArenaMapObstacleKind::Shrub => ArenaObstacleKind::Shrub,
+        },
+        center_x: obstacle.center_x,
+        center_y: obstacle.center_y,
+        half_width: obstacle.half_width,
+        half_height: obstacle.half_height,
+    }
 }
 
-fn spawn_position(team: TeamSide, ordinal: u16) -> (i16, i16, i16) {
-    let y = match ordinal {
-        0 => 220,
-        1 => -220,
-        2 => 320,
-        3 => -320,
+fn arena_effect_kind(effect: SkillEffectKind) -> ArenaEffectKind {
+    match effect {
+        SkillEffectKind::SkillShot => ArenaEffectKind::SkillShot,
+        SkillEffectKind::DashTrail => ArenaEffectKind::DashTrail,
+        SkillEffectKind::Burst => ArenaEffectKind::Burst,
+        SkillEffectKind::Nova => ArenaEffectKind::Nova,
+        SkillEffectKind::Beam => ArenaEffectKind::Beam,
+    }
+}
+
+fn spawn_position(team: TeamSide, ordinal: u16, map: &ArenaMapDefinition) -> (i16, i16, i16) {
+    let lane_offset = match ordinal {
+        1 => -SPAWN_SPACING_UNITS,
+        2 => SPAWN_SPACING_UNITS,
+        3 => -SPAWN_SPACING_UNITS * 2,
+        4 => SPAWN_SPACING_UNITS * 2,
         _ => 0,
     };
+    let (anchor_x, anchor_y, aim_x) = match team {
+        TeamSide::TeamA => (map.team_a_anchor.0, map.team_a_anchor.1, DEFAULT_AIM_X),
+        TeamSide::TeamB => (map.team_b_anchor.0, map.team_b_anchor.1, -DEFAULT_AIM_X),
+    };
 
-    match team {
-        TeamSide::TeamA => (-640, y, DEFAULT_AIM_X),
-        TeamSide::TeamB => (640, y, -DEFAULT_AIM_X),
-    }
+    (anchor_x, anchor_y + lane_offset, aim_x)
 }
 
-fn resolve_movement(current_x: i16, current_y: i16, target_x: i32, target_y: i32) -> (i16, i16) {
+fn resolve_movement(
+    current_x: i16,
+    current_y: i16,
+    target_x: i32,
+    target_y: i32,
+    arena_width_units: u16,
+    arena_height_units: u16,
+    obstacles: &[ArenaObstacle],
+) -> (i16, i16) {
     let mut resolved_x = current_x;
     let mut resolved_y = current_y;
-    let clamped_x = clamp_to_arena_x(target_x);
-    let clamped_y = clamp_to_arena_y(target_y);
+    let clamped_x = clamp_to_arena_x(target_x, arena_width_units);
+    let clamped_y = clamp_to_arena_y(target_y, arena_height_units);
 
-    if !position_collides(clamped_x, i32::from(current_y)) {
+    if !position_collides(clamped_x, i32::from(current_y), obstacles) {
         resolved_x = saturating_i16(clamped_x);
     }
-    if !position_collides(i32::from(resolved_x), clamped_y) {
+    if !position_collides(i32::from(resolved_x), clamped_y, obstacles) {
         resolved_y = saturating_i16(clamped_y);
     }
 
     (resolved_x, resolved_y)
 }
 
-fn clamp_to_arena_x(value: i32) -> i32 {
-    let half_width = i32::from(ARENA_WIDTH_UNITS) / 2;
+fn clamp_to_arena_x(value: i32, arena_width_units: u16) -> i32 {
+    let half_width = i32::from(arena_width_units) / 2;
     let radius = i32::from(PLAYER_RADIUS_UNITS);
     value.clamp(-half_width + radius, half_width - radius)
 }
 
-fn clamp_to_arena_y(value: i32) -> i32 {
-    let half_height = i32::from(ARENA_HEIGHT_UNITS) / 2;
+fn clamp_to_arena_y(value: i32, arena_height_units: u16) -> i32 {
+    let half_height = i32::from(arena_height_units) / 2;
     let radius = i32::from(PLAYER_RADIUS_UNITS);
     value.clamp(-half_height + radius, half_height - radius)
 }
 
-fn position_collides(x: i32, y: i32) -> bool {
-    arena_obstacles()
+fn position_collides(x: i32, y: i32, obstacles: &[ArenaObstacle]) -> bool {
+    obstacles
         .iter()
         .any(|obstacle| circle_intersects_rect(x, y, i32::from(PLAYER_RADIUS_UNITS), obstacle))
 }
@@ -880,6 +910,93 @@ fn circle_intersects_rect(x: i32, y: i32, radius: i32, obstacle: &ArenaObstacle)
     let dx = x - closest_x;
     let dy = y - closest_y;
     dx * dx + dy * dy <= radius * radius
+}
+
+fn truncate_line_to_obstacles(
+    start: (i16, i16),
+    end: (i16, i16),
+    obstacles: &[ArenaObstacle],
+) -> (i16, i16) {
+    let mut closest_t = 1.0_f32;
+    for obstacle in obstacles {
+        if let Some(intersection_t) = segment_rect_intersection_t(start, end, obstacle) {
+            if intersection_t < closest_t {
+                closest_t = intersection_t;
+            }
+        }
+    }
+
+    if closest_t >= 1.0 {
+        return end;
+    }
+
+    let start_x = f32::from(start.0);
+    let start_y = f32::from(start.1);
+    let delta_x = f32::from(end.0) - start_x;
+    let delta_y = f32::from(end.1) - start_y;
+    let clipped_t = (closest_t - 0.01).clamp(0.0, 1.0);
+    (
+        saturating_i16(round_f32_to_i32(start_x + delta_x * clipped_t)),
+        saturating_i16(round_f32_to_i32(start_y + delta_y * clipped_t)),
+    )
+}
+
+fn segment_rect_intersection_t(
+    start: (i16, i16),
+    end: (i16, i16),
+    obstacle: &ArenaObstacle,
+) -> Option<f32> {
+    let start_x = f32::from(start.0);
+    let start_y = f32::from(start.1);
+    let delta_x = f32::from(end.0 - start.0);
+    let delta_y = f32::from(end.1 - start.1);
+    let min_x = f32::from(obstacle.center_x) - f32::from(obstacle.half_width);
+    let max_x = f32::from(obstacle.center_x) + f32::from(obstacle.half_width);
+    let min_y = f32::from(obstacle.center_y) - f32::from(obstacle.half_height);
+    let max_y = f32::from(obstacle.center_y) + f32::from(obstacle.half_height);
+    let mut t_min = 0.0_f32;
+    let mut t_max = 1.0_f32;
+
+    if !update_segment_slab(start_x, delta_x, min_x, max_x, &mut t_min, &mut t_max) {
+        return None;
+    }
+    if !update_segment_slab(start_y, delta_y, min_y, max_y, &mut t_min, &mut t_max) {
+        return None;
+    }
+
+    if t_min <= 0.0 || t_min > 1.0 {
+        None
+    } else {
+        Some(t_min)
+    }
+}
+
+fn update_segment_slab(
+    start: f32,
+    delta: f32,
+    min_bound: f32,
+    max_bound: f32,
+    t_min: &mut f32,
+    t_max: &mut f32,
+) -> bool {
+    if delta.abs() <= f32::EPSILON {
+        return start >= min_bound && start <= max_bound;
+    }
+
+    let inverse_delta = 1.0 / delta;
+    let mut entry = (min_bound - start) * inverse_delta;
+    let mut exit = (max_bound - start) * inverse_delta;
+    if entry > exit {
+        std::mem::swap(&mut entry, &mut exit);
+    }
+    *t_min = (*t_min).max(entry);
+    *t_max = (*t_max).min(exit);
+    *t_min <= *t_max
+}
+
+#[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+fn round_f32_to_i32(value: f32) -> i32 {
+    value.round().clamp(i32::MIN as f32, i32::MAX as f32) as i32
 }
 
 #[allow(clippy::cast_possible_truncation)]
@@ -953,7 +1070,8 @@ fn saturating_i16(value: i32) -> i16 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use game_domain::{PlayerName, PlayerRecord};
+    use game_content::GameContent;
+    use game_domain::{PlayerName, PlayerRecord, SkillChoice, SkillTree};
 
     fn player_id(raw: u32) -> PlayerId {
         PlayerId::new(raw).expect("valid player id")
@@ -969,6 +1087,22 @@ mod tests {
             },
             hit_points,
         }
+    }
+
+    fn content() -> GameContent {
+        GameContent::bundled().expect("bundled content should load")
+    }
+
+    fn world(content: &GameContent, seeds: Vec<SimPlayerSeed>) -> SimulationWorld {
+        SimulationWorld::new(seeds, content.map()).expect("world should build")
+    }
+
+    fn authored_skill(content: &GameContent, tree: SkillTree, tier: u8) -> SkillDefinition {
+        content
+            .skills()
+            .resolve(SkillChoice::new(tree, tier).expect("valid choice"))
+            .expect("authored skill should exist")
+            .clone()
     }
 
     #[test]
@@ -995,16 +1129,17 @@ mod tests {
 
     #[test]
     fn simulation_new_rejects_duplicate_players_and_zero_hit_points() {
+        let content = content();
         assert!(matches!(
             SimulationWorld::new(vec![
                 seed(1, "Alice", TeamSide::TeamA, 100),
                 seed(1, "Bob", TeamSide::TeamB, 100),
-            ]),
+            ], content.map()),
             Err(SimulationError::DuplicatePlayer(player)) if player == player_id(1)
         ));
 
         assert!(matches!(
-            SimulationWorld::new(vec![seed(1, "Alice", TeamSide::TeamA, 0)]),
+            SimulationWorld::new(vec![seed(1, "Alice", TeamSide::TeamA, 0)], content.map()),
             Err(SimulationError::InvalidHitPoints { player_id: player, hit_points: 0 })
                 if player == player_id(1)
         ));
@@ -1012,8 +1147,8 @@ mod tests {
 
     #[test]
     fn submit_input_requires_a_live_known_player() {
-        let mut world = SimulationWorld::new(vec![seed(1, "Alice", TeamSide::TeamA, 100)])
-            .expect("world should build");
+        let content = content();
+        let mut world = world(&content, vec![seed(1, "Alice", TeamSide::TeamA, 100)]);
 
         assert_eq!(
             world.submit_input(
@@ -1038,8 +1173,8 @@ mod tests {
 
     #[test]
     fn tick_moves_players_and_stops_them_immediately_without_new_input() {
-        let mut world = SimulationWorld::new(vec![seed(1, "Alice", TeamSide::TeamA, 100)])
-            .expect("world should build");
+        let content = content();
+        let mut world = world(&content, vec![seed(1, "Alice", TeamSide::TeamA, 100)]);
         let starting_state = world.player_state(player_id(1)).expect("player exists");
 
         world
@@ -1068,12 +1203,24 @@ mod tests {
 
     #[test]
     fn movement_collides_with_the_center_pillars_and_shrubs() {
-        let mut world = SimulationWorld::new(vec![seed(1, "Alice", TeamSide::TeamA, 100)])
-            .expect("world should build");
+        let content = content();
+        let mut world = world(&content, vec![seed(1, "Alice", TeamSide::TeamA, 100)]);
+        let shrub = *world
+            .obstacles()
+            .iter()
+            .find(|obstacle| {
+                obstacle.kind == ArenaObstacleKind::Shrub
+                    && obstacle.center_x < 0
+                    && obstacle.center_y < 0
+            })
+            .expect("top-left shrub should exist");
         {
             let player = world.players.get_mut(&player_id(1)).expect("player");
-            player.x = -330;
-            player.y = -150;
+            player.x = shrub.center_x
+                - i16::try_from(shrub.half_width).expect("half width fits")
+                - i16::try_from(PLAYER_RADIUS_UNITS).expect("radius fits")
+                - 40;
+            player.y = shrub.center_y;
         }
 
         for _ in 0..10 {
@@ -1087,13 +1234,18 @@ mod tests {
         }
 
         let state = world.player_state(player_id(1)).expect("player exists");
-        assert!(state.x < -220 - i16::try_from(SHRUB_HALF_EXTENT_UNITS).expect("fits"));
+        assert!(
+            state.x
+                <= shrub.center_x
+                    - i16::try_from(shrub.half_width).expect("half width fits")
+                    - i16::try_from(PLAYER_RADIUS_UNITS).expect("radius fits")
+        );
     }
 
     #[test]
     fn update_aim_tracks_non_zero_mouse_deltas() {
-        let mut world = SimulationWorld::new(vec![seed(1, "Alice", TeamSide::TeamA, 100)])
-            .expect("world should build");
+        let content = content();
+        let mut world = world(&content, vec![seed(1, "Alice", TeamSide::TeamA, 100)]);
 
         assert_eq!(world.update_aim(player_id(1), 240, -120), Ok(true));
         assert_eq!(world.update_aim(player_id(1), 240, -120), Ok(false));
@@ -1105,17 +1257,21 @@ mod tests {
     }
 
     #[test]
-    fn melee_and_skill_slots_apply_damage_and_validate_slot_numbers() {
-        let mut world = SimulationWorld::new(vec![
-            seed(1, "Alice", TeamSide::TeamA, 100),
-            seed(2, "Bob", TeamSide::TeamB, 100),
-        ])
-        .expect("world should build");
+    fn melee_and_authored_skills_apply_damage_and_validate_slot_numbers() {
+        let content = content();
+        let mut world = world(
+            &content,
+            vec![
+                seed(1, "Alice", TeamSide::TeamA, 100),
+                seed(2, "Bob", TeamSide::TeamB, 100),
+            ],
+        );
 
+        let alice_state = world.player_state(player_id(1)).expect("alice exists");
         {
             let bob = world.players.get_mut(&player_id(2)).expect("bob exists");
-            bob.x = -540;
-            bob.y = 220;
+            bob.x = alice_state.x + 70;
+            bob.y = alice_state.y;
         }
 
         let melee_events = world.melee_attack(player_id(1)).expect("melee should work");
@@ -1139,7 +1295,11 @@ mod tests {
         )));
 
         let slot_one_events = world
-            .cast_skill(player_id(1), 1)
+            .cast_skill(
+                player_id(1),
+                1,
+                &authored_skill(&content, SkillTree::Mage, 1),
+            )
             .expect("slot one should work");
         assert!(slot_one_events.iter().any(|event| matches!(
             event,
@@ -1152,20 +1312,33 @@ mod tests {
             }
         )));
         assert_eq!(
-            world.cast_skill(player_id(1), 9),
+            world.cast_skill(
+                player_id(1),
+                9,
+                &authored_skill(&content, SkillTree::Mage, 1),
+            ),
             Err(SimulationError::InvalidSkillSlot(9))
         );
     }
 
     #[test]
     fn dash_and_area_skills_spawn_effects() {
-        let mut world = SimulationWorld::new(vec![
-            seed(1, "Alice", TeamSide::TeamA, 100),
-            seed(2, "Bob", TeamSide::TeamB, 100),
-        ])
-        .expect("world should build");
+        let content = content();
+        let mut world = world(
+            &content,
+            vec![
+                seed(1, "Alice", TeamSide::TeamA, 100),
+                seed(2, "Bob", TeamSide::TeamB, 100),
+            ],
+        );
 
-        let slot_two_events = world.cast_skill(player_id(1), 2).expect("dash should work");
+        let slot_two_events = world
+            .cast_skill(
+                player_id(1),
+                2,
+                &authored_skill(&content, SkillTree::Rogue, 2),
+            )
+            .expect("dash should work");
         assert!(slot_two_events.iter().any(|event| matches!(
             event,
             SimulationEvent::EffectSpawned {
@@ -1183,7 +1356,11 @@ mod tests {
         )));
 
         let slot_three_events = world
-            .cast_skill(player_id(1), 3)
+            .cast_skill(
+                player_id(1),
+                3,
+                &authored_skill(&content, SkillTree::Mage, 3),
+            )
             .expect("burst should work");
         assert!(slot_three_events.iter().any(|event| matches!(
             event,
@@ -1196,7 +1373,13 @@ mod tests {
             }
         )));
 
-        let slot_four_events = world.cast_skill(player_id(1), 4).expect("nova should work");
+        let slot_four_events = world
+            .cast_skill(
+                player_id(1),
+                4,
+                &authored_skill(&content, SkillTree::Warrior, 4),
+            )
+            .expect("nova should work");
         assert!(slot_four_events.iter().any(|event| matches!(
             event,
             SimulationEvent::EffectSpawned {
@@ -1208,7 +1391,13 @@ mod tests {
             }
         )));
 
-        let slot_five_events = world.cast_skill(player_id(1), 5).expect("beam should work");
+        let slot_five_events = world
+            .cast_skill(
+                player_id(1),
+                5,
+                &authored_skill(&content, SkillTree::Cleric, 5),
+            )
+            .expect("beam should work");
         assert!(slot_five_events.iter().any(|event| matches!(
             event,
             SimulationEvent::EffectSpawned {
@@ -1223,16 +1412,20 @@ mod tests {
 
     #[test]
     fn apply_damage_allows_friendly_fire_and_rejects_invalid_damage_calls() {
-        let mut world = SimulationWorld::new(vec![
-            seed(1, "Alice", TeamSide::TeamA, 100),
-            seed(2, "Ally", TeamSide::TeamA, 100),
-        ])
-        .expect("world should build");
+        let content = content();
+        let mut world = world(
+            &content,
+            vec![
+                seed(1, "Alice", TeamSide::TeamA, 100),
+                seed(2, "Ally", TeamSide::TeamA, 100),
+            ],
+        );
 
+        let alice_state = world.player_state(player_id(1)).expect("alice exists");
         {
             let ally = world.players.get_mut(&player_id(2)).expect("ally exists");
-            ally.x = -540;
-            ally.y = 220;
+            ally.x = alice_state.x + 70;
+            ally.y = alice_state.y;
         }
 
         let events = world
@@ -1250,19 +1443,29 @@ mod tests {
 
     #[test]
     fn lethal_damage_marks_defeat_and_team_defeat_queries_reflect_the_state() {
-        let mut world = SimulationWorld::new(vec![
-            seed(1, "Alice", TeamSide::TeamA, 100),
-            seed(2, "Bob", TeamSide::TeamB, 10),
-        ])
-        .expect("world should build");
+        let content = content();
+        let mut world = world(
+            &content,
+            vec![
+                seed(1, "Alice", TeamSide::TeamA, 100),
+                seed(2, "Bob", TeamSide::TeamB, 10),
+            ],
+        );
 
+        let alice_state = world.player_state(player_id(1)).expect("alice exists");
         {
             let bob = world.players.get_mut(&player_id(2)).expect("bob exists");
-            bob.x = -540;
-            bob.y = 220;
+            bob.x = alice_state.x + 200;
+            bob.y = alice_state.y;
         }
 
-        let events = world.cast_skill(player_id(1), 5).expect("beam should work");
+        let events = world
+            .cast_skill(
+                player_id(1),
+                5,
+                &authored_skill(&content, SkillTree::Mage, 5),
+            )
+            .expect("beam should work");
         assert!(events.iter().any(|event| matches!(
             event,
             SimulationEvent::DamageApplied {
@@ -1272,5 +1475,44 @@ mod tests {
             } if *target == player_id(2)
         )));
         assert!(world.is_team_defeated(TeamSide::TeamB));
+    }
+
+    #[test]
+    fn line_skills_stop_when_a_pillar_or_shrub_blocks_the_segment() {
+        let content = content();
+        let mut world = world(&content, vec![seed(1, "Alice", TeamSide::TeamA, 100)]);
+        let shrub = *world
+            .obstacles()
+            .iter()
+            .find(|obstacle| {
+                obstacle.kind == ArenaObstacleKind::Shrub
+                    && obstacle.center_x < 0
+                    && obstacle.center_y < 0
+            })
+            .expect("top-left shrub should exist");
+
+        {
+            let player = world.players.get_mut(&player_id(1)).expect("player");
+            player.x = shrub.center_x - 200;
+            player.y = shrub.center_y;
+            player.aim_x = 100;
+            player.aim_y = 0;
+        }
+
+        let events = world
+            .cast_skill(
+                player_id(1),
+                1,
+                &authored_skill(&content, SkillTree::Mage, 1),
+            )
+            .expect("line skill should work");
+        let effect = events
+            .iter()
+            .find_map(|event| match event {
+                SimulationEvent::EffectSpawned { effect } => Some(*effect),
+                _ => None,
+            })
+            .expect("line skill should spawn an effect");
+        assert!(effect.target_x < shrub.center_x);
     }
 }

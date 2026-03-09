@@ -1,0 +1,11 @@
+
+tree: Mage
+skills:
+  - tier: 1
+    id: mage_arc
+    name: Arc
+    description: Missing damage.
+    behavior:
+      kind: line
+      effect: skill_shot
+      range: 10

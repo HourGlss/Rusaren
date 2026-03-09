@@ -25,6 +25,8 @@ axum = { version = "0.8", features = ["ws"] }
 criterion = "0.5.1"
 futures-util = "0.3"
 getrandom = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
 tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 tokio-tungstenite = "0.28"
 tower-http = { version = "0.6", features = ["fs", "trace"] }

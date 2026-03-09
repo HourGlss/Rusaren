@@ -103,6 +103,19 @@ The current first playable slice uses a deliberately simple authored layout:
 - four square central pillars
 - each pillar is wrapped by a thin square shrub collar
 - open lanes around the perimeter for early movement/combat testing
+- the runtime source of truth is the ASCII file at `server/content/maps/prototype_arena.txt`
+
+Current editing workflow:
+- open `server/content/maps/prototype_arena.txt` in a plain text editor such as Notepad
+- edit the glyph layout directly
+- restart the local server or rerun `server/scripts/play-local.ps1`
+
+Current prototype glyphs:
+- `.` floor
+- `#` pillar tile
+- `+` shrub tile
+- `A` Team A spawn anchor
+- `B` Team B spawn anchor
 
 Current purpose:
 - validate server-authoritative movement and collision

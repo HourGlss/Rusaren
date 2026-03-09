@@ -1,0 +1,47 @@
+tree: Rogue
+skills:
+  - tier: 1
+    id: rogue_shiv
+    name: Shiv
+    description: A tight line strike with high close-range pressure.
+    behavior:
+      kind: line
+      effect: beam
+      range: 1600
+      damage: 100
+  - tier: 2
+    id: rogue_shadowstep
+    name: Shadowstep
+    description: A quick dash to slip around geometry.
+    behavior:
+      kind: dash
+      effect: dash_trail
+      distance: 240
+  - tier: 3
+    id: rogue_poison_flask
+    name: Poison Flask
+    description: A splash attack that bursts around the aimed point.
+    behavior:
+      kind: burst
+      effect: burst
+      range: 260
+      radius: 96
+      damage: 24
+  - tier: 4
+    id: rogue_smoke_knives
+    name: Smoke Knives
+    description: A circular flurry around the rogue.
+    behavior:
+      kind: nova
+      effect: nova
+      radius: 150
+      damage: 22
+  - tier: 5
+    id: rogue_assassinate
+    name: Assassinate
+    description: A precise finishing strike projected in a straight line.
+    behavior:
+      kind: line
+      effect: beam
+      range: 260
+      damage: 70
