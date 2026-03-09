@@ -1,6 +1,7 @@
 //! HTTP and service-facing orchestration for the arena server.
 
 #![forbid(unsafe_code)]
+#![warn(missing_docs)]
 #![cfg_attr(test, allow(clippy::expect_used))]
 
 mod app;

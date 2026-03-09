@@ -247,6 +247,15 @@ The documentation artifacts live at:
 - `server/target/reports/docs/site/index.html`
 - `server/target/reports/rustdoc/index.html`
 
+On pushes to `main`, the same `server/target/reports/` tree is also published to GitHub Pages.
+The intended Pages landing URL for this repo is:
+- `https://hourglss.github.io/Rusaren/`
+
+Useful Pages paths:
+- `https://hourglss.github.io/Rusaren/` for the report index
+- `https://hourglss.github.io/Rusaren/docs/site/` for the mdBook docs site
+- `https://hourglss.github.io/Rusaren/rustdoc/` for the Rust API docs
+
 The docs report includes a per-file publication table for every Markdown file under `shared/docs`.
 The fuzz report shows corpus replay coverage, which means line coverage measured by replaying the checked-in seed corpus through the same decode and ingress APIs used by the fuzz targets. The current replay set includes packet decode, ingress sequencing, HTTP route classification, Prometheus observability metric rendering, and persisted player-record TSV parsing/canonicalization.
 
@@ -308,6 +317,7 @@ Hook behavior:
 - `post-commit` also refreshes the docs site, Rust API docs, and backend call graph under `server/target/reports/`.
 - `pre-push` runs Rust linting and tests before the branch leaves your machine.
 - each push to `main` uploads a GitHub Actions artifact named `server-reports-<commit-sha>` that contains `server/target/reports/output.html`
+- each successful push to `main` also deploys the same report tree to GitHub Pages so reports and docs can be reviewed without downloading artifacts
 
 Current local fallback behavior:
 - if `cargo-nextest` is installed, the quality script uses it for the normal test task

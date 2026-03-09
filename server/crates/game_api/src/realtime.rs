@@ -62,16 +62,19 @@ struct RuntimeState {
 }
 
 impl RuntimeState {
+    /// Drains any currently queued transport packets into the app core.
     fn pump_transport(&mut self) {
         let Self { app, transport, .. } = self;
         app.pump_transport(transport);
     }
 
+    /// Advances application time without exposing the transport internals to callers.
     fn advance_millis(&mut self, delta_ms: u16) {
         let Self { app, transport, .. } = self;
         app.advance_millis(transport, delta_ms);
     }
 
+    /// Disconnects one bound connection from the app core.
     fn disconnect_connection(&mut self, connection_id: ConnectionId) {
         let Self { app, transport, .. } = self;
         let _ = app.disconnect_connection(transport, connection_id);
@@ -90,6 +93,7 @@ enum ClientOutbound {
 }
 
 impl ClientOutbound {
+    /// Routes one encoded server packet to the correct transport-specific sink.
     fn send_packet(&self, packet: Vec<u8>) {
         match self {
             Self::WebSocket { outbound } => {
@@ -114,6 +118,7 @@ impl ClientOutbound {
         }
     }
 
+    /// Sends a control-plane error packet if it can be encoded successfully.
     fn send_error(&self, message: &str) {
         if let Ok(packet) = (ServerControlEvent::Error {
             message: message.to_string(),
@@ -131,6 +136,7 @@ struct RealtimeTransport {
 }
 
 impl RealtimeTransport {
+    /// Creates an empty realtime transport.
     fn new() -> Self {
         Self {
             incoming: VecDeque::new(),
@@ -138,6 +144,7 @@ impl RealtimeTransport {
         }
     }
 
+    /// Registers the outbound path for one connection.
     fn register_client(
         &mut self,
         connection_id: ConnectionId,
@@ -151,10 +158,12 @@ impl RealtimeTransport {
         Ok(())
     }
 
+    /// Removes the outbound path for one connection.
     fn unregister_client(&mut self, connection_id: ConnectionId) {
         self.outgoing.remove(&connection_id);
     }
 
+    /// Queues one inbound client packet for later processing.
     fn enqueue(&mut self, connection_id: ConnectionId, packet: Vec<u8>) {
         self.incoming.push_back((connection_id, packet));
     }
@@ -188,6 +197,7 @@ enum IngressEvent {
     },
 }
 
+/// Running dev-server handle used by tests and local launch scripts.
 pub struct DevServerHandle {
     local_addr: SocketAddr,
     shutdown_tx: Option<oneshot::Sender<()>>,
@@ -196,14 +206,22 @@ pub struct DevServerHandle {
     tick_task: JoinHandle<()>,
 }
 
+/// Runtime options for the websocket/WebRTC dev server.
 #[derive(Clone, Debug)]
 pub struct DevServerOptions {
+    /// Real wall-clock interval between server ticks.
     pub tick_interval: Duration,
+    /// Simulated milliseconds advanced per tick.
     pub simulation_step_ms: u16,
+    /// Path to the persistent player-record store.
     pub record_store_path: PathBuf,
+    /// Root directory that holds runtime-authored content.
     pub content_root: PathBuf,
+    /// Root directory that holds the exported web client.
     pub web_client_root: PathBuf,
+    /// Optional Prometheus-style observability registry.
     pub observability: Option<ServerObservability>,
+    /// STUN/TURN runtime configuration for `WebRTC` clients.
     pub webrtc: WebRtcRuntimeConfig,
 }
 
@@ -244,11 +262,13 @@ struct SignalingTransport {
 }
 
 impl DevServerHandle {
+    /// Returns the socket address the server bound to.
     #[must_use]
     pub const fn local_addr(&self) -> SocketAddr {
         self.local_addr
     }
 
+    /// Shuts the server down and waits for its owned tasks to exit.
     pub async fn shutdown(mut self) {
         if let Some(shutdown_tx) = self.shutdown_tx.take() {
             let _ = shutdown_tx.send(());
@@ -260,10 +280,12 @@ impl DevServerHandle {
     }
 }
 
+/// Spawns the realtime dev server with default options.
 pub async fn spawn_dev_server(listener: TcpListener) -> io::Result<DevServerHandle> {
     spawn_dev_server_with_options(listener, DevServerOptions::default()).await
 }
 
+/// Spawns the realtime dev server with explicit runtime options.
 pub async fn spawn_dev_server_with_options(
     listener: TcpListener,
     options: DevServerOptions,
@@ -329,6 +351,7 @@ pub async fn spawn_dev_server_with_options(
     })
 }
 
+/// Returns the default persistent record-store path used for local runs.
 fn default_record_store_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
@@ -337,6 +360,7 @@ fn default_record_store_path() -> PathBuf {
         .join("player_records.tsv")
 }
 
+/// Returns the default runtime content root used for local runs.
 fn default_content_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
@@ -344,6 +368,7 @@ fn default_content_root() -> PathBuf {
         .join("content")
 }
 
+/// Returns the default exported web-client root served at `/`.
 fn default_web_client_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
@@ -352,6 +377,7 @@ fn default_web_client_root() -> PathBuf {
         .join("webclient")
 }
 
+/// Builds the HTTP router for health, metrics, static assets, and realtime transports.
 fn build_router(state: DevServerState) -> Router {
     let static_assets = get_service(ServeDir::new(state.web_client_root.clone()));
 
@@ -376,6 +402,7 @@ fn build_router(state: DevServerState) -> Router {
         .with_state(state)
 }
 
+/// Pumps transport ingress events into the application core.
 async fn run_ingress_loop(
     runtime: Arc<Mutex<RuntimeState>>,
     mut ingress_rx: mpsc::UnboundedReceiver<IngressEvent>,
@@ -450,6 +477,7 @@ async fn run_ingress_loop(
     }
 }
 
+/// Advances the simulation clock on a fixed real-time interval.
 async fn run_tick_loop(
     runtime: Arc<Mutex<RuntimeState>>,
     tick_interval: Duration,
@@ -475,6 +503,7 @@ async fn run_tick_loop(
     }
 }
 
+/// Responds to the liveness probe.
 async fn healthcheck(State(state): State<DevServerState>) -> &'static str {
     if let Some(observability) = &state.observability {
         observability.record_http_request(crate::HttpRouteLabel::Healthz);
@@ -482,6 +511,7 @@ async fn healthcheck(State(state): State<DevServerState>) -> &'static str {
     "ok"
 }
 
+/// Serves the exported Godot web client root page.
 async fn web_client_index(State(state): State<DevServerState>) -> Response {
     if let Some(observability) = &state.observability {
         observability.record_http_request(crate::HttpRouteLabel::Root);
@@ -504,6 +534,7 @@ async fn web_client_index(State(state): State<DevServerState>) -> Response {
     }
 }
 
+/// Serves Prometheus metrics when observability is enabled.
 async fn metrics_export(State(state): State<DevServerState>) -> Response {
     if let Some(observability) = &state.observability {
         observability.record_http_request(crate::HttpRouteLabel::Metrics);
@@ -527,6 +558,7 @@ async fn metrics_export(State(state): State<DevServerState>) -> Response {
         .into_response()
 }
 
+/// Renders a small HTML page that explains how to build the missing web client.
 fn render_missing_web_client_page(web_client_root: &Path) -> String {
     format!(
         concat!(
@@ -542,6 +574,7 @@ fn render_missing_web_client_page(web_client_root: &Path) -> String {
     )
 }
 
+/// Upgrades `/ws` into the websocket signaling channel used for `WebRTC` setup.
 async fn signaling_upgrade(
     ws: WebSocketUpgrade,
     State(state): State<DevServerState>,
@@ -555,6 +588,7 @@ async fn signaling_upgrade(
         .on_upgrade(move |socket| handle_signaling_socket(state, socket))
 }
 
+/// Upgrades `/ws-dev` into the legacy raw websocket gameplay adapter.
 async fn websocket_dev_upgrade(
     ws: WebSocketUpgrade,
     State(state): State<DevServerState>,
@@ -568,6 +602,7 @@ async fn websocket_dev_upgrade(
         .on_upgrade(move |socket| handle_websocket_dev_socket(state, socket))
 }
 
+/// Runs one signaling websocket until either side closes or negotiation fails.
 async fn handle_signaling_socket(state: DevServerState, socket: WebSocket) {
     let (mut sender, mut receiver) = socket.split();
     let (signal_tx, mut signal_rx) = mpsc::unbounded_channel::<ServerSignalMessage>();
@@ -649,6 +684,7 @@ async fn handle_signaling_socket(state: DevServerState, socket: WebSocket) {
     );
 }
 
+/// Runs the legacy raw websocket gameplay adapter used by local tests and fallback flows.
 async fn handle_websocket_dev_socket(state: DevServerState, socket: WebSocket) {
     let (mut sender, mut receiver) = socket.split();
     let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel::<Vec<u8>>();
@@ -730,6 +766,7 @@ async fn handle_websocket_dev_socket(state: DevServerState, socket: WebSocket) {
     );
 }
 
+/// Handles one validated client signaling message against a live peer connection.
 async fn handle_signaling_message(
     _state: &DevServerState,
     connection_id: ConnectionId,
@@ -765,6 +802,7 @@ async fn handle_signaling_message(
     }
 }
 
+/// Creates the `WebRTC` transport state for one newly connected signaling client.
 async fn create_signaling_transport(
     state: &DevServerState,
     connection_id: ConnectionId,
@@ -818,6 +856,7 @@ async fn create_signaling_transport(
     })
 }
 
+/// Dispatches one websocket frame received on `/ws`.
 async fn process_signaling_websocket_message(
     state: &DevServerState,
     connection_id: ConnectionId,
@@ -849,6 +888,7 @@ async fn process_signaling_websocket_message(
     }
 }
 
+/// Accepts the client's SDP offer and emits the server answer.
 async fn accept_webrtc_offer(
     connection_id: ConnectionId,
     signal_tx: &mpsc::UnboundedSender<ServerSignalMessage>,
@@ -923,6 +963,7 @@ async fn accept_webrtc_offer(
     true
 }
 
+/// Adds one remote ICE candidate after an offer has been accepted.
 async fn add_remote_ice_candidate(
     signal_tx: &mpsc::UnboundedSender<ServerSignalMessage>,
     peer: &Arc<RTCPeerConnection>,
@@ -959,6 +1000,7 @@ async fn add_remote_ice_candidate(
     true
 }
 
+/// Creates negotiated `WebRTC` data channels and the server-side outbound handles for them.
 async fn create_webrtc_outbound(
     state: &DevServerState,
     connection_id: ConnectionId,
@@ -1026,6 +1068,7 @@ async fn create_webrtc_outbound(
     Ok(outbound)
 }
 
+/// Installs peer-state and ICE-candidate callbacks on a negotiated peer connection.
 fn install_webrtc_callbacks(
     state: &DevServerState,
     connection_id: ConnectionId,
@@ -1092,6 +1135,7 @@ fn install_webrtc_callbacks(
     }));
 }
 
+/// Installs one packet handler for an inbound `WebRTC` data channel.
 fn install_webrtc_message_handler(
     state: DevServerState,
     connection_id: ConnectionId,
@@ -1139,6 +1183,7 @@ fn install_webrtc_message_handler(
     }));
 }
 
+/// Rejects any attempt by a client to send payloads on the snapshot channel.
 fn install_snapshot_rejection_handler(
     state: DevServerState,
     peer: &Arc<RTCPeerConnection>,
@@ -1162,6 +1207,7 @@ fn install_snapshot_rejection_handler(
     }));
 }
 
+/// Writes queued packets onto one `WebRTC` data channel once it is open.
 async fn run_webrtc_channel_writer(
     label: &'static str,
     data_channel: Arc<RTCDataChannel>,
@@ -1186,6 +1232,7 @@ async fn run_webrtc_channel_writer(
     }
 }
 
+/// Creates a `webrtc` peer connection configured with the supplied ICE servers.
 async fn create_peer_connection(
     ice_servers: &[crate::WebRtcIceServerConfig],
 ) -> Result<RTCPeerConnection, webrtc::Error> {
@@ -1202,6 +1249,7 @@ async fn create_peer_connection(
     api.new_peer_connection(configuration).await
 }
 
+/// Returns the negotiated settings for the reliable ordered control channel.
 const fn control_channel_init() -> RTCDataChannelInit {
     RTCDataChannelInit {
         ordered: Some(true),
@@ -1212,6 +1260,7 @@ const fn control_channel_init() -> RTCDataChannelInit {
     }
 }
 
+/// Returns the negotiated settings for the unreliable gameplay channels.
 const fn unreliable_channel_init(id: u16) -> RTCDataChannelInit {
     RTCDataChannelInit {
         ordered: Some(false),
@@ -1222,6 +1271,7 @@ const fn unreliable_channel_init(id: u16) -> RTCDataChannelInit {
     }
 }
 
+/// Validates and dispatches one inbound binary data-channel payload.
 async fn handle_webrtc_binary_message(
     state: &DevServerState,
     connection_id: ConnectionId,
@@ -1250,6 +1300,7 @@ async fn handle_webrtc_binary_message(
     keep_open
 }
 
+/// Verifies that a packet arrived on the correct negotiated data channel.
 fn validate_webrtc_packet_channel(
     packet: &[u8],
     expected_channel: ChannelId,
@@ -1278,6 +1329,7 @@ fn validate_webrtc_packet_channel(
     }
 }
 
+/// Applies one binary realtime packet to either session binding or gameplay ingress.
 async fn handle_binary_message(
     state: &DevServerState,
     connection_id: ConnectionId,
@@ -1299,6 +1351,7 @@ async fn handle_binary_message(
     forward_bound_packet(state, connection_id, packet)
 }
 
+/// Processes the first connect packet that binds a transport session to a player.
 async fn bind_initial_player(
     state: &DevServerState,
     connection_id: ConnectionId,
@@ -1355,6 +1408,7 @@ async fn bind_initial_player(
     }
 }
 
+/// Forwards a bound packet into the application ingress channel.
 fn forward_bound_packet(
     state: &DevServerState,
     connection_id: ConnectionId,
@@ -1382,6 +1436,7 @@ fn forward_bound_packet(
     false
 }
 
+/// Disconnects a bound session exactly once and notifies the app layer.
 async fn disconnect_bound_session(
     state: &DevServerState,
     connection_id: ConnectionId,
@@ -1412,6 +1467,7 @@ async fn disconnect_bound_session(
     );
 }
 
+/// Allocates the next non-zero transport connection id.
 fn allocate_connection_id(next_connection_id: &AtomicU64) -> ConnectionId {
     let raw = next_connection_id.fetch_add(1, Ordering::Relaxed);
     match ConnectionId::new(raw) {
@@ -1420,6 +1476,7 @@ fn allocate_connection_id(next_connection_id: &AtomicU64) -> ConnectionId {
     }
 }
 
+/// Sends a protocol-level rejection to a client and records observability counters.
 fn reject_client_session(
     outbound: &ClientOutbound,
     observability: Option<&ServerObservability>,
@@ -1433,6 +1490,7 @@ fn reject_client_session(
     outbound.send_error(message);
 }
 
+/// Rejects a `WebRTC` session and closes the peer connection.
 async fn reject_peer_session(
     outbound: &ClientOutbound,
     observability: Option<&ServerObservability>,

@@ -9,8 +9,10 @@ use game_domain::{PlayerId, PlayerName, PlayerRecord};
 
 const CURRENT_FIELD_COUNT: usize = 4;
 const LEGACY_FIELD_COUNT: usize = 5;
+/// Maximum accepted size, in bytes, for the persisted player-record store.
 pub const MAX_RECORD_STORE_BYTES: u64 = 1_048_576;
 
+/// Persistent or in-memory storage for player win/loss/no-contest records.
 #[derive(Debug)]
 pub struct PlayerRecordStore {
     path: Option<PathBuf>,
@@ -18,6 +20,7 @@ pub struct PlayerRecordStore {
 }
 
 impl PlayerRecordStore {
+    /// Creates an in-memory store that performs no filesystem I/O.
     #[must_use]
     pub fn new_ephemeral() -> Self {
         Self {
@@ -26,6 +29,7 @@ impl PlayerRecordStore {
         }
     }
 
+    /// Opens a persistent store from disk, creating an empty one in memory if the file is absent.
     pub fn new_persistent(path: impl Into<PathBuf>) -> Result<Self, RecordStoreError> {
         let path = path.into();
         let records = if path.exists() {
@@ -57,6 +61,7 @@ impl PlayerRecordStore {
         })
     }
 
+    /// Loads an existing record for a player or creates a new zeroed record.
     pub fn load_or_create(
         &mut self,
         player_name: &PlayerName,
@@ -71,6 +76,7 @@ impl PlayerRecordStore {
         Ok(PlayerRecord::new())
     }
 
+    /// Writes an updated player record back into the store.
     pub fn save(
         &mut self,
         player_name: &PlayerName,
@@ -101,40 +107,64 @@ impl PlayerRecordStore {
     }
 }
 
+/// Parses and reserializes record-store contents into the canonical sorted format.
 pub fn canonicalize_record_store_contents(input: &str) -> Result<String, RecordStoreError> {
     let records = parse_records(input)?;
     Ok(serialize_records(&records))
 }
 
+/// Errors returned while reading, validating, or writing the player record store.
 #[derive(Debug)]
 pub enum RecordStoreError {
+    /// Reading the backing store failed.
     Read {
+        /// The path that failed to read.
         path: PathBuf,
+        /// The underlying I/O error.
         source: io::Error,
     },
+    /// Writing the backing store failed.
     Write {
+        /// The path that failed to write.
         path: PathBuf,
+        /// The underlying I/O error.
         source: io::Error,
     },
+    /// Creating the parent directory for the backing store failed.
     CreateParentDir {
+        /// The parent directory path that could not be created.
         path: PathBuf,
+        /// The underlying I/O error.
         source: io::Error,
     },
+    /// The backing file exceeded the configured safety limit.
     FileTooLarge {
+        /// The path of the oversized file.
         path: PathBuf,
+        /// The observed byte count.
         actual: u64,
+        /// The maximum accepted byte count.
         maximum: u64,
     },
+    /// One row in the backing file was malformed.
     MalformedLine {
+        /// The 1-based line number that failed validation.
         line_number: usize,
+        /// The specific reason the row was rejected.
         reason: String,
     },
+    /// A legacy row repeated a player id that had already appeared.
     DuplicatePlayerId {
+        /// The 1-based line number that failed validation.
         line_number: usize,
+        /// The repeated legacy player id.
         player_id: u32,
     },
+    /// A non-legacy row repeated a player name that had already appeared.
     DuplicatePlayerName {
+        /// The 1-based line number that failed validation.
         line_number: usize,
+        /// The repeated player name.
         player_name: String,
     },
 }

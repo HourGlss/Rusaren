@@ -2908,6 +2908,7 @@ $(($noteItems -join "`n"))
 
     Write-ReportHtml -Path (Join-Path $reportsRoot "index.html") -Title "Rarena Quality Reports" -Body $body
     Write-ReportHtml -Path (Join-Path $reportsRoot "output.html") -Title "Rarena Quality Reports" -Body $body
+    New-Item -ItemType File -Force -Path (Join-Path $reportsRoot ".nojekyll") | Out-Null
 
     Write-Host "Reports written to $reportsRoot"
 

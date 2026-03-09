@@ -15,26 +15,35 @@ use crate::ConnectionId;
 
 type HmacSha1 = Hmac<Sha1>;
 
+/// Negotiated id for the reliable ordered control data channel.
 pub const CONTROL_DATA_CHANNEL_ID: u16 = 0;
+/// Negotiated id for the unreliable player-input data channel.
 pub const INPUT_DATA_CHANNEL_ID: u16 = 1;
+/// Negotiated id for the unreliable snapshot data channel.
 pub const SNAPSHOT_DATA_CHANNEL_ID: u16 = 2;
+/// Maximum accepted size for one signaling websocket message.
 pub const MAX_SIGNAL_MESSAGE_BYTES: usize = 128 * 1024;
 const MAX_SIGNAL_SDP_BYTES: usize = 96 * 1024;
 const MAX_SIGNAL_CANDIDATE_BYTES: usize = 4096;
 const MAX_SIGNAL_MID_BYTES: usize = 64;
 const DEFAULT_TURN_TTL_SECS: u64 = 3600;
 
+/// JSON-serializable ICE server configuration sent to the browser client.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WebRtcIceServerConfig {
+    /// `stun:` or `turn:` URLs exposed to the browser.
     pub urls: Vec<String>,
+    /// Ephemeral TURN username, or blank for STUN-only servers.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub username: String,
+    /// Ephemeral TURN credential, or blank for STUN-only servers.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub credential: String,
 }
 
 impl WebRtcIceServerConfig {
+    /// Converts the serialized config into the `webrtc` crate type.
     #[must_use]
     pub fn to_rtc_ice_server(&self) -> RTCIceServer {
         RTCIceServer {
@@ -45,6 +54,7 @@ impl WebRtcIceServerConfig {
         }
     }
 
+    /// Validates that the config is safe to send to the client and feed into `WebRTC`.
     fn validate(&self) -> Result<(), String> {
         if self.urls.is_empty() {
             return Err(String::from(
@@ -70,11 +80,16 @@ impl WebRtcIceServerConfig {
     }
 }
 
+/// Runtime configuration for STUN/TURN integration on the server.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WebRtcRuntimeConfig {
+    /// STUN URLs exposed to the client for direct-path discovery.
     pub stun_urls: Vec<String>,
+    /// TURN URLs exposed to the client for relay fallback.
     pub turn_urls: Vec<String>,
+    /// Shared secret used to mint temporary TURN credentials.
     pub turn_shared_secret: Option<String>,
+    /// Lifetime of generated TURN credentials.
     pub turn_ttl: Duration,
 }
 
@@ -90,6 +105,7 @@ impl Default for WebRtcRuntimeConfig {
 }
 
 impl WebRtcRuntimeConfig {
+    /// Validates the runtime configuration loaded from the environment.
     pub fn validate(&self) -> Result<(), String> {
         for url in &self.stun_urls {
             if url.trim().is_empty() {
@@ -122,6 +138,7 @@ impl WebRtcRuntimeConfig {
         Ok(())
     }
 
+    /// Builds the ICE server list for one connection, including ephemeral TURN credentials.
     pub fn ice_servers_for_connection(
         &self,
         connection_id: ConnectionId,
@@ -160,11 +177,15 @@ impl WebRtcRuntimeConfig {
     }
 }
 
+/// Fixed mapping between semantic channel names and negotiated data-channel ids.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SignalingChannelMap {
+    /// Reliable ordered control channel id.
     pub control: u16,
+    /// Unreliable player-input channel id.
     pub input: u16,
+    /// Unreliable snapshot channel id.
     pub snapshot: u16,
 }
 
@@ -178,15 +199,19 @@ impl Default for SignalingChannelMap {
     }
 }
 
+/// JSON-serializable `WebRTC` offer or answer description.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SignalingSessionDescription {
+    /// SDP type, limited to `offer` or `answer`.
     #[serde(rename = "type")]
     pub sdp_type: String,
+    /// Raw SDP payload.
     pub sdp: String,
 }
 
 impl SignalingSessionDescription {
+    /// Validates description type and size limits.
     pub fn validate(&self) -> Result<(), String> {
         let sdp_type = self.sdp_type.trim();
         if sdp_type != "offer" && sdp_type != "answer" {
@@ -208,6 +233,7 @@ impl SignalingSessionDescription {
         Ok(())
     }
 
+    /// Validates that the description is a client-originated offer.
     pub fn validate_as_offer(&self) -> Result<(), String> {
         self.validate()?;
         if self.sdp_type.trim() != "offer" {
@@ -218,6 +244,7 @@ impl SignalingSessionDescription {
         Ok(())
     }
 
+    /// Converts the signaling payload into an `RTCSessionDescription`.
     pub fn to_rtc_description(&self) -> Result<RTCSessionDescription, String> {
         self.validate()?;
         match self.sdp_type.trim() {
@@ -232,6 +259,7 @@ impl SignalingSessionDescription {
         }
     }
 
+    /// Converts an `RTCSessionDescription` into the signaling wire format.
     #[must_use]
     pub fn from_rtc_description(description: &RTCSessionDescription) -> Self {
         Self {
@@ -241,17 +269,22 @@ impl SignalingSessionDescription {
     }
 }
 
+/// JSON-serializable ICE candidate exchanged over the signaling websocket.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SignalingIceCandidate {
+    /// Raw candidate line.
     pub candidate: String,
+    /// Optional media id for the candidate.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sdp_mid: Option<String>,
+    /// Optional media-line index for the candidate.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sdp_mline_index: Option<u16>,
 }
 
 impl SignalingIceCandidate {
+    /// Validates size and field constraints for one ICE candidate.
     pub fn validate(&self) -> Result<(), String> {
         if self.candidate.trim().is_empty() {
             return Err(String::from("ICE candidate must not be empty"));
@@ -277,6 +310,7 @@ impl SignalingIceCandidate {
         Ok(())
     }
 
+    /// Converts the signaling form into the `webrtc` crate type.
     pub fn to_rtc_candidate_init(&self) -> Result<RTCIceCandidateInit, String> {
         self.validate()?;
         Ok(RTCIceCandidateInit {
@@ -287,6 +321,7 @@ impl SignalingIceCandidate {
         })
     }
 
+    /// Converts the `webrtc` crate candidate type into the signaling wire format.
     #[must_use]
     pub fn from_rtc_candidate_init(candidate: &RTCIceCandidateInit) -> Self {
         Self {
@@ -297,19 +332,26 @@ impl SignalingIceCandidate {
     }
 }
 
+/// Client-to-server signaling messages accepted on `/ws`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ClientSignalMessage {
+    /// Submits the client's SDP offer.
     SessionDescription {
+        /// The offer payload.
         description: SignalingSessionDescription,
     },
+    /// Submits one remote ICE candidate.
     IceCandidate {
+        /// The candidate payload.
         candidate: SignalingIceCandidate,
     },
+    /// Requests an orderly signaling shutdown.
     Bye,
 }
 
 impl ClientSignalMessage {
+    /// Validates the message according to the client signaling contract.
     pub fn validate(&self) -> Result<(), String> {
         match self {
             Self::SessionDescription { description } => description.validate_as_offer(),
@@ -319,25 +361,37 @@ impl ClientSignalMessage {
     }
 }
 
+/// Server-to-client signaling messages sent over `/ws`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ServerSignalMessage {
+    /// Announces protocol details before the `WebRTC` offer is processed.
     Hello {
+        /// Current network protocol version.
         protocol_version: u8,
+        /// ICE servers to use for this connection.
         ice_servers: Vec<WebRtcIceServerConfig>,
+        /// Negotiated channel ids to open in the browser.
         channels: SignalingChannelMap,
     },
+    /// Sends the server's SDP answer.
     SessionDescription {
+        /// The answer payload.
         description: SignalingSessionDescription,
     },
+    /// Sends one local ICE candidate to the client.
     IceCandidate {
+        /// The candidate payload.
         candidate: SignalingIceCandidate,
     },
+    /// Reports a signaling failure to the client.
     Error {
+        /// Human-readable error message safe to show in the shell.
         message: String,
     },
 }
 
+/// Parses and validates one client signaling message from websocket text.
 pub fn decode_client_signal_message(text: &str) -> Result<ClientSignalMessage, String> {
     if text.is_empty() {
         return Err(String::from("signaling message must not be empty"));
@@ -359,6 +413,7 @@ pub fn decode_client_signal_message(text: &str) -> Result<ClientSignalMessage, S
     Ok(message)
 }
 
+/// Rejects obvious shape mismatches before deserializing into the signaling enum.
 fn validate_client_signal_json_shape(value: &Value) -> Result<(), String> {
     let object = value
         .as_object()
@@ -386,6 +441,7 @@ fn validate_client_signal_json_shape(value: &Value) -> Result<(), String> {
     Ok(())
 }
 
+/// Generates ephemeral TURN credentials from the shared secret and connection id.
 fn generate_turn_credentials(
     shared_secret: &str,
     connection_id: ConnectionId,

@@ -18,6 +18,9 @@ on:
       - "server/**"
       - "shared/docs/**"
 
+permissions:
+  contents: read
+
 jobs:
   quality:
     runs-on: ubuntu-latest
@@ -62,6 +65,21 @@ jobs:
       - name: HTML reports
         run: ./scripts/quality.ps1 reports
 
+      - name: Configure GitHub Pages
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/configure-pages@v5
+
+      - name: Prepare Pages artifact
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          New-Item -ItemType File -Force -Path target/reports/.nojekyll | Out-Null
+
+      - name: Upload Pages artifact
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: server/target/reports
+
       - name: Dependency policy
         run: ./scripts/quality.ps1 deny
 
@@ -104,3 +122,18 @@ jobs:
           Coverage file inside artifact: `server/target/reports/coverage/output.html`
           Complexity file inside artifact: `server/target/reports/complexity/output.html`
           "@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+
+  deploy-pages:
+    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: quality
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

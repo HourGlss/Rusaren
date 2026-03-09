@@ -3,16 +3,23 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+/// Low-cardinality labels for the HTTP surface exposed by the server.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HttpRouteLabel {
+    /// The root page that serves the exported Godot client.
     Root,
+    /// The basic liveness probe.
     Healthz,
+    /// The Prometheus metrics endpoint.
     Metrics,
+    /// Either the signaling websocket or the websocket dev adapter.
     WebSocket,
+    /// Any other static asset path served from the web client root.
     StaticAsset,
 }
 
 impl HttpRouteLabel {
+    /// Returns the Prometheus-safe string form for the label.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -25,6 +32,7 @@ impl HttpRouteLabel {
     }
 }
 
+/// Maps an incoming HTTP request path into a low-cardinality metrics label.
 #[must_use]
 pub fn classify_http_path(path: &str) -> HttpRouteLabel {
     match path {
@@ -81,12 +89,14 @@ impl ServerObservabilityInner {
     }
 }
 
+/// Thread-safe in-process metrics registry for the hosted server surface.
 #[derive(Clone, Debug)]
 pub struct ServerObservability {
     inner: Arc<ServerObservabilityInner>,
 }
 
 impl ServerObservability {
+    /// Creates a new observability registry for one server process.
     #[must_use]
     pub fn new(version: impl Into<String>) -> Self {
         Self {
@@ -94,6 +104,7 @@ impl ServerObservability {
         }
     }
 
+    /// Records one HTTP request against the supplied route label.
     pub fn record_http_request(&self, route: HttpRouteLabel) {
         let counter = match route {
             HttpRouteLabel::Root => &self.inner.http_root_requests,
@@ -105,12 +116,14 @@ impl ServerObservability {
         counter.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Records an attempted websocket upgrade.
     pub fn record_websocket_upgrade_attempt(&self) {
         self.inner
             .websocket_upgrade_attempts
             .fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Records a successfully bound realtime session.
     pub fn record_websocket_session_bound(&self) {
         self.inner
             .websocket_sessions_bound
@@ -120,6 +133,7 @@ impl ServerObservability {
             .fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Records a websocket disconnect and decrements the active-session gauge.
     pub fn record_websocket_disconnect(&self) {
         self.inner
             .websocket_disconnects
@@ -127,12 +141,14 @@ impl ServerObservability {
         decrement_clamped(&self.inner.websocket_sessions_active);
     }
 
+    /// Records a rejected realtime session or packet.
     pub fn record_websocket_rejection(&self) {
         self.inner
             .websocket_rejections
             .fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Records whether an ingress packet was accepted or rejected.
     pub fn record_ingress_packet(&self, accepted: bool) {
         let counter = if accepted {
             &self.inner.ingress_packets_accepted
@@ -142,6 +158,7 @@ impl ServerObservability {
         counter.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Records the elapsed time for one simulation tick.
     pub fn record_tick(&self, duration: Duration) {
         let capped_micros = duration.as_micros().min(u128::from(u64::MAX));
         let micros = u64::try_from(capped_micros).unwrap_or(u64::MAX);
@@ -152,6 +169,7 @@ impl ServerObservability {
         update_max(&self.inner.tick_duration_max_micros, micros);
     }
 
+    /// Renders the current metrics snapshot in Prometheus text format.
     #[must_use]
     pub fn render_prometheus(&self) -> String {
         let mut output = String::new();

@@ -37,8 +37,10 @@ use crate::{
 
 const DEFAULT_HIT_POINTS: u16 = 100;
 
+/// Errors returned by the server application orchestration layer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AppError {
+    /// The requested player is not currently connected to the server app.
     PlayerMissing(PlayerId),
 }
 
@@ -98,6 +100,7 @@ impl MatchRuntime {
     }
 }
 
+/// High-level authoritative application state for lobbies, matches, and persistence.
 #[derive(Debug)]
 pub struct ServerApp {
     content: GameContent,
@@ -121,6 +124,7 @@ impl Default for ServerApp {
 }
 
 impl ServerApp {
+    /// Creates an ephemeral server app loaded from bundled content.
     #[must_use]
     pub fn new() -> Self {
         let content = match GameContent::bundled() {
@@ -132,6 +136,7 @@ impl ServerApp {
         Self::from_content_and_record_store(content, PlayerRecordStore::new_ephemeral())
     }
 
+    /// Creates a server app backed by a persistent on-disk record store.
     pub fn new_persistent(path: impl Into<PathBuf>) -> Result<Self, RecordStoreError> {
         let content = match GameContent::bundled() {
             Ok(content) => content,
@@ -145,11 +150,13 @@ impl ServerApp {
         ))
     }
 
+    /// Creates an ephemeral server app from explicit runtime content.
     #[must_use]
     pub fn new_with_content(content: GameContent) -> Self {
         Self::from_content_and_record_store(content, PlayerRecordStore::new_ephemeral())
     }
 
+    /// Creates a persistent server app from explicit runtime content.
     pub fn new_persistent_with_content(
         content: GameContent,
         path: impl Into<PathBuf>,
@@ -180,12 +187,14 @@ impl ServerApp {
         }
     }
 
+    /// Drains all currently queued transport packets and applies them to server state.
     pub fn pump_transport<T: AppTransport>(&mut self, transport: &mut T) {
         while let Some((connection_id, packet)) = transport.recv_from_client() {
             self.handle_packet(transport, connection_id, &packet);
         }
     }
 
+    /// Advances the application clock by a number of milliseconds.
     pub fn advance_millis<T: AppTransport>(&mut self, transport: &mut T, delta_ms: u16) {
         if delta_ms == 0 {
             return;
@@ -213,12 +222,14 @@ impl ServerApp {
         }
     }
 
+    /// Advances the application clock in whole-second steps.
     pub fn advance_seconds<T: AppTransport>(&mut self, transport: &mut T, seconds: u8) {
         for _ in 0..seconds {
             self.advance_millis(transport, 1000);
         }
     }
 
+    /// Disconnects one player and applies the correct lobby or match-side cleanup.
     pub fn disconnect_player<T: AppTransport>(
         &mut self,
         transport: &mut T,
@@ -310,6 +321,7 @@ impl ServerApp {
         Ok(())
     }
 
+    /// Disconnects one connection id if it is bound to a player.
     pub fn disconnect_connection<T: AppTransport>(
         &mut self,
         transport: &mut T,
@@ -1910,6 +1922,7 @@ impl ServerApp {
         ))
     }
 
+    /// Returns the player id currently bound to a transport connection, if any.
     #[must_use]
     pub fn player_id_for_connection(&self, connection_id: ConnectionId) -> Option<PlayerId> {
         self.connections.get(&connection_id).copied()
