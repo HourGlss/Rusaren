@@ -143,6 +143,16 @@ fn render_sim_event(event: &SimulationEvent) -> String {
         SimulationEvent::PlayerMoved { player_id, x, y } => {
             format!("player {} moved to ({x}, {y})", player_id.get())
         }
+        SimulationEvent::EffectSpawned { effect } => format!(
+            "player {} spawned {:?} from ({}, {}) to ({}, {}) with radius {}",
+            effect.owner.get(),
+            effect.kind,
+            effect.x,
+            effect.y,
+            effect.target_x,
+            effect.target_y,
+            effect.radius
+        ),
         SimulationEvent::DamageApplied {
             attacker,
             target,
@@ -344,10 +354,12 @@ fn run_demo() -> Result<Vec<String>, String> {
         lines.push(render_sim_event(&event));
     }
 
-    let damage_event = world
-        .apply_damage(alice_id, bob_id, 100)
-        .map_err(|error| error.to_string())?;
-    lines.push(render_sim_event(&damage_event));
+    for event in world
+        .cast_skill(alice_id, 1)
+        .map_err(|error| error.to_string())?
+    {
+        lines.push(render_sim_event(&event));
+    }
 
     for event in session
         .mark_player_defeated(bob_id)

@@ -9,7 +9,9 @@ use game_api::{
     spawn_dev_server, spawn_dev_server_with_options, DevServerOptions, ServerObservability,
 };
 use game_domain::{MatchOutcome, PlayerId, PlayerName, ReadyState, TeamSide};
-use game_net::{ClientControlCommand, ServerControlEvent, ValidatedInputFrame, BUTTON_PRIMARY};
+use game_net::{
+    ClientControlCommand, ServerControlEvent, ValidatedInputFrame, BUTTON_CAST, BUTTON_PRIMARY,
+};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio_tungstenite::connect_async;
@@ -139,6 +141,11 @@ async fn send_input(
         Err(error) => panic!("input frame packet should encode: {error}"),
     };
     let _ = stream.send(ClientMessage::Binary(packet.into())).await;
+}
+
+fn slot_one_cast_input(client_input_tick: u32) -> ValidatedInputFrame {
+    ValidatedInputFrame::new(client_input_tick, 0, 0, 0, 0, BUTTON_CAST, 1)
+        .expect("slot one cast frame should be valid")
 }
 
 async fn connect_player(stream: &mut ClientStream, raw_name: &str) {
@@ -709,6 +716,15 @@ async fn websocket_adapter_finishes_a_full_match_loop_via_live_input_frames() {
     assert!(bob_launch_events
         .iter()
         .any(|event| matches!(event, ServerControlEvent::LaunchCountdownStarted { .. })));
+    let alice_snapshot_events = recv_events_until(&mut alice, 4, |event| {
+        matches!(event, ServerControlEvent::ArenaStateSnapshot { .. })
+    })
+    .await;
+    assert!(alice_snapshot_events.iter().any(|event| matches!(
+        event,
+        ServerControlEvent::ArenaStateSnapshot { snapshot }
+            if snapshot.players.len() == 2 && snapshot.obstacles.len() == 8
+    )));
 
     for round in 1..=5 {
         send_command(
@@ -730,11 +746,11 @@ async fn websocket_adapter_finishes_a_full_match_loop_via_live_input_frames() {
         )
         .await;
 
-        let alice_skill_events = recv_events_until(&mut alice, 6, |event| {
+        let alice_skill_events = recv_events_until(&mut alice, 10, |event| {
             matches!(event, ServerControlEvent::PreCombatStarted { .. })
         })
         .await;
-        let bob_skill_events = recv_events_until(&mut bob, 6, |event| {
+        let bob_skill_events = recv_events_until(&mut bob, 10, |event| {
             matches!(event, ServerControlEvent::PreCombatStarted { .. })
         })
         .await;
@@ -756,8 +772,7 @@ async fn websocket_adapter_finishes_a_full_match_loop_via_live_input_frames() {
 
         send_input(
             &mut alice,
-            ValidatedInputFrame::new(u32::from(round), 0, 0, 0, 0, BUTTON_PRIMARY, 0)
-                .expect("primary attack frame should be valid"),
+            slot_one_cast_input(u32::from(round)),
             u32::from(round),
             u32::from(round),
         )
@@ -772,6 +787,11 @@ async fn websocket_adapter_finishes_a_full_match_loop_via_live_input_frames() {
                 matches!(event, ServerControlEvent::RoundWon { round: won, .. } if won.get() == round)
             })
             .await;
+            assert!(alice_round_events.iter().any(|event| matches!(
+                event,
+                ServerControlEvent::ArenaEffectBatch { effects }
+                    if effects.iter().any(|effect| effect.slot == 1)
+            )));
             assert!(alice_round_events.iter().any(|event| matches!(
                 event,
                 ServerControlEvent::RoundWon {
@@ -959,11 +979,15 @@ async fn websocket_adapter_rejects_skill_tier_skips_and_accepts_the_next_valid_p
         5,
     )
     .await;
-    assert!(matches!(
-        recv_event(&mut alice).await,
+    let alice_invalid_events = recv_events_until(&mut alice, 4, |event| {
+        matches!(event, ServerControlEvent::Error { .. })
+    })
+    .await;
+    assert!(alice_invalid_events.iter().any(|event| matches!(
+        event,
         ServerControlEvent::Error { message }
             if message == "skill progression for Mage expected tier 1 but received tier 5"
-    ));
+    )));
 
     send_command(
         &mut alice,
@@ -1118,11 +1142,15 @@ async fn websocket_adapter_rejects_input_frames_before_combat() {
     )
     .await;
 
-    assert!(matches!(
-        recv_event(&mut alice).await,
+    let alice_error_events = recv_events_until(&mut alice, 4, |event| {
+        matches!(event, ServerControlEvent::Error { .. })
+    })
+    .await;
+    assert!(alice_error_events.iter().any(|event| matches!(
+        event,
         ServerControlEvent::Error { message }
             if message == "input frames are only accepted during combat"
-    ));
+    )));
 
     let _ = alice.close(None).await;
     let _ = bob.close(None).await;

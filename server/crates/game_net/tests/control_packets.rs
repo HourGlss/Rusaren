@@ -5,8 +5,10 @@ use game_domain::{
     SkillTree, TeamSide,
 };
 use game_net::{
-    ChannelId, ClientControlCommand, LobbyDirectoryEntry, LobbySnapshotPhase, LobbySnapshotPlayer,
-    PacketError, PacketHeader, PacketKind, ServerControlEvent,
+    ArenaEffectKind, ArenaEffectSnapshot, ArenaObstacleKind, ArenaObstacleSnapshot,
+    ArenaPlayerSnapshot, ArenaStateSnapshot, ChannelId, ClientControlCommand, LobbyDirectoryEntry,
+    LobbySnapshotPhase, LobbySnapshotPlayer, PacketError, PacketHeader, PacketKind,
+    ServerControlEvent,
 };
 
 fn player_id(raw: u32) -> PlayerId {
@@ -267,6 +269,67 @@ fn server_control_event_round_trips_lobby_directory_and_snapshot_packets() {
 }
 
 #[test]
+fn server_control_event_round_trips_arena_packets() {
+    let arena_state = ServerControlEvent::ArenaStateSnapshot {
+        snapshot: ArenaStateSnapshot {
+            width: 1800,
+            height: 1200,
+            obstacles: vec![
+                ArenaObstacleSnapshot {
+                    kind: ArenaObstacleKind::Shrub,
+                    center_x: -220,
+                    center_y: -150,
+                    half_width: 92,
+                    half_height: 92,
+                },
+                ArenaObstacleSnapshot {
+                    kind: ArenaObstacleKind::Pillar,
+                    center_x: -220,
+                    center_y: -150,
+                    half_width: 70,
+                    half_height: 70,
+                },
+            ],
+            players: vec![ArenaPlayerSnapshot {
+                player_id: player_id(7),
+                player_name: player_name("Alice"),
+                team: TeamSide::TeamA,
+                x: -640,
+                y: 220,
+                aim_x: 120,
+                aim_y: 0,
+                hit_points: 100,
+                max_hit_points: 100,
+                alive: true,
+                unlocked_skill_slots: 3,
+            }],
+        },
+    };
+    let effect_batch = ServerControlEvent::ArenaEffectBatch {
+        effects: vec![ArenaEffectSnapshot {
+            kind: ArenaEffectKind::SkillShot,
+            owner: player_id(7),
+            slot: 1,
+            x: -640,
+            y: 220,
+            target_x: 640,
+            target_y: 220,
+            radius: 28,
+        }],
+    };
+
+    let arena_packet = arena_state.clone().encode_packet(6, 22).expect("packet");
+    let effects_packet = effect_batch.clone().encode_packet(7, 22).expect("packet");
+    let (_, decoded_arena_state) =
+        ServerControlEvent::decode_packet(&arena_packet).expect("decode");
+    let (_, decoded_effect_batch) =
+        ServerControlEvent::decode_packet(&effects_packet).expect("decode");
+
+    assert_eq!(decoded_arena_state, arena_state);
+    assert_eq!(decoded_effect_batch, effect_batch);
+}
+
+#[test]
 fn server_control_event_rejects_bad_payloads_and_unknown_variants() {
     let header = PacketHeader::new(ChannelId::Control, PacketKind::ControlEvent, 0, 1, 1, 1)
         .expect("header");
@@ -282,6 +345,59 @@ fn server_control_event_rejects_bad_payloads_and_unknown_variants() {
     assert_eq!(
         ServerControlEvent::decode_packet(&packet),
         Err(PacketError::InvalidEncodedMatchOutcome(9))
+    );
+}
+
+#[test]
+fn server_control_event_rejects_invalid_arena_kinds() {
+    let mut arena_payload = vec![19];
+    arena_payload.extend_from_slice(&1800_u16.to_le_bytes());
+    arena_payload.extend_from_slice(&1200_u16.to_le_bytes());
+    arena_payload.extend_from_slice(&1_u16.to_le_bytes());
+    arena_payload.push(9);
+    arena_payload.extend_from_slice(&0_i16.to_le_bytes());
+    arena_payload.extend_from_slice(&0_i16.to_le_bytes());
+    arena_payload.extend_from_slice(&32_u16.to_le_bytes());
+    arena_payload.extend_from_slice(&32_u16.to_le_bytes());
+    arena_payload.extend_from_slice(&0_u16.to_le_bytes());
+    let header = PacketHeader::new(
+        ChannelId::Control,
+        PacketKind::ControlEvent,
+        0,
+        u16::try_from(arena_payload.len()).expect("payload length should fit"),
+        3,
+        1,
+    )
+    .expect("header");
+    let packet = header.encode(&arena_payload);
+    assert_eq!(
+        ServerControlEvent::decode_packet(&packet),
+        Err(PacketError::InvalidEncodedArenaObstacleKind(9))
+    );
+
+    let mut effect_payload = vec![20];
+    effect_payload.extend_from_slice(&1_u16.to_le_bytes());
+    effect_payload.push(9);
+    effect_payload.extend_from_slice(&7_u32.to_le_bytes());
+    effect_payload.push(1);
+    effect_payload.extend_from_slice(&0_i16.to_le_bytes());
+    effect_payload.extend_from_slice(&0_i16.to_le_bytes());
+    effect_payload.extend_from_slice(&0_i16.to_le_bytes());
+    effect_payload.extend_from_slice(&0_i16.to_le_bytes());
+    effect_payload.extend_from_slice(&28_u16.to_le_bytes());
+    let header = PacketHeader::new(
+        ChannelId::Control,
+        PacketKind::ControlEvent,
+        0,
+        u16::try_from(effect_payload.len()).expect("payload length should fit"),
+        4,
+        1,
+    )
+    .expect("header");
+    let packet = header.encode(&effect_payload);
+    assert_eq!(
+        ServerControlEvent::decode_packet(&packet),
+        Err(PacketError::InvalidEncodedArenaEffectKind(9))
     );
 }
 

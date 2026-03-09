@@ -31,6 +31,11 @@ var roster := {}
 var recent_events: Array[String] = []
 var local_skill_progress := {}
 var local_round_skill_locked := false
+var arena_width := 0
+var arena_height := 0
+var arena_obstacles: Array[Dictionary] = []
+var arena_players := {}
+var arena_effects: Array[Dictionary] = []
 
 
 func prepare_for_connection(url: String, player_name: String) -> void:
@@ -58,6 +63,7 @@ func prepare_for_connection(url: String, player_name: String) -> void:
 	recent_events.clear()
 	_reset_local_skill_progress()
 	local_round_skill_locked = false
+	_clear_arena_state()
 	_append_event("Connecting to %s." % websocket_url)
 
 
@@ -108,6 +114,7 @@ func apply_server_event(event: Dictionary) -> void:
 			roster.clear()
 			_reset_local_skill_progress()
 			local_round_skill_locked = false
+			_clear_arena_state()
 			banner_message = "Connected as %s." % local_player_name
 			_append_event("Connected as %s (#%d)." % [local_player_name, local_player_id])
 		"LobbyDirectorySnapshot":
@@ -204,6 +211,7 @@ func apply_server_event(event: Dictionary) -> void:
 			match_phase = "skill_pick"
 			_reset_local_skill_progress()
 			local_round_skill_locked = false
+			_clear_arena_state()
 			phase_label = "Match #%d, Round %d" % [current_match_id, current_round]
 			countdown_label = "Choose one skill in %ds." % int(event.get("skill_pick_seconds", 0))
 			lobby_locked = false
@@ -240,6 +248,7 @@ func apply_server_event(event: Dictionary) -> void:
 			score_b = int(event.get("score_b", score_b))
 			countdown_label = "Round %d ended. Choose the next skill when ready." % current_round
 			local_round_skill_locked = false
+			arena_effects.clear()
 			banner_message = "%s won round %d." % [
 				String(event.get("winning_team", "Unknown Team")),
 				current_round,
@@ -256,6 +265,7 @@ func apply_server_event(event: Dictionary) -> void:
 			match_phase = "ended"
 			score_a = int(event.get("score_a", score_a))
 			score_b = int(event.get("score_b", score_b))
+			arena_effects.clear()
 			outcome_label = "%s, %d-%d" % [
 				String(event.get("outcome", "Unknown")),
 				score_a,
@@ -271,6 +281,24 @@ func apply_server_event(event: Dictionary) -> void:
 		"Error":
 			banner_message = String(event.get("message", "Unknown server error"))
 			_append_event("Server error: %s" % banner_message)
+		"ArenaStateSnapshot":
+			var snapshot: Dictionary = event.get("snapshot", {})
+			arena_width = int(snapshot.get("width", 0))
+			arena_height = int(snapshot.get("height", 0))
+			arena_obstacles.clear()
+			for obstacle_data in snapshot.get("obstacles", []):
+				arena_obstacles.append((obstacle_data as Dictionary).duplicate(true))
+			arena_players.clear()
+			for player_data in snapshot.get("players", []):
+				var player_id := int(player_data.get("player_id", 0))
+				arena_players[player_id] = player_data.duplicate(true)
+		"ArenaEffectBatch":
+			for effect_data in event.get("effects", []):
+				var effect: Dictionary = (effect_data as Dictionary).duplicate(true)
+				var ttl: float = _effect_ttl_seconds(String(effect.get("kind", "")))
+				effect["ttl"] = ttl
+				effect["ttl_max"] = ttl
+				arena_effects.append(effect)
 		_:
 			_append_event("Unhandled event: %s" % event_type)
 
@@ -422,7 +450,45 @@ func can_quit_results() -> bool:
 
 
 func can_send_combat_input() -> bool:
-	return transport_state == "open" and screen == "match" and match_phase == "combat"
+	var player := local_arena_player()
+	return (
+		transport_state == "open"
+		and screen == "match"
+		and match_phase == "combat"
+		and not player.is_empty()
+		and bool(player.get("alive", false))
+	)
+
+
+func can_use_combat_slot(slot: int) -> bool:
+	if slot < 1 or slot > 5:
+		return false
+	var player := local_arena_player()
+	return can_send_combat_input() and slot <= int(player.get("unlocked_skill_slots", 0))
+
+
+func local_arena_player() -> Dictionary:
+	if arena_players.has(local_player_id):
+		return arena_players[local_player_id]
+	return {}
+
+
+func arena_players_list() -> Array[Dictionary]:
+	var ids := arena_players.keys()
+	ids.sort()
+	var players: Array[Dictionary] = []
+	for player_id in ids:
+		players.append((arena_players[player_id] as Dictionary).duplicate(true))
+	return players
+
+
+func advance_visuals(delta: float) -> void:
+	for index in range(arena_effects.size() - 1, -1, -1):
+		var effect: Dictionary = arena_effects[index]
+		var ttl: float = maxf(0.0, float(effect.get("ttl", 0.0)) - delta)
+		effect["ttl"] = ttl
+		if ttl <= 0.0:
+			arena_effects.remove_at(index)
 
 
 func _reset_to_central() -> void:
@@ -441,6 +507,7 @@ func _reset_to_central() -> void:
 	roster.clear()
 	_reset_local_skill_progress()
 	local_round_skill_locked = false
+	_clear_arena_state()
 
 
 func _ensure_roster_entry(player_id: int, suggested_name: String = "") -> Dictionary:
@@ -483,3 +550,25 @@ func _reset_local_skill_progress() -> void:
 		"Mage": 0,
 		"Cleric": 0,
 	}
+
+
+func _clear_arena_state() -> void:
+	arena_width = 0
+	arena_height = 0
+	arena_obstacles.clear()
+	arena_players.clear()
+	arena_effects.clear()
+
+
+func _effect_ttl_seconds(kind_name: String) -> float:
+	match kind_name:
+		"MeleeSwing":
+			return 0.18
+		"DashTrail":
+			return 0.24
+		"HitSpark":
+			return 0.16
+		"Beam":
+			return 0.22
+		_:
+			return 0.35

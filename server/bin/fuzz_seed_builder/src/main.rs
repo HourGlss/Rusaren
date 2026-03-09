@@ -11,8 +11,10 @@ use game_domain::{
     TeamSide,
 };
 use game_net::{
-    ChannelId, ClientControlCommand, LobbyDirectoryEntry, LobbySnapshotPhase, LobbySnapshotPlayer,
-    PacketHeader, PacketKind, ServerControlEvent, ValidatedInputFrame, BUTTON_CAST, BUTTON_PRIMARY,
+    ArenaEffectKind, ArenaEffectSnapshot, ArenaObstacleKind, ArenaObstacleSnapshot,
+    ArenaPlayerSnapshot, ArenaStateSnapshot, ChannelId, ClientControlCommand, LobbyDirectoryEntry,
+    LobbySnapshotPhase, LobbySnapshotPlayer, PacketHeader, PacketKind, ServerControlEvent,
+    ValidatedInputFrame, BUTTON_CAST, BUTTON_PRIMARY,
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -383,6 +385,96 @@ fn write_server_control_event_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
         ],
     }
     .encode_packet(3, 11)?;
+    let arena_state = ServerControlEvent::ArenaStateSnapshot {
+        snapshot: ArenaStateSnapshot {
+            width: 1800,
+            height: 1200,
+            obstacles: vec![
+                ArenaObstacleSnapshot {
+                    kind: ArenaObstacleKind::Shrub,
+                    center_x: -220,
+                    center_y: -150,
+                    half_width: 92,
+                    half_height: 92,
+                },
+                ArenaObstacleSnapshot {
+                    kind: ArenaObstacleKind::Pillar,
+                    center_x: -220,
+                    center_y: -150,
+                    half_width: 70,
+                    half_height: 70,
+                },
+                ArenaObstacleSnapshot {
+                    kind: ArenaObstacleKind::Shrub,
+                    center_x: 220,
+                    center_y: 150,
+                    half_width: 92,
+                    half_height: 92,
+                },
+                ArenaObstacleSnapshot {
+                    kind: ArenaObstacleKind::Pillar,
+                    center_x: 220,
+                    center_y: 150,
+                    half_width: 70,
+                    half_height: 70,
+                },
+            ],
+            players: vec![
+                ArenaPlayerSnapshot {
+                    player_id: player_id(7)?,
+                    player_name: player_name("Alice")?,
+                    team: TeamSide::TeamA,
+                    x: -640,
+                    y: 220,
+                    aim_x: 120,
+                    aim_y: 0,
+                    hit_points: 100,
+                    max_hit_points: 100,
+                    alive: true,
+                    unlocked_skill_slots: 3,
+                },
+                ArenaPlayerSnapshot {
+                    player_id: player_id(8)?,
+                    player_name: player_name("Bob")?,
+                    team: TeamSide::TeamB,
+                    x: 640,
+                    y: 220,
+                    aim_x: -120,
+                    aim_y: 0,
+                    hit_points: 100,
+                    max_hit_points: 100,
+                    alive: true,
+                    unlocked_skill_slots: 3,
+                },
+            ],
+        },
+    }
+    .encode_packet(4, 12)?;
+    let arena_effects = ServerControlEvent::ArenaEffectBatch {
+        effects: vec![
+            ArenaEffectSnapshot {
+                kind: ArenaEffectKind::SkillShot,
+                owner: player_id(7)?,
+                slot: 1,
+                x: -640,
+                y: 220,
+                target_x: 640,
+                target_y: 220,
+                radius: 28,
+            },
+            ArenaEffectSnapshot {
+                kind: ArenaEffectKind::MeleeSwing,
+                owner: player_id(8)?,
+                slot: 0,
+                x: 640,
+                y: 220,
+                target_x: 530,
+                target_y: 220,
+                radius: 48,
+            },
+        ],
+    }
+    .encode_packet(5, 12)?;
     let truncated = snapshot[..snapshot.len() - 1].to_vec();
     let wrong_packet_kind =
         PacketHeader::new(ChannelId::Control, PacketKind::ControlCommand, 0, 1, 4, 12)?
@@ -441,6 +533,48 @@ fn write_server_control_event_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
     let invalid_match_outcome =
         PacketHeader::new(ChannelId::Control, PacketKind::ControlEvent, 0, 4, 9, 12)?
             .encode(&[14, 9, 0, 0]);
+    let invalid_arena_obstacle_kind = {
+        let mut payload = vec![19];
+        payload.extend_from_slice(&1800_u16.to_le_bytes());
+        payload.extend_from_slice(&1200_u16.to_le_bytes());
+        payload.extend_from_slice(&1_u16.to_le_bytes());
+        payload.push(9);
+        payload.extend_from_slice(&0_i16.to_le_bytes());
+        payload.extend_from_slice(&0_i16.to_le_bytes());
+        payload.extend_from_slice(&32_u16.to_le_bytes());
+        payload.extend_from_slice(&32_u16.to_le_bytes());
+        payload.extend_from_slice(&0_u16.to_le_bytes());
+        PacketHeader::new(
+            ChannelId::Control,
+            PacketKind::ControlEvent,
+            0,
+            u16::try_from(payload.len())?,
+            10,
+            12,
+        )?
+        .encode(&payload)
+    };
+    let invalid_arena_effect_kind = {
+        let mut payload = vec![20];
+        payload.extend_from_slice(&1_u16.to_le_bytes());
+        payload.push(9);
+        payload.extend_from_slice(&7_u32.to_le_bytes());
+        payload.push(1);
+        payload.extend_from_slice(&0_i16.to_le_bytes());
+        payload.extend_from_slice(&0_i16.to_le_bytes());
+        payload.extend_from_slice(&0_i16.to_le_bytes());
+        payload.extend_from_slice(&0_i16.to_le_bytes());
+        payload.extend_from_slice(&28_u16.to_le_bytes());
+        PacketHeader::new(
+            ChannelId::Control,
+            PacketKind::ControlEvent,
+            0,
+            u16::try_from(payload.len())?,
+            11,
+            12,
+        )?
+        .encode(&payload)
+    };
 
     write_seed(dir, "connected_valid.bin", &connected)?;
     write_seed(dir, "created_valid.bin", &created)?;
@@ -460,6 +594,8 @@ fn write_server_control_event_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
     write_seed(dir, "error_valid.bin", &error)?;
     write_seed(dir, "directory_valid.bin", &directory)?;
     write_seed(dir, "snapshot_valid.bin", &snapshot)?;
+    write_seed(dir, "arena_state_valid.bin", &arena_state)?;
+    write_seed(dir, "arena_effects_valid.bin", &arena_effects)?;
     write_seed(dir, "truncated_snapshot.bin", &truncated)?;
     write_seed(dir, "wrong_packet_kind.bin", &wrong_packet_kind)?;
     write_seed(dir, "invalid_optional_team.bin", &invalid_optional_team)?;
@@ -468,6 +604,16 @@ fn write_server_control_event_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
     write_seed(dir, "invalid_ready.bin", &invalid_ready)?;
     write_seed(dir, "invalid_team.bin", &invalid_team)?;
     write_seed(dir, "invalid_match_outcome.bin", &invalid_match_outcome)?;
+    write_seed(
+        dir,
+        "invalid_arena_obstacle_kind.bin",
+        &invalid_arena_obstacle_kind,
+    )?;
+    write_seed(
+        dir,
+        "invalid_arena_effect_kind.bin",
+        &invalid_arena_effect_kind,
+    )?;
     Ok(())
 }
 

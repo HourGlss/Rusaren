@@ -11,6 +11,7 @@ Buildable now:
 - a scripted backend-only gameplay slice that exercises lobby -> match -> combat -> no-contest flow
 - a real websocket dev adapter on top of the backend app layer
 - a Godot 4 shell under `client/godot` that drives the websocket dev adapter with real binary control packets and live combat input frames
+- a first playable arena slice with a mostly empty map, four central square pillars, shrub collars, authoritative player snapshots, WASD movement, mouse aim, left-click melee, and placeholder skills on `1`-`5`
 - a same-origin Godot Web export path hosted directly by the Rust server at `/`
 - a documented production-style deploy path with Caddy, Prometheus, and `coturn`
 - persistent player records under `server/var/player_records.tsv`
@@ -19,9 +20,9 @@ Buildable now:
 
 Not implemented yet:
 - real WebRTC transport integration
-- full Godot gameplay rendering
+- polished Godot gameplay rendering and interpolation
 - content loading and validation
-- full combat/class implementation
+- content-driven combat/class implementation
 
 ## Build and run
 
@@ -72,8 +73,8 @@ The current Godot shell is wired to the websocket dev adapter first, not WebRTC 
 The project metadata version is currently `0.6.0`.
 Known shell limitations:
 - the final production transport is still planned as WebRTC, so browser play currently uses the websocket dev adapter
-- gameplay rendering is still placeholder-only even though the shell now consumes central lobby directory snapshots and full lobby snapshots
-- the current local combat slice resolves rounds with a placeholder primary attack button rather than final movement/casting gameplay
+- the arena slice is intentionally simple and uses placeholder slot skills instead of real authored classes/spells
+- projectile collision/visibility rules are still early and not content-driven yet
 
 Run the Godot protocol checks headlessly:
 
@@ -297,7 +298,10 @@ Current manual full-loop slice:
 - connect both players, let the server assign their runtime player IDs, create/join a lobby, choose teams, ready up
 - click a lobby from the central directory or join by manual lobby ID
 - choose a skill each round
-- press `Primary Attack` during combat to resolve the current placeholder one-hit round flow
+- use `WASD` to move during combat
+- aim with the mouse inside the arena
+- left click for melee
+- use `1`-`5` for the currently unlocked placeholder skill slots
 - review the result screen and quit back to the central lobby
 
 Current easiest full-loop slice:

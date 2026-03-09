@@ -2,6 +2,8 @@ extends Control
 
 const ClientStateScript := preload("res://scripts/state/client_state.gd")
 const DevSocketClientScript := preload("res://scripts/net/dev_socket_client.gd")
+const ArenaViewScript := preload("res://scripts/arena/arena_view.gd")
+const Protocol := preload("res://scripts/net/protocol.gd")
 
 var app_state := ClientStateScript.new()
 var transport := DevSocketClientScript.new()
@@ -16,6 +18,7 @@ var record_label: Label
 var identity_label: Label
 var phase_label: Label
 var countdown_value_label: Label
+var combat_hint_label: Label
 var score_label: Label
 var outcome_label: Label
 var lobby_label: Label
@@ -37,8 +40,12 @@ var join_lobby_button: Button
 var team_a_button: Button
 var team_b_button: Button
 var primary_attack_button: Button
+var arena_view = null
 var skill_buttons: Array[Button] = []
 var _next_client_input_tick := 1
+var _pending_primary_attack := false
+var _pending_cast_slot := 0
+var _last_sent_aim := Vector2i.ZERO
 
 
 func _ready() -> void:
@@ -47,8 +54,36 @@ func _ready() -> void:
 	_refresh_ui()
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
+	app_state.advance_visuals(delta)
 	transport.poll()
+	_drive_combat_input()
+	_refresh_ui()
+
+
+func _input(event: InputEvent) -> void:
+	if not app_state.can_send_combat_input():
+		return
+
+	if event is InputEventMouseButton:
+		var mouse_button := event as InputEventMouseButton
+		if mouse_button.button_index == MOUSE_BUTTON_LEFT and mouse_button.pressed and arena_view != null and arena_view.has_mouse_in_arena():
+			_pending_primary_attack = true
+			_drive_combat_input()
+		return
+
+	if event is InputEventKey and event.pressed and not event.echo:
+		match event.keycode:
+			KEY_1:
+				_queue_combat_cast(1)
+			KEY_2:
+				_queue_combat_cast(2)
+			KEY_3:
+				_queue_combat_cast(3)
+			KEY_4:
+				_queue_combat_cast(4)
+			KEY_5:
+				_queue_combat_cast(5)
 
 
 func _bind_transport() -> void:
@@ -330,10 +365,22 @@ func _build_match_panel() -> PanelContainer:
 	body.add_child(countdown_value_label)
 
 	var placeholder := Label.new()
-	placeholder.text = "Combat presentation stays intentionally thin in this slice. This shell now sends real input-frame packets, but the current backend slice still resolves combat with a placeholder one-hit primary attack."
+	placeholder.text = "The first arena slice is live here: a mostly empty map, central shrub-encased pillars, authoritative snapshots, WASD movement, mouse aim, left-click melee, and placeholder skills on 1-5."
 	placeholder.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	placeholder.add_theme_color_override("font_color", Color8(179, 180, 174))
 	body.add_child(placeholder)
+
+	arena_view = ArenaViewScript.new()
+	arena_view.custom_minimum_size = Vector2(0, 460)
+	arena_view.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	arena_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	arena_view.set_client_state(app_state)
+	body.add_child(arena_view)
+
+	combat_hint_label = Label.new()
+	combat_hint_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	combat_hint_label.add_theme_color_override("font_color", Color8(214, 218, 208))
+	body.add_child(combat_hint_label)
 
 	var combat_title := Label.new()
 	combat_title.text = "Combat controls"
@@ -545,6 +592,9 @@ func _on_connect_pressed() -> void:
 	var url := ws_url_input.text.strip_edges()
 	var player_name := player_name_input.text.strip_edges()
 	_next_client_input_tick = 1
+	_pending_primary_attack = false
+	_pending_cast_slot = 0
+	_last_sent_aim = Vector2i.ZERO
 	app_state.prepare_for_connection(url, player_name)
 	ws_url_input.text = app_state.websocket_url
 	_refresh_ui()
@@ -555,6 +605,9 @@ func _on_connect_pressed() -> void:
 
 func _on_disconnect_pressed() -> void:
 	_next_client_input_tick = 1
+	_pending_primary_attack = false
+	_pending_cast_slot = 0
+	_last_sent_aim = Vector2i.ZERO
 	transport.close()
 	app_state.mark_transport_closed("Disconnected by the local client.")
 	_refresh_ui()
@@ -619,18 +672,8 @@ func _on_quit_results_pressed() -> void:
 
 
 func _on_primary_attack_pressed() -> void:
-	var payload := {
-		"client_input_tick": _next_client_input_tick,
-		"move_horizontal_q": 0,
-		"move_vertical_q": 0,
-		"aim_horizontal_q": 0,
-		"aim_vertical_q": 0,
-		"primary": true,
-	}
-	if transport.send_input_frame(payload):
-		_next_client_input_tick += 1
-		app_state.announce_local("Requested primary attack.")
-		_refresh_ui()
+	_pending_primary_attack = true
+	_drive_combat_input()
 
 
 func _on_transport_state_changed(state_name: String) -> void:
@@ -683,6 +726,10 @@ func _refresh_ui() -> void:
 	phase_label.text = app_state.phase_label
 	score_label.text = app_state.score_text()
 	countdown_value_label.text = app_state.countdown_label
+	var local_player := app_state.local_arena_player()
+	var unlocked_slots := int(local_player.get("unlocked_skill_slots", 0))
+	var alive_state := "alive" if bool(local_player.get("alive", false)) else "down"
+	combat_hint_label.text = "WASD move, aim with the mouse, left click for melee, and use 1-5 for combat skills. Unlocked slots: %d. Local state: %s." % [unlocked_slots, alive_state]
 	outcome_label.text = result_text
 	central_directory_log.text = app_state.lobby_directory_bbcode()
 	roster_log.text = "\n".join(app_state.roster_lines())
@@ -719,3 +766,65 @@ func _refresh_ui() -> void:
 	lobby_panel.visible = app_state.screen == "lobby"
 	match_panel.visible = app_state.screen == "match"
 	results_panel.visible = app_state.screen == "results"
+
+
+func _queue_combat_cast(slot: int) -> void:
+	if not app_state.can_use_combat_slot(slot):
+		app_state.mark_transport_error("Skill slot %d is not currently usable." % slot)
+		_refresh_ui()
+		return
+	_pending_cast_slot = slot
+	_drive_combat_input()
+
+
+func _drive_combat_input() -> void:
+	if not app_state.can_send_combat_input():
+		_pending_primary_attack = false
+		_pending_cast_slot = 0
+		return
+
+	var move_x := int(Input.is_key_pressed(KEY_D)) - int(Input.is_key_pressed(KEY_A))
+	var move_y := int(Input.is_key_pressed(KEY_S)) - int(Input.is_key_pressed(KEY_W))
+	var aim := _current_aim_vector()
+	var aim_changed := aim != _last_sent_aim
+	var should_send := (
+		move_x != 0
+		or move_y != 0
+		or aim_changed
+		or _pending_primary_attack
+		or _pending_cast_slot > 0
+	)
+	if not should_send:
+		return
+
+	var payload := {
+		"client_input_tick": _next_client_input_tick,
+		"move_horizontal_q": move_x,
+		"move_vertical_q": move_y,
+		"aim_horizontal_q": aim.x,
+		"aim_vertical_q": aim.y,
+		"primary": _pending_primary_attack,
+	}
+	if _pending_cast_slot > 0:
+		payload["cast"] = true
+		payload["ability_or_context"] = _pending_cast_slot
+
+	if transport.send_input_frame(payload):
+		_next_client_input_tick += 1
+		_last_sent_aim = aim
+		_pending_primary_attack = false
+		_pending_cast_slot = 0
+
+
+func _current_aim_vector() -> Vector2i:
+	var player := app_state.local_arena_player()
+	if player.is_empty() or arena_view == null or not arena_view.has_arena_snapshot():
+		return Vector2i.ZERO
+
+	var world_mouse: Vector2 = arena_view.mouse_world_position() as Vector2
+	var delta_x := int(round(world_mouse.x - float(player.get("x", 0))))
+	var delta_y := int(round(world_mouse.y - float(player.get("y", 0))))
+	return Vector2i(
+		clampi(delta_x, Protocol.MIN_I16, Protocol.MAX_I16),
+		clampi(delta_y, Protocol.MIN_I16, Protocol.MAX_I16)
+	)

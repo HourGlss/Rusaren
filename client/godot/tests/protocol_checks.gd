@@ -12,6 +12,8 @@ func _init() -> void:
 	success = _assert_missing_cast_context_rejection() and success
 	success = _assert_unexpected_context_rejection() and success
 	success = _assert_aim_range_rejection() and success
+	success = _assert_decode_arena_state_snapshot() and success
+	success = _assert_decode_arena_effect_batch() and success
 	quit(0 if success else 1)
 
 
@@ -106,6 +108,66 @@ func _assert_aim_range_rejection() -> bool:
 	return _expect_error(encoded, "aim_horizontal_q=40000 is outside the allowed range -32768..=32767")
 
 
+func _assert_decode_arena_state_snapshot() -> bool:
+	var payload := PackedByteArray([19])
+	_push_u16(payload, 1800)
+	_push_u16(payload, 1200)
+	_push_u16(payload, 1)
+	payload.append(1)
+	_push_i16(payload, -220)
+	_push_i16(payload, -150)
+	_push_u16(payload, 70)
+	_push_u16(payload, 70)
+	_push_u16(payload, 1)
+	_push_u32(payload, 11)
+	_push_string(payload, "Alice")
+	payload.append(Protocol.TEAM_A)
+	_push_i16(payload, -640)
+	_push_i16(payload, 220)
+	_push_i16(payload, 120)
+	_push_i16(payload, 0)
+	_push_u16(payload, 100)
+	_push_u16(payload, 100)
+	payload.append(1)
+	payload.append(3)
+	var decoded := Protocol.decode_server_event(_encode_server_event_packet(payload, 8, 21))
+	if not bool(decoded.get("ok", false)):
+		return _fail("arena state snapshot should decode")
+	var event: Dictionary = decoded.get("event", {})
+	var snapshot: Dictionary = event.get("snapshot", {})
+	var players: Array = snapshot.get("players", [])
+	if String(event.get("type", "")) != "ArenaStateSnapshot":
+		return _fail("arena state snapshot should use the ArenaStateSnapshot event type")
+	if players.size() != 1:
+		return _fail("arena state snapshot should decode one player")
+	if int(players[0].get("unlocked_skill_slots", 0)) != 3:
+		return _fail("arena state snapshot should preserve unlocked combat slots")
+	return true
+
+
+func _assert_decode_arena_effect_batch() -> bool:
+	var payload := PackedByteArray([20])
+	_push_u16(payload, 1)
+	payload.append(2)
+	_push_u32(payload, 11)
+	payload.append(1)
+	_push_i16(payload, -640)
+	_push_i16(payload, 220)
+	_push_i16(payload, 640)
+	_push_i16(payload, 220)
+	_push_u16(payload, 28)
+	var decoded := Protocol.decode_server_event(_encode_server_event_packet(payload, 9, 21))
+	if not bool(decoded.get("ok", false)):
+		return _fail("arena effect batch should decode")
+	var event: Dictionary = decoded.get("event", {})
+	var effects: Array = event.get("effects", [])
+	if String(event.get("type", "")) != "ArenaEffectBatch":
+		return _fail("arena effect batch should use the ArenaEffectBatch event type")
+	if effects.size() != 1 or String(effects[0].get("kind", "")) != "SkillShot":
+		return _fail("arena effect batch should preserve the effect kind")
+	return true
+
+
 func _expect_error(result: Dictionary, expected_message: String) -> bool:
 	if bool(result.get("ok", false)):
 		return _fail("expected encoder to reject invalid input")
@@ -118,3 +180,41 @@ func _expect_error(result: Dictionary, expected_message: String) -> bool:
 func _fail(message: String) -> bool:
 	printerr(message)
 	return false
+
+
+func _encode_server_event_packet(payload: PackedByteArray, seq: int, sim_tick: int) -> PackedByteArray:
+	var packet := PackedByteArray()
+	_push_u16(packet, Protocol.PACKET_MAGIC)
+	packet.append(Protocol.PROTOCOL_VERSION)
+	packet.append(Protocol.CHANNEL_CONTROL)
+	packet.append(Protocol.PACKET_KIND_CONTROL_EVENT)
+	packet.append(0)
+	_push_u16(packet, payload.size())
+	_push_u32(packet, seq)
+	_push_u32(packet, sim_tick)
+	packet.append_array(payload)
+	return packet
+
+
+func _push_string(bytes: PackedByteArray, value: String) -> void:
+	var utf8 := value.to_utf8_buffer()
+	bytes.append(utf8.size())
+	bytes.append_array(utf8)
+
+
+func _push_u16(bytes: PackedByteArray, value: int) -> void:
+	bytes.append(value & 0xff)
+	bytes.append((value >> 8) & 0xff)
+
+
+func _push_i16(bytes: PackedByteArray, value: int) -> void:
+	var encoded := value & 0xffff
+	bytes.append(encoded & 0xff)
+	bytes.append((encoded >> 8) & 0xff)
+
+
+func _push_u32(bytes: PackedByteArray, value: int) -> void:
+	bytes.append(value & 0xff)
+	bytes.append((value >> 8) & 0xff)
+	bytes.append((value >> 16) & 0xff)
+	bytes.append((value >> 24) & 0xff)

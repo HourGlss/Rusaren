@@ -95,3 +95,16 @@ Map content should define:
 - no mandatory reveal interactables in v1
 
 See docs/maps/_template.md
+
+## Current playable prototype map
+
+The current first playable slice uses a deliberately simple authored layout:
+- mostly empty arena floor
+- four square central pillars
+- each pillar is wrapped by a thin square shrub collar
+- open lanes around the perimeter for early movement/combat testing
+
+Current purpose:
+- validate server-authoritative movement and collision
+- validate mouse aim + simple skill/melee effects in the browser shell
+- provide a predictable layout for early fuzzing, tests, and packet debugging

@@ -11,8 +11,9 @@ mod control;
 mod ingress;
 
 pub use control::{
-    ClientControlCommand, LobbyDirectoryEntry, LobbySnapshotPhase, LobbySnapshotPlayer,
-    ServerControlEvent,
+    ArenaEffectKind, ArenaEffectSnapshot, ArenaObstacleKind, ArenaObstacleSnapshot,
+    ArenaPlayerSnapshot, ArenaStateSnapshot, ClientControlCommand, LobbyDirectoryEntry,
+    LobbySnapshotPhase, LobbySnapshotPlayer, ServerControlEvent,
 };
 pub use ingress::{NetworkSessionGuard, MAX_INGRESS_PACKET_BYTES};
 
@@ -442,6 +443,8 @@ pub enum PacketError {
     InvalidEncodedSkillTree(u8),
     InvalidEncodedMatchOutcome(u8),
     InvalidEncodedLobbyPhase(u8),
+    InvalidEncodedArenaObstacleKind(u8),
+    InvalidEncodedArenaEffectKind(u8),
     InvalidEncodedBoolean(u8),
     InvalidEncodedPlayerName(DomainError),
     InvalidUtf8String {
@@ -587,6 +590,12 @@ impl PacketError {
             }
             Self::InvalidEncodedLobbyPhase(raw) => {
                 Some(write!(f, "encoded lobby phase {raw} is invalid"))
+            }
+            Self::InvalidEncodedArenaObstacleKind(raw) => {
+                Some(write!(f, "encoded arena obstacle kind {raw} is invalid"))
+            }
+            Self::InvalidEncodedArenaEffectKind(raw) => {
+                Some(write!(f, "encoded arena effect kind {raw} is invalid"))
             }
             Self::InvalidEncodedBoolean(raw) => Some(write!(f, "encoded boolean {raw} is invalid")),
             Self::InvalidEncodedPlayerName(error) => Some(fmt::Display::fmt(error, f)),

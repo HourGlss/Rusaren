@@ -1,0 +1,268 @@
+extends Control
+class_name ArenaView
+
+const PADDING := 22.0
+const GRID_STEP_UNITS := 60.0
+
+var app_state: ClientState = null
+
+
+func _ready() -> void:
+	mouse_filter = Control.MOUSE_FILTER_PASS
+
+
+func _process(_delta: float) -> void:
+	queue_redraw()
+
+
+func set_client_state(state: ClientState) -> void:
+	app_state = state
+	queue_redraw()
+
+
+func has_arena_snapshot() -> bool:
+	return app_state != null and app_state.arena_width > 0 and app_state.arena_height > 0
+
+
+func has_mouse_in_arena() -> bool:
+	return _arena_rect().has_point(get_local_mouse_position())
+
+
+func mouse_world_position() -> Vector2:
+	var rect := _arena_rect()
+	if rect.size.x <= 0.0 or rect.size.y <= 0.0 or not has_arena_snapshot():
+		return Vector2.ZERO
+	var local := get_local_mouse_position()
+	var normalized_x := clampf((local.x - rect.position.x) / rect.size.x, 0.0, 1.0)
+	var normalized_y := clampf((local.y - rect.position.y) / rect.size.y, 0.0, 1.0)
+	return Vector2(
+		( normalized_x - 0.5) * float(app_state.arena_width),
+		( normalized_y - 0.5) * float(app_state.arena_height)
+	)
+
+
+func _draw() -> void:
+	var panel_rect := Rect2(Vector2.ZERO, size)
+	draw_rect(panel_rect, Color8(235, 236, 239))
+
+	if not has_arena_snapshot():
+		_draw_centered_text(
+			panel_rect,
+			"Waiting for the authoritative arena snapshot..."
+		)
+		return
+
+	var arena_rect := _arena_rect()
+	draw_rect(arena_rect, Color8(232, 232, 236))
+	_draw_grid(arena_rect)
+	_draw_obstacles(arena_rect)
+	_draw_effects(arena_rect)
+	_draw_players(arena_rect)
+	_draw_border(arena_rect)
+
+
+func _arena_rect() -> Rect2:
+	var available := size - Vector2.ONE * (PADDING * 2.0)
+	if available.x <= 0.0 or available.y <= 0.0:
+		return Rect2(Vector2.ZERO, Vector2.ZERO)
+	if app_state == null or app_state.arena_width <= 0 or app_state.arena_height <= 0:
+		return Rect2(Vector2(PADDING, PADDING), available)
+
+	var world_size := Vector2(app_state.arena_width, app_state.arena_height)
+	var scale := minf(available.x / world_size.x, available.y / world_size.y)
+	var draw_size := world_size * scale
+	var offset := Vector2(
+		(size.x - draw_size.x) * 0.5,
+		(size.y - draw_size.y) * 0.5
+	)
+	return Rect2(offset, draw_size)
+
+
+func _draw_grid(arena_rect: Rect2) -> void:
+	var step_x := arena_rect.size.x * (GRID_STEP_UNITS / float(app_state.arena_width))
+	var step_y := arena_rect.size.y * (GRID_STEP_UNITS / float(app_state.arena_height))
+	var grid_color := Color8(205, 206, 212)
+
+	var x := arena_rect.position.x
+	while x <= arena_rect.end.x + 0.5:
+		draw_line(
+			Vector2(x, arena_rect.position.y),
+			Vector2(x, arena_rect.end.y),
+			grid_color,
+			1.0
+		)
+		x += step_x
+
+	var y := arena_rect.position.y
+	while y <= arena_rect.end.y + 0.5:
+		draw_line(
+			Vector2(arena_rect.position.x, y),
+			Vector2(arena_rect.end.x, y),
+			grid_color,
+			1.0
+		)
+		y += step_y
+
+
+func _draw_obstacles(arena_rect: Rect2) -> void:
+	for obstacle in app_state.arena_obstacles:
+		var rect := _world_rect_to_canvas(
+			arena_rect,
+			float(obstacle.get("center_x", 0)),
+			float(obstacle.get("center_y", 0)),
+			float(obstacle.get("half_width", 0)),
+			float(obstacle.get("half_height", 0))
+		)
+		var kind_name := String(obstacle.get("kind", ""))
+		match kind_name:
+			"Shrub":
+				draw_rect(rect, Color8(185, 215, 180))
+			"Pillar":
+				draw_rect(rect, Color8(84, 84, 93))
+				var inner: Rect2 = rect.grow(-rect.size.x * 0.24)
+				draw_rect(inner, Color8(203, 217, 228))
+			_:
+				draw_rect(rect, Color8(140, 140, 140))
+
+
+func _draw_effects(arena_rect: Rect2) -> void:
+	for effect in app_state.arena_effects:
+		var ttl: float = float(effect.get("ttl", 0.0))
+		var ttl_max: float = maxf(0.01, float(effect.get("ttl_max", ttl)))
+		var alpha: float = clampf(ttl / ttl_max, 0.15, 1.0)
+		var start: Vector2 = _world_to_canvas(
+			arena_rect,
+			Vector2(float(effect.get("x", 0)), float(effect.get("y", 0)))
+		)
+		var target: Vector2 = _world_to_canvas(
+			arena_rect,
+			Vector2(float(effect.get("target_x", 0)), float(effect.get("target_y", 0)))
+		)
+		var radius: float = _world_radius_to_canvas(arena_rect, float(effect.get("radius", 0)))
+		var color: Color = _effect_color(String(effect.get("kind", "")), alpha)
+		match String(effect.get("kind", "")):
+			"MeleeSwing":
+				draw_arc(start, radius, -0.8, 0.8, 18, color, 3.0)
+			"SkillShot", "Beam":
+				draw_line(start, target, color, 4.0)
+			"DashTrail":
+				draw_line(start, target, color, 6.0)
+			"Burst", "Nova":
+				draw_circle(start, radius, color)
+			"HitSpark":
+				draw_line(start + Vector2(-radius, -radius), start + Vector2(radius, radius), color, 2.0)
+				draw_line(start + Vector2(-radius, radius), start + Vector2(radius, -radius), color, 2.0)
+			_:
+				draw_circle(start, radius, color)
+
+
+func _draw_players(arena_rect: Rect2) -> void:
+	var font := ThemeDB.fallback_font
+	for player in app_state.arena_players_list():
+		var canvas_pos := _world_to_canvas(
+			arena_rect,
+			Vector2(float(player.get("x", 0)), float(player.get("y", 0)))
+		)
+		var aim_end := _world_to_canvas(
+			arena_rect,
+			Vector2(
+				float(player.get("x", 0)) + float(player.get("aim_x", 0)),
+				float(player.get("y", 0)) + float(player.get("aim_y", 0))
+			)
+		)
+		var alive := bool(player.get("alive", false))
+		var body_color: Color = _team_color(String(player.get("team", "")), alive)
+		var radius: float = _world_radius_to_canvas(arena_rect, 28.0)
+		var outline: Color = Color.WHITE if int(player.get("player_id", 0)) == app_state.local_player_id else Color8(34, 34, 42)
+
+		draw_line(canvas_pos, aim_end, Color(body_color, 0.35), 2.0)
+		draw_circle(canvas_pos, radius + 4.0, outline)
+		draw_circle(canvas_pos, radius, body_color)
+
+		var hp_ratio: float = 0.0
+		var max_hp: float = maxf(1.0, float(player.get("max_hit_points", 1)))
+		hp_ratio = clampf(float(player.get("hit_points", 0)) / max_hp, 0.0, 1.0)
+		var hp_width: float = radius * 2.2
+		var hp_origin: Vector2 = canvas_pos + Vector2(-hp_width * 0.5, radius + 10.0)
+		draw_rect(Rect2(hp_origin, Vector2(hp_width, 5.0)), Color8(65, 34, 34))
+		draw_rect(Rect2(hp_origin, Vector2(hp_width * hp_ratio, 5.0)), Color8(86, 198, 125))
+
+		if font != null:
+			var label: String = "%s  [%d]" % [
+				String(player.get("player_name", "Player")),
+				int(player.get("hit_points", 0)),
+			]
+			draw_string(font, canvas_pos + Vector2(-radius * 0.7, -radius - 10.0), label, HORIZONTAL_ALIGNMENT_LEFT, -1.0, 14, Color8(26, 28, 34))
+
+
+func _draw_border(arena_rect: Rect2) -> void:
+	draw_rect(arena_rect, Color8(58, 61, 68), false, 3.0)
+
+
+func _draw_centered_text(rect: Rect2, text: String) -> void:
+	var font := ThemeDB.fallback_font
+	if font == null:
+		return
+	var size_px := 18
+	var text_width := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, size_px).x
+	var baseline := rect.position + Vector2((rect.size.x - text_width) * 0.5, rect.size.y * 0.5)
+	draw_string(font, baseline, text, HORIZONTAL_ALIGNMENT_LEFT, -1.0, size_px, Color8(58, 61, 68))
+
+
+func _world_to_canvas(arena_rect: Rect2, world_point: Vector2) -> Vector2:
+	var normalized := Vector2(
+		(world_point.x / float(app_state.arena_width)) + 0.5,
+		(world_point.y / float(app_state.arena_height)) + 0.5
+	)
+	return arena_rect.position + Vector2(
+		normalized.x * arena_rect.size.x,
+		normalized.y * arena_rect.size.y
+	)
+
+
+func _world_rect_to_canvas(
+	arena_rect: Rect2,
+	center_x: float,
+	center_y: float,
+	half_width: float,
+	half_height: float
+) -> Rect2:
+	var center := _world_to_canvas(arena_rect, Vector2(center_x, center_y))
+	var size_units := Vector2(half_width * 2.0, half_height * 2.0)
+	var scale := Vector2(
+		arena_rect.size.x / float(app_state.arena_width),
+		arena_rect.size.y / float(app_state.arena_height)
+	)
+	var draw_size := Vector2(size_units.x * scale.x, size_units.y * scale.y)
+	return Rect2(center - draw_size * 0.5, draw_size)
+
+
+func _world_radius_to_canvas(arena_rect: Rect2, radius_units: float) -> float:
+	var scale_x := arena_rect.size.x / float(app_state.arena_width)
+	var scale_y := arena_rect.size.y / float(app_state.arena_height)
+	return radius_units * minf(scale_x, scale_y)
+
+
+func _team_color(team_name: String, alive: bool) -> Color:
+	var color := Color8(237, 103, 69) if team_name == "Team A" else Color8(96, 197, 224)
+	return color if alive else color.darkened(0.45)
+
+
+func _effect_color(kind_name: String, alpha: float) -> Color:
+	match kind_name:
+		"MeleeSwing":
+			return Color(0.95, 0.77, 0.46, alpha)
+		"SkillShot":
+			return Color(0.92, 0.52, 0.41, alpha)
+		"DashTrail":
+			return Color(0.44, 0.85, 0.89, alpha)
+		"Burst":
+			return Color(0.95, 0.59, 0.48, alpha)
+		"Nova":
+			return Color(0.60, 0.81, 0.98, alpha)
+		"Beam":
+			return Color(0.76, 0.93, 0.96, alpha)
+		"HitSpark":
+			return Color(1.0, 0.95, 0.78, alpha)
+		_:
+			return Color(0.85, 0.85, 0.85, alpha)

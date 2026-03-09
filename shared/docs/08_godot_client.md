@@ -26,7 +26,9 @@ Current implementation status:
 - The current shell sends only the player name on connect; the backend assigns the runtime `player_id`.
 - The current shell renders central lobby, game lobby, launch countdown, match skill-pick state, results, and central-lobby directory snapshots.
 - The current shell now consumes authoritative full game-lobby snapshots, including late-joiner roster state and `W-L-NC`.
-- The current shell now sends real binary `InputFrame` packets for a placeholder combat action over the websocket dev adapter.
+- The current shell now sends real binary `InputFrame` packets for live arena input over the websocket dev adapter.
+- The current shell now renders a simple top-down arena with a mostly empty floor, four central square pillars, and shrub collars.
+- The current shell now consumes authoritative `ArenaStateSnapshot` and `ArenaEffectBatch` events to draw players, aim lines, hp bars, and short-lived combat effects.
 - The current shell only enables legal skill picks for the local player: tier 1 for unstarted trees or the next tier in a tree already started this match.
 - The current shell now exports to Web and defaults browser builds to the same-origin `/ws` endpoint.
 - The Rust dev server can now host the exported shell directly at `/`.
@@ -35,8 +37,8 @@ Current implementation status:
 - The current shell is intentionally websocket-first while the WebRTC transport stays in planning.
 
 Current backend limitations the shell must expose honestly:
-- Combat rendering is still placeholder-only; the shell shows authoritative state changes, not final gameplay presentation.
-- The current combat slice is intentionally narrow: once combat starts, the shell uses a placeholder primary-attack control to drive the backend through real rounds and match resolution.
+- Combat content is still placeholder-only even though the shell now shows a real arena.
+- The current combat slice is intentionally narrow: once combat starts, the shell supports `WASD` movement, mouse aim, left-click melee, and placeholder slot skills on `1`-`5`, but not final authored class abilities yet.
 
 Disconnect UX:
 - If a match is aborted because a player disconnects, show: `<PLAYER_NAME> has disconnected. Game is over.`
@@ -55,7 +57,7 @@ Lag handling:
 
 Current local validation:
 - Run the shell headlessly with `godot4 --headless --path client/godot --quit` to verify that the project boots.
-- Run `godot4 --headless --path client/godot -s res://tests/protocol_checks.gd` to verify the Godot packet encoder's positive and negative connect/input cases.
-- Run `godot4 --headless --path client/godot -s res://tests/web_export_checks.gd` to verify the same-origin browser websocket defaults and clickable lobby-directory formatting.
+- Run `godot4 --headless --path client/godot -s res://tests/protocol_checks.gd` to verify the Godot packet encoder plus arena event decoding.
+- Run `godot4 --headless --path client/godot -s res://tests/web_export_checks.gd` to verify the same-origin browser websocket defaults, clickable lobby-directory formatting, and local arena combat-slot state handling.
 - Run `server/scripts/export-web-client.ps1` to build the browser shell into `server/static/webclient/`.
 - For hosted deployment, build the web export first, then package it with the Rust server image described in `15_deployment_ops.md`.

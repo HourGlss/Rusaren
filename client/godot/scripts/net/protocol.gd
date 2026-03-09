@@ -93,6 +93,12 @@ class ByteCursor:
 		index += 2
 		return value
 
+	func read_i16() -> Variant:
+		var raw = read_u16()
+		if has_error():
+			return null
+		return raw - 65536 if raw >= 32768 else raw
+
 	func read_u32() -> Variant:
 		if not _ensure_available(4):
 			return null
@@ -239,6 +245,42 @@ class ByteCursor:
 				return "No Contest"
 			_:
 				error_message = "encoded match outcome %d is invalid" % raw
+				return null
+
+	func read_arena_obstacle_kind() -> Variant:
+		var raw = read_u8()
+		if has_error():
+			return null
+		match raw:
+			1:
+				return "Pillar"
+			2:
+				return "Shrub"
+			_:
+				error_message = "encoded arena obstacle kind %d is invalid" % raw
+				return null
+
+	func read_arena_effect_kind() -> Variant:
+		var raw = read_u8()
+		if has_error():
+			return null
+		match raw:
+			1:
+				return "MeleeSwing"
+			2:
+				return "SkillShot"
+			3:
+				return "DashTrail"
+			4:
+				return "Burst"
+			5:
+				return "Nova"
+			6:
+				return "Beam"
+			7:
+				return "HitSpark"
+			_:
+				error_message = "encoded arena effect kind %d is invalid" % raw
 				return null
 
 	func read_lobby_phase() -> Variant:
@@ -668,6 +710,98 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 				"lobby_id": lobby_id,
 				"phase": phase,
 				"players": players,
+			}
+		19:
+			var width = cursor.read_u16()
+			var height = cursor.read_u16()
+			var obstacle_count = cursor.read_u16()
+			if cursor.has_error():
+				return _error(cursor.error_message)
+			var obstacles: Array[Dictionary] = []
+			for _obstacle_index in range(int(obstacle_count)):
+				var kind_name = cursor.read_arena_obstacle_kind()
+				var center_x = cursor.read_i16()
+				var center_y = cursor.read_i16()
+				var half_width = cursor.read_u16()
+				var half_height = cursor.read_u16()
+				if cursor.has_error():
+					return _error(cursor.error_message)
+				obstacles.append({
+					"kind": kind_name,
+					"center_x": center_x,
+					"center_y": center_y,
+					"half_width": half_width,
+					"half_height": half_height,
+				})
+			var player_count = cursor.read_u16()
+			if cursor.has_error():
+				return _error(cursor.error_message)
+			var players: Array[Dictionary] = []
+			for _player_index in range(int(player_count)):
+				var player_id = cursor.read_player_id()
+				var player_name = cursor.read_string("player_name", MAX_PLAYER_NAME_LEN)
+				var team = cursor.read_team_label()
+				var x = cursor.read_i16()
+				var y = cursor.read_i16()
+				var aim_x = cursor.read_i16()
+				var aim_y = cursor.read_i16()
+				var hit_points = cursor.read_u16()
+				var max_hit_points = cursor.read_u16()
+				var alive = cursor.read_bool()
+				var unlocked_skill_slots = cursor.read_u8()
+				if cursor.has_error():
+					return _error(cursor.error_message)
+				players.append({
+					"player_id": player_id,
+					"player_name": player_name,
+					"team": team,
+					"x": x,
+					"y": y,
+					"aim_x": aim_x,
+					"aim_y": aim_y,
+					"hit_points": hit_points,
+					"max_hit_points": max_hit_points,
+					"alive": alive,
+					"unlocked_skill_slots": unlocked_skill_slots,
+				})
+			event = {
+				"type": "ArenaStateSnapshot",
+				"snapshot": {
+					"width": width,
+					"height": height,
+					"obstacles": obstacles,
+					"players": players,
+				},
+			}
+		20:
+			var effect_count = cursor.read_u16()
+			if cursor.has_error():
+				return _error(cursor.error_message)
+			var effects: Array[Dictionary] = []
+			for _effect_index in range(int(effect_count)):
+				var effect_kind = cursor.read_arena_effect_kind()
+				var owner = cursor.read_player_id()
+				var slot = cursor.read_u8()
+				var x = cursor.read_i16()
+				var y = cursor.read_i16()
+				var target_x = cursor.read_i16()
+				var target_y = cursor.read_i16()
+				var radius = cursor.read_u16()
+				if cursor.has_error():
+					return _error(cursor.error_message)
+				effects.append({
+					"kind": effect_kind,
+					"owner": owner,
+					"slot": slot,
+					"x": x,
+					"y": y,
+					"target_x": target_x,
+					"target_y": target_y,
+					"radius": radius,
+				})
+			event = {
+				"type": "ArenaEffectBatch",
+				"effects": effects,
 			}
 		_:
 			return _error("unknown server event %d" % kind)

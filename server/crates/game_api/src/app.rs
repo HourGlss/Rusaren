@@ -17,10 +17,15 @@ use game_domain::{
 use game_lobby::{Lobby, LobbyEvent, LobbyPhase};
 use game_match::{MatchConfig, MatchEvent, MatchPhase, MatchSession};
 use game_net::{
-    ClientControlCommand, LobbyDirectoryEntry, LobbySnapshotPhase, LobbySnapshotPlayer,
-    SequenceTracker, ServerControlEvent, ValidatedInputFrame, BUTTON_PRIMARY, BUTTON_QUIT_TO_LOBBY,
+    ArenaEffectKind, ArenaEffectSnapshot, ArenaObstacleKind, ArenaObstacleSnapshot,
+    ArenaPlayerSnapshot, ArenaStateSnapshot, ClientControlCommand, LobbyDirectoryEntry,
+    LobbySnapshotPhase, LobbySnapshotPlayer, SequenceTracker, ServerControlEvent,
+    ValidatedInputFrame, BUTTON_CAST, BUTTON_PRIMARY, BUTTON_QUIT_TO_LOBBY,
 };
-use game_sim::{MovementIntent, SimPlayerSeed, SimulationWorld};
+use game_sim::{
+    arena_obstacles, ArenaEffect, ArenaObstacle, MovementIntent, SimPlayerSeed, SimulationEvent,
+    SimulationWorld, ARENA_HEIGHT_UNITS, ARENA_WIDTH_UNITS,
+};
 use getrandom::fill as fill_random;
 
 use crate::records::PlayerRecordStore;
@@ -748,11 +753,8 @@ impl ServerApp {
             }
         };
 
-        let target = self
-            .matches
-            .get(&match_id)
-            .and_then(|runtime| Self::first_attack_target(runtime, sender_id));
-        let mut events = Vec::new();
+        let mut match_events = Vec::new();
+        let mut effect_batch = Vec::new();
 
         let runtime = match self.matches.get_mut(&match_id) {
             Some(runtime) => runtime,
@@ -769,55 +771,110 @@ impl ServerApp {
                 return;
             }
         };
-        if let Err(error) = runtime.world.submit_input(sender_id, movement) {
-            self.send_error(transport, sender_id, &error.to_string());
-            return;
-        }
-        let _ = runtime.world.tick();
-
-        if frame.buttons & BUTTON_PRIMARY != 0 {
-            let target_id = match target {
-                Some(target_id) => target_id,
-                None => {
-                    self.send_error(transport, sender_id, "no valid target is alive");
-                    return;
-                }
-            };
-
-            let damage = match runtime
+        let aim_changed =
+            match runtime
                 .world
-                .apply_damage(sender_id, target_id, DEFAULT_HIT_POINTS)
+                .update_aim(sender_id, frame.aim_horizontal_q, frame.aim_vertical_q)
             {
-                Ok(damage) => damage,
+                Ok(changed) => changed,
                 Err(error) => {
                     self.send_error(transport, sender_id, &error.to_string());
                     return;
                 }
             };
+        if let Err(error) = runtime.world.submit_input(sender_id, movement) {
+            self.send_error(transport, sender_id, &error.to_string());
+            return;
+        }
+        let simulation_events = runtime.world.tick();
+        let mut state_dirty = aim_changed || !simulation_events.is_empty();
+        let defeated_targets = Self::collect_defeated_targets(&simulation_events);
+        effect_batch.extend(Self::collect_effect_batch(&simulation_events));
+        for target_id in defeated_targets {
+            let events = match runtime.session.mark_player_defeated(target_id) {
+                Ok(events) => events,
+                Err(error) => {
+                    self.send_error(transport, sender_id, &error.to_string());
+                    return;
+                }
+            };
+            match_events.extend(events);
+        }
 
-            if matches!(
-                damage,
-                game_sim::SimulationEvent::DamageApplied { defeated: true, .. }
-            ) {
-                events = match runtime.session.mark_player_defeated(target_id) {
+        if frame.buttons & BUTTON_PRIMARY != 0 {
+            let combat_events = match runtime.world.melee_attack(sender_id) {
+                Ok(events) => events,
+                Err(error) => {
+                    self.send_error(transport, sender_id, &error.to_string());
+                    return;
+                }
+            };
+            state_dirty = true;
+            let defeated_targets = Self::collect_defeated_targets(&combat_events);
+            effect_batch.extend(Self::collect_effect_batch(&combat_events));
+            for target_id in defeated_targets {
+                let events = match runtime.session.mark_player_defeated(target_id) {
                     Ok(events) => events,
                     Err(error) => {
                         self.send_error(transport, sender_id, &error.to_string());
                         return;
                     }
                 };
-
-                if matches!(runtime.session.phase(), MatchPhase::SkillPick { .. })
-                    && !matches!(runtime.session.phase(), MatchPhase::MatchEnd { .. })
-                {
-                    runtime.rebuild_world();
-                }
+                match_events.extend(events);
             }
         }
 
+        if frame.buttons & BUTTON_CAST != 0 {
+            let slot = u8::try_from(frame.ability_or_context).unwrap_or(u8::MAX);
+            let unlocked_slots = runtime.session.current_round().get();
+            if slot == 0 || slot > unlocked_slots {
+                self.send_error(
+                    transport,
+                    sender_id,
+                    &format!("skill slot {slot} is not unlocked for round {unlocked_slots}"),
+                );
+                return;
+            }
+
+            let combat_events = match runtime.world.cast_skill(sender_id, slot) {
+                Ok(events) => events,
+                Err(error) => {
+                    self.send_error(transport, sender_id, &error.to_string());
+                    return;
+                }
+            };
+            state_dirty = true;
+            let defeated_targets = Self::collect_defeated_targets(&combat_events);
+            effect_batch.extend(Self::collect_effect_batch(&combat_events));
+            for target_id in defeated_targets {
+                let events = match runtime.session.mark_player_defeated(target_id) {
+                    Ok(events) => events,
+                    Err(error) => {
+                        self.send_error(transport, sender_id, &error.to_string());
+                        return;
+                    }
+                };
+                match_events.extend(events);
+            }
+        }
+
+        if matches!(runtime.session.phase(), MatchPhase::SkillPick { .. })
+            && !matches!(runtime.session.phase(), MatchPhase::MatchEnd { .. })
+        {
+            runtime.rebuild_world();
+            state_dirty = true;
+        }
+
         let _ = runtime;
-        if !events.is_empty() {
-            self.dispatch_match_events(transport, match_id, &events);
+        if !effect_batch.is_empty() {
+            self.broadcast_arena_effect_batch(transport, match_id, &effect_batch);
+        }
+        if !match_events.is_empty() {
+            self.dispatch_match_events(transport, match_id, &match_events);
+            state_dirty = true;
+        }
+        if state_dirty {
+            self.broadcast_arena_state_snapshot(transport, match_id);
         }
     }
 
@@ -992,6 +1049,10 @@ impl ServerApp {
                 }
             }
         }
+
+        if self.matches.contains_key(&match_id) {
+            self.broadcast_arena_state_snapshot(transport, match_id);
+        }
     }
 
     fn broadcast_lobby_events<T: AppTransport>(
@@ -1161,6 +1222,159 @@ impl ServerApp {
         })
     }
 
+    fn build_arena_state_snapshot(&self, match_id: MatchId) -> Option<ArenaStateSnapshot> {
+        let runtime = self.matches.get(&match_id)?;
+        let unlocked_skill_slots = runtime.session.current_round().get();
+        let obstacles = arena_obstacles()
+            .iter()
+            .map(Self::arena_obstacle_snapshot)
+            .collect();
+        let players = runtime
+            .roster
+            .iter()
+            .filter_map(|assignment| {
+                runtime
+                    .world
+                    .player_state(assignment.player_id)
+                    .map(|state| {
+                        Self::arena_player_snapshot(assignment, state, unlocked_skill_slots)
+                    })
+            })
+            .collect();
+
+        Some(ArenaStateSnapshot {
+            width: ARENA_WIDTH_UNITS,
+            height: ARENA_HEIGHT_UNITS,
+            obstacles,
+            players,
+        })
+    }
+
+    fn broadcast_arena_state_snapshot<T: AppTransport>(
+        &mut self,
+        transport: &mut T,
+        match_id: MatchId,
+    ) {
+        let recipients = self.match_recipients(match_id);
+        if recipients.is_empty() {
+            return;
+        }
+
+        let Some(snapshot) = self.build_arena_state_snapshot(match_id) else {
+            return;
+        };
+        self.broadcast_event(
+            transport,
+            &recipients,
+            ServerControlEvent::ArenaStateSnapshot { snapshot },
+        );
+    }
+
+    fn broadcast_arena_effect_batch<T: AppTransport>(
+        &mut self,
+        transport: &mut T,
+        match_id: MatchId,
+        effects: &[ArenaEffectSnapshot],
+    ) {
+        if effects.is_empty() {
+            return;
+        }
+
+        let recipients = self.match_recipients(match_id);
+        if recipients.is_empty() {
+            return;
+        }
+
+        self.broadcast_event(
+            transport,
+            &recipients,
+            ServerControlEvent::ArenaEffectBatch {
+                effects: effects.to_vec(),
+            },
+        );
+    }
+
+    fn arena_obstacle_snapshot(obstacle: &ArenaObstacle) -> ArenaObstacleSnapshot {
+        ArenaObstacleSnapshot {
+            kind: match obstacle.kind {
+                game_sim::ArenaObstacleKind::Pillar => ArenaObstacleKind::Pillar,
+                game_sim::ArenaObstacleKind::Shrub => ArenaObstacleKind::Shrub,
+            },
+            center_x: obstacle.center_x,
+            center_y: obstacle.center_y,
+            half_width: obstacle.half_width,
+            half_height: obstacle.half_height,
+        }
+    }
+
+    fn arena_player_snapshot(
+        assignment: &TeamAssignment,
+        state: game_sim::SimPlayerState,
+        unlocked_skill_slots: u8,
+    ) -> ArenaPlayerSnapshot {
+        ArenaPlayerSnapshot {
+            player_id: assignment.player_id,
+            player_name: assignment.player_name.clone(),
+            team: assignment.team,
+            x: state.x,
+            y: state.y,
+            aim_x: state.aim_x,
+            aim_y: state.aim_y,
+            hit_points: state.hit_points,
+            max_hit_points: state.max_hit_points,
+            alive: state.alive,
+            unlocked_skill_slots,
+        }
+    }
+
+    fn collect_defeated_targets(events: &[SimulationEvent]) -> Vec<PlayerId> {
+        let mut defeated_targets = Vec::new();
+        for event in events {
+            if let SimulationEvent::DamageApplied {
+                target, defeated, ..
+            } = event
+            {
+                if *defeated && !defeated_targets.contains(target) {
+                    defeated_targets.push(*target);
+                }
+            }
+        }
+        defeated_targets
+    }
+
+    fn collect_effect_batch(events: &[SimulationEvent]) -> Vec<ArenaEffectSnapshot> {
+        events
+            .iter()
+            .filter_map(|event| match event {
+                SimulationEvent::EffectSpawned { effect } => {
+                    Some(Self::arena_effect_snapshot(effect))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn arena_effect_snapshot(effect: &ArenaEffect) -> ArenaEffectSnapshot {
+        ArenaEffectSnapshot {
+            kind: match effect.kind {
+                game_sim::ArenaEffectKind::MeleeSwing => ArenaEffectKind::MeleeSwing,
+                game_sim::ArenaEffectKind::SkillShot => ArenaEffectKind::SkillShot,
+                game_sim::ArenaEffectKind::DashTrail => ArenaEffectKind::DashTrail,
+                game_sim::ArenaEffectKind::Burst => ArenaEffectKind::Burst,
+                game_sim::ArenaEffectKind::Nova => ArenaEffectKind::Nova,
+                game_sim::ArenaEffectKind::Beam => ArenaEffectKind::Beam,
+                game_sim::ArenaEffectKind::HitSpark => ArenaEffectKind::HitSpark,
+            },
+            owner: effect.owner,
+            slot: effect.slot,
+            x: effect.x,
+            y: effect.y,
+            target_x: effect.target_x,
+            target_y: effect.target_y,
+            radius: effect.radius,
+        }
+    }
+
     fn lobby_snapshot_phase(phase: &LobbyPhase) -> LobbySnapshotPhase {
         match phase {
             LobbyPhase::Open => LobbySnapshotPhase::Open,
@@ -1227,6 +1441,7 @@ impl ServerApp {
                 skill_pick_seconds: MatchConfig::v1().skill_pick_seconds,
             },
         );
+        self.broadcast_arena_state_snapshot(transport, match_id);
     }
 
     fn apply_match_outcome<T: AppTransport>(
@@ -1600,20 +1815,6 @@ impl ServerApp {
             )),
         }
     }
-
-    fn first_attack_target(runtime: &MatchRuntime, attacker: PlayerId) -> Option<PlayerId> {
-        runtime
-            .participants
-            .iter()
-            .copied()
-            .filter(|player_id| *player_id != attacker)
-            .find(|player_id| {
-                runtime
-                    .world
-                    .player_state(*player_id)
-                    .is_some_and(|state| state.alive)
-            })
-    }
 }
 
 fn build_world(roster: &[TeamAssignment]) -> SimulationWorld {
@@ -1700,6 +1901,11 @@ mod tests {
             ServerControlEvent::LobbyDirectorySnapshot { lobbies } => Some(lobbies.as_slice()),
             _ => None,
         })
+    }
+
+    fn slot_one_cast_input(client_input_tick: u32) -> ValidatedInputFrame {
+        ValidatedInputFrame::new(client_input_tick, 0, 0, 0, 0, BUTTON_CAST, 1)
+            .expect("slot one cast input should be valid")
     }
 
     fn lobby_snapshot_players(entries: &[ServerControlEvent]) -> Option<&[LobbySnapshotPlayer]> {
@@ -1831,6 +2037,11 @@ mod tests {
                 _ => None,
             })
             .expect("match should start");
+        assert!(alice_events.iter().any(|event| matches!(
+            event,
+            ServerControlEvent::ArenaStateSnapshot { snapshot }
+                if snapshot.players.len() == 2 && snapshot.obstacles.len() == arena_obstacles().len()
+        )));
         assert!(bob_events.iter().any(|event| matches!(
             event,
             ServerControlEvent::MatchStarted { match_id: other, .. } if *other == match_id
@@ -1850,6 +2061,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn end_to_end_skill_pick_round_flow_match_end_and_quit_work_via_fake_clients() {
         let mut server = ServerApp::new();
         let mut transport = InMemoryTransport::new();
@@ -1892,10 +2104,12 @@ mod tests {
                 .drain_events(&mut transport)
                 .expect("bob pre-combat events");
 
-            let attack = ValidatedInputFrame::new(u32::from(tier), 0, 0, 0, 0, BUTTON_PRIMARY, 0)
-                .expect("valid input");
             alice
-                .send_input(&mut transport, attack, u32::from(tier))
+                .send_input(
+                    &mut transport,
+                    slot_one_cast_input(u32::from(tier)),
+                    u32::from(tier),
+                )
                 .expect("attack packet");
             server.pump_transport(&mut transport);
 
@@ -1903,6 +2117,11 @@ mod tests {
                 .drain_events(&mut transport)
                 .expect("alice combat events");
             let bob_events = bob.drain_events(&mut transport).expect("bob combat events");
+            assert!(alice_events.iter().any(|event| matches!(
+                event,
+                ServerControlEvent::ArenaEffectBatch { effects }
+                    if effects.iter().any(|effect| effect.slot == 1)
+            )));
             assert!(alice_events.iter().any(|event| matches!(
                 event,
                 ServerControlEvent::RoundWon {
@@ -1999,11 +2218,7 @@ mod tests {
             .drain_events(&mut transport)
             .expect("bob first-round pre-combat events");
         alice
-            .send_input(
-                &mut transport,
-                ValidatedInputFrame::new(1, 0, 0, 0, 0, BUTTON_PRIMARY, 0).expect("valid input"),
-                1,
-            )
+            .send_input(&mut transport, slot_one_cast_input(1), 1)
             .expect("attack packet");
         server.pump_transport(&mut transport);
         let _ = alice
@@ -2204,8 +2419,7 @@ mod tests {
             alice
                 .send_input(
                     &mut transport,
-                    ValidatedInputFrame::new(u32::from(tier), 0, 0, 0, 0, BUTTON_PRIMARY, 0)
-                        .expect("valid input"),
+                    slot_one_cast_input(u32::from(tier)),
                     u32::from(tier),
                 )
                 .expect("attack packet");
