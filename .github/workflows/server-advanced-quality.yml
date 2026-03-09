@@ -5,6 +5,9 @@ on:
   schedule:
     - cron: "0 7 * * 1"
 
+permissions:
+  contents: read
+
 jobs:
   advanced:
     runs-on: ubuntu-latest
@@ -14,7 +17,9 @@ jobs:
         working-directory: server
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
 
       - name: Install stable toolchain
         run: |
@@ -37,12 +42,17 @@ jobs:
       - name: Complexity report
         run: ./scripts/quality.ps1 complexity
 
-      - name: Fuzz target build
-        run: ./scripts/quality.ps1 fuzz
+      - name: Live ingress fuzz campaign
+        env:
+          RARENA_FUZZ_MAX_TOTAL_TIME: 300
+        run: ./scripts/quality.ps1 fuzz-live
 
       - name: Upload advanced reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: server-advanced-quality-${{ github.sha }}
-          path: server/target/reports
+          path: |
+            server/target/reports
+            server/target/fuzz-generated-corpus
+            server/fuzz/artifacts

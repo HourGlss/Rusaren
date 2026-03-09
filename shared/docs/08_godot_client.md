@@ -31,6 +31,7 @@ Current implementation status:
 - The current shell now consumes authoritative `ArenaStateSnapshot` and `ArenaEffectBatch` events to draw players, aim lines, hp bars, cooldown state, projectile state, and short-lived combat effects.
 - The current shell only enables legal skill picks for the local player: tier 1 for unstarted trees or the next tier in a tree already started this match.
 - The current shell now exports to Web and defaults browser builds to the same-origin `/ws` endpoint.
+- The current shell first fetches `/session/bootstrap`, then upgrades `/ws` with a short-lived one-time token.
 - The Rust dev server can now host the exported shell directly at `/`.
 - The documented production path now places Caddy in front of the Rust server for same-origin TLS while preserving the `/ws` websocket endpoint.
 - The current runtime skills and prototype map load from `server/content/skills/*.yaml` and `server/content/maps/prototype_arena.txt`.
@@ -51,7 +52,7 @@ Web export requirement:
 - The primary client path must remain compatible with Godot web export.
 - Do not assume native-only networking APIs or a native-only client stack.
 - Do not make the main gameplay client depend on a desktop-only scripting/runtime path.
-- Stock native Godot on this machine does not include the `webrtc-native` extension, so full networked transport testing is browser-first unless that extension is installed.
+- Native Godot transport testing depends on the `webrtc-native` extension being available to the editor/runtime. If the local Godot install ships it under a folder like `Godot/webrtc/`, `server/scripts/export-web-client.ps1` can sync that bundle into the ignored local project path `client/godot/webrtc/` for native/headless validation; otherwise full networked transport testing remains browser-first.
 
 Lag handling:
 - Interpolate positions between snapshots

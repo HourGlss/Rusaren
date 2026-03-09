@@ -10,7 +10,7 @@ This is the current hosted topology:
 - `turn.domain.com` -> `coturn` on the same operator-managed host
 
 Current transport note:
-- the public shell now uses websocket signaling at `/ws` plus WebRTC data channels for live gameplay traffic
+- the public shell now uses `/session/bootstrap` plus websocket signaling at `/ws` and WebRTC data channels for live gameplay traffic
 - `coturn` is provisioned because TURN relay fallback is required for reliable browser connectivity on real networks
 
 ## Checked-in stack
@@ -24,7 +24,7 @@ Files:
 - `server/scripts/docker-smoke.ps1`
 
 What each part does:
-- `rarena-server`: serves `/`, `/ws`, `/ws-dev`, `/healthz`, and `/metrics`
+- `rarena-server`: serves `/`, `/session/bootstrap`, `/ws`, `/ws-dev`, `/healthz`, and `/metrics`
 - `caddy`: terminates TLS and reverse-proxies the public site to the Rust server
 - `prometheus`: scrapes backend metrics
 - `coturn`: provides STUN/TURN service on the operator-managed domain

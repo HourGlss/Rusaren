@@ -240,6 +240,37 @@ function Assert-WebExportArtifacts {
     }
 }
 
+function Sync-ProjectWebRtcExtension {
+    param(
+        [string]$ProjectRoot,
+        [string]$ExecutablePath
+    )
+
+    $destinationRoot = Join-Path $ProjectRoot "webrtc"
+    $candidateRoots = @(
+        (Join-Path $repoRoot "Godot\webrtc"),
+        (Join-Path (Split-Path -Parent $ExecutablePath) "webrtc"),
+        (Join-Path (Split-Path -Parent (Split-Path -Parent $ExecutablePath)) "webrtc")
+    ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+
+    $sourceRoot = $candidateRoots |
+        Where-Object { Test-Path (Join-Path $_ "webrtc.gdextension") } |
+        Select-Object -First 1
+
+    if ([string]::IsNullOrWhiteSpace($sourceRoot)) {
+        Write-Host "No local Godot WebRTC extension bundle was found. Native/headless WebRTC checks will use the browser-first fallback path."
+        return
+    }
+
+    if (Test-Path $destinationRoot) {
+        Remove-Item -Recurse -Force -Path $destinationRoot
+    }
+
+    New-Item -ItemType Directory -Force -Path $destinationRoot | Out-Null
+    Copy-Item -Path (Join-Path $sourceRoot "*") -Destination $destinationRoot -Recurse -Force
+    Write-Host "Synced Godot WebRTC extension from '$sourceRoot' to '$destinationRoot'."
+}
+
 $resolvedGodotExecutable = Find-GodotExecutable `
     -RequestedPath $GodotExecutable `
     -InstallRoot $GodotInstallRoot `
@@ -248,6 +279,7 @@ $resolvedGodotExecutable = Find-GodotExecutable `
 
 $buildInfo = Get-GodotBuildInfo -ExecutablePath $resolvedGodotExecutable -FallbackVersionTag $GodotVersionTag
 [void](Ensure-GodotExportTemplates -BuildInfo $buildInfo -AllowInstall:$InstallTemplates)
+Sync-ProjectWebRtcExtension -ProjectRoot $ProjectPath -ExecutablePath $resolvedGodotExecutable
 Clear-WebExportRoot -OutputFilePath $OutputPath
 
 & $resolvedGodotExecutable --headless --path $ProjectPath --export-release "Web" $OutputPath | Out-Host

@@ -9,6 +9,8 @@ func _init() -> void:
 	success = _assert_same_origin_http_upgrade() and success
 	success = _assert_same_origin_https_upgrade() and success
 	success = _assert_custom_url_preserved() and success
+	success = _assert_bootstrap_url_derivation() and success
+	success = _assert_session_token_append() and success
 	success = _assert_blank_origin_falls_back_to_local_default() and success
 	success = _assert_directory_bbcode_exposes_join_links_for_open_lobbies() and success
 	success = _assert_skill_buttons_only_unlock_next_tiers() and success
@@ -47,6 +49,26 @@ func _assert_custom_url_preserved() -> bool:
 		actual,
 		"wss://staging.example.com/ws",
 		"explicit websocket URLs should not be overwritten"
+	)
+
+
+func _assert_bootstrap_url_derivation() -> bool:
+	var helper := WebSocketConfigScript.new()
+	var actual: String = helper.bootstrap_url("wss://arena.example.com/ws")
+	return _expect_equal(
+		actual,
+		"https://arena.example.com/session/bootstrap",
+		"bootstrap url should be derived from the signaling origin"
+	)
+
+
+func _assert_session_token_append() -> bool:
+	var helper := WebSocketConfigScript.new()
+	var actual: String = helper.append_session_token("wss://arena.example.com/ws", "abc123")
+	return _expect_equal(
+		actual,
+		"wss://arena.example.com/ws?token=abc123",
+		"session bootstrap token should be appended as a query parameter"
 	)
 
 

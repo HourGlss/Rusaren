@@ -75,8 +75,23 @@ Current repo usage:
 - `server/verus/packet_header_model.rs`
 - `server/verus/http_route_model.rs`
 - `server/verus/player_record_store_model.rs`
+- `server/verus/webrtc_signaling_model.rs`
+- `server/verus/session_bootstrap_model.rs`
 - run with `cd server && ./scripts/quality.ps1 verus`
 - installed by `cd server && ./scripts/install-tools.ps1` into `server/tools/verus/current`
+
+Important limitation:
+- The current proofs are small security models, not direct proofs over the production async networking code.
+- Every production ingress site that depends on one of these models should point back to the relevant file with a `VERIFIED MODEL:` comment.
+- Those comments are only useful if runtime tests also exercise the real production types and enforce the same invariants.
+
+Current modeled invariants:
+- `network_ingress_model.rs`: first packet must be `Connect`; bound sessions reject reconnects
+- `packet_header_model.rs`: packet header bounds and length assumptions
+- `http_route_model.rs`: low-cardinality route classification stays within the declared surface
+- `player_record_store_model.rs`: record-store parsing remains size-bounded and line-oriented
+- `webrtc_signaling_model.rs`: signaling offer/candidate/bye ordering stays valid
+- `session_bootstrap_model.rs`: websocket bootstrap tokens are one-time use
 
 ## What not to do first
 

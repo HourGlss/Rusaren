@@ -28,12 +28,17 @@ on:
       - "shared/docs/08_godot_client.md"
       - "shared/docs/14_buildability_assessment.md"
 
+permissions:
+  contents: read
+
 jobs:
   web-smoke:
     runs-on: windows-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
 
       - name: Install stable toolchain
         shell: pwsh
@@ -46,8 +51,14 @@ jobs:
         run: |
           ./server/scripts/export-web-client.ps1 -DownloadPortable -InstallTemplates
 
-      - name: Resolve Godot executable
-        id: godot
+      - name: Verify export output
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "server/static/webclient/index.html")) {
+            throw "Godot export failed: server/static/webclient/index.html was not produced."
+          }
+
+      - name: Godot headless checks
         shell: pwsh
         run: |
           $godotExe = Get-ChildItem -Path server/tools/godot/4.6.1-stable -Recurse -File -Filter "Godot*_console.exe" |
@@ -55,18 +66,10 @@ jobs:
           if ([string]::IsNullOrWhiteSpace($godotExe)) {
             throw "Godot console executable was not found after export setup."
           }
-          "path=$godotExe" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
-      - name: Godot headless boot
-        shell: pwsh
-        run: |
-          & "${{ steps.godot.outputs.path }}" --headless --path client/godot --quit
-
-      - name: Godot protocol checks
-        shell: pwsh
-        run: |
-          & "${{ steps.godot.outputs.path }}" --headless --path client/godot -s res://tests/protocol_checks.gd
-          & "${{ steps.godot.outputs.path }}" --headless --path client/godot -s res://tests/web_export_checks.gd
+          & $godotExe --headless --path client/godot --quit
+          & $godotExe --headless --path client/godot -s res://tests/protocol_checks.gd
+          & $godotExe --headless --path client/godot -s res://tests/web_export_checks.gd
 
       - name: Build dedicated server
         shell: pwsh
@@ -115,7 +118,7 @@ jobs:
 
       - name: Upload exported web client
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: godot-webclient-${{ github.sha }}
           path: server/static/webclient

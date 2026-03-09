@@ -38,12 +38,17 @@ on:
       - "shared/docs/15_deployment_ops.md"
       - "shared/docs/16_runbooks.md"
 
+permissions:
+  contents: read
+
 jobs:
   smoke:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
 
       - name: Run deploy smoke script
         shell: pwsh

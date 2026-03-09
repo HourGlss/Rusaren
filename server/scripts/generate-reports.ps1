@@ -6,6 +6,10 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+Set-StrictMode -Version Latest
+if ($PSVersionTable.PSVersion.Major -ge 7) {
+    $PSNativeCommandUseErrorActionPreference = $true
+}
 
 $serverRoot = Split-Path -Parent $PSScriptRoot
 $repoRoot = Split-Path -Parent $serverRoot
@@ -340,6 +344,22 @@ function New-ScoreSummary {
     }
 }
 
+function Get-OptionalPropertyValue {
+    param(
+        [Parameter(Mandatory)]
+        [object]$InputObject,
+        [Parameter(Mandatory)]
+        [string]$PropertyName
+    )
+
+    $property = $InputObject.PSObject.Properties[$PropertyName]
+    if ($null -eq $property) {
+        return $null
+    }
+
+    return $property.Value
+}
+
 function Get-StatusBadgeClass {
     param([string]$Status)
 
@@ -654,60 +674,98 @@ function Get-FuzzTargetCatalog {
             Scope = "crates/game_net/src/lib.rs"
             Description = "Packet framing and header validation."
             Paths = @("crates/game_net/src/lib.rs")
+            Primary = $true
         },
         [pscustomobject]@{
             Target = "control_command_decode"
             Scope = "crates/game_net/src/control.rs plus game_domain validation via decoded identifiers and names."
             Description = "Control command decode and validation."
             Paths = @("crates/game_net/src/control.rs")
+            Primary = $true
         },
         [pscustomobject]@{
             Target = "input_frame_decode"
             Scope = "crates/game_net/src/lib.rs"
             Description = "Input packet decode and button/context validation."
             Paths = @("crates/game_net/src/lib.rs")
+            Primary = $true
         },
         [pscustomobject]@{
             Target = "session_ingress"
             Scope = "crates/game_net/src/ingress.rs plus control decode and domain validation."
             Description = "Session binding and hostile ingress sequencing."
             Paths = @("crates/game_net/src/ingress.rs", "crates/game_net/src/control.rs")
+            Primary = $true
         },
         [pscustomobject]@{
             Target = "server_control_event_decode"
             Scope = "crates/game_net/src/control.rs plus game_domain validation via decoded lobby snapshots and records."
             Description = "Server control event decode for lobby directory and full lobby snapshot payloads."
             Paths = @("crates/game_net/src/control.rs")
+            Primary = $true
+        },
+        [pscustomobject]@{
+            Target = "webrtc_signal_message_parse"
+            Scope = "crates/game_api/src/webrtc.rs via websocket signaling JSON validation."
+            Description = "WebRTC signaling message decode and validation."
+            Paths = @("crates/game_api/src/webrtc.rs")
+            Primary = $true
+        },
+        [pscustomobject]@{
+            Target = "control_command_roundtrip"
+            Scope = "crates/game_net/src/control.rs via structured encode/decode differential fuzzing."
+            Description = "Structured round-trip fuzzing for valid control command packets."
+            Paths = @("crates/game_net/src/control.rs")
+            Primary = $false
+        },
+        [pscustomobject]@{
+            Target = "input_frame_roundtrip"
+            Scope = "crates/game_net/src/lib.rs via structured encode/decode differential fuzzing."
+            Description = "Structured round-trip fuzzing for valid player input packets."
+            Paths = @("crates/game_net/src/lib.rs")
+            Primary = $false
+        },
+        [pscustomobject]@{
+            Target = "webrtc_signal_message_roundtrip"
+            Scope = "crates/game_api/src/webrtc.rs via structured JSON round-trip fuzzing."
+            Description = "Structured round-trip fuzzing for valid signaling messages."
+            Paths = @("crates/game_api/src/webrtc.rs")
+            Primary = $false
         },
         [pscustomobject]@{
             Target = "http_route_classification"
             Scope = "crates/game_api/src/observability.rs plus realtime HTTP route labeling."
             Description = "HTTP route classification for observability and low-cardinality request labeling."
             Paths = @("crates/game_api/src/observability.rs")
+            Primary = $false
         },
         [pscustomobject]@{
             Target = "observability_metrics_render"
             Scope = "crates/game_api/src/observability.rs via Prometheus rendering, counters, gauges, and route-labeled request metrics."
             Description = "Observability metric rendering and counter/gauge update flows exposed by the hosted ops surface."
             Paths = @("crates/game_api/src/observability.rs")
+            Primary = $false
         },
         [pscustomobject]@{
             Target = "player_record_store_parse"
             Scope = "crates/game_api/src/records.rs via persisted record parsing, validation, and canonicalization."
             Description = "Persisted player-record TSV parsing and canonicalization at the storage boundary."
             Paths = @("crates/game_api/src/records.rs")
+            Primary = $false
         },
         [pscustomobject]@{
             Target = "ascii_map_parse"
             Scope = "crates/game_content/src/lib.rs via authored ASCII map parsing and validation."
             Description = "ASCII map parsing for the server-authored arena layout."
             Paths = @("crates/game_content/src/lib.rs")
+            Primary = $false
         },
         [pscustomobject]@{
             Target = "skill_yaml_parse"
             Scope = "crates/game_content/src/lib.rs via authored YAML skill parsing and validation."
             Description = "YAML skill parsing for runtime-loaded class and skill definitions."
             Paths = @("crates/game_content/src/lib.rs")
+            Primary = $false
         }
     )
 }
@@ -735,6 +793,50 @@ function Get-FuzzReplaySuites {
             Description = "Replay authored content corpora against ASCII map parsing and YAML skill validation."
         }
     )
+}
+
+function Get-FuzzCorpusStats {
+    param(
+        [string]$ServerRoot,
+        [string]$Target
+    )
+
+    $seedDir = Join-Path $ServerRoot ("fuzz\corpus\" + $Target)
+    $generatedDir = Join-Path $ServerRoot ("target\fuzz-generated-corpus\" + $Target)
+    $seedFiles = if (Test-Path $seedDir) {
+        @(Get-ChildItem -Path $seedDir -File | Sort-Object Name)
+    }
+    else {
+        @()
+    }
+    $generatedFiles = if (Test-Path $generatedDir) {
+        @(Get-ChildItem -Path $generatedDir -File | Sort-Object Name)
+    }
+    else {
+        @()
+    }
+
+    $seedHashes = @{}
+    foreach ($seedFile in $seedFiles) {
+        $seedHashes[(Get-FileHash -Algorithm SHA256 -Path $seedFile.FullName).Hash] = $true
+    }
+
+    $discoveredFiles = @(
+        foreach ($generatedFile in $generatedFiles) {
+            $hash = (Get-FileHash -Algorithm SHA256 -Path $generatedFile.FullName).Hash
+            if (-not $seedHashes.ContainsKey($hash)) {
+                $generatedFile
+            }
+        }
+    )
+
+    return [pscustomobject]@{
+        SeedDir = $seedDir
+        GeneratedDir = $generatedDir
+        SeedFiles = @($seedFiles)
+        GeneratedFiles = @($generatedFiles)
+        DiscoveredFiles = @($discoveredFiles)
+    }
 }
 
 function Get-FuzzArtifactFindings {
@@ -1012,9 +1114,9 @@ $(($noteItems -join "`n"))
             ErrorMessage = $null
             ScoreSummary = $scoreSummary
             Summary = [pscustomobject]@{
-                Lines = [double]$totals.lines.percent
-                Functions = [double]$totals.functions.percent
-                Regions = [double]$totals.regions.percent
+                Lines = $runtimeLinePercent
+                Functions = $runtimeFunctionPercent
+                Regions = $runtimeRegionPercent
             }
         }
     }
@@ -1455,8 +1557,20 @@ function Invoke-CallgraphReport {
                 Remove-Item -Force -Path "index.scip"
             }
 
-            Invoke-CheckedCommand -Description "rust-analyzer scip" -Command {
-                rust-analyzer scip . | Out-Host
+            $scipIndexerWarning = $null
+            try {
+                & rust-analyzer scip . | Out-Host
+                if ($LASTEXITCODE -ne 0) {
+                    throw "rust-analyzer scip failed with exit code $LASTEXITCODE."
+                }
+            }
+            catch {
+                if (Test-Path "index.scip") {
+                    $scipIndexerWarning = $_.Exception.Message
+                }
+                else {
+                    throw
+                }
             }
 
             if (-not (Test-Path "index.scip")) {
@@ -1513,6 +1627,10 @@ function Invoke-CallgraphReport {
         }
         if ($summary.omitted_bodyless_nodes -gt 0) {
             $notes.Add("$($summary.omitted_bodyless_nodes) callable-looking definitions were omitted because no executable body could be located.")
+        }
+        if (-not [string]::IsNullOrWhiteSpace($scipIndexerWarning)) {
+            $notes.Add("rust-analyzer scip reported upstream indexing errors but still produced a usable SCIP index; the curated callgraph artifacts were generated from that output.")
+            $notes.Add("Indexer warning: $scipIndexerWarning")
         }
 
         $embedBlock = if ($null -ne $overviewEmbedAsset) {
@@ -1710,7 +1828,7 @@ $(($noteItems -join "`n"))
 
         return [pscustomobject]@{
             Name = "Call Graph"
-            Status = "ok"
+            Status = $(if ([string]::IsNullOrWhiteSpace($scipIndexerWarning)) { "ok" } else { "warn" })
             Notes = @($notes | Sort-Object -Unique)
             IndexPath = "callgraph/index.html"
             ErrorMessage = $null
@@ -1751,6 +1869,7 @@ function Invoke-FuzzCoverageReport {
     $outputPath = Join-Path $fuzzRoot "output.html"
     $detailRoot = $fuzzRoot
     $artifactRoot = Join-Path $serverRoot "fuzz\artifacts"
+    $generatedCorpusRoot = Join-Path $serverRoot "target\fuzz-generated-corpus"
 
     if (-not (Test-ToolAvailable -CommandName "cargo-llvm-cov")) {
         $notes.Add("Fuzz corpus coverage was skipped because cargo-llvm-cov is not installed.")
@@ -1820,8 +1939,9 @@ function Invoke-FuzzCoverageReport {
 
         $files = @($files | Sort-Object LinePercent, DisplayPath)
         $targetScopes = Get-FuzzTargetCatalog
+        $primaryTargetScopes = @($targetScopes | Where-Object { $_.Primary })
         $primaryPathSet = @{}
-        foreach ($targetScope in @($targetScopes)) {
+        foreach ($targetScope in $primaryTargetScopes) {
             foreach ($path in @($targetScope.Paths)) {
                 $primaryPathSet[$path] = $true
             }
@@ -1867,17 +1987,16 @@ function Invoke-FuzzCoverageReport {
         }
 
         $scopeRows = foreach ($scope in $targetScopes) {
-            $corpusDir = Join-Path $serverRoot ("fuzz\corpus\" + $scope.Target)
-            $seeds = @()
-            if (Test-Path $corpusDir) {
-                $seeds = @(Get-ChildItem -Path $corpusDir -File | Sort-Object Name)
-            }
+            $corpusStats = Get-FuzzCorpusStats -ServerRoot $serverRoot -Target $scope.Target
 
 @"
 <tr>
   <td><code>$(Escape-Html $scope.Target)</code></td>
-  <td>$($seeds.Count)</td>
-  <td><code>$(Escape-Html (Convert-ToDisplayPath -Path $corpusDir))</code></td>
+  <td>$(if ($scope.Primary) { "Primary" } else { "Supplemental" })</td>
+  <td>$($corpusStats.SeedFiles.Count)</td>
+  <td>$($corpusStats.DiscoveredFiles.Count)</td>
+  <td><code>$(Escape-Html (Convert-ToDisplayPath -Path $corpusStats.SeedDir))</code></td>
+  <td><code>$(Escape-Html (Convert-ToDisplayPath -Path $corpusStats.GeneratedDir))</code></td>
   <td>$(Escape-Html $scope.Scope)</td>
   <td>$(Escape-Html $scope.Description)</td>
 </tr>
@@ -1914,7 +2033,7 @@ function Invoke-FuzzCoverageReport {
 @"
 <tr>
   <td><code>$(Escape-Html $file.DisplayPath)</code></td>
-  <td>Not hit by the checked-in fuzz corpus replay yet.</td>
+  <td>Not hit by the current replay corpus yet.</td>
 </tr>
 "@
         }
@@ -1925,14 +2044,23 @@ function Invoke-FuzzCoverageReport {
         else {
             ($coveredPrimaryCount / $primaryRuntimeMetrics.Count) * 100.0
         }
-        $seededTargetCount = @($targetScopes | Where-Object {
-            Test-Path (Join-Path $serverRoot ("fuzz\corpus\" + $_.Target))
+        $seededTargetCount = @($primaryTargetScopes | Where-Object {
+            (Get-FuzzCorpusStats -ServerRoot $serverRoot -Target $_.Target).SeedFiles.Count -gt 0
         }).Count
-        $seededTargetPercent = if ($targetScopes.Count -eq 0) {
+        $seededTargetPercent = if ($primaryTargetScopes.Count -eq 0) {
             0.0
         }
         else {
-            ($seededTargetCount / $targetScopes.Count) * 100.0
+            ($seededTargetCount / $primaryTargetScopes.Count) * 100.0
+        }
+        $discoveredTargetCount = @($primaryTargetScopes | Where-Object {
+            (Get-FuzzCorpusStats -ServerRoot $serverRoot -Target $_.Target).DiscoveredFiles.Count -gt 0
+        }).Count
+        $discoveredTargetPercent = if ($primaryTargetScopes.Count -eq 0) {
+            0.0
+        }
+        else {
+            ($discoveredTargetCount / $primaryTargetScopes.Count) * 100.0
         }
         $findings = @(Get-FuzzArtifactFindings -ArtifactRoot $artifactRoot -TargetCatalog $targetScopes)
         $cleanFindingsPercent = if ($findings.Count -eq 0) {
@@ -1942,25 +2070,32 @@ function Invoke-FuzzCoverageReport {
             0.0
         }
         $scoreSummary = New-ScoreSummary `
-            -Score (($averagePrimaryLinePercent * 0.3) + ($averagePrimaryFunctionPercent * 0.2) + ($averagePrimaryRegionPercent * 0.1) + ($primaryFileHitPercent * 0.2) + ($seededTargetPercent * 0.1) + ($cleanFindingsPercent * 0.1)) `
-            -Formula "30% primary runtime line + 20% primary runtime function + 10% primary runtime region corpus replay coverage + 20% primary runtime file hit rate + 10% seeded target coverage + 10% no saved findings" `
+            -Score (($averagePrimaryLinePercent * 0.25) + ($averagePrimaryFunctionPercent * 0.2) + ($averagePrimaryRegionPercent * 0.1) + ($primaryFileHitPercent * 0.15) + ($seededTargetPercent * 0.1) + ($discoveredTargetPercent * 0.1) + ($cleanFindingsPercent * 0.1)) `
+            -Formula "25% primary runtime line + 20% primary runtime function + 10% primary runtime region replay coverage + 15% primary runtime file hit rate + 10% seeded target coverage + 10% discovered-corpus target coverage + 10% no saved findings" `
             -Breakdown @(
                 "Primary runtime lines: $(Format-Percent -Value $averagePrimaryLinePercent)",
                 "Primary runtime functions: $(Format-Percent -Value $averagePrimaryFunctionPercent)",
                 "Primary runtime regions: $(Format-Percent -Value $averagePrimaryRegionPercent)",
                 "Primary runtime files hit: $(Format-Percent -Value $primaryFileHitPercent)",
-                "Seeded fuzz targets: $(Format-Percent -Value $seededTargetPercent)",
+                "Seeded primary targets: $(Format-Percent -Value $seededTargetPercent)",
+                "Discovered-corpus primary targets: $(Format-Percent -Value $discoveredTargetPercent)",
                 "No saved findings: $(Format-Percent -Value $cleanFindingsPercent)"
             )
 
-        $notes.Add("This report measures corpus replay coverage, not live libFuzzer exploration coverage.")
+        $notes.Add("This report measures replay coverage over the checked-in seed corpus plus any discovered corpus present under server/target/fuzz-generated-corpus.")
         $notes.Add("Saved crash artifacts are reviewed on this page under Findings and reproductions, and are stored under server/fuzz/artifacts.")
         $notes.Add("Seed corpora are generated by fuzz_seed_builder and replayed through the same decode and ingress APIs that the fuzz targets call.")
-        $notes.Add("Headline fuzz scoring is scoped to the primary runtime files mapped from the checked-in fuzz targets. Additional replay-hit files remain visible below as supplemental coverage.")
-        $notes.Add("The checked-in corpus currently focuses on hostile packet decoding and ingress validation.")
+        $notes.Add("Headline fuzz scoring is scoped to the primary network-ingress files mapped from the ingress fuzz targets. Additional replay-hit files remain visible below as supplemental coverage.")
+        $notes.Add("Structured round-trip fuzz targets exist for selected network packet types, but the headline score remains focused on ingress decode and validation.")
         $notes.Add("This Windows/MSVC host does not currently emit native cargo fuzz coverage HTML for this repo, so corpus replay coverage is used instead.")
+        if ($discoveredTargetCount -gt 0) {
+            $notes.Add("$discoveredTargetCount primary fuzz target(s) currently have a discovered corpus under server/target/fuzz-generated-corpus.")
+        }
+        else {
+            $notes.Add("No discovered corpus is currently present under server/target/fuzz-generated-corpus. Local Windows runs will usually show seed-only replay until Linux CI or Docker runs a live cargo fuzz campaign.")
+        }
         if ($findings.Count -eq 0) {
-            $notes.Add("No saved crash artifacts are present under server/fuzz/artifacts. The current per-commit workflow builds fuzz targets and replays the checked-in corpus, but it does not run long live exploration campaigns.")
+            $notes.Add("No saved crash artifacts are present under server/fuzz/artifacts.")
         }
         else {
             $notes.Add("$($findings.Count) saved fuzz finding artifact(s) were found under server/fuzz/artifacts.")
@@ -1983,16 +2118,17 @@ function Invoke-FuzzCoverageReport {
         }
 
         $body = @"
-<h1>Fuzz Corpus Coverage</h1>
-<p class="muted">This report replays the checked-in fuzz corpus through the backend decode and ingress surfaces, then measures the exercised lines with <code>cargo llvm-cov</code>. Detailed line-by-line output: <a href="./html/index.html">fuzz/html/index.html</a>.</p>
+<h1>Fuzz Coverage</h1>
+<p class="muted">This report replays the checked-in seed corpus plus any discovered corpus under <code>server/target/fuzz-generated-corpus</code> through the backend decode and ingress surfaces, then measures the exercised lines with <code>cargo llvm-cov</code>. Detailed line-by-line output: <a href="./html/index.html">fuzz/html/index.html</a>.</p>
 <div class="grid">
   <div class="metric"><span class="muted">Fuzzing score</span><strong>$(Format-Score -Score $scoreSummary.Score) $(Format-GradeBadge -Grade $scoreSummary.Grade)</strong><div class="detail">$(Escape-Html $scoreSummary.Formula)</div></div>
   <div class="metric"><span class="muted">Primary line coverage</span><strong>$(Format-Percent -Value $averagePrimaryLinePercent)</strong></div>
   <div class="metric"><span class="muted">Primary function coverage</span><strong>$(Format-Percent -Value $averagePrimaryFunctionPercent)</strong></div>
   <div class="metric"><span class="muted">Primary region coverage</span><strong>$(Format-Percent -Value $averagePrimaryRegionPercent)</strong></div>
   <div class="metric"><span class="muted">Primary files hit</span><strong>$(Format-Percent -Value $primaryFileHitPercent)</strong></div>
-  <div class="metric"><span class="muted">Coverage mode</span><strong>Corpus replay</strong></div>
-  <div class="metric"><span class="muted">Seeded targets</span><strong>$(Format-Percent -Value $seededTargetPercent)</strong></div>
+  <div class="metric"><span class="muted">Coverage mode</span><strong>Seed + discovered replay</strong></div>
+  <div class="metric"><span class="muted">Seeded primary targets</span><strong>$(Format-Percent -Value $seededTargetPercent)</strong></div>
+  <div class="metric"><span class="muted">Discovered-corpus targets</span><strong>$(Format-Percent -Value $discoveredTargetPercent)</strong></div>
   <div class="metric"><span class="muted">Saved findings</span><strong>$($findings.Count)</strong></div>
   <div class="metric"><span class="muted">Findings directory</span><strong><code>server/fuzz/artifacts</code></strong></div>
 </div>
@@ -2002,8 +2138,11 @@ function Invoke-FuzzCoverageReport {
     <thead>
       <tr>
         <th>Target</th>
+        <th>Scope</th>
         <th>Seed files</th>
-        <th>Corpus directory</th>
+        <th>Discovered files</th>
+        <th>Seed corpus directory</th>
+        <th>Discovered corpus directory</th>
         <th>Expected source scope</th>
         <th>Focus</th>
       </tr>
@@ -2014,7 +2153,7 @@ $(($scopeRows -join "`n"))
   </table>
 </div>
 <div class="panel">
-  <h2>Primary runtime file corpus replay coverage</h2>
+  <h2>Primary runtime file replay coverage</h2>
   <table>
     <thead>
       <tr>
@@ -2041,7 +2180,7 @@ $(($fileRows -join "`n"))
       </tr>
     </thead>
     <tbody>
-$(if ($uncoveredRows) { $uncoveredRows -join "`n" } else { '<tr><td colspan="2">All current game_domain and game_net source files were hit by corpus replay.</td></tr>' })
+$(if ($uncoveredRows) { $uncoveredRows -join "`n" } else { '<tr><td colspan="2">All primary ingress-runtime files were hit by the current replay corpus.</td></tr>' })
     </tbody>
   </table>
 </div>
@@ -2094,15 +2233,15 @@ $(($findingRows -join "`n"))
 } else {
 @"
   <p>No saved fuzz findings are currently present under <code>server/fuzz/artifacts</code>.</p>
-  <p class="muted">Current automation builds fuzz targets and replays the checked-in corpus. To create finding artifacts, run a longer <code>cargo fuzz run &lt;target&gt;</code> campaign manually or in scheduled CI.</p>
+  <p class="muted">Current coverage is based on replaying checked-in seeds plus any discovered corpus already present. To create finding artifacts or grow the discovered corpus, run a bounded live <code>cargo fuzz run &lt;target&gt;</code> campaign in Linux CI, Docker, or WSL.</p>
 "@
 })
 </div>
 <p class="footer"><a href="../index.html">Back to report index</a></p>
 "@
 
-        Write-ReportHtml -Path $reportPath -Title "Fuzz Corpus Coverage" -Body $body
-        Write-ReportHtml -Path $outputPath -Title "Fuzz Corpus Coverage" -Body $body
+        Write-ReportHtml -Path $reportPath -Title "Fuzz Coverage" -Body $body
+        Write-ReportHtml -Path $outputPath -Title "Fuzz Coverage" -Body $body
 
         return [pscustomobject]@{
             Name = "Fuzz Coverage"
@@ -2118,6 +2257,7 @@ $(($findingRows -join "`n"))
                 CoreFileHitPercent = $primaryFileHitPercent
                 PrimaryFileHitPercent = $primaryFileHitPercent
                 SeededTargetPercent = $seededTargetPercent
+                DiscoveredTargetPercent = $discoveredTargetPercent
                 CleanFindingsPercent = $cleanFindingsPercent
                 Findings = $findings.Count
             }
@@ -2127,15 +2267,15 @@ $(($findingRows -join "`n"))
         $errorMessage = $_.Exception.Message
         $notes.Add("Fuzz corpus coverage generation failed: $errorMessage")
         $body = @"
-<h1>Fuzz Corpus Coverage Failed</h1>
+<h1>Fuzz Coverage Failed</h1>
 <div class="panel">
   <p>The fuzz corpus coverage step could not complete.</p>
   <p><code>$(Escape-Html $errorMessage)</code></p>
 </div>
 <p class="footer"><a href="../index.html">Back to report index</a></p>
 "@
-        Write-ReportHtml -Path $reportPath -Title "Fuzz Corpus Coverage Failed" -Body $body
-        Write-ReportHtml -Path $outputPath -Title "Fuzz Corpus Coverage Failed" -Body $body
+        Write-ReportHtml -Path $reportPath -Title "Fuzz Coverage Failed" -Body $body
+        Write-ReportHtml -Path $outputPath -Title "Fuzz Coverage Failed" -Body $body
 
         return [pscustomobject]@{
             Name = "Fuzz Coverage"
@@ -2830,7 +2970,16 @@ function Invoke-ReportGeneration {
         }
     }
 
-    $scoredResults = @($results | Where-Object { $null -ne $_.ScoreSummary })
+    $scoredResults = @(
+        $results |
+            ForEach-Object {
+                [pscustomobject]@{
+                    Result = $_
+                    ScoreSummary = Get-OptionalPropertyValue -InputObject $_ -PropertyName "ScoreSummary"
+                }
+            } |
+            Where-Object { $null -ne $_.ScoreSummary }
+    )
     $overallScoreSummary = if ($scoredResults.Count -gt 0) {
         $averageScore = [double](($scoredResults | ForEach-Object { $_.ScoreSummary.Score } | Measure-Object -Average).Average)
         New-ScoreSummary -Score $averageScore -Formula "Average of Coverage, Fuzzing, Docs, and Complexity scores" -Breakdown @()
@@ -2840,10 +2989,11 @@ function Invoke-ReportGeneration {
     }
 
     $cards = foreach ($result in $results) {
-        $scoreBlock = if ($null -ne $result.ScoreSummary) {
+        $resultScoreSummary = Get-OptionalPropertyValue -InputObject $result -PropertyName "ScoreSummary"
+        $scoreBlock = if ($null -ne $resultScoreSummary) {
             @"
-  <p><strong>$(Format-Score -Score $result.ScoreSummary.Score)</strong> $(Format-GradeBadge -Grade $result.ScoreSummary.Grade)</p>
-  <p class="muted">$(Escape-Html $result.ScoreSummary.Formula)</p>
+  <p><strong>$(Format-Score -Score $resultScoreSummary.Score)</strong> $(Format-GradeBadge -Grade $resultScoreSummary.Grade)</p>
+  <p class="muted">$(Escape-Html $resultScoreSummary.Formula)</p>
 "@
         }
         else {
@@ -2851,8 +3001,8 @@ function Invoke-ReportGeneration {
   <p><strong>Informational</strong></p>
 "@
         }
-        $breakdownBlock = if (($null -ne $result.ScoreSummary) -and $result.ScoreSummary.Breakdown) {
-            "<p class=`"muted`">$(Escape-Html (($result.ScoreSummary.Breakdown -join ' | ')))</p>"
+        $breakdownBlock = if (($null -ne $resultScoreSummary) -and $resultScoreSummary.Breakdown) {
+            "<p class=`"muted`">$(Escape-Html (($resultScoreSummary.Breakdown -join ' | ')))</p>"
         }
         else {
             ""

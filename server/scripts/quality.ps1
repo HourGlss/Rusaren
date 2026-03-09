@@ -1,10 +1,14 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("all", "fmt", "lint", "hack", "test", "doc", "docs-artifacts", "coverage", "fuzz-coverage", "reports", "deny", "audit", "udeps", "miri", "complexity", "callgraph", "bench", "fuzz", "typos", "taplo", "zizmor", "verus")]
+    [ValidateSet("all", "fmt", "lint", "hack", "test", "doc", "docs-artifacts", "coverage", "fuzz-coverage", "reports", "deny", "audit", "udeps", "miri", "complexity", "callgraph", "bench", "fuzz", "fuzz-build", "fuzz-live", "typos", "taplo", "zizmor", "verus")]
     [string]$Task = "all"
 )
 
 $ErrorActionPreference = "Stop"
+Set-StrictMode -Version Latest
+if ($PSVersionTable.PSVersion.Major -ge 7) {
+    $PSNativeCommandUseErrorActionPreference = $true
+}
 
 $serverRoot = Split-Path -Parent $PSScriptRoot
 $repoRoot = Split-Path -Parent $serverRoot
@@ -15,6 +19,98 @@ if (Test-Path $cargoBin) {
     $env:PATH = "$cargoBin$([System.IO.Path]::PathSeparator)$env:PATH"
 }
 
+$runtime = [System.Runtime.InteropServices.RuntimeInformation]
+$isWindows = $runtime::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Windows)
+
+function Get-AllFuzzTargets {
+    if (-not (Test-Path "fuzz/Cargo.toml")) {
+        return @()
+    }
+
+    return @(
+        Get-ChildItem -Path "fuzz/fuzz_targets" -Filter *.rs -File |
+            ForEach-Object { [System.IO.Path]::GetFileNameWithoutExtension($_.Name) }
+    )
+}
+
+function Get-NetworkFuzzTargets {
+    return @(
+        "packet_header_decode",
+        "control_command_decode",
+        "input_frame_decode",
+        "session_ingress",
+        "server_control_event_decode",
+        "webrtc_signal_message_parse"
+    )
+}
+
+function Invoke-FuzzBuild {
+    param([string[]]$Targets)
+
+    if ($Targets.Count -eq 0) {
+        Write-Host "The fuzz workspace exists, but no fuzz targets are defined yet."
+        return
+    }
+
+    foreach ($target in $Targets) {
+        rustup run nightly cargo fuzz build $target
+    }
+}
+
+function Copy-FuzzSeedCorpus {
+    param(
+        [string]$Target,
+        [string]$DestinationRoot
+    )
+
+    $sourceDir = Join-Path $serverRoot ("fuzz\corpus\" + $Target)
+    $targetDir = Join-Path $DestinationRoot $Target
+
+    if (Test-Path $targetDir) {
+        Remove-Item -Recurse -Force -Path $targetDir
+    }
+    New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
+
+    if (Test-Path $sourceDir) {
+        Copy-Item -Path (Join-Path $sourceDir "*") -Destination $targetDir -Recurse -Force
+    }
+}
+
+function Invoke-LiveFuzz {
+    param([string[]]$Targets)
+
+    if ($isWindows) {
+        throw "Live cargo-fuzz execution is not supported on this native Windows/MSVC setup. Use Linux CI, Docker, or WSL for cargo fuzz run."
+    }
+
+    if ($Targets.Count -eq 0) {
+        Write-Host "The fuzz workspace exists, but no fuzz targets are defined yet."
+        return
+    }
+
+    $maxTotalTime = 10
+    if (-not [string]::IsNullOrWhiteSpace($env:RARENA_FUZZ_MAX_TOTAL_TIME)) {
+        $maxTotalTime = [int]$env:RARENA_FUZZ_MAX_TOTAL_TIME
+    }
+    if ($maxTotalTime -le 0) {
+        throw "RARENA_FUZZ_MAX_TOTAL_TIME must be greater than zero."
+    }
+
+    $artifactRoot = Join-Path $serverRoot "fuzz\artifacts"
+    $generatedCorpusRoot = Join-Path $serverRoot "target\fuzz-generated-corpus"
+    New-Item -ItemType Directory -Force -Path $artifactRoot | Out-Null
+    New-Item -ItemType Directory -Force -Path $generatedCorpusRoot | Out-Null
+
+    foreach ($target in $Targets) {
+        Copy-FuzzSeedCorpus -Target $target -DestinationRoot $generatedCorpusRoot
+        $corpusDir = Join-Path $generatedCorpusRoot $target
+        $artifactDir = Join-Path $artifactRoot $target
+        New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
+
+        rustup run nightly cargo fuzz run $target $corpusDir -- "-artifact_prefix=$artifactDir/" "-max_total_time=$maxTotalTime"
+    }
+}
+
 function Invoke-QualityTask {
     param([string]$Name)
 
@@ -23,7 +119,7 @@ function Invoke-QualityTask {
     switch ($Name) {
         "fmt" { rustup run stable cargo xfmt }
         "lint" { rustup run stable cargo xlint }
-        "hack" { rustup run stable cargo hack check --workspace --all-targets --each-feature --no-dev-deps }
+        "hack" { rustup run stable cargo hack check --workspace --all-targets --each-feature }
         "test" {
             if ($hasNextest) {
                 rustup run stable cargo nextest run --workspace --all-features
@@ -57,23 +153,17 @@ function Invoke-QualityTask {
             rustup run stable cargo bench --workspace --no-run
         }
         "fuzz" {
-            if (-not (Test-Path "fuzz/Cargo.toml")) {
-                Write-Host "No fuzz workspace has been initialized yet."
-                return
+            $targets = Get-NetworkFuzzTargets
+            if ($isWindows) {
+                Write-Host "Live cargo-fuzz execution is not available on native Windows/MSVC in this repo; building ingress fuzz targets instead."
+                Invoke-FuzzBuild -Targets $targets
             }
-
-            $targets = Get-ChildItem -Path "fuzz/fuzz_targets" -Filter *.rs -File |
-                ForEach-Object { [System.IO.Path]::GetFileNameWithoutExtension($_.Name) }
-
-            if ($targets.Count -eq 0) {
-                Write-Host "The fuzz workspace exists, but no fuzz targets are defined yet."
-                return
-            }
-
-            foreach ($target in $targets) {
-                rustup run nightly cargo fuzz build $target
+            else {
+                Invoke-LiveFuzz -Targets $targets
             }
         }
+        "fuzz-build" { Invoke-FuzzBuild -Targets (Get-AllFuzzTargets) }
+        "fuzz-live" { Invoke-LiveFuzz -Targets (Get-NetworkFuzzTargets) }
         "typos" {
             Push-Location $repoRoot
             try {
@@ -106,7 +196,7 @@ function Invoke-QualityTask {
 }
 
 $tasks = if ($Task -eq "all") {
-    @("fmt", "lint", "verus", "hack", "test", "doc", "reports", "deny", "audit", "typos", "taplo", "zizmor")
+    @("fmt", "lint", "verus", "hack", "test", "doc", "fuzz", "reports", "deny", "audit", "typos", "taplo", "zizmor")
 }
 else {
     @($Task)

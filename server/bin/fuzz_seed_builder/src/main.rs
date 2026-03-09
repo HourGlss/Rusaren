@@ -641,6 +641,7 @@ fn write_http_route_classification_corpus(dir: &Path) -> Result<(), Box<dyn Erro
     write_seed(dir, "root.bin", b"/")?;
     write_seed(dir, "healthz.bin", b"/healthz")?;
     write_seed(dir, "metrics.bin", b"/metrics")?;
+    write_seed(dir, "session_bootstrap.bin", b"/session/bootstrap")?;
     write_seed(dir, "websocket.bin", b"/ws")?;
     write_seed(dir, "index_js.bin", b"/index.js")?;
     write_seed(dir, "nested_asset.bin", b"/assets/shell/index.wasm")?;

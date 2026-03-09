@@ -44,7 +44,7 @@ rustup run stable cargo run -p dedicated_server --quiet
 Start the easiest local playable build:
 
 ```powershell
-./server/scripts/play-local.ps1 -GodotExecutable C:\Users\azbai\Documents\Rarena\Godot\Godot_v4.6.1-stable_win64_console.exe
+./server/scripts/play-local.ps1 -GodotExecutable <GODOT_EXECUTABLE>
 ```
 
 That script exports the Godot web client, starts the Rust server directly on the host by default, and opens the browser shell at `http://127.0.0.1:3000/`.
@@ -53,9 +53,12 @@ Direct host mode is the default because browser WebRTC is more reliable there th
 The backend listens on:
 - `http://127.0.0.1:3000/healthz`
 - `http://127.0.0.1:3000/metrics`
+- `http://127.0.0.1:3000/session/bootstrap` for short-lived websocket bootstrap tokens
 - `ws://127.0.0.1:3000/ws` for websocket signaling plus TURN/STUN configuration handoff
 - `ws://127.0.0.1:3000/ws-dev` for the raw websocket dev adapter and legacy transport tests
 - `http://127.0.0.1:3000/` for the exported Godot web shell when `server/static/webclient` exists
+
+When deployed behind Caddy on the real domain, the same browser path becomes `https://<domain>/session/bootstrap` and `wss://<domain>/ws`.
 
 The dev adapter persists player `W-L-NC` records at:
 - `server/var/player_records.tsv`
@@ -78,12 +81,13 @@ Open the Godot shell:
 client/godot/project.godot
 ```
 
-The current Godot shell is wired to websocket signaling at `/ws` and WebRTC data channels for live gameplay traffic.
+The current Godot shell is wired to `/session/bootstrap` for a one-time websocket token, then `/ws` for websocket signaling and WebRTC data channels for live gameplay traffic.
 The project metadata version is currently `0.6.0`.
 Known shell limitations:
 - the arena slice is intentionally simple, even though the current skills and map now load from authored content files
 - visibility is still a stubbed/minimal system; movement, health, cooldowns, and spell use are the priority slice
-- stock native/headless Godot on this machine does not include the `webrtc-native` extension, so full networked play should be tested in the browser unless that extension is installed
+- native/headless Godot transport testing depends on the `webrtc-native` extension being available to the editor/runtime; if your local Godot install ships that extension under a folder like `Godot/webrtc/`, `export-web-client.ps1` now syncs that bundle into the ignored local project path `client/godot/webrtc/` before export or headless checks
+- browser play remains the primary supported networked path on this machine; the synced native extension is for local editor/headless validation and is not tracked in git
 
 Run the Godot protocol checks headlessly:
 
@@ -94,7 +98,7 @@ godot4 --headless --path client/godot -s res://tests/protocol_checks.gd
 On this machine, the equivalent command is:
 
 ```powershell
-C:\Users\azbai\Documents\Rarena\Godot\Godot_v4.6.1-stable_win64_console.exe --headless --path client\godot -s res://tests/protocol_checks.gd
+<GODOT_EXECUTABLE> --headless --path client\godot -s res://tests/protocol_checks.gd
 ```
 
 Run the browser-export checks headlessly:
@@ -106,14 +110,16 @@ godot4 --headless --path client/godot -s res://tests/web_export_checks.gd
 On this machine, the equivalent command is:
 
 ```powershell
-C:\Users\azbai\Documents\Rarena\Godot\Godot_v4.6.1-stable_win64_console.exe --headless --path client\godot -s res://tests/web_export_checks.gd
+<GODOT_EXECUTABLE> --headless --path client\godot -s res://tests/web_export_checks.gd
 ```
 
 Export the Godot web client into the Rust server static root:
 
 ```powershell
-./server/scripts/export-web-client.ps1 -GodotExecutable C:\Users\azbai\Documents\Rarena\Godot\Godot_v4.6.1-stable_win64_console.exe -InstallTemplates
+./server/scripts/export-web-client.ps1 -GodotExecutable <GODOT_EXECUTABLE> -InstallTemplates
 ```
+
+If a local `Godot/webrtc/` bundle exists, that export script also syncs it into the ignored local project path `client/godot/webrtc/` so native/headless Godot checks can use the same extension bundle.
 
 For CI or a machine without a local Godot install, the script can download a portable editor and export templates:
 
@@ -144,12 +150,19 @@ cd server
 rustup run stable cargo test --workspace
 ```
 
-Build the initial fuzz targets:
+Run the ingress fuzz smoke checks:
 
 ```powershell
 cd server
 ./scripts/install-tools.ps1 -IncludeNightly -IncludeFuzzTools
 ./scripts/quality.ps1 fuzz
+```
+
+Run a bounded live ingress fuzz campaign on Linux, Docker, or WSL:
+
+```powershell
+cd server
+./scripts/quality.ps1 fuzz-live
 ```
 
 Install the configured quality tools:
@@ -160,7 +173,7 @@ cd server
 ```
 
 That script now installs Verus into the repo-local cache at `server/tools/verus/current`.
-It also installs `mdbook`, `cargo-fuzz`, and the nightly toolchain required by the pre-commit fuzz hook.
+It also installs `mdbook`, `cargo-fuzz`, and the nightly toolchain required by the pre-commit ingress fuzz hook.
 The backend call-graph report now uses the repo-local `backend_callgraph` binary in this workspace plus `rust-analyzer`, so there is no separate call-graph tool checkout to manage.
 
 Run the Rust WebRTC integration suite:
@@ -176,6 +189,8 @@ Run the configured quality checks:
 cd server
 ./scripts/quality.ps1
 ```
+
+On Linux or inside a container, the checked-in `server/Makefile` provides the same entrypoints through `make lint`, `make test`, `make fuzz`, `make verus`, and `make reports`.
 
 Run only the Verus network-boundary models:
 
@@ -256,8 +271,11 @@ Useful Pages paths:
 - `https://hourglss.github.io/Rusaren/docs/site/` for the mdBook docs site
 - `https://hourglss.github.io/Rusaren/rustdoc/` for the Rust API docs
 
+If that URL does not come up after a successful `server-quality` run, the remaining GitHub-side step is:
+- repo `Settings -> Pages -> Source: GitHub Actions`
+
 The docs report includes a per-file publication table for every Markdown file under `shared/docs`.
-The fuzz report shows corpus replay coverage, which means line coverage measured by replaying the checked-in seed corpus through the same decode and ingress APIs used by the fuzz targets. The current replay set includes packet decode, ingress sequencing, HTTP route classification, Prometheus observability metric rendering, and persisted player-record TSV parsing/canonicalization.
+The fuzz report now shows replay coverage over the checked-in seed corpus plus any discovered corpus already present under `server/target/fuzz-generated-corpus/`. The headline score is intentionally scoped to network-ingress targets such as packet decode, ingress sequencing, server-control-event decode, and WebRTC signaling JSON parsing. On native Windows, `cargo fuzz run` is still not dependable for this repo, so real live fuzz campaigns are expected to run in Linux CI, Docker, or WSL.
 
 Run the local Docker deploy smoke path:
 
@@ -312,7 +330,7 @@ git commit -m "Describe the change"
 
 Hook behavior:
 - `pre-commit` runs fast repo checks such as whitespace, TOML/YAML validation, `typos`, `taplo`, and Rust formatting.
-- `pre-commit` also builds the current fuzz targets when network-boundary or fuzz-target files change.
+- `pre-commit` also runs the current ingress fuzz smoke task when network-boundary or fuzz-target files change.
 - `post-commit` generates the HTML reports and writes them to `server/target/reports/output.html`.
 - `post-commit` also refreshes the docs site, Rust API docs, and backend call graph under `server/target/reports/`.
 - `pre-push` runs Rust linting and tests before the branch leaves your machine.
@@ -323,6 +341,7 @@ Current local fallback behavior:
 - if `cargo-nextest` is installed, the quality script uses it for the normal test task
 - if `cargo-nextest` is not installed, the quality script falls back to `cargo test`
 - fuzzing uses `cargo-fuzz` under `server/fuzz/` and is prioritized around ingress boundaries where external data enters the application, especially networking paths such as packet-header, control-command, server-control-event, input-frame, ingress-session decoding/validation, and WebRTC signaling JSON parsing
+- local Windows fuzzing is a smoke/build path; bounded live `cargo fuzz run` campaigns are enforced in Linux CI where the sanitizer runtime is available
 - gameplay correctness is primarily enforced with Rust unit and integration tests, not fuzzing
 - project docs are generated from `shared/docs` through `mdBook`, while Rust API docs are generated with `cargo doc --workspace --all-features --no-deps`
 - browser-export smoke checks run in `.github/workflows/godot-web-smoke.yml` and verify that the exported shell can be hosted by `dedicated_server`
@@ -342,7 +361,7 @@ Current manual full-loop slice:
 - review the result screen and quit back to the central lobby
 
 Current easiest full-loop slice:
-- run `./server/scripts/play-local.ps1 -GodotExecutable C:\Users\azbai\Documents\Rarena\Godot\Godot_v4.6.1-stable_win64_console.exe`
+- run `./server/scripts/play-local.ps1 -GodotExecutable <GODOT_EXECUTABLE>`
 - open two browser tabs to `http://127.0.0.1:3000/`
 - connect two players, receive server-assigned IDs, and play through the placeholder round flow
 

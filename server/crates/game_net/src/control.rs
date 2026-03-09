@@ -81,8 +81,6 @@ impl ClientControlCommand {
     }
 
     #[allow(clippy::too_many_lines)]
-    #[allow(clippy::too_many_lines)]
-    #[allow(clippy::too_many_lines)]
     fn encode_body(self, payload: &mut Vec<u8>) -> Result<(), PacketError> {
         match self {
             Self::Connect { player_name } => encode_connect_command(payload, &player_name),

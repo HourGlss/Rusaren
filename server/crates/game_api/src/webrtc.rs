@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha1::Sha1;
 use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
-use webrtc::ice_transport::ice_credential_type::RTCIceCredentialType;
 use webrtc::ice_transport::ice_server::RTCIceServer;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 
@@ -50,7 +49,6 @@ impl WebRtcIceServerConfig {
             urls: self.urls.clone(),
             username: self.username.clone(),
             credential: self.credential.clone(),
-            credential_type: RTCIceCredentialType::Password,
         }
     }
 
@@ -392,6 +390,11 @@ pub enum ServerSignalMessage {
 }
 
 /// Parses and validates one client signaling message from websocket text.
+///
+/// VERIFIED MODEL: `server/verus/webrtc_signaling_model.rs` mirrors the message-order
+/// contract enforced by the runtime signaling flow that uses this decoder. The proof
+/// model is not a direct proof over these production types, so runtime tests remain
+/// mandatory for the actual websocket and peer-connection integration.
 pub fn decode_client_signal_message(text: &str) -> Result<ClientSignalMessage, String> {
     if text.is_empty() {
         return Err(String::from("signaling message must not be empty"));

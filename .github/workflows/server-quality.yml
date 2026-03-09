@@ -30,7 +30,9 @@ jobs:
         working-directory: server
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
 
       - name: Install stable toolchain
         run: |
@@ -59,15 +61,17 @@ jobs:
       - name: Doc tests
         run: ./scripts/quality.ps1 doc
 
-      - name: Fuzz target build
-        run: ./scripts/quality.ps1 fuzz
+      - name: Live ingress fuzz smoke
+        env:
+          RARENA_FUZZ_MAX_TOTAL_TIME: 10
+        run: ./scripts/quality.ps1 fuzz-live
 
       - name: HTML reports
         run: ./scripts/quality.ps1 reports
 
       - name: Configure GitHub Pages
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
 
       - name: Prepare Pages artifact
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -76,7 +80,7 @@ jobs:
 
       - name: Upload Pages artifact
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
         with:
           path: server/target/reports
 
@@ -97,10 +101,13 @@ jobs:
 
       - name: Upload reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: server-reports-${{ github.sha }}
-          path: server/target/reports
+          path: |
+            server/target/reports
+            server/target/fuzz-generated-corpus
+            server/fuzz/artifacts
 
       - name: Report summary
         if: always()
@@ -112,6 +119,8 @@ jobs:
           Artifact: `server-reports-${{ github.sha }}`
           Main file inside artifact: `server/target/reports/output.html`
           Fuzz coverage file inside artifact: `server/target/reports/fuzz/output.html`
+          Discovered fuzz corpus directory inside artifact: `server/target/fuzz-generated-corpus`
+          Fuzz findings directory inside artifact: `server/fuzz/artifacts`
           Docs file inside artifact: `server/target/reports/docs/index.html`
           Docs summary file inside artifact: `server/target/reports/docs/summary.json`
           Docs site file inside artifact: `server/target/reports/docs/site/index.html`
@@ -136,4 +145,4 @@ jobs:
     steps:
       - name: Deploy GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4

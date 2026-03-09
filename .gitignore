@@ -14,6 +14,7 @@ server/fuzz/target/
 /Godot/
 client/godot/.godot/
 client/godot/export/
+client/godot/webrtc/
 *.uid
 server/static/webclient/
 

@@ -61,5 +61,5 @@ Restart the stack after changing it.
 4. set the real public `TURN_EXTERNAL_IP`
 
 Current note:
-- the browser gameplay path now depends on `/ws` signaling plus the checked-in STUN/TURN configuration
+- the browser gameplay path now depends on `/session/bootstrap`, `/ws` signaling, and the checked-in STUN/TURN configuration
 - if browser sessions fail to connect, check the `coturn` logs and the ICE/TURN environment values first

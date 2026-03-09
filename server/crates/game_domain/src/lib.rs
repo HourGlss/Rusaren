@@ -451,6 +451,18 @@ mod tests {
             PlayerName::new("bad name"),
             Err(DomainError::PlayerNameInvalidCharacter { ch: ' ' })
         );
+        assert_eq!(
+            PlayerName::new("Alice\t2"),
+            Err(DomainError::PlayerNameInvalidCharacter { ch: '\t' })
+        );
+        assert_eq!(
+            PlayerName::new("Alice\n2"),
+            Err(DomainError::PlayerNameInvalidCharacter { ch: '\n' })
+        );
+        assert_eq!(
+            PlayerName::new("=cmd"),
+            Err(DomainError::PlayerNameInvalidCharacter { ch: '=' })
+        );
     }
 
     #[test]

@@ -8,6 +8,7 @@ Browser support is a hard requirement, so v1 transport is:
 
 Current hosted-dev and hosted-MVP note:
 - The live playable shell now uses websocket signaling at `/ws` plus WebRTC data channels for gameplay traffic.
+- The browser shell first fetches a short-lived one-time token from `/session/bootstrap`, then uses that token on the websocket upgrade to `/ws` or `/ws-dev`.
 - The older raw websocket dev adapter remains available at `/ws-dev` for fallback tests and transport regression coverage.
 - The deploy stack already provisions the same-origin public host and a self-hosted `coturn` service for the WebRTC gameplay path.
 
@@ -107,9 +108,8 @@ Operational guidance:
 
 ## Session setup
 - Player authenticates over HTTPS.
-- Server issues a short-lived signed session token.
-- Server also issues short-lived TURN credentials for that session.
-- Client uses WebSocket signaling at `/ws` to establish the WebRTC session for live authoritative state, including lobby and match traffic.
+- Server issues a short-lived session bootstrap token for the websocket upgrade plus short-lived TURN credentials for relay use.
+- Client fetches `/session/bootstrap`, upgrades `/ws?token=<token>`, then uses websocket signaling to establish the WebRTC session for live authoritative state, including lobby and match traffic.
 
 ## Security sanity
 - Rate-limit inputs.

@@ -43,7 +43,7 @@ repos:
         files: ^server/.*\.rs$
 
       - id: rust-fuzz
-        name: rust fuzz build
+        name: rust ingress fuzz smoke
         entry: powershell -NoProfile -ExecutionPolicy Bypass -File server/scripts/quality.ps1 fuzz
         language: system
         pass_filenames: false

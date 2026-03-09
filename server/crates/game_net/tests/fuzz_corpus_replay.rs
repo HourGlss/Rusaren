@@ -5,34 +5,44 @@ use game_net::{
     ValidatedInputFrame,
 };
 
-fn corpus_dir(target: &str) -> PathBuf {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+fn corpus_dirs(target: &str) -> Vec<PathBuf> {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
-        .join("..")
-        .join("fuzz")
-        .join("corpus")
-        .join(target);
+        .join("..");
+    let dirs = [
+        repo_root.join("fuzz").join("corpus").join(target),
+        repo_root
+            .join("target")
+            .join("fuzz-generated-corpus")
+            .join(target),
+    ];
 
-    fs::canonicalize(&dir).unwrap_or(dir)
+    dirs.into_iter()
+        .filter(|dir| dir.exists())
+        .map(|dir| fs::canonicalize(&dir).unwrap_or(dir))
+        .collect()
 }
 
 fn corpus_files(target: &str) -> Vec<Vec<u8>> {
-    let dir = corpus_dir(target);
-    let mut entries = fs::read_dir(&dir)
-        .unwrap_or_else(|error| {
-            panic!("failed to read corpus directory {}: {error}", dir.display())
-        })
-        .map(|entry| {
-            entry.unwrap_or_else(|error| {
-                panic!("failed to read corpus entry in {}: {error}", dir.display())
+    let mut entries = Vec::new();
+    let dirs = corpus_dirs(target);
+    for dir in &dirs {
+        let mut dir_entries = fs::read_dir(dir)
+            .unwrap_or_else(|error| {
+                panic!("failed to read corpus directory {}: {error}", dir.display())
             })
-        })
-        .collect::<Vec<_>>();
+            .map(|entry| {
+                entry.unwrap_or_else(|error| {
+                    panic!("failed to read corpus entry in {}: {error}", dir.display())
+                })
+            })
+            .collect::<Vec<_>>();
+        entries.append(&mut dir_entries);
+    }
     entries.sort_by_key(std::fs::DirEntry::file_name);
     assert!(
         !entries.is_empty(),
-        "corpus directory {} should contain at least one seed",
-        dir.display()
+        "at least one checked-in or generated corpus file should exist for target {target}"
     );
 
     entries

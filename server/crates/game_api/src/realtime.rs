@@ -7,11 +7,15 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use axum::extract::Query;
 use axum::extract::State;
 use axum::http::{header, Request, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, get_service};
+use axum::Json;
 use axum::Router;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64_URL_SAFE_NO_PAD;
+use base64::Engine as _;
 use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt};
 use game_content::GameContent;
@@ -21,6 +25,8 @@ use game_net::{
     MAX_INGRESS_PACKET_BYTES, PROTOCOL_VERSION,
 };
 use game_sim::COMBAT_FRAME_MS;
+use getrandom::fill as getrandom_fill;
+use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio::task::JoinHandle;
@@ -46,12 +52,17 @@ use crate::webrtc::{
 };
 use crate::{AppTransport, ConnectionId, ServerApp};
 
+const SESSION_BOOTSTRAP_TOKEN_BYTES: usize = 24;
+const SESSION_BOOTSTRAP_TOKEN_TTL: Duration = Duration::from_secs(30);
+const MAX_SESSION_BOOTSTRAP_TOKEN_BYTES: usize = 96;
+
 #[derive(Clone)]
 struct DevServerState {
     ingress_tx: mpsc::UnboundedSender<IngressEvent>,
     web_client_root: PathBuf,
     observability: Option<ServerObservability>,
     next_connection_id: Arc<AtomicU64>,
+    bootstrap_tokens: Arc<Mutex<SessionBootstrapTokenRegistry>>,
     webrtc: WebRtcRuntimeConfig,
 }
 
@@ -253,6 +264,72 @@ struct WebRtcNegotiationState {
     pending_local_candidates: Vec<SignalingIceCandidate>,
 }
 
+#[derive(Debug)]
+struct SessionBootstrapTokenRegistry {
+    issued: BTreeMap<String, Instant>,
+    ttl: Duration,
+}
+
+impl SessionBootstrapTokenRegistry {
+    fn new(ttl: Duration) -> Self {
+        Self {
+            issued: BTreeMap::new(),
+            ttl,
+        }
+    }
+
+    fn mint(&mut self, now: Instant) -> Result<String, String> {
+        self.prune_expired(now);
+
+        let mut bytes = [0_u8; SESSION_BOOTSTRAP_TOKEN_BYTES];
+        getrandom_fill(&mut bytes)
+            .map_err(|error| format!("failed to generate a session bootstrap token: {error}"))?;
+        let token = BASE64_URL_SAFE_NO_PAD.encode(bytes);
+        self.issued.insert(token.clone(), now + self.ttl);
+        Ok(token)
+    }
+
+    fn consume(&mut self, token: &str, now: Instant) -> Result<(), &'static str> {
+        self.prune_expired(now);
+
+        if !is_valid_session_bootstrap_token_shape(token) {
+            return Err("session bootstrap token format is invalid");
+        }
+
+        let Some(expires_at) = self.issued.remove(token) else {
+            return Err("session bootstrap token is missing or already consumed");
+        };
+        if now > expires_at {
+            return Err("session bootstrap token has expired");
+        }
+
+        Ok(())
+    }
+
+    fn prune_expired(&mut self, now: Instant) {
+        self.issued.retain(|_, expires_at| *expires_at >= now);
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct SessionBootstrapQuery {
+    token: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct SessionBootstrapResponse {
+    token: String,
+    expires_in_ms: u64,
+}
+
+fn is_valid_session_bootstrap_token_shape(token: &str) -> bool {
+    !token.is_empty()
+        && token.len() <= MAX_SESSION_BOOTSTRAP_TOKEN_BYTES
+        && token
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+}
+
 struct SignalingTransport {
     peer: Arc<RTCPeerConnection>,
     binding_state: Arc<Mutex<BindingState>>,
@@ -323,6 +400,9 @@ pub async fn spawn_dev_server_with_options(
         web_client_root: options.web_client_root.clone(),
         observability: options.observability,
         next_connection_id,
+        bootstrap_tokens: Arc::new(Mutex::new(SessionBootstrapTokenRegistry::new(
+            SESSION_BOOTSTRAP_TOKEN_TTL,
+        ))),
         webrtc: options.webrtc,
     };
 
@@ -385,6 +465,7 @@ fn build_router(state: DevServerState) -> Router {
         .route("/", get(web_client_index))
         .route("/healthz", get(healthcheck))
         .route("/metrics", get(metrics_export))
+        .route("/session/bootstrap", get(session_bootstrap))
         .route("/ws", get(signaling_upgrade))
         .route("/ws-dev", get(websocket_dev_upgrade))
         .fallback_service(static_assets)
@@ -558,6 +639,34 @@ async fn metrics_export(State(state): State<DevServerState>) -> Response {
         .into_response()
 }
 
+/// Issues a short-lived one-time token required by websocket signaling upgrades.
+async fn session_bootstrap(
+    State(state): State<DevServerState>,
+) -> Result<Json<SessionBootstrapResponse>, Response> {
+    if let Some(observability) = &state.observability {
+        observability.record_http_request(crate::HttpRouteLabel::SessionBootstrap);
+    }
+
+    let token = {
+        let mut tokens = state.bootstrap_tokens.lock().await;
+        match tokens.mint(Instant::now()) {
+            Ok(token) => token,
+            Err(message) => {
+                return Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": message })),
+                )
+                    .into_response());
+            }
+        }
+    };
+
+    Ok(Json(SessionBootstrapResponse {
+        token,
+        expires_in_ms: u64::try_from(SESSION_BOOTSTRAP_TOKEN_TTL.as_millis()).unwrap_or(u64::MAX),
+    }))
+}
+
 /// Renders a small HTML page that explains how to build the missing web client.
 fn render_missing_web_client_page(web_client_root: &Path) -> String {
     format!(
@@ -577,29 +686,87 @@ fn render_missing_web_client_page(web_client_root: &Path) -> String {
 /// Upgrades `/ws` into the websocket signaling channel used for `WebRTC` setup.
 async fn signaling_upgrade(
     ws: WebSocketUpgrade,
+    Query(query): Query<SessionBootstrapQuery>,
     State(state): State<DevServerState>,
-) -> impl IntoResponse {
+) -> Response {
     if let Some(observability) = &state.observability {
         observability.record_http_request(crate::HttpRouteLabel::WebSocket);
+    }
+
+    if let Err(response) = authorize_websocket_upgrade(&state, query.token.as_deref()).await {
+        return response;
+    }
+
+    if let Some(observability) = &state.observability {
         observability.record_websocket_upgrade_attempt();
     }
     ws.max_message_size(MAX_SIGNAL_MESSAGE_BYTES)
         .max_frame_size(MAX_SIGNAL_MESSAGE_BYTES)
         .on_upgrade(move |socket| handle_signaling_socket(state, socket))
+        .into_response()
 }
 
 /// Upgrades `/ws-dev` into the legacy raw websocket gameplay adapter.
 async fn websocket_dev_upgrade(
     ws: WebSocketUpgrade,
+    Query(query): Query<SessionBootstrapQuery>,
     State(state): State<DevServerState>,
-) -> impl IntoResponse {
+) -> Response {
     if let Some(observability) = &state.observability {
         observability.record_http_request(crate::HttpRouteLabel::WebSocket);
+    }
+
+    if let Err(response) = authorize_websocket_upgrade(&state, query.token.as_deref()).await {
+        return response;
+    }
+
+    if let Some(observability) = &state.observability {
         observability.record_websocket_upgrade_attempt();
     }
     ws.max_message_size(MAX_INGRESS_PACKET_BYTES)
         .max_frame_size(MAX_INGRESS_PACKET_BYTES)
         .on_upgrade(move |socket| handle_websocket_dev_socket(state, socket))
+        .into_response()
+}
+
+/// Validates and consumes the short-lived bootstrap token required for websocket upgrades.
+///
+/// VERIFIED MODEL: `server/verus/session_bootstrap_model.rs` mirrors the one-time-use
+/// token invariant enforced here. The production registry still relies on runtime tests
+/// for actual timing, storage, and HTTP upgrade behavior.
+async fn authorize_websocket_upgrade(
+    state: &DevServerState,
+    token: Option<&str>,
+) -> Result<(), Response> {
+    let Some(token) = token else {
+        if let Some(observability) = &state.observability {
+            observability.record_websocket_rejection();
+        }
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({
+                "error": "missing required session bootstrap token"
+            })),
+        )
+            .into_response());
+    };
+
+    let consume_result = {
+        let mut tokens = state.bootstrap_tokens.lock().await;
+        tokens.consume(token, Instant::now())
+    };
+    if let Err(message) = consume_result {
+        if let Some(observability) = &state.observability {
+            observability.record_websocket_rejection();
+        }
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({ "error": message })),
+        )
+            .into_response());
+    }
+
+    Ok(())
 }
 
 /// Runs one signaling websocket until either side closes or negotiation fails.
@@ -1499,4 +1666,36 @@ async fn reject_peer_session(
 ) {
     reject_client_session(outbound, observability, message);
     let _ = peer.close().await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bootstrap_token_shape_is_url_safe_and_bounded() {
+        assert!(is_valid_session_bootstrap_token_shape("abc_DEF-123"));
+        assert!(!is_valid_session_bootstrap_token_shape(""));
+        assert!(!is_valid_session_bootstrap_token_shape("bad token"));
+        assert!(!is_valid_session_bootstrap_token_shape(&"A".repeat(128)));
+    }
+
+    #[test]
+    fn bootstrap_tokens_are_one_time_use_and_expire() {
+        let now = Instant::now();
+        let mut registry = SessionBootstrapTokenRegistry::new(Duration::from_millis(50));
+        let token = registry.mint(now).expect("token should mint");
+
+        assert_eq!(registry.consume(&token, now), Ok(()));
+        assert_eq!(
+            registry.consume(&token, now),
+            Err("session bootstrap token is missing or already consumed")
+        );
+
+        let expired = registry.mint(now).expect("token should mint");
+        assert_eq!(
+            registry.consume(&expired, now + Duration::from_millis(60)),
+            Err("session bootstrap token is missing or already consumed")
+        );
+    }
 }

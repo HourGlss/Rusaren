@@ -8,6 +8,7 @@ edition = "2021"
 cargo-fuzz = true
 
 [dependencies]
+arbitrary = { version = "1", features = ["derive"] }
 game_api = { path = "../crates/game_api" }
 game_content = { path = "../crates/game_content" }
 game_domain = { path = "../crates/game_domain" }
@@ -97,6 +98,27 @@ bench = false
 [[bin]]
 name = "webrtc_signal_message_parse"
 path = "fuzz_targets/webrtc_signal_message_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "control_command_roundtrip"
+path = "fuzz_targets/control_command_roundtrip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "input_frame_roundtrip"
+path = "fuzz_targets/input_frame_roundtrip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "webrtc_signal_message_roundtrip"
+path = "fuzz_targets/webrtc_signal_message_roundtrip.rs"
 test = false
 doc = false
 bench = false

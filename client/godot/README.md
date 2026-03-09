@@ -3,6 +3,7 @@
 This is the `0.6.0` browser-safe Godot shell for the current Rust backend.
 
 What it does:
+- fetches a short-lived bootstrap token from `http://127.0.0.1:3000/session/bootstrap`
 - connects to the websocket signaling endpoint at `ws://127.0.0.1:3000/ws`
 - defaults browser exports to the same-origin `/ws` endpoint automatically
 - lets the server assign the runtime player ID after connect instead of exposing a player-id field in the UI
@@ -26,13 +27,15 @@ What it does not do yet:
 
 Current shell limitation:
 - the combat loop is still prototype-level, even though the current map and slot skills now load from authored YAML and ASCII content files and already support real melee/projectile/status interactions
-- stock native/headless Godot on this machine does not include the `webrtc-native` extension, so full transport testing should happen in the browser unless that extension is installed
+- native/headless transport testing depends on the `webrtc-native` extension being available to the editor/runtime; if your local Godot install ships it under a folder like `Godot/webrtc/`, `server/scripts/export-web-client.ps1` now syncs that bundle into the ignored local project path `client/godot/webrtc/`
+- browser play remains the primary supported networked path on this machine; the synced native extension is only for local editor/headless validation
 
 Run flow:
 1. start the Rust backend with `cd server && rustup run stable cargo run -p dedicated_server --quiet`
 2. optionally validate the packet encoder with `godot4 --headless --path client/godot -s res://tests/protocol_checks.gd`
 3. optionally validate the web-export defaults with `godot4 --headless --path client/godot -s res://tests/web_export_checks.gd`
 4. export the web shell with `powershell -NoProfile -ExecutionPolicy Bypass -File server/scripts/export-web-client.ps1 -InstallTemplates`
+   If a local `Godot/webrtc/` bundle exists, the export script syncs it into the ignored local project path `client/godot/webrtc/` first.
 5. open `http://127.0.0.1:3000/` in a browser, or run `res://scenes/main.tscn` in Godot 4
    Browser play is the supported networked path on this machine.
 6. connect, create or join a lobby, pick teams, ready up, choose skills, then use `WASD`, mouse aim, left click, and `1`-`5` during combat to drive the current backend slice end to end
@@ -45,6 +48,6 @@ Fast content iteration:
 3. reload the browser shell
 
 Fastest local browser path:
-1. run `powershell -NoProfile -ExecutionPolicy Bypass -File server/scripts/play-local.ps1 -GodotExecutable C:\Users\azbai\Documents\Rarena\Godot\Godot_v4.6.1-stable_win64_console.exe`
+1. run `powershell -NoProfile -ExecutionPolicy Bypass -File server/scripts/play-local.ps1 -GodotExecutable <GODOT_EXECUTABLE>`
 2. open `http://127.0.0.1:3000/` in two browser tabs
 3. connect two players, receive server-assigned IDs, and play through the placeholder match loop

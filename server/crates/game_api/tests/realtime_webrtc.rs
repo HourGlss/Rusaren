@@ -13,6 +13,8 @@ use game_api::{
 use game_domain::{PlayerName, ReadyState, TeamSide};
 use game_net::{ClientControlCommand, ServerControlEvent};
 use game_sim::COMBAT_FRAME_MS;
+use serde_json::Value;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, oneshot};
 use tokio_tungstenite::connect_async;
@@ -43,7 +45,7 @@ struct WebRtcClient {
 
 impl WebRtcClient {
     async fn connect(base_url: &str, player_name_raw: &str) -> Self {
-        let signal_url = format!("{base_url}/ws");
+        let signal_url = bootstrap_signal_url(base_url).await;
         let (stream, _) = connect_async(&signal_url)
             .await
             .expect("signaling websocket should connect");
@@ -369,6 +371,57 @@ fn temp_web_client_root(prefix: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!("rusaren-webrtc-web-root-{prefix}-{unique}"));
     std::fs::create_dir_all(&root).expect("temporary web client root should be created");
     root
+}
+
+fn http_authority(base_url: &str) -> String {
+    base_url
+        .trim_start_matches("ws://")
+        .trim_start_matches("wss://")
+        .to_string()
+}
+
+async fn http_get(base_url: &str, path: &str) -> (u16, String) {
+    let authority = http_authority(base_url);
+    let mut stream = tokio::net::TcpStream::connect(&authority)
+        .await
+        .expect("http connection should succeed");
+    let request = format!("GET {path} HTTP/1.1\r\nHost: {authority}\r\nConnection: close\r\n\r\n");
+    stream
+        .write_all(request.as_bytes())
+        .await
+        .expect("http request should be written");
+
+    let mut raw_response = Vec::new();
+    stream
+        .read_to_end(&mut raw_response)
+        .await
+        .expect("http response should be readable");
+
+    let response =
+        String::from_utf8(raw_response).expect("http response should be valid utf8 for tests");
+    let (head, body) = response
+        .split_once("\r\n\r\n")
+        .expect("http response should contain a header/body split");
+    let status_line = head.lines().next().expect("http status line should exist");
+    let status_code = status_line
+        .split_whitespace()
+        .nth(1)
+        .expect("http status line should contain a status code")
+        .parse::<u16>()
+        .expect("http status code should be numeric");
+
+    (status_code, body.to_string())
+}
+
+async fn bootstrap_signal_url(base_url: &str) -> String {
+    let (status_code, body) = http_get(base_url, "/session/bootstrap").await;
+    assert_eq!(status_code, 200, "session bootstrap should return HTTP 200");
+    let payload = serde_json::from_str::<Value>(&body).expect("bootstrap JSON should decode");
+    let token = payload
+        .get("token")
+        .and_then(Value::as_str)
+        .expect("bootstrap JSON should include a token");
+    format!("{base_url}/ws?token={token}")
 }
 
 async fn start_server_fast() -> (game_api::DevServerHandle, String) {

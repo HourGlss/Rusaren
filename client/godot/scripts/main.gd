@@ -4,9 +4,11 @@ const ClientStateScript := preload("res://scripts/state/client_state.gd")
 const DevSocketClientScript := preload("res://scripts/net/dev_socket_client.gd")
 const ArenaViewScript := preload("res://scripts/arena/arena_view.gd")
 const Protocol := preload("res://scripts/net/protocol.gd")
+const WebSocketConfigScript := preload("res://scripts/net/websocket_config.gd")
 
 var app_state := ClientStateScript.new()
 var transport := DevSocketClientScript.new()
+var websocket_config := WebSocketConfigScript.new()
 
 var connect_button: Button
 var disconnect_button: Button
@@ -47,9 +49,15 @@ var _next_client_input_tick := 1
 var _pending_primary_attack := false
 var _pending_cast_slot := 0
 var _last_sent_aim := Vector2i.ZERO
+var _bootstrap_request: HTTPRequest
+var _bootstrap_request_active := false
+var _pending_bootstrap_url := ""
 
 
 func _ready() -> void:
+	_bootstrap_request = HTTPRequest.new()
+	add_child(_bootstrap_request)
+	_bootstrap_request.request_completed.connect(_on_bootstrap_request_completed)
 	_build_shell()
 	_bind_transport()
 	_refresh_ui()
@@ -603,10 +611,27 @@ func _on_connect_pressed() -> void:
 	_last_sent_aim = Vector2i.ZERO
 	app_state.prepare_for_connection(url, player_name)
 	ws_url_input.text = app_state.websocket_url
-	_refresh_ui()
-	if not transport.open(app_state.websocket_url):
-		app_state.mark_transport_error("Unable to start the signaling connection.")
+	var bootstrap_url := websocket_config.bootstrap_url(app_state.websocket_url)
+	if bootstrap_url == "":
+		app_state.mark_transport_error("Unable to derive the session bootstrap URL from the signaling URL.")
 		_refresh_ui()
+		return
+
+	if _bootstrap_request_active:
+		_bootstrap_request.cancel_request()
+		_bootstrap_request_active = false
+	_pending_bootstrap_url = app_state.websocket_url
+	var request_error := _bootstrap_request.request(bootstrap_url)
+	if request_error != OK:
+		_pending_bootstrap_url = ""
+		app_state.mark_transport_error("Unable to request a signaling bootstrap token.")
+		_refresh_ui()
+		return
+
+	_bootstrap_request_active = true
+	app_state.mark_transport_state("bootstrapping")
+	app_state.announce_local("Requested a short-lived signaling token.")
+	_refresh_ui()
 
 
 func _on_disconnect_pressed() -> void:
@@ -614,6 +639,10 @@ func _on_disconnect_pressed() -> void:
 	_pending_primary_attack = false
 	_pending_cast_slot = 0
 	_last_sent_aim = Vector2i.ZERO
+	if _bootstrap_request_active:
+		_bootstrap_request.cancel_request()
+		_bootstrap_request_active = false
+	_pending_bootstrap_url = ""
 	transport.close()
 	app_state.mark_transport_closed("Disconnected by the local client.")
 	_refresh_ui()
@@ -706,6 +735,50 @@ func _on_socket_closed(reason: String) -> void:
 	_refresh_ui()
 
 
+func _on_bootstrap_request_completed(
+	result: int,
+	response_code: int,
+	_headers: PackedStringArray,
+	body: PackedByteArray
+) -> void:
+	_bootstrap_request_active = false
+	var expected_signal_url := _pending_bootstrap_url
+	_pending_bootstrap_url = ""
+	if expected_signal_url == "":
+		return
+
+	if result != HTTPRequest.RESULT_SUCCESS:
+		app_state.mark_transport_error("The signaling bootstrap request failed.")
+		_refresh_ui()
+		return
+
+	var payload_text := body.get_string_from_utf8()
+	var payload: Variant = JSON.parse_string(payload_text)
+	if response_code != 200:
+		var error_message := "The signaling bootstrap request was rejected."
+		if typeof(payload) == TYPE_DICTIONARY:
+			error_message = String((payload as Dictionary).get("error", error_message))
+		app_state.mark_transport_error(error_message)
+		_refresh_ui()
+		return
+
+	if typeof(payload) != TYPE_DICTIONARY:
+		app_state.mark_transport_error("The signaling bootstrap response was not valid JSON.")
+		_refresh_ui()
+		return
+
+	var token := String((payload as Dictionary).get("token", ""))
+	if token.strip_edges() == "":
+		app_state.mark_transport_error("The signaling bootstrap response did not contain a token.")
+		_refresh_ui()
+		return
+
+	var tokenized_url := websocket_config.append_session_token(expected_signal_url, token)
+	if not transport.open(tokenized_url):
+		app_state.mark_transport_error("Unable to start the signaling connection.")
+		_refresh_ui()
+
+
 func _on_packet_received(decoded_event: Dictionary) -> void:
 	app_state.apply_server_event(decoded_event.get("event", {}))
 	_refresh_ui()
@@ -742,8 +815,8 @@ func _refresh_ui() -> void:
 	roster_log.text = "\n".join(app_state.roster_lines())
 	event_log.text = app_state.event_log_text()
 
-	connect_button.disabled = app_state.transport_state == "connecting" or transport.is_open()
-	disconnect_button.disabled = not transport.is_open() and app_state.transport_state != "connecting"
+	connect_button.disabled = app_state.transport_state == "connecting" or app_state.transport_state == "bootstrapping" or transport.is_open()
+	disconnect_button.disabled = not transport.is_open() and app_state.transport_state != "connecting" and app_state.transport_state != "bootstrapping"
 	create_lobby_button.disabled = not app_state.can_join_or_create_lobby()
 	join_lobby_button.disabled = not app_state.can_join_or_create_lobby()
 	team_a_button.disabled = not app_state.can_manage_lobby()

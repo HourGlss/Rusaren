@@ -12,6 +12,8 @@ pub enum HttpRouteLabel {
     Healthz,
     /// The Prometheus metrics endpoint.
     Metrics,
+    /// One-time bootstrap token minting for websocket signaling upgrades.
+    SessionBootstrap,
     /// Either the signaling websocket or the websocket dev adapter.
     WebSocket,
     /// Any other static asset path served from the web client root.
@@ -26,6 +28,7 @@ impl HttpRouteLabel {
             Self::Root => "root",
             Self::Healthz => "healthz",
             Self::Metrics => "metrics",
+            Self::SessionBootstrap => "session_bootstrap",
             Self::WebSocket => "ws",
             Self::StaticAsset => "static_asset",
         }
@@ -39,6 +42,7 @@ pub fn classify_http_path(path: &str) -> HttpRouteLabel {
         "/" => HttpRouteLabel::Root,
         "/healthz" => HttpRouteLabel::Healthz,
         "/metrics" => HttpRouteLabel::Metrics,
+        "/session/bootstrap" => HttpRouteLabel::SessionBootstrap,
         "/ws" | "/ws-dev" => HttpRouteLabel::WebSocket,
         _ => HttpRouteLabel::StaticAsset,
     }
@@ -51,6 +55,7 @@ struct ServerObservabilityInner {
     http_root_requests: AtomicU64,
     http_healthz_requests: AtomicU64,
     http_metrics_requests: AtomicU64,
+    http_session_bootstrap_requests: AtomicU64,
     http_websocket_requests: AtomicU64,
     http_static_asset_requests: AtomicU64,
     websocket_upgrade_attempts: AtomicU64,
@@ -73,6 +78,7 @@ impl ServerObservabilityInner {
             http_root_requests: AtomicU64::new(0),
             http_healthz_requests: AtomicU64::new(0),
             http_metrics_requests: AtomicU64::new(0),
+            http_session_bootstrap_requests: AtomicU64::new(0),
             http_websocket_requests: AtomicU64::new(0),
             http_static_asset_requests: AtomicU64::new(0),
             websocket_upgrade_attempts: AtomicU64::new(0),
@@ -110,6 +116,7 @@ impl ServerObservability {
             HttpRouteLabel::Root => &self.inner.http_root_requests,
             HttpRouteLabel::Healthz => &self.inner.http_healthz_requests,
             HttpRouteLabel::Metrics => &self.inner.http_metrics_requests,
+            HttpRouteLabel::SessionBootstrap => &self.inner.http_session_bootstrap_requests,
             HttpRouteLabel::WebSocket => &self.inner.http_websocket_requests,
             HttpRouteLabel::StaticAsset => &self.inner.http_static_asset_requests,
         };
@@ -215,6 +222,11 @@ fn write_http_metrics(output: &mut String, inner: &ServerObservabilityInner) {
                 "route",
                 "metrics",
                 load_counter(&inner.http_metrics_requests),
+            ),
+            (
+                "route",
+                "session_bootstrap",
+                load_counter(&inner.http_session_bootstrap_requests),
             ),
             ("route", "ws", load_counter(&inner.http_websocket_requests)),
             (
@@ -373,6 +385,10 @@ mod tests {
         assert_eq!(classify_http_path("/"), HttpRouteLabel::Root);
         assert_eq!(classify_http_path("/healthz"), HttpRouteLabel::Healthz);
         assert_eq!(classify_http_path("/metrics"), HttpRouteLabel::Metrics);
+        assert_eq!(
+            classify_http_path("/session/bootstrap"),
+            HttpRouteLabel::SessionBootstrap
+        );
         assert_eq!(classify_http_path("/ws"), HttpRouteLabel::WebSocket);
         assert_eq!(classify_http_path("/ws-dev"), HttpRouteLabel::WebSocket);
         assert_eq!(classify_http_path("/index.js"), HttpRouteLabel::StaticAsset);

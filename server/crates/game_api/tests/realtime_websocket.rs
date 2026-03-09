@@ -14,6 +14,7 @@ use game_net::{
     ClientControlCommand, ServerControlEvent, ValidatedInputFrame, BUTTON_CAST, BUTTON_PRIMARY,
 };
 use game_sim::COMBAT_FRAME_MS;
+use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio_tungstenite::connect_async;
@@ -149,6 +150,13 @@ async fn connect_socket(base_url: &str) -> ClientStream {
     match connect_async(base_url).await {
         Ok((stream, _)) => stream,
         Err(error) => panic!("websocket should connect: {error}"),
+    }
+}
+
+async fn connect_socket_expect_rejection(base_url: &str) -> String {
+    match connect_async(base_url).await {
+        Ok(_) => panic!("websocket handshake should have been rejected"),
+        Err(error) => error.to_string(),
     }
 }
 
@@ -328,11 +336,23 @@ async fn http_get(base_url: &str, path: &str) -> (u16, String) {
     (status_code, body.to_string())
 }
 
+async fn bootstrap_signal_url(base_url: &str) -> String {
+    let (status_code, body) = http_get(base_url, "/session/bootstrap").await;
+    assert_eq!(status_code, 200, "session bootstrap should return HTTP 200");
+    let payload = serde_json::from_str::<Value>(&body).expect("bootstrap JSON should decode");
+    let token = payload
+        .get("token")
+        .and_then(Value::as_str)
+        .expect("bootstrap JSON should include a token");
+    assert!(!token.is_empty(), "bootstrap token should not be blank");
+    format!("{base_url}?token={token}")
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn websocket_adapter_accepts_binary_commands_and_broadcasts_events() {
     let (server, base_url) = start_server().await;
-    let mut alice = connect_socket(&base_url).await;
-    let mut bob = connect_socket(&base_url).await;
+    let mut alice = connect_socket(&bootstrap_signal_url(&base_url).await).await;
+    let mut bob = connect_socket(&bootstrap_signal_url(&base_url).await).await;
 
     connect_player(&mut alice, "Alice").await;
     connect_player(&mut bob, "Bob").await;
@@ -495,9 +515,32 @@ async fn websocket_adapter_accepts_binary_commands_and_broadcasts_events() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn websocket_upgrade_requires_one_time_bootstrap_tokens() {
+    let (server, base_url) = start_server().await;
+
+    let missing_token_error = connect_socket_expect_rejection(&base_url).await;
+    assert!(
+        missing_token_error.contains("401"),
+        "missing bootstrap token should fail with HTTP 401, got: {missing_token_error}"
+    );
+
+    let tokenized_url = bootstrap_signal_url(&base_url).await;
+    let stream = connect_socket(&tokenized_url).await;
+    drop(stream);
+
+    let reused_token_error = connect_socket_expect_rejection(&tokenized_url).await;
+    assert!(
+        reused_token_error.contains("401"),
+        "reused bootstrap token should fail with HTTP 401, got: {reused_token_error}"
+    );
+
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn websocket_adapter_rejects_text_messages() {
     let (server, base_url) = start_server().await;
-    let mut socket = connect_socket(&base_url).await;
+    let mut socket = connect_socket(&bootstrap_signal_url(&base_url).await).await;
 
     let _ = socket.send(ClientMessage::Text("hello".into())).await;
     assert!(matches!(
@@ -512,7 +555,7 @@ async fn websocket_adapter_rejects_text_messages() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn websocket_adapter_rejects_non_connect_binary_first_packets() {
     let (server, base_url) = start_server().await;
-    let mut socket = connect_socket(&base_url).await;
+    let mut socket = connect_socket(&bootstrap_signal_url(&base_url).await).await;
 
     send_command(
         &mut socket,
@@ -536,7 +579,7 @@ async fn websocket_adapter_rejects_non_connect_binary_first_packets() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn websocket_adapter_rejects_connect_after_session_binding() {
     let (server, base_url) = start_server().await;
-    let mut socket = connect_socket(&base_url).await;
+    let mut socket = connect_socket(&bootstrap_signal_url(&base_url).await).await;
 
     connect_player(&mut socket, "Alice").await;
     let connect_events = recv_events_until(&mut socket, 3, |event| {
@@ -608,7 +651,7 @@ async fn hosted_root_serves_the_exported_web_shell_and_keeps_websocket_routes_al
     assert_eq!(asset_status_code, 200);
     assert!(asset_body.contains("rusaren shell"));
 
-    let mut socket = connect_socket(&base_url).await;
+    let mut socket = connect_socket(&bootstrap_signal_url(&base_url).await).await;
     connect_player(&mut socket, "Alice").await;
     let connect_events = recv_events_until(&mut socket, 3, |event| {
         matches!(event, ServerControlEvent::LobbyDirectorySnapshot { .. })
@@ -661,7 +704,7 @@ async fn healthcheck_and_metrics_routes_report_expected_status_and_prometheus_te
     assert_eq!(root_status, 200);
     assert!(root_body.contains("metrics shell"));
 
-    let mut socket = connect_socket(&base_url).await;
+    let mut socket = connect_socket(&bootstrap_signal_url(&base_url).await).await;
     connect_player(&mut socket, "Alice").await;
     let _ = recv_events_until(&mut socket, 3, |event| {
         matches!(event, ServerControlEvent::LobbyDirectorySnapshot { .. })
@@ -711,8 +754,8 @@ async fn metrics_route_returns_service_unavailable_when_observability_is_disable
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn websocket_adapter_finishes_a_full_match_loop_via_live_input_frames() {
     let (server, base_url) = start_server_fast().await;
-    let mut alice = connect_socket(&base_url).await;
-    let mut bob = connect_socket(&base_url).await;
+    let mut alice = connect_socket(&bootstrap_signal_url(&base_url).await).await;
+    let mut bob = connect_socket(&bootstrap_signal_url(&base_url).await).await;
 
     connect_player(&mut alice, "Alice").await;
     connect_player(&mut bob, "Bob").await;
@@ -965,8 +1008,8 @@ async fn websocket_adapter_finishes_a_full_match_loop_via_live_input_frames() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn websocket_adapter_rejects_skill_tier_skips_and_accepts_the_next_valid_pick() {
     let (server, base_url) = start_server_fast().await;
-    let mut alice = connect_socket(&base_url).await;
-    let mut bob = connect_socket(&base_url).await;
+    let mut alice = connect_socket(&bootstrap_signal_url(&base_url).await).await;
+    let mut bob = connect_socket(&bootstrap_signal_url(&base_url).await).await;
 
     connect_player(&mut alice, "Alice").await;
     connect_player(&mut bob, "Bob").await;
@@ -1128,8 +1171,8 @@ async fn websocket_adapter_rejects_skill_tier_skips_and_accepts_the_next_valid_p
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn websocket_adapter_rejects_input_frames_before_combat() {
     let (server, base_url) = start_server_fast().await;
-    let mut alice = connect_socket(&base_url).await;
-    let mut bob = connect_socket(&base_url).await;
+    let mut alice = connect_socket(&bootstrap_signal_url(&base_url).await).await;
+    let mut bob = connect_socket(&bootstrap_signal_url(&base_url).await).await;
 
     connect_player(&mut alice, "Alice").await;
     connect_player(&mut bob, "Bob").await;

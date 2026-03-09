@@ -108,6 +108,10 @@ impl PlayerRecordStore {
 }
 
 /// Parses and reserializes record-store contents into the canonical sorted format.
+///
+/// VERIFIED MODEL: `server/verus/player_record_store_model.rs` mirrors the size-bounded,
+/// line-oriented record-store invariants enforced by the runtime parser below. The proof
+/// model is intentionally small and does not replace the parser tests over production data.
 pub fn canonicalize_record_store_contents(input: &str) -> Result<String, RecordStoreError> {
     let records = parse_records(input)?;
     Ok(serialize_records(&records))

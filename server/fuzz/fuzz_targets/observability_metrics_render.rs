@@ -24,20 +24,21 @@ fn exercise_observability_metrics(data: &[u8]) {
     let observability = ServerObservability::new(String::from_utf8_lossy(version_bytes));
 
     for opcode in operations {
-        match opcode % 13 {
+        match opcode % 14 {
             0 => observability.record_http_request(classify_http_path("/")),
             1 => observability.record_http_request(classify_http_path("/healthz")),
             2 => observability.record_http_request(classify_http_path("/metrics")),
-            3 => observability.record_http_request(classify_http_path("/ws")),
-            4 => observability.record_http_request(classify_http_path("/assets/client/game.wasm")),
-            5 => observability.record_websocket_upgrade_attempt(),
-            6 => observability.record_websocket_session_bound(),
-            7 => observability.record_websocket_disconnect(),
-            8 => observability.record_websocket_rejection(),
-            9 => observability.record_ingress_packet(true),
-            10 => observability.record_ingress_packet(false),
-            11 => observability.record_tick(Duration::from_micros(u64::from(*opcode))),
-            12 => observability.record_tick(Duration::from_millis(u64::from(*opcode) + 1)),
+            3 => observability.record_http_request(classify_http_path("/session/bootstrap")),
+            4 => observability.record_http_request(classify_http_path("/ws")),
+            5 => observability.record_http_request(classify_http_path("/assets/client/game.wasm")),
+            6 => observability.record_websocket_upgrade_attempt(),
+            7 => observability.record_websocket_session_bound(),
+            8 => observability.record_websocket_disconnect(),
+            9 => observability.record_websocket_rejection(),
+            10 => observability.record_ingress_packet(true),
+            11 => observability.record_ingress_packet(false),
+            12 => observability.record_tick(Duration::from_micros(u64::from(*opcode))),
+            13 => observability.record_tick(Duration::from_millis(u64::from(*opcode) + 1)),
             _ => unreachable!(),
         }
     }
