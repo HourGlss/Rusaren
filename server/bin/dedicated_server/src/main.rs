@@ -7,7 +7,7 @@ use std::env;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use game_api::{spawn_dev_server_with_options, DevServerOptions};
+use game_api::{spawn_dev_server_with_options, DevServerOptions, WebRtcRuntimeConfig};
 use game_content::GameContent;
 use game_domain::{
     LobbyId, MatchId, PlayerId, PlayerName, PlayerRecord, ReadyState, SkillChoice, SkillTree,
@@ -225,7 +225,52 @@ fn default_web_client_root() -> PathBuf {
 fn parse_tick_interval(raw: Option<String>) -> Duration {
     raw.and_then(|value| value.parse::<u64>().ok())
         .filter(|millis| *millis > 0)
-        .map_or_else(|| Duration::from_millis(u64::from(COMBAT_FRAME_MS)), Duration::from_millis)
+        .map_or_else(
+            || Duration::from_millis(u64::from(COMBAT_FRAME_MS)),
+            Duration::from_millis,
+        )
+}
+
+fn parse_csv_urls(raw: Option<String>) -> Vec<String> {
+    raw.into_iter()
+        .flat_map(|value| {
+            value
+                .split(',')
+                .map(str::trim)
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .filter(|value| !value.is_empty())
+        .collect()
+}
+
+fn parse_turn_ttl(raw: Option<String>) -> Result<Duration, String> {
+    let Some(raw) = raw else {
+        return Ok(WebRtcRuntimeConfig::default().turn_ttl);
+    };
+
+    let seconds = raw
+        .parse::<u64>()
+        .map_err(|error| format!("failed to parse RARENA_WEBRTC_TURN_TTL_SECONDS: {error}"))?;
+    if seconds == 0 {
+        return Err(String::from(
+            "RARENA_WEBRTC_TURN_TTL_SECONDS must be greater than zero",
+        ));
+    }
+
+    Ok(Duration::from_secs(seconds))
+}
+
+fn parse_webrtc_config_from_env() -> Result<WebRtcRuntimeConfig, String> {
+    Ok(WebRtcRuntimeConfig {
+        stun_urls: parse_csv_urls(env::var("RARENA_WEBRTC_STUN_URLS").ok()),
+        turn_urls: parse_csv_urls(env::var("RARENA_WEBRTC_TURN_URLS").ok()),
+        turn_shared_secret: env::var("RARENA_WEBRTC_TURN_SECRET")
+            .ok()
+            .map(|secret| secret.trim().to_string())
+            .filter(|secret| !secret.is_empty()),
+        turn_ttl: parse_turn_ttl(env::var("RARENA_WEBRTC_TURN_TTL_SECONDS").ok())?,
+    })
 }
 
 fn parse_log_format_from_env() -> Result<LogFormat, String> {
@@ -491,6 +536,13 @@ async fn main() {
     let web_client_root =
         env::var_os("RARENA_WEB_CLIENT_ROOT").map_or_else(default_web_client_root, PathBuf::from);
     let tick_interval = parse_tick_interval(env::var("RARENA_TICK_INTERVAL_MS").ok());
+    let webrtc = match parse_webrtc_config_from_env() {
+        Ok(webrtc) => webrtc,
+        Err(error) => {
+            error!(%error, "dedicated_server failed to parse WebRTC configuration");
+            std::process::exit(1);
+        }
+    };
 
     let server = match spawn_dev_server_with_options(
         listener,
@@ -501,6 +553,7 @@ async fn main() {
             content_root,
             web_client_root,
             observability: DevServerOptions::default().observability,
+            webrtc,
         },
     )
     .await
@@ -514,7 +567,8 @@ async fn main() {
 
     info!(
         http_url = %format!("http://{}", server.local_addr()),
-        websocket_url = %format!("ws://{}/ws", server.local_addr()),
+        signaling_url = %format!("ws://{}/ws", server.local_addr()),
+        websocket_dev_url = %format!("ws://{}/ws-dev", server.local_addr()),
         "dedicated_server listening"
     );
     wait_for_shutdown_signal().await;
@@ -525,7 +579,10 @@ async fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_tick_interval, run_demo, LogFormat, COMBAT_FRAME_MS};
+    use super::{
+        parse_csv_urls, parse_tick_interval, parse_turn_ttl, parse_webrtc_config_from_env,
+        run_demo, LogFormat, WebRtcRuntimeConfig, COMBAT_FRAME_MS,
+    };
     use std::time::Duration;
 
     #[test]
@@ -564,6 +621,51 @@ mod tests {
     }
 
     #[test]
+    fn parse_csv_urls_discards_blank_entries() {
+        assert_eq!(
+            parse_csv_urls(Some(String::from(
+                "stun:one.example.com:3478, ,turn:two.example.com:3478?transport=udp"
+            ))),
+            vec![
+                String::from("stun:one.example.com:3478"),
+                String::from("turn:two.example.com:3478?transport=udp"),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_turn_ttl_accepts_positive_values_and_rejects_zero() {
+        assert_eq!(
+            parse_turn_ttl(Some(String::from("600"))).expect("ttl should parse"),
+            Duration::from_secs(600)
+        );
+        assert_eq!(
+            parse_turn_ttl(Some(String::from("0"))).expect_err("zero should be rejected"),
+            "RARENA_WEBRTC_TURN_TTL_SECONDS must be greater than zero"
+        );
+    }
+
+    #[test]
+    fn parse_webrtc_config_from_env_uses_defaults_when_variables_are_missing() {
+        let previous_stun = std::env::var("RARENA_WEBRTC_STUN_URLS").ok();
+        let previous_turn = std::env::var("RARENA_WEBRTC_TURN_URLS").ok();
+        let previous_secret = std::env::var("RARENA_WEBRTC_TURN_SECRET").ok();
+        let previous_ttl = std::env::var("RARENA_WEBRTC_TURN_TTL_SECONDS").ok();
+        std::env::remove_var("RARENA_WEBRTC_STUN_URLS");
+        std::env::remove_var("RARENA_WEBRTC_TURN_URLS");
+        std::env::remove_var("RARENA_WEBRTC_TURN_SECRET");
+        std::env::remove_var("RARENA_WEBRTC_TURN_TTL_SECONDS");
+
+        let result = parse_webrtc_config_from_env().expect("default webrtc config should parse");
+        assert_eq!(result, WebRtcRuntimeConfig::default());
+
+        restore_env("RARENA_WEBRTC_STUN_URLS", previous_stun);
+        restore_env("RARENA_WEBRTC_TURN_URLS", previous_turn);
+        restore_env("RARENA_WEBRTC_TURN_SECRET", previous_secret);
+        restore_env("RARENA_WEBRTC_TURN_TTL_SECONDS", previous_ttl);
+    }
+
+    #[test]
     fn parse_log_format_from_env_accepts_pretty_and_json_and_rejects_unknown_values() {
         assert_eq!(
             LogFormat::parse("json").expect("json log format should parse"),
@@ -577,5 +679,13 @@ mod tests {
             LogFormat::parse("xml").expect_err("unknown log formats should be rejected"),
             "unsupported RARENA_LOG_FORMAT 'xml'; expected 'pretty' or 'json'"
         );
+    }
+
+    fn restore_env(key: &str, value: Option<String>) {
+        if let Some(value) = value {
+            std::env::set_var(key, value);
+        } else {
+            std::env::remove_var(key);
+        }
     }
 }

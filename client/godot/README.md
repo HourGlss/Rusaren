@@ -3,12 +3,12 @@
 This is the `0.6.0` browser-safe Godot shell for the current Rust backend.
 
 What it does:
-- connects to the websocket dev adapter at `ws://127.0.0.1:3000/ws`
+- connects to the websocket signaling endpoint at `ws://127.0.0.1:3000/ws`
 - defaults browser exports to the same-origin `/ws` endpoint automatically
 - lets the server assign the runtime player ID after connect instead of exposing a player-id field in the UI
 - only enables legal skill buttons for the current round: tier 1 on unstarted trees or the next tier on started trees
 - sends real binary control packets
-- sends real binary combat input frames during the current prototype combat slice
+- sends real binary combat input frames during the current prototype combat slice over the WebRTC input channel
 - decodes real binary server control events
 - renders central-lobby, game-lobby, countdown, match, and results screens
 - renders a simple top-down arena with a mostly empty floor, four central pillars, and shrub collars
@@ -20,12 +20,13 @@ What it does:
 - consumes a runtime arena and skill set authored under `server/content/`
 
 What it does not do yet:
-- WebRTC gameplay transport
 - polished movement/combat rendering
 - interpolation
+- native desktop WebRTC transport without the `webrtc-native` extension
 
 Current shell limitation:
 - the combat loop is still prototype-level, even though the current map and slot skills now load from authored YAML and ASCII content files and already support real melee/projectile/status interactions
+- stock native/headless Godot on this machine does not include the `webrtc-native` extension, so full transport testing should happen in the browser unless that extension is installed
 
 Run flow:
 1. start the Rust backend with `cd server && rustup run stable cargo run -p dedicated_server --quiet`
@@ -33,6 +34,7 @@ Run flow:
 3. optionally validate the web-export defaults with `godot4 --headless --path client/godot -s res://tests/web_export_checks.gd`
 4. export the web shell with `powershell -NoProfile -ExecutionPolicy Bypass -File server/scripts/export-web-client.ps1 -InstallTemplates`
 5. open `http://127.0.0.1:3000/` in a browser, or run `res://scenes/main.tscn` in Godot 4
+   Browser play is the supported networked path on this machine.
 6. connect, create or join a lobby, pick teams, ready up, choose skills, then use `WASD`, mouse aim, left click, and `1`-`5` during combat to drive the current backend slice end to end
    The shell asks for a player name only; the backend assigns the runtime player ID.
    Cooldowns shown in the HUD are driven by authoritative server snapshots.

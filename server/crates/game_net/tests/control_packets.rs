@@ -325,11 +325,15 @@ fn server_control_event_round_trips_arena_packets() {
 
     let arena_packet = arena_state.clone().encode_packet(6, 22).expect("packet");
     let effects_packet = effect_batch.clone().encode_packet(7, 22).expect("packet");
-    let (_, decoded_arena_state) =
+    let (arena_header, decoded_arena_state) =
         ServerControlEvent::decode_packet(&arena_packet).expect("decode");
-    let (_, decoded_effect_batch) =
+    let (effects_header, decoded_effect_batch) =
         ServerControlEvent::decode_packet(&effects_packet).expect("decode");
 
+    assert_eq!(arena_header.channel_id, ChannelId::Snapshot);
+    assert_eq!(arena_header.packet_kind, PacketKind::FullSnapshot);
+    assert_eq!(effects_header.channel_id, ChannelId::Snapshot);
+    assert_eq!(effects_header.packet_kind, PacketKind::EventBatch);
     assert_eq!(decoded_arena_state, arena_state);
     assert_eq!(decoded_effect_batch, effect_batch);
 }
@@ -366,8 +370,8 @@ fn server_control_event_rejects_invalid_arena_kinds() {
     arena_payload.extend_from_slice(&32_u16.to_le_bytes());
     arena_payload.extend_from_slice(&0_u16.to_le_bytes());
     let header = PacketHeader::new(
-        ChannelId::Control,
-        PacketKind::ControlEvent,
+        ChannelId::Snapshot,
+        PacketKind::FullSnapshot,
         0,
         u16::try_from(arena_payload.len()).expect("payload length should fit"),
         3,
@@ -391,8 +395,8 @@ fn server_control_event_rejects_invalid_arena_kinds() {
     effect_payload.extend_from_slice(&0_i16.to_le_bytes());
     effect_payload.extend_from_slice(&28_u16.to_le_bytes());
     let header = PacketHeader::new(
-        ChannelId::Control,
-        PacketKind::ControlEvent,
+        ChannelId::Snapshot,
+        PacketKind::EventBatch,
         0,
         u16::try_from(effect_payload.len()).expect("payload length should fit"),
         4,

@@ -93,3 +93,10 @@ path = "fuzz_targets/skill_yaml_parse.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "webrtc_signal_message_parse"
+path = "fuzz_targets/webrtc_signal_message_parse.rs"
+test = false
+doc = false
+bench = false

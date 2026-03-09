@@ -147,7 +147,7 @@ func _build_header() -> Control:
 	wrapper.add_child(title)
 
 	var subtitle := Label.new()
-	subtitle.text = "Godot web shell wired to the current websocket dev adapter. Gameplay rendering stays placeholder while the backend packet surface stabilizes."
+	subtitle.text = "Godot web shell wired to WebRTC gameplay channels over same-origin websocket signaling. Gameplay rendering stays intentionally rough while the transport and rules settle."
 	subtitle.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	subtitle.add_theme_color_override("font_color", Color8(184, 191, 198))
 	wrapper.add_child(subtitle)
@@ -173,7 +173,7 @@ func _build_connection_panel() -> Control:
 	var body := panel.get_meta("body") as VBoxContainer
 
 	var heading := Label.new()
-	heading.text = "Dev adapter"
+	heading.text = "Realtime transport"
 	heading.add_theme_font_size_override("font_size", 19)
 	heading.add_theme_color_override("font_color", Color8(244, 239, 232))
 	body.add_child(heading)
@@ -189,7 +189,7 @@ func _build_connection_panel() -> Control:
 	grid.add_theme_constant_override("v_separation", 10)
 	body.add_child(grid)
 
-	ws_url_input = _labeled_line_edit(grid, "WebSocket URL", app_state.websocket_url)
+	ws_url_input = _labeled_line_edit(grid, "Signaling URL", app_state.websocket_url)
 	player_name_input = _labeled_line_edit(grid, "Player name", "Alice")
 	join_lobby_input = _labeled_line_edit(grid, "Join lobby ID", "")
 
@@ -260,7 +260,7 @@ func _build_central_panel() -> PanelContainer:
 	body.add_child(title)
 
 	var summary := Label.new()
-	summary.text = "Create a game lobby or click one from the directory below to join it. Browser exports default to the same-origin /ws endpoint when you leave the URL field on its default value."
+	summary.text = "Create a game lobby or click one from the directory below to join it. Browser exports default to same-origin websocket signaling at /ws, then switch live gameplay onto WebRTC data channels."
 	summary.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	summary.add_theme_color_override("font_color", Color8(187, 196, 203))
 	body.add_child(summary)
@@ -366,7 +366,7 @@ func _build_match_panel() -> PanelContainer:
 	body.add_child(countdown_value_label)
 
 	var placeholder := Label.new()
-	placeholder.text = "The first arena slice is live here: a mostly empty map, central shrub-encased pillars, authoritative snapshots, WASD movement, mouse aim, left-click melee, and placeholder skills on 1-5."
+	placeholder.text = "The first arena slice is live here: a mostly empty map, central shrub-encased pillars, authoritative snapshots, WASD movement, mouse aim, left-click melee, and authored combat skills on 1-5."
 	placeholder.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	placeholder.add_theme_color_override("font_color", Color8(179, 180, 174))
 	body.add_child(placeholder)
@@ -605,7 +605,7 @@ func _on_connect_pressed() -> void:
 	ws_url_input.text = app_state.websocket_url
 	_refresh_ui()
 	if not transport.open(app_state.websocket_url):
-		app_state.mark_transport_error("Unable to start the websocket connection.")
+		app_state.mark_transport_error("Unable to start the signaling connection.")
 		_refresh_ui()
 
 

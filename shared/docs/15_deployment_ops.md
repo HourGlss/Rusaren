@@ -10,8 +10,8 @@ This is the current hosted topology:
 - `turn.domain.com` -> `coturn` on the same operator-managed host
 
 Current transport note:
-- the public shell is still websocket-first in `0.6.0`
-- `coturn` is provisioned now because the browser-compatible WebRTC gameplay transport is the next milestone in `0.7.0`
+- the public shell now uses websocket signaling at `/ws` plus WebRTC data channels for live gameplay traffic
+- `coturn` is provisioned because TURN relay fallback is required for reliable browser connectivity on real networks
 
 ## Checked-in stack
 Files:
@@ -24,7 +24,7 @@ Files:
 - `server/scripts/docker-smoke.ps1`
 
 What each part does:
-- `rarena-server`: serves `/`, `/ws`, `/healthz`, and `/metrics`
+- `rarena-server`: serves `/`, `/ws`, `/ws-dev`, `/healthz`, and `/metrics`
 - `caddy`: terminates TLS and reverse-proxies the public site to the Rust server
 - `prometheus`: scrapes backend metrics
 - `coturn`: provides STUN/TURN service on the operator-managed domain
@@ -101,9 +101,9 @@ Current logs:
 - `/metrics` is scraped internally by Prometheus and is not proxied publicly by the checked-in `Caddyfile`
 - `coturn` uses long-term credentials via a shared secret in this deployment milestone
 - `rarena-server` now runs as a non-root user with a read-only root filesystem, `no-new-privileges`, and all Linux capabilities dropped in the checked-in compose path
-- before `0.7.0` WebRTC rollout, replace placeholder secrets with generated values and keep them out of git
+- TURN secrets and public host values still need to be replaced with operator-generated production values and kept out of git
 
 ## Current limitation
 This deploy path is production-style and testable, but not yet the final game transport:
-- the hosted shell still uses the websocket dev adapter
-- real gameplay WebRTC, signaling, and TURN credential issuance land in `0.7.0`
+- WebRTC is now the intended gameplay transport, but the current replication path still relies on full snapshots plus event batches rather than the final delta stream
+- a real hosted-domain test still depends on operator DNS, certificates, and secret material

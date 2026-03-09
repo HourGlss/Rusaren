@@ -1,11 +1,10 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::io;
 use std::net::SocketAddr;
-use std::path::Path;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
@@ -13,10 +12,14 @@ use axum::http::{header, Request, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, get_service};
 use axum::Router;
+use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt};
 use game_content::GameContent;
 use game_domain::PlayerId;
-use game_net::{NetworkSessionGuard, ServerControlEvent};
+use game_net::{
+    ChannelId, NetworkSessionGuard, PacketHeader, PacketKind, ServerControlEvent,
+    MAX_INGRESS_PACKET_BYTES, PROTOCOL_VERSION,
+};
 use game_sim::COMBAT_FRAME_MS;
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, oneshot, Mutex};
@@ -24,8 +27,23 @@ use tokio::task::JoinHandle;
 use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 use tracing::{debug, error, info, info_span, warn};
+use webrtc::api::media_engine::MediaEngine;
+use webrtc::api::APIBuilder;
+use webrtc::data_channel::data_channel_init::RTCDataChannelInit;
+use webrtc::data_channel::data_channel_message::DataChannelMessage;
+use webrtc::data_channel::data_channel_state::RTCDataChannelState;
+use webrtc::data_channel::RTCDataChannel;
+use webrtc::peer_connection::configuration::RTCConfiguration;
+use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
+use webrtc::peer_connection::RTCPeerConnection;
 
 use crate::observability::{classify_http_path, ServerObservability};
+use crate::webrtc::{
+    decode_client_signal_message, ClientSignalMessage, ServerSignalMessage, SignalingChannelMap,
+    SignalingIceCandidate, SignalingSessionDescription, WebRtcRuntimeConfig,
+    CONTROL_DATA_CHANNEL_ID, INPUT_DATA_CHANNEL_ID, MAX_SIGNAL_MESSAGE_BYTES,
+    SNAPSHOT_DATA_CHANNEL_ID,
+};
 use crate::{AppTransport, ConnectionId, ServerApp};
 
 #[derive(Clone)]
@@ -34,6 +52,7 @@ struct DevServerState {
     web_client_root: PathBuf,
     observability: Option<ServerObservability>,
     next_connection_id: Arc<AtomicU64>,
+    webrtc: WebRtcRuntimeConfig,
 }
 
 struct RuntimeState {
@@ -59,9 +78,56 @@ impl RuntimeState {
     }
 }
 
+#[derive(Clone)]
+enum ClientOutbound {
+    WebSocket {
+        outbound: mpsc::UnboundedSender<Vec<u8>>,
+    },
+    WebRtc {
+        control: mpsc::UnboundedSender<Vec<u8>>,
+        snapshot: mpsc::UnboundedSender<Vec<u8>>,
+    },
+}
+
+impl ClientOutbound {
+    fn send_packet(&self, packet: Vec<u8>) {
+        match self {
+            Self::WebSocket { outbound } => {
+                let _ = outbound.send(packet);
+            }
+            Self::WebRtc { control, snapshot } => match PacketHeader::decode(&packet) {
+                Ok((header, _)) => match header.channel_id {
+                    ChannelId::Control => {
+                        let _ = control.send(packet);
+                    }
+                    ChannelId::Snapshot => {
+                        let _ = snapshot.send(packet);
+                    }
+                    ChannelId::Input => {
+                        warn!("server attempted to send an input-channel packet to a client");
+                    }
+                },
+                Err(error) => {
+                    warn!(%error, "server attempted to send a malformed packet to a client");
+                }
+            },
+        }
+    }
+
+    fn send_error(&self, message: &str) {
+        if let Ok(packet) = (ServerControlEvent::Error {
+            message: message.to_string(),
+        })
+        .encode_packet(0, 0)
+        {
+            self.send_packet(packet);
+        }
+    }
+}
+
 struct RealtimeTransport {
     incoming: VecDeque<(ConnectionId, Vec<u8>)>,
-    outgoing: BTreeMap<ConnectionId, mpsc::UnboundedSender<Vec<u8>>>,
+    outgoing: BTreeMap<ConnectionId, ClientOutbound>,
 }
 
 impl RealtimeTransport {
@@ -75,7 +141,7 @@ impl RealtimeTransport {
     fn register_client(
         &mut self,
         connection_id: ConnectionId,
-        outbound: mpsc::UnboundedSender<Vec<u8>>,
+        outbound: ClientOutbound,
     ) -> Result<(), &'static str> {
         if self.outgoing.contains_key(&connection_id) {
             return Err("connection is already registered");
@@ -101,7 +167,7 @@ impl AppTransport for RealtimeTransport {
 
     fn send_to_client(&mut self, connection_id: ConnectionId, packet: Vec<u8>) {
         if let Some(outbound) = self.outgoing.get(&connection_id) {
-            let _ = outbound.send(packet);
+            outbound.send_packet(packet);
         }
     }
 }
@@ -109,7 +175,7 @@ impl AppTransport for RealtimeTransport {
 enum IngressEvent {
     Connect {
         connection_id: ConnectionId,
-        outbound: mpsc::UnboundedSender<Vec<u8>>,
+        outbound: ClientOutbound,
         packet: Vec<u8>,
         ack: oneshot::Sender<Result<PlayerId, String>>,
     },
@@ -138,6 +204,7 @@ pub struct DevServerOptions {
     pub content_root: PathBuf,
     pub web_client_root: PathBuf,
     pub observability: Option<ServerObservability>,
+    pub webrtc: WebRtcRuntimeConfig,
 }
 
 impl Default for DevServerOptions {
@@ -149,8 +216,31 @@ impl Default for DevServerOptions {
             content_root: default_content_root(),
             web_client_root: default_web_client_root(),
             observability: Some(ServerObservability::new(env!("CARGO_PKG_VERSION"))),
+            webrtc: WebRtcRuntimeConfig::default(),
         }
     }
+}
+
+#[derive(Default)]
+struct BindingState {
+    guard: NetworkSessionGuard,
+    bound_player: Option<PlayerId>,
+    disconnected: bool,
+}
+
+#[derive(Default)]
+struct WebRtcNegotiationState {
+    offer_seen: bool,
+    answer_sent: bool,
+    pending_local_candidates: Vec<SignalingIceCandidate>,
+}
+
+struct SignalingTransport {
+    peer: Arc<RTCPeerConnection>,
+    binding_state: Arc<Mutex<BindingState>>,
+    negotiation_state: Arc<Mutex<WebRtcNegotiationState>>,
+    outbound: ClientOutbound,
+    ice_servers: Vec<crate::WebRtcIceServerConfig>,
 }
 
 impl DevServerHandle {
@@ -190,6 +280,10 @@ pub async fn spawn_dev_server_with_options(
             "simulation step must be greater than zero",
         ));
     }
+    options
+        .webrtc
+        .validate()
+        .map_err(|message| io::Error::new(io::ErrorKind::InvalidInput, message))?;
 
     let local_addr = listener.local_addr()?;
     let content = GameContent::load_from_root(&options.content_root).map_err(io::Error::other)?;
@@ -207,6 +301,7 @@ pub async fn spawn_dev_server_with_options(
         web_client_root: options.web_client_root.clone(),
         observability: options.observability,
         next_connection_id,
+        webrtc: options.webrtc,
     };
 
     let ingress_task = tokio::spawn(run_ingress_loop(runtime.clone(), ingress_rx));
@@ -264,7 +359,8 @@ fn build_router(state: DevServerState) -> Router {
         .route("/", get(web_client_index))
         .route("/healthz", get(healthcheck))
         .route("/metrics", get(metrics_export))
-        .route("/ws", get(websocket_upgrade))
+        .route("/ws", get(signaling_upgrade))
+        .route("/ws-dev", get(websocket_dev_upgrade))
         .fallback_service(static_assets)
         .layer(
             TraceLayer::new_for_http().make_span_with(|request: &Request<_>| {
@@ -305,7 +401,7 @@ async fn run_ingress_loop(
                         %message,
                         "realtime ingress rejected duplicate connect"
                     );
-                    send_direct_error(&outbound, message);
+                    outbound.send_error(message);
                     let _ = ack.send(Err(message.to_string()));
                     continue;
                 }
@@ -345,7 +441,7 @@ async fn run_ingress_loop(
             IngressEvent::Disconnect { connection_id } => {
                 info!(
                     connection_id = connection_id.get(),
-                    "realtime ingress disconnected websocket session"
+                    "realtime ingress disconnected bound session"
                 );
                 runtime.disconnect_connection(connection_id);
                 runtime.transport.unregister_client(connection_id);
@@ -446,7 +542,7 @@ fn render_missing_web_client_page(web_client_root: &Path) -> String {
     )
 }
 
-async fn websocket_upgrade(
+async fn signaling_upgrade(
     ws: WebSocketUpgrade,
     State(state): State<DevServerState>,
 ) -> impl IntoResponse {
@@ -454,14 +550,111 @@ async fn websocket_upgrade(
         observability.record_http_request(crate::HttpRouteLabel::WebSocket);
         observability.record_websocket_upgrade_attempt();
     }
-    ws.max_message_size(game_net::MAX_INGRESS_PACKET_BYTES)
-        .max_frame_size(game_net::MAX_INGRESS_PACKET_BYTES)
-        .on_upgrade(move |socket| handle_socket(state, socket))
+    ws.max_message_size(MAX_SIGNAL_MESSAGE_BYTES)
+        .max_frame_size(MAX_SIGNAL_MESSAGE_BYTES)
+        .on_upgrade(move |socket| handle_signaling_socket(state, socket))
 }
 
-async fn handle_socket(state: DevServerState, socket: WebSocket) {
+async fn websocket_dev_upgrade(
+    ws: WebSocketUpgrade,
+    State(state): State<DevServerState>,
+) -> impl IntoResponse {
+    if let Some(observability) = &state.observability {
+        observability.record_http_request(crate::HttpRouteLabel::WebSocket);
+        observability.record_websocket_upgrade_attempt();
+    }
+    ws.max_message_size(MAX_INGRESS_PACKET_BYTES)
+        .max_frame_size(MAX_INGRESS_PACKET_BYTES)
+        .on_upgrade(move |socket| handle_websocket_dev_socket(state, socket))
+}
+
+async fn handle_signaling_socket(state: DevServerState, socket: WebSocket) {
+    let (mut sender, mut receiver) = socket.split();
+    let (signal_tx, mut signal_rx) = mpsc::unbounded_channel::<ServerSignalMessage>();
+    let writer = tokio::spawn(async move {
+        while let Some(message) = signal_rx.recv().await {
+            let text = match serde_json::to_string(&message) {
+                Ok(text) => text,
+                Err(error) => {
+                    error!(%error, "failed to serialize WebRTC signaling message");
+                    break;
+                }
+            };
+
+            if sender.send(Message::Text(text.into())).await.is_err() {
+                break;
+            }
+        }
+    });
+
+    let connection_id = allocate_connection_id(&state.next_connection_id);
+    info!(
+        connection_id = connection_id.get(),
+        "WebRTC signaling session opened"
+    );
+
+    let Ok(transport) = create_signaling_transport(&state, connection_id, &signal_tx).await else {
+        drop(signal_tx);
+        let _ = writer.await;
+        return;
+    };
+
+    install_webrtc_callbacks(
+        &state,
+        connection_id,
+        &transport.peer,
+        &transport.binding_state,
+        &transport.negotiation_state,
+        transport.outbound.clone(),
+        signal_tx.clone(),
+    );
+
+    let _ = signal_tx.send(ServerSignalMessage::Hello {
+        protocol_version: PROTOCOL_VERSION,
+        ice_servers: transport.ice_servers.clone(),
+        channels: SignalingChannelMap::default(),
+    });
+
+    while let Some(message_result) = receiver.next().await {
+        let Ok(message) = message_result else {
+            warn!(
+                connection_id = connection_id.get(),
+                "WebRTC signaling websocket ended with an error"
+            );
+            break;
+        };
+
+        let keep_open = process_signaling_websocket_message(
+            &state,
+            connection_id,
+            &signal_tx,
+            &transport.peer,
+            &transport.negotiation_state,
+            message,
+        )
+        .await;
+
+        if !keep_open {
+            break;
+        }
+    }
+
+    disconnect_bound_session(&state, connection_id, &transport.binding_state, "WebRTC").await;
+    let _ = transport.peer.close().await;
+    drop(signal_tx);
+    let _ = writer.await;
+    info!(
+        connection_id = connection_id.get(),
+        "WebRTC signaling session closed"
+    );
+}
+
+async fn handle_websocket_dev_socket(state: DevServerState, socket: WebSocket) {
     let (mut sender, mut receiver) = socket.split();
     let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+    let outbound = ClientOutbound::WebSocket {
+        outbound: outbound_tx.clone(),
+    };
     let connection_id = allocate_connection_id(&state.next_connection_id);
     let writer = tokio::spawn(async move {
         while let Some(packet) = outbound_rx.recv().await {
@@ -473,11 +666,17 @@ async fn handle_socket(state: DevServerState, socket: WebSocket) {
 
     let mut guard = NetworkSessionGuard::new();
     let mut bound_player = None;
-    info!("websocket session opened");
+    info!(
+        connection_id = connection_id.get(),
+        "websocket dev session opened"
+    );
 
     while let Some(message_result) = receiver.next().await {
         let Ok(message) = message_result else {
-            warn!("websocket stream ended with an error");
+            warn!(
+                connection_id = connection_id.get(),
+                "websocket dev stream ended with an error"
+            );
             break;
         };
 
@@ -486,7 +685,7 @@ async fn handle_socket(state: DevServerState, socket: WebSocket) {
                 let keep_open = handle_binary_message(
                     &state,
                     connection_id,
-                    &outbound_tx,
+                    &outbound,
                     &mut guard,
                     &mut bound_player,
                     bytes.to_vec(),
@@ -497,8 +696,8 @@ async fn handle_socket(state: DevServerState, socket: WebSocket) {
                 }
             }
             Message::Text(_) => {
-                reject_socket(
-                    &outbound_tx,
+                reject_client_session(
+                    &outbound,
                     state.observability.as_ref(),
                     "text websocket messages are not accepted",
                 );
@@ -519,42 +718,582 @@ async fn handle_socket(state: DevServerState, socket: WebSocket) {
         info!(
             connection_id = connection_id.get(),
             player_id = player_id.get(),
-            "websocket session disconnected after binding"
+            "websocket dev session disconnected after binding"
         );
     }
 
     drop(outbound_tx);
     let _ = writer.await;
-    info!("websocket session closed");
+    info!(
+        connection_id = connection_id.get(),
+        "websocket dev session closed"
+    );
+}
+
+async fn handle_signaling_message(
+    _state: &DevServerState,
+    connection_id: ConnectionId,
+    signal_tx: &mpsc::UnboundedSender<ServerSignalMessage>,
+    peer: &Arc<RTCPeerConnection>,
+    negotiation_state: &Arc<Mutex<WebRtcNegotiationState>>,
+    message_text: &str,
+) -> bool {
+    let message = match decode_client_signal_message(message_text) {
+        Ok(message) => message,
+        Err(message) => {
+            let _ = signal_tx.send(ServerSignalMessage::Error { message });
+            let _ = peer.close().await;
+            return false;
+        }
+    };
+
+    match message {
+        ClientSignalMessage::SessionDescription { description } => {
+            accept_webrtc_offer(
+                connection_id,
+                signal_tx,
+                peer,
+                negotiation_state,
+                description,
+            )
+            .await
+        }
+        ClientSignalMessage::IceCandidate { candidate } => {
+            add_remote_ice_candidate(signal_tx, peer, negotiation_state, candidate).await
+        }
+        ClientSignalMessage::Bye => false,
+    }
+}
+
+async fn create_signaling_transport(
+    state: &DevServerState,
+    connection_id: ConnectionId,
+    signal_tx: &mpsc::UnboundedSender<ServerSignalMessage>,
+) -> Result<SignalingTransport, ()> {
+    let ice_servers = match state
+        .webrtc
+        .ice_servers_for_connection(connection_id, SystemTime::now())
+    {
+        Ok(ice_servers) => ice_servers,
+        Err(message) => {
+            let _ = signal_tx.send(ServerSignalMessage::Error { message });
+            return Err(());
+        }
+    };
+
+    let peer = match create_peer_connection(&ice_servers).await {
+        Ok(peer) => Arc::new(peer),
+        Err(error) => {
+            let _ = signal_tx.send(ServerSignalMessage::Error {
+                message: format!("failed to create the WebRTC peer connection: {error}"),
+            });
+            return Err(());
+        }
+    };
+
+    let binding_state = Arc::new(Mutex::new(BindingState::default()));
+    let negotiation_state = Arc::new(Mutex::new(WebRtcNegotiationState::default()));
+    let outbound = match create_webrtc_outbound(
+        state,
+        connection_id,
+        Arc::clone(&peer),
+        Arc::clone(&binding_state),
+    )
+    .await
+    {
+        Ok(outbound) => outbound,
+        Err(message) => {
+            let _ = signal_tx.send(ServerSignalMessage::Error { message });
+            let _ = peer.close().await;
+            return Err(());
+        }
+    };
+
+    Ok(SignalingTransport {
+        peer,
+        binding_state,
+        negotiation_state,
+        outbound,
+        ice_servers,
+    })
+}
+
+async fn process_signaling_websocket_message(
+    state: &DevServerState,
+    connection_id: ConnectionId,
+    signal_tx: &mpsc::UnboundedSender<ServerSignalMessage>,
+    peer: &Arc<RTCPeerConnection>,
+    negotiation_state: &Arc<Mutex<WebRtcNegotiationState>>,
+    message: Message,
+) -> bool {
+    match message {
+        Message::Text(text) => {
+            handle_signaling_message(
+                state,
+                connection_id,
+                signal_tx,
+                peer,
+                negotiation_state,
+                text.as_str(),
+            )
+            .await
+        }
+        Message::Binary(_) => {
+            let _ = signal_tx.send(ServerSignalMessage::Error {
+                message: String::from("binary websocket messages are not accepted on /ws"),
+            });
+            false
+        }
+        Message::Close(_) => false,
+        Message::Ping(_) | Message::Pong(_) => true,
+    }
+}
+
+async fn accept_webrtc_offer(
+    connection_id: ConnectionId,
+    signal_tx: &mpsc::UnboundedSender<ServerSignalMessage>,
+    peer: &Arc<RTCPeerConnection>,
+    negotiation_state: &Arc<Mutex<WebRtcNegotiationState>>,
+    description: SignalingSessionDescription,
+) -> bool {
+    let mut negotiation = negotiation_state.lock().await;
+    if negotiation.offer_seen {
+        let _ = signal_tx.send(ServerSignalMessage::Error {
+            message: String::from("a WebRTC offer has already been processed"),
+        });
+        drop(negotiation);
+        let _ = peer.close().await;
+        return false;
+    }
+
+    let remote_description = match description.to_rtc_description() {
+        Ok(remote_description) => remote_description,
+        Err(message) => {
+            let _ = signal_tx.send(ServerSignalMessage::Error { message });
+            drop(negotiation);
+            let _ = peer.close().await;
+            return false;
+        }
+    };
+
+    if let Err(error) = peer.set_remote_description(remote_description).await {
+        let _ = signal_tx.send(ServerSignalMessage::Error {
+            message: format!("failed to apply the remote offer: {error}"),
+        });
+        drop(negotiation);
+        let _ = peer.close().await;
+        return false;
+    }
+
+    let answer = match peer.create_answer(None).await {
+        Ok(answer) => answer,
+        Err(error) => {
+            let _ = signal_tx.send(ServerSignalMessage::Error {
+                message: format!("failed to create the WebRTC answer: {error}"),
+            });
+            drop(negotiation);
+            let _ = peer.close().await;
+            return false;
+        }
+    };
+    if let Err(error) = peer.set_local_description(answer.clone()).await {
+        let _ = signal_tx.send(ServerSignalMessage::Error {
+            message: format!("failed to apply the local answer: {error}"),
+        });
+        drop(negotiation);
+        let _ = peer.close().await;
+        return false;
+    }
+
+    let answer_description = peer.local_description().await.unwrap_or(answer);
+    negotiation.offer_seen = true;
+    let _ = signal_tx.send(ServerSignalMessage::SessionDescription {
+        description: SignalingSessionDescription::from_rtc_description(&answer_description),
+    });
+    negotiation.answer_sent = true;
+
+    for candidate in negotiation.pending_local_candidates.drain(..) {
+        let _ = signal_tx.send(ServerSignalMessage::IceCandidate { candidate });
+    }
+
+    info!(
+        connection_id = connection_id.get(),
+        "WebRTC offer accepted and answer sent"
+    );
+    true
+}
+
+async fn add_remote_ice_candidate(
+    signal_tx: &mpsc::UnboundedSender<ServerSignalMessage>,
+    peer: &Arc<RTCPeerConnection>,
+    negotiation_state: &Arc<Mutex<WebRtcNegotiationState>>,
+    candidate: SignalingIceCandidate,
+) -> bool {
+    let negotiation = negotiation_state.lock().await;
+    if !negotiation.offer_seen {
+        let _ = signal_tx.send(ServerSignalMessage::Error {
+            message: String::from("ICE candidates are not accepted before an offer"),
+        });
+        drop(negotiation);
+        let _ = peer.close().await;
+        return false;
+    }
+    drop(negotiation);
+
+    let candidate_init = match candidate.to_rtc_candidate_init() {
+        Ok(candidate_init) => candidate_init,
+        Err(message) => {
+            let _ = signal_tx.send(ServerSignalMessage::Error { message });
+            let _ = peer.close().await;
+            return false;
+        }
+    };
+
+    if let Err(error) = peer.add_ice_candidate(candidate_init).await {
+        let _ = signal_tx.send(ServerSignalMessage::Error {
+            message: format!("failed to add the remote ICE candidate: {error}"),
+        });
+        let _ = peer.close().await;
+        return false;
+    }
+    true
+}
+
+async fn create_webrtc_outbound(
+    state: &DevServerState,
+    connection_id: ConnectionId,
+    peer: Arc<RTCPeerConnection>,
+    binding_state: Arc<Mutex<BindingState>>,
+) -> Result<ClientOutbound, String> {
+    let (control_tx, control_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+    let (snapshot_tx, snapshot_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+
+    let control_channel = peer
+        .create_data_channel("control", Some(control_channel_init()))
+        .await
+        .map_err(|error| format!("failed to create the control data channel: {error}"))?;
+    let input_channel = peer
+        .create_data_channel(
+            "input",
+            Some(unreliable_channel_init(INPUT_DATA_CHANNEL_ID)),
+        )
+        .await
+        .map_err(|error| format!("failed to create the input data channel: {error}"))?;
+    let snapshot_channel = peer
+        .create_data_channel(
+            "snapshot",
+            Some(unreliable_channel_init(SNAPSHOT_DATA_CHANNEL_ID)),
+        )
+        .await
+        .map_err(|error| format!("failed to create the snapshot data channel: {error}"))?;
+
+    tokio::spawn(run_webrtc_channel_writer(
+        "control",
+        Arc::clone(&control_channel),
+        control_rx,
+    ));
+    tokio::spawn(run_webrtc_channel_writer(
+        "snapshot",
+        Arc::clone(&snapshot_channel),
+        snapshot_rx,
+    ));
+
+    let outbound = ClientOutbound::WebRtc {
+        control: control_tx.clone(),
+        snapshot: snapshot_tx.clone(),
+    };
+
+    install_webrtc_message_handler(
+        state.clone(),
+        connection_id,
+        &peer,
+        &binding_state,
+        outbound.clone(),
+        &control_channel,
+        ChannelId::Control,
+    );
+    install_webrtc_message_handler(
+        state.clone(),
+        connection_id,
+        &peer,
+        &binding_state,
+        outbound.clone(),
+        &input_channel,
+        ChannelId::Input,
+    );
+    install_snapshot_rejection_handler(state.clone(), &peer, outbound.clone(), &snapshot_channel);
+
+    Ok(outbound)
+}
+
+fn install_webrtc_callbacks(
+    state: &DevServerState,
+    connection_id: ConnectionId,
+    peer: &Arc<RTCPeerConnection>,
+    binding_state: &Arc<Mutex<BindingState>>,
+    negotiation_state: &Arc<Mutex<WebRtcNegotiationState>>,
+    outbound: ClientOutbound,
+    signal_tx: mpsc::UnboundedSender<ServerSignalMessage>,
+) {
+    let state_for_disconnect = state.clone();
+    let binding_for_disconnect = Arc::clone(binding_state);
+    let outbound_for_errors = outbound;
+    let peer_for_state = Arc::clone(peer);
+    peer.on_peer_connection_state_change(Box::new(move |peer_state| {
+        let state = state_for_disconnect.clone();
+        let binding_state = Arc::clone(&binding_for_disconnect);
+        let outbound = outbound_for_errors.clone();
+        let peer = Arc::clone(&peer_for_state);
+        Box::pin(async move {
+            info!(
+                connection_id = connection_id.get(),
+                peer_state = %peer_state,
+                "WebRTC peer connection state changed"
+            );
+            if peer_state == RTCPeerConnectionState::Failed {
+                outbound.send_error("the WebRTC transport failed");
+                let _ = peer.close().await;
+            }
+            if matches!(
+                peer_state,
+                RTCPeerConnectionState::Disconnected
+                    | RTCPeerConnectionState::Failed
+                    | RTCPeerConnectionState::Closed
+            ) {
+                disconnect_bound_session(&state, connection_id, &binding_state, "WebRTC").await;
+            }
+        })
+    }));
+
+    let negotiation_for_candidates = Arc::clone(negotiation_state);
+    peer.on_ice_candidate(Box::new(move |candidate| {
+        let signal_tx = signal_tx.clone();
+        let negotiation_state = Arc::clone(&negotiation_for_candidates);
+        Box::pin(async move {
+            let Some(candidate) = candidate else {
+                return;
+            };
+
+            let candidate_init = match candidate.to_json() {
+                Ok(candidate_init) => candidate_init,
+                Err(error) => {
+                    warn!(%error, "failed to serialize local ICE candidate");
+                    return;
+                }
+            };
+            let candidate = SignalingIceCandidate::from_rtc_candidate_init(&candidate_init);
+            let mut negotiation = negotiation_state.lock().await;
+            if negotiation.answer_sent {
+                let _ = signal_tx.send(ServerSignalMessage::IceCandidate { candidate });
+            } else {
+                negotiation.pending_local_candidates.push(candidate);
+            }
+        })
+    }));
+}
+
+fn install_webrtc_message_handler(
+    state: DevServerState,
+    connection_id: ConnectionId,
+    peer: &Arc<RTCPeerConnection>,
+    binding_state: &Arc<Mutex<BindingState>>,
+    outbound: ClientOutbound,
+    data_channel: &Arc<RTCDataChannel>,
+    expected_channel: ChannelId,
+) {
+    let peer = Arc::clone(peer);
+    let binding_state = Arc::clone(binding_state);
+    data_channel.on_message(Box::new(move |message: DataChannelMessage| {
+        let state = state.clone();
+        let peer = Arc::clone(&peer);
+        let binding_state = Arc::clone(&binding_state);
+        let outbound = outbound.clone();
+        Box::pin(async move {
+            if message.is_string {
+                reject_peer_session(
+                    &outbound,
+                    state.observability.as_ref(),
+                    &peer,
+                    "text data-channel messages are not accepted",
+                )
+                .await;
+                disconnect_bound_session(&state, connection_id, &binding_state, "WebRTC").await;
+                return;
+            }
+
+            let packet = message.data.to_vec();
+            let keep_open = handle_webrtc_binary_message(
+                &state,
+                connection_id,
+                &peer,
+                &outbound,
+                &binding_state,
+                expected_channel,
+                packet,
+            )
+            .await;
+            if !keep_open {
+                disconnect_bound_session(&state, connection_id, &binding_state, "WebRTC").await;
+            }
+        })
+    }));
+}
+
+fn install_snapshot_rejection_handler(
+    state: DevServerState,
+    peer: &Arc<RTCPeerConnection>,
+    outbound: ClientOutbound,
+    data_channel: &Arc<RTCDataChannel>,
+) {
+    let peer = Arc::clone(peer);
+    data_channel.on_message(Box::new(move |_message: DataChannelMessage| {
+        let state = state.clone();
+        let peer = Arc::clone(&peer);
+        let outbound = outbound.clone();
+        Box::pin(async move {
+            reject_peer_session(
+                &outbound,
+                state.observability.as_ref(),
+                &peer,
+                "clients must not send packets on the snapshot data channel",
+            )
+            .await;
+        })
+    }));
+}
+
+async fn run_webrtc_channel_writer(
+    label: &'static str,
+    data_channel: Arc<RTCDataChannel>,
+    mut outbound_rx: mpsc::UnboundedReceiver<Vec<u8>>,
+) {
+    loop {
+        match data_channel.ready_state() {
+            RTCDataChannelState::Open => break,
+            RTCDataChannelState::Closing | RTCDataChannelState::Closed => return,
+            _ => tokio::time::sleep(Duration::from_millis(10)).await,
+        }
+    }
+
+    while let Some(packet) = outbound_rx.recv().await {
+        if data_channel.ready_state() != RTCDataChannelState::Open {
+            break;
+        }
+        if let Err(error) = data_channel.send(&Bytes::from(packet)).await {
+            warn!(channel = label, %error, "failed to send a WebRTC packet");
+            break;
+        }
+    }
+}
+
+async fn create_peer_connection(
+    ice_servers: &[crate::WebRtcIceServerConfig],
+) -> Result<RTCPeerConnection, webrtc::Error> {
+    let mut media_engine = MediaEngine::default();
+    media_engine.register_default_codecs()?;
+    let api = APIBuilder::new().with_media_engine(media_engine).build();
+    let configuration = RTCConfiguration {
+        ice_servers: ice_servers
+            .iter()
+            .map(crate::WebRtcIceServerConfig::to_rtc_ice_server)
+            .collect(),
+        ..Default::default()
+    };
+    api.new_peer_connection(configuration).await
+}
+
+const fn control_channel_init() -> RTCDataChannelInit {
+    RTCDataChannelInit {
+        ordered: Some(true),
+        max_packet_life_time: None,
+        max_retransmits: None,
+        protocol: None,
+        negotiated: Some(CONTROL_DATA_CHANNEL_ID),
+    }
+}
+
+const fn unreliable_channel_init(id: u16) -> RTCDataChannelInit {
+    RTCDataChannelInit {
+        ordered: Some(false),
+        max_packet_life_time: None,
+        max_retransmits: Some(0),
+        protocol: None,
+        negotiated: Some(id),
+    }
+}
+
+async fn handle_webrtc_binary_message(
+    state: &DevServerState,
+    connection_id: ConnectionId,
+    peer: &Arc<RTCPeerConnection>,
+    outbound: &ClientOutbound,
+    binding_state: &Arc<Mutex<BindingState>>,
+    expected_channel: ChannelId,
+    packet: Vec<u8>,
+) -> bool {
+    if let Err(message) = validate_webrtc_packet_channel(&packet, expected_channel) {
+        reject_peer_session(outbound, state.observability.as_ref(), peer, &message).await;
+        return false;
+    }
+
+    let mut binding = binding_state.lock().await;
+    let BindingState {
+        guard,
+        bound_player,
+        ..
+    } = &mut *binding;
+    let keep_open =
+        handle_binary_message(state, connection_id, outbound, guard, bound_player, packet).await;
+    if !keep_open {
+        let _ = peer.close().await;
+    }
+    keep_open
+}
+
+fn validate_webrtc_packet_channel(
+    packet: &[u8],
+    expected_channel: ChannelId,
+) -> Result<(), String> {
+    let (header, _) = PacketHeader::decode(packet).map_err(|error| error.to_string())?;
+    if header.channel_id != expected_channel {
+        return Err(format!(
+            "packet header channel {:?} does not match the {:?} data channel",
+            header.channel_id, expected_channel
+        ));
+    }
+
+    match expected_channel {
+        ChannelId::Control if header.packet_kind != PacketKind::ControlCommand => Err(format!(
+            "the control data channel only accepts ControlCommand packets, received {:?}",
+            header.packet_kind
+        )),
+        ChannelId::Input if header.packet_kind != PacketKind::InputFrame => Err(format!(
+            "the input data channel only accepts InputFrame packets, received {:?}",
+            header.packet_kind
+        )),
+        ChannelId::Snapshot => Err(String::from(
+            "clients must not send packets on the snapshot data channel",
+        )),
+        _ => Ok(()),
+    }
 }
 
 async fn handle_binary_message(
     state: &DevServerState,
     connection_id: ConnectionId,
-    outbound_tx: &mpsc::UnboundedSender<Vec<u8>>,
+    outbound: &ClientOutbound,
     guard: &mut NetworkSessionGuard,
     bound_player: &mut Option<PlayerId>,
     packet: Vec<u8>,
 ) -> bool {
     if let Err(error) = guard.accept_packet(&packet) {
-        reject_socket(
-            outbound_tx,
-            state.observability.as_ref(),
-            &error.to_string(),
-        );
+        reject_client_session(outbound, state.observability.as_ref(), &error.to_string());
         return false;
     }
 
     if bound_player.is_none() {
-        return bind_initial_player(
-            state,
-            connection_id,
-            outbound_tx,
-            guard,
-            bound_player,
-            packet,
-        )
-        .await;
+        return bind_initial_player(state, connection_id, outbound, guard, bound_player, packet)
+            .await;
     }
 
     forward_bound_packet(state, connection_id, packet)
@@ -563,7 +1302,7 @@ async fn handle_binary_message(
 async fn bind_initial_player(
     state: &DevServerState,
     connection_id: ConnectionId,
-    outbound_tx: &mpsc::UnboundedSender<Vec<u8>>,
+    outbound: &ClientOutbound,
     guard: &mut NetworkSessionGuard,
     bound_player: &mut Option<PlayerId>,
     packet: Vec<u8>,
@@ -573,14 +1312,14 @@ async fn bind_initial_player(
         .ingress_tx
         .send(IngressEvent::Connect {
             connection_id,
-            outbound: outbound_tx.clone(),
+            outbound: outbound.clone(),
             packet,
             ack: ack_tx,
         })
         .is_err()
     {
-        reject_socket(
-            outbound_tx,
+        reject_client_session(
+            outbound,
             state.observability.as_ref(),
             "server is shutting down",
         );
@@ -596,18 +1335,18 @@ async fn bind_initial_player(
             info!(
                 connection_id = connection_id.get(),
                 player_id = player_id.get(),
-                "websocket session bound to player"
+                "session bound to player"
             );
             *bound_player = Some(player_id);
             true
         }
         Ok(Err(message)) => {
-            reject_socket(outbound_tx, state.observability.as_ref(), &message);
+            reject_client_session(outbound, state.observability.as_ref(), &message);
             false
         }
         Err(_) => {
-            reject_socket(
-                outbound_tx,
+            reject_client_session(
+                outbound,
                 state.observability.as_ref(),
                 "server did not accept the connect request",
             );
@@ -643,6 +1382,36 @@ fn forward_bound_packet(
     false
 }
 
+async fn disconnect_bound_session(
+    state: &DevServerState,
+    connection_id: ConnectionId,
+    binding_state: &Arc<Mutex<BindingState>>,
+    transport_name: &'static str,
+) {
+    let mut binding = binding_state.lock().await;
+    if binding.disconnected {
+        return;
+    }
+    binding.disconnected = true;
+
+    let Some(player_id) = binding.bound_player else {
+        return;
+    };
+
+    if let Some(observability) = &state.observability {
+        observability.record_websocket_disconnect();
+    }
+    let _ = state
+        .ingress_tx
+        .send(IngressEvent::Disconnect { connection_id });
+    info!(
+        connection_id = connection_id.get(),
+        player_id = player_id.get(),
+        transport = transport_name,
+        "bound realtime session disconnected"
+    );
+}
+
 fn allocate_connection_id(next_connection_id: &AtomicU64) -> ConnectionId {
     let raw = next_connection_id.fetch_add(1, Ordering::Relaxed);
     match ConnectionId::new(raw) {
@@ -651,18 +1420,8 @@ fn allocate_connection_id(next_connection_id: &AtomicU64) -> ConnectionId {
     }
 }
 
-fn send_direct_error(outbound: &mpsc::UnboundedSender<Vec<u8>>, message: &str) {
-    if let Ok(packet) = (ServerControlEvent::Error {
-        message: message.to_string(),
-    })
-    .encode_packet(0, 0)
-    {
-        let _ = outbound.send(packet);
-    }
-}
-
-fn reject_socket(
-    outbound: &mpsc::UnboundedSender<Vec<u8>>,
+fn reject_client_session(
+    outbound: &ClientOutbound,
     observability: Option<&ServerObservability>,
     message: &str,
 ) {
@@ -670,6 +1429,16 @@ fn reject_socket(
         observability.record_websocket_rejection();
         observability.record_ingress_packet(false);
     }
-    warn!(%message, "rejecting websocket session");
-    send_direct_error(outbound, message);
+    warn!(%message, "rejecting realtime client session");
+    outbound.send_error(message);
+}
+
+async fn reject_peer_session(
+    outbound: &ClientOutbound,
+    observability: Option<&ServerObservability>,
+    peer: &Arc<RTCPeerConnection>,
+    message: &str,
+) {
+    reject_client_session(outbound, observability, message);
+    let _ = peer.close().await;
 }

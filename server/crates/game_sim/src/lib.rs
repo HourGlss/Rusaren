@@ -192,7 +192,11 @@ impl fmt::Display for SimulationError {
                 )
             }
             Self::PlayerMissing(player_id) => {
-                write!(f, "player {} is not part of the simulation", player_id.get())
+                write!(
+                    f,
+                    "player {} is not part of the simulation",
+                    player_id.get()
+                )
             }
             Self::PlayerAlreadyDefeated(player_id) => {
                 write!(f, "player {} is already defeated", player_id.get())
@@ -527,8 +531,9 @@ impl SimulationWorld {
 
     fn advance_cooldowns(&mut self, delta_ms: u16) {
         for player in self.players.values_mut() {
-            player.primary_cooldown_remaining_ms =
-                player.primary_cooldown_remaining_ms.saturating_sub(delta_ms);
+            player.primary_cooldown_remaining_ms = player
+                .primary_cooldown_remaining_ms
+                .saturating_sub(delta_ms);
             for remaining in &mut player.slot_cooldown_remaining_ms {
                 *remaining = remaining.saturating_sub(delta_ms);
             }
@@ -555,8 +560,7 @@ impl SimulationWorld {
                 for mut status in std::mem::take(&mut player.statuses) {
                     status.remaining_ms = status.remaining_ms.saturating_sub(delta_ms);
                     if let Some(interval_ms) = status.tick_interval_ms {
-                        status.tick_progress_ms =
-                            status.tick_progress_ms.saturating_add(delta_ms);
+                        status.tick_progress_ms = status.tick_progress_ms.saturating_add(delta_ms);
                         while status.tick_progress_ms >= interval_ms {
                             status.tick_progress_ms =
                                 status.tick_progress_ms.saturating_sub(interval_ms);
@@ -598,7 +602,10 @@ impl SimulationWorld {
                 continue;
             }
 
-            let rooted = player.statuses.iter().any(|status| status.kind == StatusKind::Root);
+            let rooted = player
+                .statuses
+                .iter()
+                .any(|status| status.kind == StatusKind::Root);
             let movement = if rooted {
                 MovementIntent::zero()
             } else {
@@ -654,7 +661,10 @@ impl SimulationWorld {
                 .players
                 .get(&player_id)
                 .is_some_and(|player| player.queued_primary);
-            let queued_cast_slot = self.players.get(&player_id).and_then(|player| player.queued_cast_slot);
+            let queued_cast_slot = self
+                .players
+                .get(&player_id)
+                .and_then(|player| player.queued_cast_slot);
 
             if queued_primary {
                 events.extend(self.resolve_primary_attack(player_id, snapshot));
@@ -921,9 +931,12 @@ impl SimulationWorld {
             },
         }];
 
-        if let Some(target) =
-            self.find_first_player_on_segment(attacker, (attacker_state.x, attacker_state.y), end, radius)
-        {
+        if let Some(target) = self.find_first_player_on_segment(
+            attacker,
+            (attacker_state.x, attacker_state.y),
+            end,
+            radius,
+        ) {
             events.extend(self.apply_payload(attacker, slot, &[target], payload));
         }
         events
@@ -982,7 +995,8 @@ impl SimulationWorld {
         ];
 
         if let (Some(radius), Some(payload)) = (impact_radius, payload) {
-            let targets = self.find_players_in_radius((resolved_x, resolved_y), radius, Some(attacker));
+            let targets =
+                self.find_players_in_radius((resolved_x, resolved_y), radius, Some(attacker));
             events.extend(self.apply_payload(attacker, slot, &targets, payload));
         }
 
@@ -1059,15 +1073,16 @@ impl SimulationWorld {
         let mut next_projectiles = Vec::new();
         let projectiles = std::mem::take(&mut self.projectiles);
         for projectile in projectiles {
-            let step_distance =
-                travel_distance_units(projectile.speed_units_per_second, delta_ms);
+            let step_distance = travel_distance_units(projectile.speed_units_per_second, delta_ms);
             if step_distance == 0 {
                 next_projectiles.push(projectile);
                 continue;
             }
 
-            let desired_x = f32::from(projectile.x) + projectile.direction_x * f32::from(step_distance);
-            let desired_y = f32::from(projectile.y) + projectile.direction_y * f32::from(step_distance);
+            let desired_x =
+                f32::from(projectile.x) + projectile.direction_x * f32::from(step_distance);
+            let desired_y =
+                f32::from(projectile.y) + projectile.direction_y * f32::from(step_distance);
             let desired_end = (
                 saturating_i16(round_f32_to_i32(desired_x)),
                 saturating_i16(round_f32_to_i32(desired_y)),
@@ -1252,11 +1267,9 @@ impl SimulationWorld {
         }
 
         let mut stacks_after = 1_u8;
-        if let Some(existing) = player
-            .statuses
-            .iter_mut()
-            .find(|status| status.source == source && status.slot == slot && status.kind == definition.kind)
-        {
+        if let Some(existing) = player.statuses.iter_mut().find(|status| {
+            status.source == source && status.slot == slot && status.kind == definition.kind
+        }) {
             existing.stacks = existing.stacks.saturating_add(1).min(existing.max_stacks);
             existing.remaining_ms = definition.duration_ms;
             existing.tick_progress_ms = 0;
@@ -1340,7 +1353,8 @@ impl SimulationWorld {
             .filter_map(|(player_id, player)| {
                 let point = (player.x, player.y);
                 let distance_sq = segment_distance_sq(start, end, point);
-                (distance_sq <= threshold_sq).then_some((*player_id, point_distance_sq(start, point)))
+                (distance_sq <= threshold_sq)
+                    .then_some((*player_id, point_distance_sq(start, point)))
             })
             .min_by_key(|(_, distance_sq)| *distance_sq)
             .map(|(player_id, _)| player_id)
@@ -1706,7 +1720,14 @@ mod tests {
         let content = content();
         let mut world = world(
             &content,
-            vec![seed(&content, 1, "Alice", TeamSide::TeamA, SkillTree::Warrior, [None, None, None, None, None])],
+            vec![seed(
+                &content,
+                1,
+                "Alice",
+                TeamSide::TeamA,
+                SkillTree::Warrior,
+                [None, None, None, None, None],
+            )],
         );
         let shrub = *world
             .obstacles()
@@ -1715,7 +1736,10 @@ mod tests {
             .expect("shrub exists");
         {
             let player = world.players.get_mut(&player_id(1)).expect("player");
-            player.x = shrub.center_x - i16::try_from(shrub.half_width).expect("fits") - i16::try_from(PLAYER_RADIUS_UNITS).expect("fits") - 30;
+            player.x = shrub.center_x
+                - i16::try_from(shrub.half_width).expect("fits")
+                - i16::try_from(PLAYER_RADIUS_UNITS).expect("fits")
+                - 30;
             player.y = shrub.center_y;
         }
         world
@@ -1725,7 +1749,12 @@ mod tests {
             let _ = world.tick(COMBAT_FRAME_MS);
         }
         let state = world.player_state(player_id(1)).expect("player");
-        assert!(state.x <= shrub.center_x - i16::try_from(shrub.half_width).expect("fits") - i16::try_from(PLAYER_RADIUS_UNITS).expect("fits"));
+        assert!(
+            state.x
+                <= shrub.center_x
+                    - i16::try_from(shrub.half_width).expect("fits")
+                    - i16::try_from(PLAYER_RADIUS_UNITS).expect("fits")
+        );
     }
 
     #[test]
@@ -1734,8 +1763,22 @@ mod tests {
         let mut world = world(
             &content,
             vec![
-                seed(&content, 1, "Alice", TeamSide::TeamA, SkillTree::Rogue, [Some(choice(SkillTree::Rogue, 1)), None, None, None, None]),
-                seed(&content, 2, "Bob", TeamSide::TeamB, SkillTree::Warrior, [Some(choice(SkillTree::Warrior, 1)), None, None, None, None]),
+                seed(
+                    &content,
+                    1,
+                    "Alice",
+                    TeamSide::TeamA,
+                    SkillTree::Rogue,
+                    [Some(choice(SkillTree::Rogue, 1)), None, None, None, None],
+                ),
+                seed(
+                    &content,
+                    2,
+                    "Bob",
+                    TeamSide::TeamB,
+                    SkillTree::Warrior,
+                    [Some(choice(SkillTree::Warrior, 1)), None, None, None, None],
+                ),
             ],
         );
         let alice = world.player_state(player_id(1)).expect("alice");
@@ -1745,11 +1788,15 @@ mod tests {
             bob.y = alice.y;
         }
 
-        world.queue_primary_attack(player_id(1)).expect("melee queue");
+        world
+            .queue_primary_attack(player_id(1))
+            .expect("melee queue");
         let events = world.tick(COMBAT_FRAME_MS);
         assert!(events.iter().any(|event| matches!(event, SimulationEvent::DamageApplied { attacker, target, amount: 14, .. } if *attacker == player_id(1) && *target == player_id(2))));
 
-        world.queue_primary_attack(player_id(1)).expect("cooldown queue");
+        world
+            .queue_primary_attack(player_id(1))
+            .expect("cooldown queue");
         let events = world.tick(COMBAT_FRAME_MS);
         assert!(!events.iter().any(|event| matches!(event, SimulationEvent::DamageApplied { target, .. } if *target == player_id(2))));
     }
@@ -1760,8 +1807,22 @@ mod tests {
         let mut world = world(
             &content,
             vec![
-                seed(&content, 1, "Alice", TeamSide::TeamA, SkillTree::Mage, [Some(choice(SkillTree::Mage, 1)), None, None, None, None]),
-                seed(&content, 2, "Bob", TeamSide::TeamB, SkillTree::Warrior, [Some(choice(SkillTree::Warrior, 1)), None, None, None, None]),
+                seed(
+                    &content,
+                    1,
+                    "Alice",
+                    TeamSide::TeamA,
+                    SkillTree::Mage,
+                    [Some(choice(SkillTree::Mage, 1)), None, None, None, None],
+                ),
+                seed(
+                    &content,
+                    2,
+                    "Bob",
+                    TeamSide::TeamB,
+                    SkillTree::Warrior,
+                    [Some(choice(SkillTree::Warrior, 1)), None, None, None, None],
+                ),
             ],
         );
         {
@@ -1781,7 +1842,9 @@ mod tests {
         assert!(after_cast.slot_cooldown_remaining_ms[0] > 0);
         assert_eq!(after_cast.slot_cooldown_total_ms[0], 700);
 
-        world.queue_cast(player_id(1), 1).expect("second cast queue");
+        world
+            .queue_cast(player_id(1), 1)
+            .expect("second cast queue");
         let blocked_events = world.tick(COMBAT_FRAME_MS);
         assert!(!blocked_events.iter().any(|event| matches!(
             event,
@@ -1802,8 +1865,22 @@ mod tests {
         let mut world = world(
             &content,
             vec![
-                seed(&content, 1, "Alice", TeamSide::TeamA, SkillTree::Mage, [Some(choice(SkillTree::Mage, 1)), None, None, None, None]),
-                seed(&content, 2, "Bob", TeamSide::TeamB, SkillTree::Warrior, [Some(choice(SkillTree::Warrior, 1)), None, None, None, None]),
+                seed(
+                    &content,
+                    1,
+                    "Alice",
+                    TeamSide::TeamA,
+                    SkillTree::Mage,
+                    [Some(choice(SkillTree::Mage, 1)), None, None, None, None],
+                ),
+                seed(
+                    &content,
+                    2,
+                    "Bob",
+                    TeamSide::TeamB,
+                    SkillTree::Warrior,
+                    [Some(choice(SkillTree::Warrior, 1)), None, None, None, None],
+                ),
             ],
         );
         {
@@ -1834,8 +1911,28 @@ mod tests {
         let mut world = world(
             &content,
             vec![
-                seed(&content, 1, "Alice", TeamSide::TeamA, SkillTree::Rogue, [Some(choice(SkillTree::Rogue, 1)), None, None, None, None]),
-                seed(&content, 2, "Bob", TeamSide::TeamB, SkillTree::Cleric, [Some(choice(SkillTree::Cleric, 1)), Some(choice(SkillTree::Cleric, 2)), Some(choice(SkillTree::Cleric, 3)), None, None]),
+                seed(
+                    &content,
+                    1,
+                    "Alice",
+                    TeamSide::TeamA,
+                    SkillTree::Rogue,
+                    [Some(choice(SkillTree::Rogue, 1)), None, None, None, None],
+                ),
+                seed(
+                    &content,
+                    2,
+                    "Bob",
+                    TeamSide::TeamB,
+                    SkillTree::Cleric,
+                    [
+                        Some(choice(SkillTree::Cleric, 1)),
+                        Some(choice(SkillTree::Cleric, 2)),
+                        Some(choice(SkillTree::Cleric, 3)),
+                        None,
+                        None,
+                    ],
+                ),
             ],
         );
         {
@@ -1858,7 +1955,9 @@ mod tests {
             let _ = world.tick(COMBAT_FRAME_MS);
         }
         let poison_statuses = world.statuses_for(player_id(2)).expect("statuses");
-        assert!(poison_statuses.iter().any(|status| status.kind == StatusKind::Poison));
+        assert!(poison_statuses
+            .iter()
+            .any(|status| status.kind == StatusKind::Poison));
         let damaged_hit_points = world.player_state(player_id(2)).expect("bob").hit_points;
         assert!(damaged_hit_points < 70);
 
@@ -1868,7 +1967,9 @@ mod tests {
             let _ = world.tick(COMBAT_FRAME_MS);
         }
         let hot_statuses = world.statuses_for(player_id(2)).expect("statuses");
-        assert!(hot_statuses.iter().any(|status| status.kind == StatusKind::Hot));
+        assert!(hot_statuses
+            .iter()
+            .any(|status| status.kind == StatusKind::Hot));
         let bob = world.player_state(player_id(2)).expect("bob");
         assert!(bob.hit_points > damaged_hit_points);
     }
@@ -1879,8 +1980,22 @@ mod tests {
         let mut poison_world = world(
             &content,
             vec![
-                seed(&content, 1, "Alice", TeamSide::TeamA, SkillTree::Rogue, [Some(choice(SkillTree::Rogue, 1)), None, None, None, None]),
-                seed(&content, 2, "Bob", TeamSide::TeamB, SkillTree::Warrior, [Some(choice(SkillTree::Warrior, 1)), None, None, None, None]),
+                seed(
+                    &content,
+                    1,
+                    "Alice",
+                    TeamSide::TeamA,
+                    SkillTree::Rogue,
+                    [Some(choice(SkillTree::Rogue, 1)), None, None, None, None],
+                ),
+                seed(
+                    &content,
+                    2,
+                    "Bob",
+                    TeamSide::TeamB,
+                    SkillTree::Warrior,
+                    [Some(choice(SkillTree::Warrior, 1)), None, None, None, None],
+                ),
             ],
         );
         {
@@ -1895,7 +2010,9 @@ mod tests {
         }
 
         for _ in 0..2 {
-            poison_world.queue_cast(player_id(1), 1).expect("poison cast");
+            poison_world
+                .queue_cast(player_id(1), 1)
+                .expect("poison cast");
             let _ = poison_world.tick(COMBAT_FRAME_MS);
             for _ in 0..8 {
                 let _ = poison_world.tick(COMBAT_FRAME_MS);
@@ -1911,7 +2028,14 @@ mod tests {
 
         let mut hot_world = world(
             &content,
-            vec![seed(&content, 1, "Cleric", TeamSide::TeamA, SkillTree::Cleric, [None, None, Some(choice(SkillTree::Cleric, 3)), None, None])],
+            vec![seed(
+                &content,
+                1,
+                "Cleric",
+                TeamSide::TeamA,
+                SkillTree::Cleric,
+                [None, None, Some(choice(SkillTree::Cleric, 3)), None, None],
+            )],
         );
         {
             let cleric = hot_world.players.get_mut(&player_id(1)).expect("cleric");
@@ -1951,8 +2075,28 @@ mod tests {
         let mut world = world(
             &content,
             vec![
-                seed(&content, 1, "Alice", TeamSide::TeamA, SkillTree::Mage, [Some(choice(SkillTree::Mage, 1)), Some(choice(SkillTree::Mage, 2)), Some(choice(SkillTree::Mage, 3)), None, None]),
-                seed(&content, 2, "Bob", TeamSide::TeamB, SkillTree::Warrior, [Some(choice(SkillTree::Warrior, 1)), None, None, None, None]),
+                seed(
+                    &content,
+                    1,
+                    "Alice",
+                    TeamSide::TeamA,
+                    SkillTree::Mage,
+                    [
+                        Some(choice(SkillTree::Mage, 1)),
+                        Some(choice(SkillTree::Mage, 2)),
+                        Some(choice(SkillTree::Mage, 3)),
+                        None,
+                        None,
+                    ],
+                ),
+                seed(
+                    &content,
+                    2,
+                    "Bob",
+                    TeamSide::TeamB,
+                    SkillTree::Warrior,
+                    [Some(choice(SkillTree::Warrior, 1)), None, None, None, None],
+                ),
             ],
         );
         {
@@ -1975,7 +2119,9 @@ mod tests {
                 .find(|status| status.kind == StatusKind::Chill)
                 .expect("chill should be active after each burst");
             assert_eq!(chill.stacks, stack);
-            let rooted = statuses.iter().any(|status| status.kind == StatusKind::Root);
+            let rooted = statuses
+                .iter()
+                .any(|status| status.kind == StatusKind::Root);
             assert_eq!(rooted, stack == 3);
             for _ in 0..20 {
                 let _ = world.tick(COMBAT_FRAME_MS);
@@ -1989,8 +2135,22 @@ mod tests {
         let mut world = world(
             &content,
             vec![
-                seed(&content, 1, "Alice", TeamSide::TeamA, SkillTree::Cleric, [Some(choice(SkillTree::Cleric, 1)), None, None, None, None]),
-                seed(&content, 2, "Bob", TeamSide::TeamB, SkillTree::Warrior, [Some(choice(SkillTree::Warrior, 1)), None, None, None, None]),
+                seed(
+                    &content,
+                    1,
+                    "Alice",
+                    TeamSide::TeamA,
+                    SkillTree::Cleric,
+                    [Some(choice(SkillTree::Cleric, 1)), None, None, None, None],
+                ),
+                seed(
+                    &content,
+                    2,
+                    "Bob",
+                    TeamSide::TeamB,
+                    SkillTree::Warrior,
+                    [Some(choice(SkillTree::Warrior, 1)), None, None, None, None],
+                ),
             ],
         );
         {

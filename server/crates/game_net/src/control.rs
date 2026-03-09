@@ -315,6 +315,7 @@ pub struct ArenaStateSnapshot {
 
 impl ServerControlEvent {
     pub fn encode_packet(self, seq: u32, sim_tick: u32) -> Result<Vec<u8>, PacketError> {
+        let (channel_id, packet_kind) = self.transport_metadata();
         let mut payload = Vec::new();
         payload.push(self.kind_byte());
         self.encode_body(&mut payload)?;
@@ -324,28 +325,24 @@ impl ServerControlEvent {
                 actual: payload.len(),
                 maximum: usize::from(u16::MAX),
             })?;
-        let header = PacketHeader::new(
-            ChannelId::Control,
-            PacketKind::ControlEvent,
-            0,
-            payload_len,
-            seq,
-            sim_tick,
-        )?;
+        let header = PacketHeader::new(channel_id, packet_kind, 0, payload_len, seq, sim_tick)?;
 
         Ok(header.encode(&payload))
     }
 
     pub fn decode_packet(packet: &[u8]) -> Result<(PacketHeader, Self), PacketError> {
         let (header, payload) = PacketHeader::decode(packet)?;
-        if header.channel_id != ChannelId::Control || header.packet_kind != PacketKind::ControlEvent
-        {
-            return Err(PacketError::UnexpectedPacketKind {
-                expected_channel: ChannelId::Control,
-                expected_kind: PacketKind::ControlEvent,
-                actual_channel: header.channel_id,
-                actual_kind: header.packet_kind,
-            });
+        match (header.channel_id, header.packet_kind) {
+            (ChannelId::Control, PacketKind::ControlEvent)
+            | (ChannelId::Snapshot, PacketKind::FullSnapshot | PacketKind::EventBatch) => {}
+            _ => {
+                return Err(PacketError::UnexpectedPacketKind {
+                    expected_channel: ChannelId::Control,
+                    expected_kind: PacketKind::ControlEvent,
+                    actual_channel: header.channel_id,
+                    actual_kind: header.packet_kind,
+                });
+            }
         }
 
         let kind = *payload.first().ok_or(PacketError::ControlPayloadTooShort {
@@ -358,6 +355,14 @@ impl ServerControlEvent {
 
         ensure_consumed(payload, index, "ServerControlEvent")?;
         Ok((header, event))
+    }
+
+    const fn transport_metadata(&self) -> (ChannelId, PacketKind) {
+        match self {
+            Self::ArenaStateSnapshot { .. } => (ChannelId::Snapshot, PacketKind::FullSnapshot),
+            Self::ArenaEffectBatch { .. } => (ChannelId::Snapshot, PacketKind::EventBatch),
+            _ => (ChannelId::Control, PacketKind::ControlEvent),
+        }
     }
 
     const fn kind_byte(&self) -> u8 {

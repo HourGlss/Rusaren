@@ -7,6 +7,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use futures_util::{SinkExt, StreamExt};
 use game_api::{
     spawn_dev_server, spawn_dev_server_with_options, DevServerOptions, ServerObservability,
+    WebRtcRuntimeConfig,
 };
 use game_domain::{MatchOutcome, PlayerId, PlayerName, ReadyState, TeamSide};
 use game_net::{
@@ -97,7 +98,7 @@ async fn start_server() -> (game_api::DevServerHandle, String) {
         Ok(server) => server,
         Err(error) => panic!("server should spawn: {error}"),
     };
-    let base_url = format!("ws://{}/ws", server.local_addr());
+    let base_url = format!("ws://{}/ws-dev", server.local_addr());
     (server, base_url)
 }
 
@@ -112,7 +113,7 @@ async fn start_server_with_options(
         Ok(server) => server,
         Err(error) => panic!("server should spawn: {error}"),
     };
-    let base_url = format!("ws://{}/ws", server.local_addr());
+    let base_url = format!("ws://{}/ws-dev", server.local_addr());
     (server, base_url)
 }
 
@@ -124,6 +125,7 @@ async fn start_server_fast() -> (game_api::DevServerHandle, String) {
         content_root: repo_content_root(),
         web_client_root: temp_web_client_root("fast-default", None),
         observability: Some(ServerObservability::new("test-fast")),
+        webrtc: WebRtcRuntimeConfig::default(),
     })
     .await
 }
@@ -138,6 +140,7 @@ async fn start_server_with_web_root(
         content_root: repo_content_root(),
         web_client_root,
         observability: Some(ServerObservability::new("test-web-root")),
+        webrtc: WebRtcRuntimeConfig::default(),
     })
     .await
 }
@@ -285,7 +288,10 @@ fn http_authority_from_ws(base_url: &str) -> String {
     let without_scheme = base_url
         .strip_prefix("ws://")
         .expect("ws:// prefix expected");
-    without_scheme.trim_end_matches("/ws").to_string()
+    without_scheme
+        .trim_end_matches("/ws-dev")
+        .trim_end_matches("/ws")
+        .to_string()
 }
 
 async fn http_get(base_url: &str, path: &str) -> (u16, String) {
@@ -576,6 +582,7 @@ async fn websocket_adapter_rejects_zero_tick_intervals() {
             content_root: repo_content_root(),
             web_client_root: temp_web_client_root("zero-tick", None),
             observability: Some(ServerObservability::new("test-zero-tick")),
+            webrtc: WebRtcRuntimeConfig::default(),
         },
     )
     .await;
@@ -642,6 +649,7 @@ async fn healthcheck_and_metrics_routes_report_expected_status_and_prometheus_te
         content_root: repo_content_root(),
         web_client_root,
         observability: Some(observability.clone()),
+        webrtc: WebRtcRuntimeConfig::default(),
     })
     .await;
 
@@ -689,6 +697,7 @@ async fn metrics_route_returns_service_unavailable_when_observability_is_disable
         content_root: repo_content_root(),
         web_client_root,
         observability: None,
+        webrtc: WebRtcRuntimeConfig::default(),
     })
     .await;
 

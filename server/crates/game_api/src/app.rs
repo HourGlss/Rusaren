@@ -199,8 +199,9 @@ impl ServerApp {
             .saturating_add(u32::from(delta_ms));
 
         while self.combat_accumulator_ms >= u32::from(COMBAT_FRAME_MS) {
-            self.combat_accumulator_ms =
-                self.combat_accumulator_ms.saturating_sub(u32::from(COMBAT_FRAME_MS));
+            self.combat_accumulator_ms = self
+                .combat_accumulator_ms
+                .saturating_sub(u32::from(COMBAT_FRAME_MS));
             self.advance_combat_frames(transport);
         }
 

@@ -398,7 +398,10 @@ fn load_skill_catalog_from_pairs(pairs: &[(&str, &str)]) -> Result<SkillCatalog,
     })
 }
 
-fn validate_skill_file(source: &str, document: SkillFileYaml) -> Result<ClassDefinition, ContentError> {
+fn validate_skill_file(
+    source: &str,
+    document: SkillFileYaml,
+) -> Result<ClassDefinition, ContentError> {
     let tree = parse_skill_tree(source, &document.tree)?;
     let melee = parse_melee_definition(source, tree, document.melee)?;
     let mut seen_tiers = BTreeSet::new();
@@ -445,7 +448,11 @@ fn validate_skill_file(source: &str, document: SkillFileYaml) -> Result<ClassDef
         });
     }
 
-    Ok(ClassDefinition { tree, melee, skills })
+    Ok(ClassDefinition {
+        tree,
+        melee,
+        skills,
+    })
 }
 
 fn parse_melee_definition(
@@ -501,7 +508,10 @@ fn parse_skill_tree(source: &str, raw: &str) -> Result<SkillTree, ContentError> 
     }
 }
 
-fn parse_skill_behavior(source: &str, yaml: &SkillBehaviorYaml) -> Result<SkillBehavior, ContentError> {
+fn parse_skill_behavior(
+    source: &str,
+    yaml: &SkillBehaviorYaml,
+) -> Result<SkillBehavior, ContentError> {
     let effect = parse_effect_kind(source, &yaml.effect)?;
     let cooldown_ms = require_positive_u16(source, "cooldown_ms", yaml.cooldown_ms)?;
     match yaml.kind.as_str() {
@@ -626,7 +636,9 @@ fn parse_status(source: &str, yaml: &StatusYaml) -> Result<StatusDefinition, Con
             max_stacks,
             trigger_duration_ms: yaml
                 .trigger_duration_ms
-                .map(|value| require_positive_u16(source, "status.trigger_duration_ms", Some(value)))
+                .map(|value| {
+                    require_positive_u16(source, "status.trigger_duration_ms", Some(value))
+                })
                 .transpose()?,
         }),
         StatusKind::Root => Ok(StatusDefinition {
@@ -998,7 +1010,10 @@ mod tests {
             .skills()
             .resolve(SkillChoice::new(SkillTree::Mage, 1).expect("choice"))
             .expect("mage tier one should exist");
-        assert!(matches!(mage_one.behavior, SkillBehavior::Projectile { .. }));
+        assert!(matches!(
+            mage_one.behavior,
+            SkillBehavior::Projectile { .. }
+        ));
         assert!(content.skills().melee_for(SkillTree::Warrior).is_some());
         assert_eq!(content.map().map_id, "prototype_arena");
         assert!(!content.map().obstacles.is_empty());
@@ -1184,15 +1199,14 @@ skills:
         assert!(matches!(
             parsed.skills[2].behavior,
             SkillBehavior::Nova {
-                payload:
-                    EffectPayload {
-                        kind: CombatValueKind::Heal,
-                        status: Some(StatusDefinition {
-                            kind: StatusKind::Hot,
-                            ..
-                        }),
+                payload: EffectPayload {
+                    kind: CombatValueKind::Heal,
+                    status: Some(StatusDefinition {
+                        kind: StatusKind::Hot,
                         ..
-                    },
+                    }),
+                    ..
+                },
                 ..
             }
         ));

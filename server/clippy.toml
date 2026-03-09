@@ -4,3 +4,31 @@ doc-valid-idents = ["Godot", "LoS", "QUIC", "StarCraft"]
 enum-variant-name-threshold = 4
 too-many-arguments-threshold = 8
 type-complexity-threshold = 300
+allowed-duplicate-crates = [
+  "aead",
+  "aes",
+  "asn1-rs",
+  "asn1-rs-derive",
+  "base64",
+  "bitflags",
+  "cfg-if",
+  "cipher",
+  "ctr",
+  "curve25519-dalek",
+  "der-parser",
+  "digest",
+  "getrandom",
+  "hashbrown",
+  "oid-registry",
+  "r-efi",
+  "rand",
+  "rand_chacha",
+  "rand_core",
+  "socket2",
+  "syn",
+  "synstructure",
+  "thiserror",
+  "thiserror-impl",
+  "wasi",
+  "x509-parser",
+]

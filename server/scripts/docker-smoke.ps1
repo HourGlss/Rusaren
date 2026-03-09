@@ -59,6 +59,9 @@ function Remove-ContainerIfPresent {
     }
     catch {
     }
+    finally {
+        $global:LASTEXITCODE = 0
+    }
 }
 
 function New-PlaceholderWebBundle {
@@ -113,8 +116,8 @@ try {
     }
 
     $root = Invoke-WebRequest -Uri $rootUri -UseBasicParsing -TimeoutSec 5
-    if ($root.Content -notmatch "Rusaren Docker Smoke") {
-        throw "Hosted root did not return the placeholder web bundle."
+    if ($root.Content -notmatch "Rusaren Docker Smoke" -and $root.Content -notmatch "Rusaren Shell") {
+        throw "Hosted root did not return either the placeholder web bundle or the exported shell."
     }
 
     Write-Host "Docker smoke succeeded against $ImageTag on port $Port."

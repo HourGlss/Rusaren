@@ -6,6 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use game_api::decode_client_signal_message;
 use game_content::{parse_ascii_map, parse_skill_yaml};
 use game_domain::{
     LobbyId, MatchId, MatchOutcome, PlayerId, PlayerName, ReadyState, RoundNumber, SkillTree,
@@ -39,6 +40,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     write_skill_progression_corpus(&corpus_root.join("skill_progression"))?;
     write_ascii_map_parse_corpus(&corpus_root.join("ascii_map_parse"))?;
     write_skill_yaml_parse_corpus(&corpus_root.join("skill_yaml_parse"))?;
+    write_webrtc_signal_message_parse_corpus(&corpus_root.join("webrtc_signal_message_parse"))?;
 
     println!("Seed corpora written under {}", corpus_root.display());
     Ok(())
@@ -811,6 +813,35 @@ skills:
     write_seed(dir, "duplicate_tier.yaml", duplicate_tier.as_bytes())?;
     write_seed(dir, "missing_damage.yaml", missing_damage.as_bytes())?;
     write_seed(dir, "invalid_behavior.yaml", invalid_behavior.as_bytes())?;
+    write_seed(dir, "empty.bin", &[])?;
+    Ok(())
+}
+
+fn write_webrtc_signal_message_parse_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
+    recreate_dir(dir)?;
+
+    let valid_offer =
+        r#"{"type":"session_description","description":{"type":"offer","sdp":"v=0\r\n"}}"#;
+    let valid_candidate = r#"{"type":"ice_candidate","candidate":{"candidate":"candidate:0 1 UDP 2122252543 127.0.0.1 5000 typ host","sdp_mid":"0","sdp_mline_index":0}}"#;
+    let bye = r#"{"type":"bye"}"#;
+    let invalid_answer =
+        r#"{"type":"session_description","description":{"type":"answer","sdp":"v=0\r\n"}}"#;
+    let invalid_unknown_field = r#"{"type":"bye","extra":true}"#;
+    let empty_candidate = r#"{"type":"ice_candidate","candidate":{"candidate":"","sdp_mid":"0","sdp_mline_index":0}}"#;
+
+    let _ = decode_client_signal_message(valid_offer)?;
+    let _ = decode_client_signal_message(valid_candidate)?;
+
+    write_seed(dir, "valid_offer.json", valid_offer.as_bytes())?;
+    write_seed(dir, "valid_candidate.json", valid_candidate.as_bytes())?;
+    write_seed(dir, "bye.json", bye.as_bytes())?;
+    write_seed(dir, "invalid_answer.json", invalid_answer.as_bytes())?;
+    write_seed(
+        dir,
+        "invalid_unknown_field.json",
+        invalid_unknown_field.as_bytes(),
+    )?;
+    write_seed(dir, "empty_candidate.json", empty_candidate.as_bytes())?;
     write_seed(dir, "empty.bin", &[])?;
     Ok(())
 }

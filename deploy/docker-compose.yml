@@ -10,6 +10,10 @@ services:
       RUST_LOG: ${RARENA_RUST_LOG}
       RARENA_RECORD_STORE_PATH: /app/server/var/player_records.tsv
       RARENA_WEB_CLIENT_ROOT: /app/server/static/webclient
+      RARENA_WEBRTC_STUN_URLS: stun:${TURN_PUBLIC_HOST}:3478
+      RARENA_WEBRTC_TURN_URLS: turn:${TURN_PUBLIC_HOST}:3478?transport=udp,turn:${TURN_PUBLIC_HOST}:3478?transport=tcp
+      RARENA_WEBRTC_TURN_SECRET: ${TURN_SHARED_SECRET}
+      RARENA_WEBRTC_TURN_TTL_SECONDS: ${TURN_TTL_SECONDS}
     volumes:
       - rarena_data:/app/server/var
     read_only: true

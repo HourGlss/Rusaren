@@ -21,12 +21,12 @@ Recommended client architecture:
 - Scene graph: purely visual nodes bound to ViewModel data
 
 Current implementation status:
-- `client/godot/` now contains a thin Godot 4 shell for the websocket dev adapter.
+- `client/godot/` now contains a thin Godot 4 shell for websocket signaling plus WebRTC gameplay transport.
 - The current shell uses a binary `NetAdapter` for `ClientControlCommand` and `ServerControlEvent`.
 - The current shell sends only the player name on connect; the backend assigns the runtime `player_id`.
 - The current shell renders central lobby, game lobby, launch countdown, match skill-pick state, results, and central-lobby directory snapshots.
 - The current shell now consumes authoritative full game-lobby snapshots, including late-joiner roster state and `W-L-NC`.
-- The current shell now sends real binary `InputFrame` packets for live arena input over the websocket dev adapter.
+- The current shell now sends real binary `InputFrame` packets over the unordered WebRTC input data channel.
 - The current shell now renders a simple top-down arena with a mostly empty floor, four central square pillars, and shrub collars.
 - The current shell now consumes authoritative `ArenaStateSnapshot` and `ArenaEffectBatch` events to draw players, aim lines, hp bars, cooldown state, projectile state, and short-lived combat effects.
 - The current shell only enables legal skill picks for the local player: tier 1 for unstarted trees or the next tier in a tree already started this match.
@@ -35,7 +35,7 @@ Current implementation status:
 - The documented production path now places Caddy in front of the Rust server for same-origin TLS while preserving the `/ws` websocket endpoint.
 - The current runtime skills and prototype map load from `server/content/skills/*.yaml` and `server/content/maps/prototype_arena.txt`.
 - Combat rendering is still placeholder-only.
-- The current shell is intentionally websocket-first while the WebRTC transport stays in planning.
+- The older websocket gameplay adapter remains at `/ws-dev` for regression tests and debugging, but browser play is expected to use WebRTC.
 
 Current backend limitations the shell must expose honestly:
 - Combat content is still prototype-level even though the shell now shows a real arena and consumes authored YAML/ASCII content.
@@ -51,6 +51,7 @@ Web export requirement:
 - The primary client path must remain compatible with Godot web export.
 - Do not assume native-only networking APIs or a native-only client stack.
 - Do not make the main gameplay client depend on a desktop-only scripting/runtime path.
+- Stock native Godot on this machine does not include the `webrtc-native` extension, so full networked transport testing is browser-first unless that extension is installed.
 
 Lag handling:
 - Interpolate positions between snapshots

@@ -10,7 +10,7 @@ var local_player_id := 0
 var local_player_name := ""
 var transport_state := "closed"
 var screen := "central"
-var banner_message := "Connect to the Rust dev adapter to drive the shell. Browser exports default to the same-origin /ws endpoint."
+var banner_message := "Connect to the Rust signaling endpoint to negotiate WebRTC gameplay channels. Browser exports default to the same-origin /ws endpoint."
 var phase_label := "Central Lobby"
 var countdown_label := ""
 var outcome_label := ""
@@ -72,13 +72,13 @@ func mark_transport_state(state_name: String) -> void:
 	transport_state = state_name
 	match state_name:
 		"connecting":
-			banner_message = "WebSocket handshake in progress."
+			banner_message = "Signaling and WebRTC negotiation are in progress."
 		"open":
-			banner_message = "WebSocket open. Waiting for the server to accept the connect command."
+			banner_message = "WebRTC control channel is open. Waiting for the server to accept the connect command."
 		"closing":
-			banner_message = "WebSocket closing."
+			banner_message = "Realtime transport closing."
 		"closed":
-			banner_message = "WebSocket closed."
+			banner_message = "Realtime transport closed."
 	_append_event("Transport state: %s." % state_name)
 
 
@@ -412,7 +412,7 @@ func event_log_text() -> String:
 
 
 func lobby_note() -> String:
-	return "Click an open lobby in the directory or enter a manual lobby ID. The backend sends authoritative directory and roster snapshots so late joiners land on current state."
+	return "Click an open lobby in the directory or enter a manual lobby ID. The backend sends authoritative directory, roster, and arena snapshots so late joiners land on current state."
 
 
 func can_join_or_create_lobby() -> bool:

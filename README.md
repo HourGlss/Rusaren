@@ -9,8 +9,8 @@ Rarena is a server-authoritative arena game prototype. The current repository no
 Buildable now:
 - the `server/` Cargo workspace scaffold
 - a scripted backend-only gameplay slice that exercises lobby -> match -> combat -> no-contest flow
-- a real websocket dev adapter on top of the backend app layer
-- a Godot 4 shell under `client/godot` that drives the websocket dev adapter with real binary control packets and live combat input frames
+- a real WebRTC gameplay transport on top of websocket signaling, plus the older raw websocket dev adapter at `/ws-dev`
+- a Godot 4 shell under `client/godot` that drives the browser gameplay path through websocket signaling at `/ws` and binary WebRTC data channels
 - a first playable arena slice with a mostly empty map, four central square pillars, shrub collars, authoritative player circles, WASD movement, mouse aim, left-click melee, authored class melee/spells on `1`-`5`, projectile combat, debuffs, HoTs, health, and cooldown state
 - runtime-loaded authored content under `server/content/skills/*.yaml` and `server/content/maps/prototype_arena.txt`
 - a same-origin Godot Web export path hosted directly by the Rust server at `/`
@@ -20,7 +20,7 @@ Buildable now:
 - GitHub Actions quality workflows plus Godot web export and deploy smoke workflows
 
 Not implemented yet:
-- real WebRTC transport integration
+- delta snapshot replication
 - polished Godot gameplay rendering and interpolation
 - a broad final class/spell set and tuned combat balance
 - final vision / fog-of-war logic beyond stubs
@@ -34,7 +34,7 @@ cd server
 rustup run stable cargo build --workspace
 ```
 
-Run the websocket dev adapter:
+Run the backend:
 
 ```powershell
 cd server
@@ -47,12 +47,14 @@ Start the easiest local playable build:
 ./server/scripts/play-local.ps1 -GodotExecutable C:\Users\azbai\Documents\Rarena\Godot\Godot_v4.6.1-stable_win64_console.exe
 ```
 
-That script exports the Godot web client, builds the hardened Docker image, starts the local container, and opens the browser shell at `http://127.0.0.1:3000/`.
+That script exports the Godot web client, starts the Rust server directly on the host by default, and opens the browser shell at `http://127.0.0.1:3000/`.
+Direct host mode is the default because browser WebRTC is more reliable there than behind local Docker NAT.
 
-The dev adapter listens on:
+The backend listens on:
 - `http://127.0.0.1:3000/healthz`
 - `http://127.0.0.1:3000/metrics`
-- `ws://127.0.0.1:3000/ws`
+- `ws://127.0.0.1:3000/ws` for websocket signaling plus TURN/STUN configuration handoff
+- `ws://127.0.0.1:3000/ws-dev` for the raw websocket dev adapter and legacy transport tests
 - `http://127.0.0.1:3000/` for the exported Godot web shell when `server/static/webclient` exists
 
 The dev adapter persists player `W-L-NC` records at:
@@ -76,12 +78,12 @@ Open the Godot shell:
 client/godot/project.godot
 ```
 
-The current Godot shell is wired to the websocket dev adapter first, not WebRTC yet.
+The current Godot shell is wired to websocket signaling at `/ws` and WebRTC data channels for live gameplay traffic.
 The project metadata version is currently `0.6.0`.
 Known shell limitations:
-- the final production transport is still planned as WebRTC, so browser play currently uses the websocket dev adapter
 - the arena slice is intentionally simple, even though the current skills and map now load from authored content files
 - visibility is still a stubbed/minimal system; movement, health, cooldowns, and spell use are the priority slice
+- stock native/headless Godot on this machine does not include the `webrtc-native` extension, so full networked play should be tested in the browser unless that extension is installed
 
 Run the Godot protocol checks headlessly:
 
@@ -160,6 +162,13 @@ cd server
 That script now installs Verus into the repo-local cache at `server/tools/verus/current`.
 It also installs `mdbook`, `cargo-fuzz`, and the nightly toolchain required by the pre-commit fuzz hook.
 The backend call-graph report now uses the repo-local `backend_callgraph` binary in this workspace plus `rust-analyzer`, so there is no separate call-graph tool checkout to manage.
+
+Run the Rust WebRTC integration suite:
+
+```powershell
+cd server
+rustup run stable cargo test -p game_api --test realtime_webrtc -- --nocapture
+```
 
 Run the configured quality checks:
 
@@ -303,7 +312,7 @@ Hook behavior:
 Current local fallback behavior:
 - if `cargo-nextest` is installed, the quality script uses it for the normal test task
 - if `cargo-nextest` is not installed, the quality script falls back to `cargo test`
-- fuzzing uses `cargo-fuzz` under `server/fuzz/` and is prioritized around ingress boundaries where external data enters the application, especially networking paths such as packet-header, control-command, server-control-event, input-frame, and ingress-session decoding/validation
+- fuzzing uses `cargo-fuzz` under `server/fuzz/` and is prioritized around ingress boundaries where external data enters the application, especially networking paths such as packet-header, control-command, server-control-event, input-frame, ingress-session decoding/validation, and WebRTC signaling JSON parsing
 - gameplay correctness is primarily enforced with Rust unit and integration tests, not fuzzing
 - project docs are generated from `shared/docs` through `mdBook`, while Rust API docs are generated with `cargo doc --workspace --all-features --no-deps`
 - browser-export smoke checks run in `.github/workflows/godot-web-smoke.yml` and verify that the exported shell can be hosted by `dedicated_server`
@@ -311,7 +320,7 @@ Current local fallback behavior:
 
 Current manual full-loop slice:
 - start the Rust backend
-- export the Godot web shell and open `http://127.0.0.1:3000/` in two browser tabs, or open two native Godot clients
+- export the Godot web shell and open `http://127.0.0.1:3000/` in two browser tabs
 - connect both players, let the server assign their runtime player IDs, create/join a lobby, choose teams, ready up
 - click a lobby from the central directory or join by manual lobby ID
 - choose a skill each round

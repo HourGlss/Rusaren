@@ -12,7 +12,7 @@ Completed:
 
 ## 0.7.0 Final Transport and Replication
 
-- [ ] Add the real WebRTC gameplay transport beside the websocket dev adapter.
+- [x] Add the real WebRTC gameplay transport beside the websocket dev adapter.
 - [ ] Implement snapshot and delta replication for gameplay.
 - [ ] Add hostile-input fuzzing for snapshot and delta decoders.
 - [ ] Add transport compatibility and malformed-packet regression suites.

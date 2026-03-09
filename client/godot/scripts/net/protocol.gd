@@ -9,9 +9,13 @@ const MAX_MESSAGE_BYTES := 200
 
 const CHANNEL_CONTROL := 0
 const CHANNEL_INPUT := 1
+const CHANNEL_SNAPSHOT := 2
 const PACKET_KIND_CONTROL_COMMAND := 6
 const PACKET_KIND_CONTROL_EVENT := 7
 const PACKET_KIND_INPUT_FRAME := 16
+const PACKET_KIND_FULL_SNAPSHOT := 32
+const PACKET_KIND_DELTA_SNAPSHOT := 33
+const PACKET_KIND_EVENT_BATCH := 34
 const BUTTON_PRIMARY := 1
 const BUTTON_SECONDARY := 1 << 1
 const BUTTON_CAST := 1 << 2
@@ -480,10 +484,24 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 		return decoded
 
 	var header: Dictionary = decoded.get("header", {})
-	if int(header.get("channel_id", -1)) != CHANNEL_CONTROL or int(header.get("packet_kind", -1)) != PACKET_KIND_CONTROL_EVENT:
+	var channel_id := int(header.get("channel_id", -1))
+	var packet_kind := int(header.get("packet_kind", -1))
+	var is_control_event := (
+		channel_id == CHANNEL_CONTROL
+		and packet_kind == PACKET_KIND_CONTROL_EVENT
+	)
+	var is_full_snapshot := (
+		channel_id == CHANNEL_SNAPSHOT
+		and packet_kind == PACKET_KIND_FULL_SNAPSHOT
+	)
+	var is_event_batch := (
+		channel_id == CHANNEL_SNAPSHOT
+		and packet_kind == PACKET_KIND_EVENT_BATCH
+	)
+	if not is_control_event and not is_full_snapshot and not is_event_batch:
 		return _error("expected Control/ControlEvent but received %s/%s" % [
-			str(header.get("channel_id", -1)),
-			str(header.get("packet_kind", -1)),
+			str(channel_id),
+			str(packet_kind),
 		])
 
 	var payload: PackedByteArray = decoded.get("payload", PackedByteArray())

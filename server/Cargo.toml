@@ -22,13 +22,19 @@ publish = false
 
 [workspace.dependencies]
 axum = { version = "0.8", features = ["ws"] }
+base64 = "0.22"
+bytes = "1"
 criterion = "0.5.1"
 futures-util = "0.3"
 getrandom = "0.3"
+hmac = "0.12"
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 serde_yaml = "0.9"
+sha1 = "0.10"
 tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 tokio-tungstenite = "0.28"
 tower-http = { version = "0.6", features = ["fs", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+webrtc = "0.8"

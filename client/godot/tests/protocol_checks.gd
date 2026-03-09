@@ -201,11 +201,20 @@ func _fail(message: String) -> bool:
 
 
 func _encode_server_event_packet(payload: PackedByteArray, seq: int, sim_tick: int) -> PackedByteArray:
+	var kind := int(payload[0])
+	var channel_id := Protocol.CHANNEL_CONTROL
+	var packet_kind := Protocol.PACKET_KIND_CONTROL_EVENT
+	if kind == 19:
+		channel_id = Protocol.CHANNEL_SNAPSHOT
+		packet_kind = Protocol.PACKET_KIND_FULL_SNAPSHOT
+	elif kind == 20:
+		channel_id = Protocol.CHANNEL_SNAPSHOT
+		packet_kind = Protocol.PACKET_KIND_EVENT_BATCH
 	var packet := PackedByteArray()
 	_push_u16(packet, Protocol.PACKET_MAGIC)
 	packet.append(Protocol.PROTOCOL_VERSION)
-	packet.append(Protocol.CHANNEL_CONTROL)
-	packet.append(Protocol.PACKET_KIND_CONTROL_EVENT)
+	packet.append(channel_id)
+	packet.append(packet_kind)
 	packet.append(0)
 	_push_u16(packet, payload.size())
 	_push_u32(packet, seq)

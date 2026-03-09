@@ -31,7 +31,7 @@ pub fn classify_http_path(path: &str) -> HttpRouteLabel {
         "/" => HttpRouteLabel::Root,
         "/healthz" => HttpRouteLabel::Healthz,
         "/metrics" => HttpRouteLabel::Metrics,
-        "/ws" => HttpRouteLabel::WebSocket,
+        "/ws" | "/ws-dev" => HttpRouteLabel::WebSocket,
         _ => HttpRouteLabel::StaticAsset,
     }
 }
@@ -356,6 +356,7 @@ mod tests {
         assert_eq!(classify_http_path("/healthz"), HttpRouteLabel::Healthz);
         assert_eq!(classify_http_path("/metrics"), HttpRouteLabel::Metrics);
         assert_eq!(classify_http_path("/ws"), HttpRouteLabel::WebSocket);
+        assert_eq!(classify_http_path("/ws-dev"), HttpRouteLabel::WebSocket);
         assert_eq!(classify_http_path("/index.js"), HttpRouteLabel::StaticAsset);
         assert_eq!(
             classify_http_path("/healthz/extra"),

@@ -55,11 +55,11 @@ Examples:
 Restart the stack after changing it.
 
 ## coturn checklist
-Before WebRTC rollout:
 1. make sure `turn.domain.com` resolves publicly
 2. confirm ports `3478/tcp`, `3478/udp`, and the relay UDP range are open
 3. set a real `TURN_SHARED_SECRET`
 4. set the real public `TURN_EXTERNAL_IP`
 
 Current note:
-- `0.6.0` hosts `coturn`, but the public shell does not rely on it yet because gameplay is still websocket-first
+- the browser gameplay path now depends on `/ws` signaling plus the checked-in STUN/TURN configuration
+- if browser sessions fail to connect, check the `coturn` logs and the ICE/TURN environment values first
