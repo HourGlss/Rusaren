@@ -19,12 +19,13 @@ use game_lobby::{Lobby, LobbyEvent, LobbyPhase};
 use game_match::{MatchConfig, MatchEvent, MatchPhase, MatchSession};
 use game_net::{
     ArenaEffectKind, ArenaEffectSnapshot, ArenaObstacleKind, ArenaObstacleSnapshot,
-    ArenaPlayerSnapshot, ArenaStateSnapshot, ClientControlCommand, LobbyDirectoryEntry,
-    LobbySnapshotPhase, LobbySnapshotPlayer, SequenceTracker, ServerControlEvent,
-    ValidatedInputFrame, BUTTON_CAST, BUTTON_PRIMARY, BUTTON_QUIT_TO_LOBBY,
+    ArenaPlayerSnapshot, ArenaProjectileSnapshot, ArenaStateSnapshot, ClientControlCommand,
+    LobbyDirectoryEntry, LobbySnapshotPhase, LobbySnapshotPlayer, SequenceTracker,
+    ServerControlEvent, ValidatedInputFrame, BUTTON_CAST, BUTTON_PRIMARY, BUTTON_QUIT_TO_LOBBY,
 };
 use game_sim::{
     ArenaEffect, ArenaObstacle, MovementIntent, SimPlayerSeed, SimulationEvent, SimulationWorld,
+    COMBAT_FRAME_MS,
 };
 use getrandom::fill as fill_random;
 
@@ -93,7 +94,7 @@ struct MatchRuntime {
 
 impl MatchRuntime {
     fn rebuild_world(&mut self, content: &GameContent) {
-        self.world = build_world(&self.roster, content);
+        self.world = build_world(&self.roster, &self.session, content);
     }
 }
 
@@ -103,6 +104,8 @@ pub struct ServerApp {
     next_lobby_id: u32,
     next_match_id: u32,
     clock_seconds: u32,
+    phase_accumulator_ms: u32,
+    combat_accumulator_ms: u32,
     record_store: PlayerRecordStore,
     connections: BTreeMap<ConnectionId, PlayerId>,
     player_connections: BTreeMap<PlayerId, ConnectionId>,
@@ -166,6 +169,8 @@ impl ServerApp {
             next_lobby_id: 1,
             next_match_id: 1,
             clock_seconds: 0,
+            phase_accumulator_ms: 0,
+            combat_accumulator_ms: 0,
             record_store,
             connections: BTreeMap::new(),
             player_connections: BTreeMap::new(),
@@ -181,11 +186,35 @@ impl ServerApp {
         }
     }
 
-    pub fn advance_seconds<T: AppTransport>(&mut self, transport: &mut T, seconds: u8) {
-        for _ in 0..seconds {
+    pub fn advance_millis<T: AppTransport>(&mut self, transport: &mut T, delta_ms: u16) {
+        if delta_ms == 0 {
+            return;
+        }
+
+        self.phase_accumulator_ms = self
+            .phase_accumulator_ms
+            .saturating_add(u32::from(delta_ms));
+        self.combat_accumulator_ms = self
+            .combat_accumulator_ms
+            .saturating_add(u32::from(delta_ms));
+
+        while self.combat_accumulator_ms >= u32::from(COMBAT_FRAME_MS) {
+            self.combat_accumulator_ms =
+                self.combat_accumulator_ms.saturating_sub(u32::from(COMBAT_FRAME_MS));
+            self.advance_combat_frames(transport);
+        }
+
+        while self.phase_accumulator_ms >= 1000 {
+            self.phase_accumulator_ms = self.phase_accumulator_ms.saturating_sub(1000);
             self.clock_seconds = self.clock_seconds.saturating_add(1);
             self.advance_lobby_countdowns(transport);
             self.advance_match_phases(transport);
+        }
+    }
+
+    pub fn advance_seconds<T: AppTransport>(&mut self, transport: &mut T, seconds: u8) {
+        for _ in 0..seconds {
+            self.advance_millis(transport, 1000);
         }
     }
 
@@ -794,9 +823,6 @@ impl ServerApp {
             }
         };
 
-        let mut match_events = Vec::new();
-        let mut effect_batch = Vec::new();
-
         let runtime = match self.matches.get_mut(&match_id) {
             Some(runtime) => runtime,
             None => {
@@ -827,41 +853,11 @@ impl ServerApp {
             self.send_error(transport, sender_id, &error.to_string());
             return;
         }
-        let simulation_events = runtime.world.tick();
-        let mut state_dirty = aim_changed || !simulation_events.is_empty();
-        let defeated_targets = Self::collect_defeated_targets(&simulation_events);
-        effect_batch.extend(Self::collect_effect_batch(&simulation_events));
-        for target_id in defeated_targets {
-            let events = match runtime.session.mark_player_defeated(target_id) {
-                Ok(events) => events,
-                Err(error) => {
-                    self.send_error(transport, sender_id, &error.to_string());
-                    return;
-                }
-            };
-            match_events.extend(events);
-        }
 
         if frame.buttons & BUTTON_PRIMARY != 0 {
-            let combat_events = match runtime.world.melee_attack(sender_id) {
-                Ok(events) => events,
-                Err(error) => {
-                    self.send_error(transport, sender_id, &error.to_string());
-                    return;
-                }
-            };
-            state_dirty = true;
-            let defeated_targets = Self::collect_defeated_targets(&combat_events);
-            effect_batch.extend(Self::collect_effect_batch(&combat_events));
-            for target_id in defeated_targets {
-                let events = match runtime.session.mark_player_defeated(target_id) {
-                    Ok(events) => events,
-                    Err(error) => {
-                        self.send_error(transport, sender_id, &error.to_string());
-                        return;
-                    }
-                };
-                match_events.extend(events);
+            if let Err(error) = runtime.world.queue_primary_attack(sender_id) {
+                self.send_error(transport, sender_id, &error.to_string());
+                return;
             }
         }
 
@@ -896,44 +892,69 @@ impl ServerApp {
                 return;
             };
 
-            let combat_events = match runtime.world.cast_skill(sender_id, slot, skill) {
-                Ok(events) => events,
-                Err(error) => {
-                    self.send_error(transport, sender_id, &error.to_string());
-                    return;
-                }
-            };
-            state_dirty = true;
-            let defeated_targets = Self::collect_defeated_targets(&combat_events);
-            effect_batch.extend(Self::collect_effect_batch(&combat_events));
-            for target_id in defeated_targets {
-                let events = match runtime.session.mark_player_defeated(target_id) {
-                    Ok(events) => events,
-                    Err(error) => {
-                        self.send_error(transport, sender_id, &error.to_string());
-                        return;
-                    }
-                };
-                match_events.extend(events);
+            let _ = skill;
+            if let Err(error) = runtime.world.queue_cast(sender_id, slot) {
+                self.send_error(transport, sender_id, &error.to_string());
+                return;
             }
         }
 
-        if matches!(runtime.session.phase(), MatchPhase::SkillPick { .. })
-            && !matches!(runtime.session.phase(), MatchPhase::MatchEnd { .. })
-        {
-            runtime.rebuild_world(&self.content);
-            state_dirty = true;
-        }
-
         let _ = runtime;
-        if !effect_batch.is_empty() {
-            self.broadcast_arena_effect_batch(transport, match_id, &effect_batch);
+        if aim_changed {
+            self.broadcast_arena_state_snapshot(transport, match_id);
         }
-        if !match_events.is_empty() {
-            self.dispatch_match_events(transport, match_id, &match_events);
-            state_dirty = true;
-        }
-        if state_dirty {
+    }
+
+    fn advance_combat_frames<T: AppTransport>(&mut self, transport: &mut T) {
+        let match_ids = self.matches.keys().copied().collect::<Vec<_>>();
+        for match_id in match_ids {
+            let phase = match self.matches.get(&match_id) {
+                Some(runtime) => runtime.session.phase().clone(),
+                None => continue,
+            };
+            if !matches!(phase, MatchPhase::Combat) {
+                continue;
+            }
+
+            let (effect_batch, match_events, errors) = {
+                let runtime = match self.matches.get_mut(&match_id) {
+                    Some(runtime) => runtime,
+                    None => continue,
+                };
+                let simulation_events = runtime.world.tick(COMBAT_FRAME_MS);
+                let effect_batch = Self::collect_effect_batch(&simulation_events);
+                let defeated_targets = Self::collect_defeated_targets(&simulation_events);
+                let mut match_events = Vec::new();
+                let mut errors = Vec::new();
+                for target_id in defeated_targets {
+                    match runtime.session.mark_player_defeated(target_id) {
+                        Ok(events) => match_events.extend(events),
+                        Err(error) => errors.push(error.to_string()),
+                    }
+                }
+                if matches!(runtime.session.phase(), MatchPhase::SkillPick { .. })
+                    && !matches!(runtime.session.phase(), MatchPhase::MatchEnd { .. })
+                {
+                    runtime.rebuild_world(&self.content);
+                }
+                (effect_batch, match_events, errors)
+            };
+
+            if !effect_batch.is_empty() {
+                self.broadcast_arena_effect_batch(transport, match_id, &effect_batch);
+            }
+            if !errors.is_empty() {
+                self.broadcast_event(
+                    transport,
+                    &self.match_recipients(match_id),
+                    ServerControlEvent::Error {
+                        message: errors.join(" | "),
+                    },
+                );
+            }
+            if !match_events.is_empty() {
+                self.dispatch_match_events(transport, match_id, &match_events);
+            }
             self.broadcast_arena_state_snapshot(transport, match_id);
         }
     }
@@ -1059,6 +1080,9 @@ impl ServerApp {
                     );
                 }
                 MatchEvent::CombatStarted => {
+                    if let Some(runtime) = self.matches.get_mut(&match_id) {
+                        runtime.rebuild_world(&self.content);
+                    }
                     self.broadcast_event(
                         transport,
                         &self.match_recipients(match_id),
@@ -1303,12 +1327,34 @@ impl ServerApp {
                     })
             })
             .collect();
+        let projectiles = runtime
+            .world
+            .projectiles()
+            .into_iter()
+            .map(|projectile| ArenaProjectileSnapshot {
+                owner: projectile.owner,
+                slot: projectile.slot,
+                kind: match projectile.kind {
+                    game_sim::ArenaEffectKind::MeleeSwing => ArenaEffectKind::MeleeSwing,
+                    game_sim::ArenaEffectKind::SkillShot => ArenaEffectKind::SkillShot,
+                    game_sim::ArenaEffectKind::DashTrail => ArenaEffectKind::DashTrail,
+                    game_sim::ArenaEffectKind::Burst => ArenaEffectKind::Burst,
+                    game_sim::ArenaEffectKind::Nova => ArenaEffectKind::Nova,
+                    game_sim::ArenaEffectKind::Beam => ArenaEffectKind::Beam,
+                    game_sim::ArenaEffectKind::HitSpark => ArenaEffectKind::HitSpark,
+                },
+                x: projectile.x,
+                y: projectile.y,
+                radius: projectile.radius,
+            })
+            .collect();
 
         Some(ArenaStateSnapshot {
             width: runtime.world.arena_width_units(),
             height: runtime.world.arena_height_units(),
             obstacles,
             players,
+            projectiles,
         })
     }
 
@@ -1386,6 +1432,10 @@ impl ServerApp {
             max_hit_points: state.max_hit_points,
             alive: state.alive,
             unlocked_skill_slots,
+            primary_cooldown_remaining_ms: state.primary_cooldown_remaining_ms,
+            primary_cooldown_total_ms: state.primary_cooldown_total_ms,
+            slot_cooldown_remaining_ms: state.slot_cooldown_remaining_ms,
+            slot_cooldown_total_ms: state.slot_cooldown_total_ms,
         }
     }
 
@@ -1482,7 +1532,7 @@ impl ServerApp {
         self.matches.insert(
             match_id,
             MatchRuntime {
-                world: build_world(&roster, &self.content),
+                world: build_world(&roster, &session, &self.content),
                 roster,
                 participants: participants.clone(),
                 session,
@@ -1879,14 +1929,40 @@ impl ServerApp {
     }
 }
 
-fn build_world(roster: &[TeamAssignment], content: &GameContent) -> SimulationWorld {
+fn build_world(
+    roster: &[TeamAssignment],
+    session: &MatchSession,
+    content: &GameContent,
+) -> SimulationWorld {
     match SimulationWorld::new(
         roster
             .iter()
             .cloned()
-            .map(|assignment| SimPlayerSeed {
-                assignment,
-                hit_points: DEFAULT_HIT_POINTS,
+            .map(|assignment| {
+                let player_id = assignment.player_id;
+                let primary_tree = session
+                    .equipped_choice(player_id, 1)
+                    .map(|choice| choice.tree)
+                    .unwrap_or(game_domain::SkillTree::Warrior);
+                let melee = if let Some(melee) = content.skills().melee_for(primary_tree) {
+                    melee.clone()
+                } else if let Some(melee) =
+                    content.skills().melee_for(game_domain::SkillTree::Warrior)
+                {
+                    melee.clone()
+                } else {
+                    panic!("validated content should always define warrior melee");
+                };
+                SimPlayerSeed {
+                    assignment,
+                    hit_points: DEFAULT_HIT_POINTS,
+                    melee,
+                    skills: std::array::from_fn(|index| {
+                        session
+                            .equipped_choice(player_id, u8::try_from(index + 1).unwrap_or(5))
+                            .and_then(|choice| content.skills().resolve(choice).cloned())
+                    }),
+                }
             })
             .collect(),
         content.map(),
@@ -1981,19 +2057,25 @@ mod tests {
         let mut alice_events = Vec::new();
         let mut bob_events = Vec::new();
 
-        for offset in 0_u32..8 {
-            let sequence = u32::from(round) * 10 + offset + 1;
+        for offset in 0_u32..18 {
+            let sequence = u32::from(round) * 100 + offset + 1;
             alice
                 .send_input(transport, slot_one_cast_input(sequence), sequence)
                 .expect("attack packet");
             server.pump_transport(transport);
-            alice_events.extend(alice.drain_events(transport).expect("alice combat events"));
-            bob_events.extend(bob.drain_events(transport).expect("bob combat events"));
-            if alice_events.iter().any(|event| matches!(
-                event,
-                ServerControlEvent::RoundWon { round: won_round, .. } if won_round.get() == round
-            )) {
-                return (alice_events, bob_events);
+            alice_events.extend(alice.drain_events(transport).expect("alice input events"));
+            bob_events.extend(bob.drain_events(transport).expect("bob input events"));
+
+            for _ in 0..12 {
+                server.advance_millis(transport, COMBAT_FRAME_MS);
+                alice_events.extend(alice.drain_events(transport).expect("alice combat events"));
+                bob_events.extend(bob.drain_events(transport).expect("bob combat events"));
+                if alice_events.iter().any(|event| matches!(
+                    event,
+                    ServerControlEvent::RoundWon { round: won_round, .. } if won_round.get() == round
+                )) {
+                    return (alice_events, bob_events);
+                }
             }
         }
 

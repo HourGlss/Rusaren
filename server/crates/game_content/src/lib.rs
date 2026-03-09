@@ -41,35 +41,109 @@ type AnchorPoint = (i16, i16);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SkillEffectKind {
+    MeleeSwing,
     SkillShot,
     DashTrail,
     Burst,
     Nova,
     Beam,
+    HitSpark,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CombatValueKind {
+    Damage,
+    Heal,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StatusKind {
+    Poison,
+    Hot,
+    Chill,
+    Root,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StatusDefinition {
+    pub kind: StatusKind,
+    pub duration_ms: u16,
+    pub tick_interval_ms: Option<u16>,
+    pub magnitude: u16,
+    pub max_stacks: u8,
+    pub trigger_duration_ms: Option<u16>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EffectPayload {
+    pub kind: CombatValueKind,
+    pub amount: u16,
+    pub status: Option<StatusDefinition>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MeleeDefinition {
+    pub tree: SkillTree,
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub cooldown_ms: u16,
+    pub range: u16,
+    pub radius: u16,
+    pub effect: SkillEffectKind,
+    pub payload: EffectPayload,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SkillBehavior {
-    Line {
+    Projectile {
+        cooldown_ms: u16,
+        speed: u16,
         range: u16,
-        damage: u16,
+        radius: u16,
         effect: SkillEffectKind,
+        payload: EffectPayload,
+    },
+    Beam {
+        cooldown_ms: u16,
+        range: u16,
+        radius: u16,
+        effect: SkillEffectKind,
+        payload: EffectPayload,
     },
     Dash {
+        cooldown_ms: u16,
         distance: u16,
         effect: SkillEffectKind,
+        impact_radius: Option<u16>,
+        payload: Option<EffectPayload>,
     },
     Burst {
+        cooldown_ms: u16,
         range: u16,
         radius: u16,
-        damage: u16,
         effect: SkillEffectKind,
+        payload: EffectPayload,
     },
     Nova {
+        cooldown_ms: u16,
         radius: u16,
-        damage: u16,
         effect: SkillEffectKind,
+        payload: EffectPayload,
     },
+}
+
+impl SkillBehavior {
+    #[must_use]
+    pub const fn cooldown_ms(self) -> u16 {
+        match self {
+            Self::Projectile { cooldown_ms, .. }
+            | Self::Beam { cooldown_ms, .. }
+            | Self::Dash { cooldown_ms, .. }
+            | Self::Burst { cooldown_ms, .. }
+            | Self::Nova { cooldown_ms, .. } => cooldown_ms,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -83,14 +157,27 @@ pub struct SkillDefinition {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ClassDefinition {
+    pub tree: SkillTree,
+    pub melee: MeleeDefinition,
+    pub skills: Vec<SkillDefinition>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SkillCatalog {
     by_choice: BTreeMap<(usize, u8), SkillDefinition>,
+    melee_by_tree: BTreeMap<usize, MeleeDefinition>,
 }
 
 impl SkillCatalog {
     #[must_use]
     pub fn resolve(&self, choice: SkillChoice) -> Option<&SkillDefinition> {
         self.by_choice.get(&(choice.tree.as_index(), choice.tier))
+    }
+
+    #[must_use]
+    pub fn melee_for(&self, tree: SkillTree) -> Option<&MeleeDefinition> {
+        self.melee_by_tree.get(&tree.as_index())
     }
 
     pub fn all(&self) -> impl Iterator<Item = &SkillDefinition> {
@@ -244,7 +331,7 @@ pub fn parse_ascii_map(source: &str, ascii_map: &str) -> Result<ArenaMapDefiniti
     })
 }
 
-pub fn parse_skill_yaml(source: &str, yaml: &str) -> Result<Vec<SkillDefinition>, ContentError> {
+pub fn parse_skill_yaml(source: &str, yaml: &str) -> Result<ClassDefinition, ContentError> {
     let document =
         serde_yaml::from_str::<SkillFileYaml>(yaml).map_err(|error| ContentError::Parse {
             source: String::from(source),
@@ -255,10 +342,22 @@ pub fn parse_skill_yaml(source: &str, yaml: &str) -> Result<Vec<SkillDefinition>
 
 fn load_skill_catalog_from_pairs(pairs: &[(&str, &str)]) -> Result<SkillCatalog, ContentError> {
     let mut by_choice = BTreeMap::new();
+    let mut melee_by_tree = BTreeMap::new();
     for (source, yaml) in pairs {
-        for definition in parse_skill_yaml(source, yaml)? {
-            let key = (definition.tree.as_index(), definition.tier);
-            if let Some(existing) = by_choice.insert(key, definition.clone()) {
+        let definition = parse_skill_yaml(source, yaml)?;
+        if melee_by_tree
+            .insert(definition.tree.as_index(), definition.melee.clone())
+            .is_some()
+        {
+            return Err(ContentError::Validation {
+                source: String::from(*source),
+                message: format!("duplicate melee definition for {}", definition.tree),
+            });
+        }
+
+        for skill in definition.skills {
+            let key = (skill.tree.as_index(), skill.tier);
+            if let Some(existing) = by_choice.insert(key, skill.clone()) {
                 return Err(ContentError::Validation {
                     source: String::from(*source),
                     message: format!(
@@ -276,6 +375,13 @@ fn load_skill_catalog_from_pairs(pairs: &[(&str, &str)]) -> Result<SkillCatalog,
         SkillTree::Mage,
         SkillTree::Cleric,
     ] {
+        if !melee_by_tree.contains_key(&tree.as_index()) {
+            return Err(ContentError::Validation {
+                source: String::from("skills"),
+                message: format!("missing melee definition for {tree}"),
+            });
+        }
+
         for tier in REQUIRED_TIERS {
             if !by_choice.contains_key(&(tree.as_index(), tier)) {
                 return Err(ContentError::Validation {
@@ -286,14 +392,15 @@ fn load_skill_catalog_from_pairs(pairs: &[(&str, &str)]) -> Result<SkillCatalog,
         }
     }
 
-    Ok(SkillCatalog { by_choice })
+    Ok(SkillCatalog {
+        by_choice,
+        melee_by_tree,
+    })
 }
 
-fn validate_skill_file(
-    source: &str,
-    document: SkillFileYaml,
-) -> Result<Vec<SkillDefinition>, ContentError> {
+fn validate_skill_file(source: &str, document: SkillFileYaml) -> Result<ClassDefinition, ContentError> {
     let tree = parse_skill_tree(source, &document.tree)?;
+    let melee = parse_melee_definition(source, tree, document.melee)?;
     let mut seen_tiers = BTreeSet::new();
     let mut skills = Vec::with_capacity(document.skills.len());
 
@@ -327,7 +434,39 @@ fn validate_skill_file(
         });
     }
 
-    Ok(skills)
+    if skills.len() != REQUIRED_TIERS.len() {
+        return Err(ContentError::Validation {
+            source: String::from(source),
+            message: format!(
+                "expected exactly {} skills, found {}",
+                REQUIRED_TIERS.len(),
+                skills.len()
+            ),
+        });
+    }
+
+    Ok(ClassDefinition { tree, melee, skills })
+}
+
+fn parse_melee_definition(
+    source: &str,
+    tree: SkillTree,
+    yaml: MeleeYaml,
+) -> Result<MeleeDefinition, ContentError> {
+    validate_skill_text(source, "melee.id", &yaml.id)?;
+    validate_skill_text(source, "melee.name", &yaml.name)?;
+    validate_skill_text(source, "melee.description", &yaml.description)?;
+    Ok(MeleeDefinition {
+        tree,
+        id: yaml.id,
+        name: yaml.name,
+        description: yaml.description,
+        cooldown_ms: require_positive_u16(source, "melee.cooldown_ms", Some(yaml.cooldown_ms))?,
+        range: require_positive_u16(source, "melee.range", Some(yaml.range))?,
+        radius: require_positive_u16(source, "melee.radius", Some(yaml.radius))?,
+        effect: parse_effect_kind(source, &yaml.effect)?,
+        payload: parse_payload(source, Some(yaml.payload), "melee.payload")?,
+    })
 }
 
 fn validate_skill_text(source: &str, field: &str, value: &str) -> Result<(), ContentError> {
@@ -362,31 +501,50 @@ fn parse_skill_tree(source: &str, raw: &str) -> Result<SkillTree, ContentError> 
     }
 }
 
-fn parse_skill_behavior(
-    source: &str,
-    yaml: &SkillBehaviorYaml,
-) -> Result<SkillBehavior, ContentError> {
+fn parse_skill_behavior(source: &str, yaml: &SkillBehaviorYaml) -> Result<SkillBehavior, ContentError> {
     let effect = parse_effect_kind(source, &yaml.effect)?;
+    let cooldown_ms = require_positive_u16(source, "cooldown_ms", yaml.cooldown_ms)?;
     match yaml.kind.as_str() {
-        "line" => Ok(SkillBehavior::Line {
+        "projectile" => Ok(SkillBehavior::Projectile {
+            cooldown_ms,
+            speed: require_positive_u16(source, "speed", yaml.speed)?,
             range: require_positive_u16(source, "range", yaml.range)?,
-            damage: require_positive_u16(source, "damage", yaml.damage)?,
+            radius: require_positive_u16(source, "radius", yaml.radius)?,
             effect,
+            payload: parse_payload(source, yaml.payload.clone(), "payload")?,
+        }),
+        "beam" => Ok(SkillBehavior::Beam {
+            cooldown_ms,
+            range: require_positive_u16(source, "range", yaml.range)?,
+            radius: require_positive_u16(source, "radius", yaml.radius)?,
+            effect,
+            payload: parse_payload(source, yaml.payload.clone(), "payload")?,
         }),
         "dash" => Ok(SkillBehavior::Dash {
+            cooldown_ms,
             distance: require_positive_u16(source, "distance", yaml.distance)?,
             effect,
+            impact_radius: yaml
+                .impact_radius
+                .map(|value| require_positive_u16(source, "impact_radius", Some(value)))
+                .transpose()?,
+            payload: match yaml.payload.clone() {
+                Some(payload) => Some(parse_payload(source, Some(payload), "payload")?),
+                None => None,
+            },
         }),
         "burst" => Ok(SkillBehavior::Burst {
+            cooldown_ms,
             range: require_positive_u16(source, "range", yaml.range)?,
             radius: require_positive_u16(source, "radius", yaml.radius)?,
-            damage: require_positive_u16(source, "damage", yaml.damage)?,
             effect,
+            payload: parse_payload(source, yaml.payload.clone(), "payload")?,
         }),
         "nova" => Ok(SkillBehavior::Nova {
+            cooldown_ms,
             radius: require_positive_u16(source, "radius", yaml.radius)?,
-            damage: require_positive_u16(source, "damage", yaml.damage)?,
             effect,
+            payload: parse_payload(source, yaml.payload.clone(), "payload")?,
         }),
         other => Err(ContentError::Validation {
             source: String::from(source),
@@ -395,13 +553,115 @@ fn parse_skill_behavior(
     }
 }
 
+fn parse_payload(
+    source: &str,
+    yaml: Option<EffectPayloadYaml>,
+    field: &str,
+) -> Result<EffectPayload, ContentError> {
+    let yaml = yaml.ok_or_else(|| ContentError::Validation {
+        source: String::from(source),
+        message: format!("{field} is required"),
+    })?;
+
+    let kind = parse_payload_kind(source, &yaml.kind)?;
+    let amount = yaml.amount.unwrap_or(0);
+    if amount == 0 && yaml.status.is_none() {
+        return Err(ContentError::Validation {
+            source: String::from(source),
+            message: format!("{field} must provide a positive amount or a status"),
+        });
+    }
+
+    Ok(EffectPayload {
+        kind,
+        amount,
+        status: yaml
+            .status
+            .as_ref()
+            .map(|status| parse_status(source, status))
+            .transpose()?,
+    })
+}
+
+fn parse_payload_kind(source: &str, raw: &str) -> Result<CombatValueKind, ContentError> {
+    match raw {
+        "damage" => Ok(CombatValueKind::Damage),
+        "heal" => Ok(CombatValueKind::Heal),
+        other => Err(ContentError::Validation {
+            source: String::from(source),
+            message: format!("unknown payload kind '{other}'"),
+        }),
+    }
+}
+
+fn parse_status(source: &str, yaml: &StatusYaml) -> Result<StatusDefinition, ContentError> {
+    let kind = parse_status_kind(source, &yaml.kind)?;
+    let duration_ms = require_positive_u16(source, "status.duration_ms", Some(yaml.duration_ms))?;
+    let max_stacks = yaml.max_stacks.unwrap_or(1);
+    if max_stacks == 0 {
+        return Err(ContentError::Validation {
+            source: String::from(source),
+            message: String::from("status.max_stacks must be greater than zero"),
+        });
+    }
+
+    match kind {
+        StatusKind::Poison | StatusKind::Hot => {
+            let tick_interval_ms =
+                require_positive_u16(source, "status.tick_interval_ms", yaml.tick_interval_ms)?;
+            Ok(StatusDefinition {
+                kind,
+                duration_ms,
+                tick_interval_ms: Some(tick_interval_ms),
+                magnitude: require_positive_u16(source, "status.magnitude", Some(yaml.magnitude))?,
+                max_stacks,
+                trigger_duration_ms: None,
+            })
+        }
+        StatusKind::Chill => Ok(StatusDefinition {
+            kind,
+            duration_ms,
+            tick_interval_ms: None,
+            magnitude: require_positive_u16(source, "status.magnitude", Some(yaml.magnitude))?,
+            max_stacks,
+            trigger_duration_ms: yaml
+                .trigger_duration_ms
+                .map(|value| require_positive_u16(source, "status.trigger_duration_ms", Some(value)))
+                .transpose()?,
+        }),
+        StatusKind::Root => Ok(StatusDefinition {
+            kind,
+            duration_ms,
+            tick_interval_ms: None,
+            magnitude: 0,
+            max_stacks: 1,
+            trigger_duration_ms: None,
+        }),
+    }
+}
+
+fn parse_status_kind(source: &str, raw: &str) -> Result<StatusKind, ContentError> {
+    match raw {
+        "poison" => Ok(StatusKind::Poison),
+        "hot" => Ok(StatusKind::Hot),
+        "chill" => Ok(StatusKind::Chill),
+        "root" => Ok(StatusKind::Root),
+        other => Err(ContentError::Validation {
+            source: String::from(source),
+            message: format!("unknown status kind '{other}'"),
+        }),
+    }
+}
+
 fn parse_effect_kind(source: &str, raw: &str) -> Result<SkillEffectKind, ContentError> {
     match raw {
+        "melee_swing" => Ok(SkillEffectKind::MeleeSwing),
         "skill_shot" => Ok(SkillEffectKind::SkillShot),
         "dash_trail" => Ok(SkillEffectKind::DashTrail),
         "burst" => Ok(SkillEffectKind::Burst),
         "nova" => Ok(SkillEffectKind::Nova),
         "beam" => Ok(SkillEffectKind::Beam),
+        "hit_spark" => Ok(SkillEffectKind::HitSpark),
         other => Err(ContentError::Validation {
             source: String::from(source),
             message: format!("unknown effect kind '{other}'"),
@@ -666,7 +926,21 @@ fn map_cell_center(
 #[serde(deny_unknown_fields)]
 struct SkillFileYaml {
     tree: String,
+    melee: MeleeYaml,
     skills: Vec<SkillYaml>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MeleeYaml {
+    id: String,
+    name: String,
+    description: String,
+    cooldown_ms: u16,
+    range: u16,
+    radius: u16,
+    effect: String,
+    payload: EffectPayloadYaml,
 }
 
 #[derive(Debug, Deserialize)]
@@ -679,15 +953,37 @@ struct SkillYaml {
     behavior: SkillBehaviorYaml,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EffectPayloadYaml {
+    kind: String,
+    amount: Option<u16>,
+    status: Option<StatusYaml>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StatusYaml {
+    kind: String,
+    duration_ms: u16,
+    tick_interval_ms: Option<u16>,
+    magnitude: u16,
+    max_stacks: Option<u8>,
+    trigger_duration_ms: Option<u16>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SkillBehaviorYaml {
     kind: String,
     effect: String,
+    cooldown_ms: Option<u16>,
     range: Option<u16>,
-    damage: Option<u16>,
     radius: Option<u16>,
     distance: Option<u16>,
+    speed: Option<u16>,
+    impact_radius: Option<u16>,
+    payload: Option<EffectPayloadYaml>,
 }
 
 #[cfg(test)]
@@ -698,10 +994,12 @@ mod tests {
     fn bundled_content_loads_all_classes_and_the_ascii_map() {
         let content = GameContent::bundled().expect("bundled content should load");
 
-        assert!(content
+        let mage_one = content
             .skills()
             .resolve(SkillChoice::new(SkillTree::Mage, 1).expect("choice"))
-            .is_some());
+            .expect("mage tier one should exist");
+        assert!(matches!(mage_one.behavior, SkillBehavior::Projectile { .. }));
+        assert!(content.skills().melee_for(SkillTree::Warrior).is_some());
         assert_eq!(content.map().map_id, "prototype_arena");
         assert!(!content.map().obstacles.is_empty());
         assert_eq!(content.map().team_a_anchor.0, -650);
@@ -712,16 +1010,32 @@ mod tests {
     fn parse_skill_yaml_rejects_unknown_trees_and_duplicate_tiers() {
         let unknown_tree = r"
 tree: Druid
+melee:
+  id: druid_claw
+  name: Claw
+  description: nope
+  cooldown_ms: 100
+  range: 50
+  radius: 20
+  effect: melee_swing
+  payload:
+    kind: damage
+    amount: 10
 skills:
   - tier: 1
     id: druid_sprout
     name: Sprout
     description: nope
     behavior:
-      kind: line
+      kind: projectile
       effect: skill_shot
-      range: 10
-      damage: 1
+      cooldown_ms: 100
+      speed: 100
+      range: 100
+      radius: 10
+      payload:
+        kind: damage
+        amount: 1
 ";
         assert!(matches!(
             parse_skill_yaml("skills/druid.yaml", unknown_tree),
@@ -730,29 +1044,157 @@ skills:
 
         let duplicate_tier = r"
 tree: Mage
+melee:
+  id: mage_staff
+  name: Staff
+  description: bonk
+  cooldown_ms: 100
+  range: 50
+  radius: 20
+  effect: melee_swing
+  payload:
+    kind: damage
+    amount: 10
 skills:
   - tier: 1
     id: mage_a
     name: A
     description: A
     behavior:
-      kind: line
+      kind: projectile
       effect: skill_shot
+      cooldown_ms: 100
+      speed: 100
       range: 10
-      damage: 1
+      radius: 10
+      payload:
+        kind: damage
+        amount: 1
   - tier: 1
     id: mage_b
     name: B
     description: B
     behavior:
-      kind: line
+      kind: beam
       effect: beam
+      cooldown_ms: 100
       range: 20
-      damage: 2
+      radius: 10
+      payload:
+        kind: damage
+        amount: 2
 ";
         assert!(matches!(
             parse_skill_yaml("skills/mage.yaml", duplicate_tier),
             Err(ContentError::Validation { .. })
+        ));
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn parse_skill_yaml_accepts_status_payloads_and_melee_definitions() {
+        let yaml = r"
+tree: Cleric
+melee:
+  id: cleric_mace
+  name: Mace
+  description: bonk
+  cooldown_ms: 550
+  range: 80
+  radius: 30
+  effect: melee_swing
+  payload:
+    kind: damage
+    amount: 12
+skills:
+  - tier: 1
+    id: cleric_minor_heal
+    name: Minor Heal
+    description: heal
+    behavior:
+      kind: beam
+      effect: beam
+      cooldown_ms: 900
+      range: 250
+      radius: 20
+      payload:
+        kind: heal
+        amount: 14
+  - tier: 2
+    id: cleric_flash
+    name: Flash
+    description: flash
+    behavior:
+      kind: dash
+      effect: dash_trail
+      cooldown_ms: 1200
+      distance: 120
+  - tier: 3
+    id: cleric_hot
+    name: Hot
+    description: hot
+    behavior:
+      kind: nova
+      effect: nova
+      cooldown_ms: 1200
+      radius: 120
+      payload:
+        kind: heal
+        amount: 0
+        status:
+          kind: hot
+          duration_ms: 3000
+          tick_interval_ms: 1000
+          magnitude: 4
+          max_stacks: 1
+  - tier: 4
+    id: cleric_burst
+    name: Burst
+    description: burst
+    behavior:
+      kind: burst
+      effect: burst
+      cooldown_ms: 1400
+      range: 200
+      radius: 80
+      payload:
+        kind: damage
+        amount: 10
+  - tier: 5
+    id: cleric_root
+    name: Root
+    description: root
+    behavior:
+      kind: projectile
+      effect: skill_shot
+      cooldown_ms: 1600
+      speed: 100
+      range: 300
+      radius: 12
+      payload:
+        kind: damage
+        amount: 5
+        status:
+          kind: root
+          duration_ms: 500
+          magnitude: 0
+";
+        let parsed = parse_skill_yaml("skills/cleric.yaml", yaml).expect("yaml should parse");
+        assert_eq!(parsed.melee.cooldown_ms, 550);
+        assert!(matches!(
+            parsed.skills[2].behavior,
+            SkillBehavior::Nova {
+                payload:
+                    EffectPayload {
+                        kind: CombatValueKind::Heal,
+                        status: Some(StatusDefinition {
+                            kind: StatusKind::Hot,
+                            ..
+                        }),
+                        ..
+                    },
+                ..
+            }
         ));
     }
 

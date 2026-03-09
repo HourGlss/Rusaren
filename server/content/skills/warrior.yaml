@@ -1,46 +1,77 @@
 tree: Warrior
+melee:
+  id: warrior_broadswing
+  name: Broadswing
+  description: A heavy close-range slash with a long recovery.
+  cooldown_ms: 650
+  range: 92
+  radius: 42
+  effect: melee_swing
+  payload:
+    kind: damage
+    amount: 18
 skills:
   - tier: 1
     id: warrior_sweeping_slash
     name: Sweeping Slash
-    description: A short frontal slash that punishes enemies in melee range.
+    description: A short beam cleave straight through the front lane.
     behavior:
-      kind: line
+      kind: beam
       effect: beam
-      range: 1600
-      damage: 100
+      cooldown_ms: 1100
+      range: 160
+      radius: 40
+      payload:
+        kind: damage
+        amount: 22
   - tier: 2
     id: warrior_shoulder_bash
     name: Shoulder Bash
-    description: A fast forward lunge that closes distance.
+    description: A forward lunge that can clip nearby players at the destination.
     behavior:
       kind: dash
       effect: dash_trail
-      distance: 220
+      cooldown_ms: 1800
+      distance: 180
+      impact_radius: 44
+      payload:
+        kind: damage
+        amount: 12
   - tier: 3
     id: warrior_chain_hook
     name: Chain Hook
-    description: A brutal line strike that reaches past the front line.
+    description: A long direct strike that punishes targets peeking around pillars.
     behavior:
-      kind: line
+      kind: beam
       effect: skill_shot
+      cooldown_ms: 1700
       range: 320
-      damage: 36
+      radius: 28
+      payload:
+        kind: damage
+        amount: 18
   - tier: 4
     id: warrior_whirlwind
     name: Whirlwind
-    description: A spinning cleave that hits everyone nearby.
+    description: A spinning cleave around the warrior.
     behavior:
       kind: nova
       effect: nova
+      cooldown_ms: 2200
       radius: 150
-      damage: 24
+      payload:
+        kind: damage
+        amount: 16
   - tier: 5
     id: warrior_earthshatter
     name: Earthshatter
-    description: A long reaching rupture that cracks open the lane ahead.
+    description: A crushing lane attack that reaches beyond normal melee range.
     behavior:
-      kind: line
+      kind: beam
       effect: beam
-      range: 650
-      damage: 60
+      cooldown_ms: 3200
+      range: 260
+      radius: 54
+      payload:
+        kind: damage
+        amount: 30

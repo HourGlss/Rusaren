@@ -28,7 +28,7 @@ Current implementation status:
 - The current shell now consumes authoritative full game-lobby snapshots, including late-joiner roster state and `W-L-NC`.
 - The current shell now sends real binary `InputFrame` packets for live arena input over the websocket dev adapter.
 - The current shell now renders a simple top-down arena with a mostly empty floor, four central square pillars, and shrub collars.
-- The current shell now consumes authoritative `ArenaStateSnapshot` and `ArenaEffectBatch` events to draw players, aim lines, hp bars, and short-lived combat effects.
+- The current shell now consumes authoritative `ArenaStateSnapshot` and `ArenaEffectBatch` events to draw players, aim lines, hp bars, cooldown state, projectile state, and short-lived combat effects.
 - The current shell only enables legal skill picks for the local player: tier 1 for unstarted trees or the next tier in a tree already started this match.
 - The current shell now exports to Web and defaults browser builds to the same-origin `/ws` endpoint.
 - The Rust dev server can now host the exported shell directly at `/`.
@@ -39,7 +39,8 @@ Current implementation status:
 
 Current backend limitations the shell must expose honestly:
 - Combat content is still prototype-level even though the shell now shows a real arena and consumes authored YAML/ASCII content.
-- The current combat slice is intentionally narrow: once combat starts, the shell supports `WASD` movement, mouse aim, left-click melee, and authored slot skills on `1`-`5`, but not the final class set yet.
+- The current combat slice is intentionally narrow: once combat starts, the shell supports `WASD` movement, mouse aim, left-click melee, authored slot skills on `1`-`5`, projectile combat, debuffs, HoTs, and authoritative cooldown display, but not the final class set yet.
+- Vision is still intentionally minimal/stubbed compared with the rest of the combat slice.
 
 Disconnect UX:
 - If a match is aborted because a player disconnects, show: `<PLAYER_NAME> has disconnected. Game is over.`

@@ -302,7 +302,12 @@ fn server_control_event_round_trips_arena_packets() {
                 max_hit_points: 100,
                 alive: true,
                 unlocked_skill_slots: 3,
+                primary_cooldown_remaining_ms: 250,
+                primary_cooldown_total_ms: 650,
+                slot_cooldown_remaining_ms: [100, 0, 900, 0, 0],
+                slot_cooldown_total_ms: [700, 1700, 2200, 0, 0],
             }],
+            projectiles: vec![],
         },
     };
     let effect_batch = ServerControlEvent::ArenaEffectBatch {

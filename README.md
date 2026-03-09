@@ -11,7 +11,7 @@ Buildable now:
 - a scripted backend-only gameplay slice that exercises lobby -> match -> combat -> no-contest flow
 - a real websocket dev adapter on top of the backend app layer
 - a Godot 4 shell under `client/godot` that drives the websocket dev adapter with real binary control packets and live combat input frames
-- a first playable arena slice with a mostly empty map, four central square pillars, shrub collars, authoritative player snapshots, WASD movement, mouse aim, left-click melee, and placeholder skills on `1`-`5`
+- a first playable arena slice with a mostly empty map, four central square pillars, shrub collars, authoritative player circles, WASD movement, mouse aim, left-click melee, authored class melee/spells on `1`-`5`, projectile combat, debuffs, HoTs, health, and cooldown state
 - runtime-loaded authored content under `server/content/skills/*.yaml` and `server/content/maps/prototype_arena.txt`
 - a same-origin Godot Web export path hosted directly by the Rust server at `/`
 - a documented production-style deploy path with Caddy, Prometheus, and `coturn`
@@ -23,6 +23,7 @@ Not implemented yet:
 - real WebRTC transport integration
 - polished Godot gameplay rendering and interpolation
 - a broad final class/spell set and tuned combat balance
+- final vision / fog-of-war logic beyond stubs
 
 ## Build and run
 
@@ -80,7 +81,7 @@ The project metadata version is currently `0.6.0`.
 Known shell limitations:
 - the final production transport is still planned as WebRTC, so browser play currently uses the websocket dev adapter
 - the arena slice is intentionally simple, even though the current skills and map now load from authored content files
-- projectile collision/visibility rules are still early and only cover the current YAML/ASCII prototype content
+- visibility is still a stubbed/minimal system; movement, health, cooldowns, and spell use are the priority slice
 
 Run the Godot protocol checks headlessly:
 
@@ -302,8 +303,8 @@ Hook behavior:
 Current local fallback behavior:
 - if `cargo-nextest` is installed, the quality script uses it for the normal test task
 - if `cargo-nextest` is not installed, the quality script falls back to `cargo test`
-- fuzzing uses `cargo-fuzz` under `server/fuzz/` and currently starts with packet-header, control-command, server-control-event, input-frame, ingress-session, HTTP-route-classification, observability-metrics-render, and player-record-store-parse targets
-- fuzzing uses `cargo-fuzz` under `server/fuzz/` and currently covers packet-header, control-command, server-control-event, input-frame, ingress-session, HTTP-route-classification, observability-metrics-render, player-record-store parsing, ASCII map parsing, and YAML skill parsing
+- fuzzing uses `cargo-fuzz` under `server/fuzz/` and is prioritized around ingress boundaries where external data enters the application, especially networking paths such as packet-header, control-command, server-control-event, input-frame, and ingress-session decoding/validation
+- gameplay correctness is primarily enforced with Rust unit and integration tests, not fuzzing
 - project docs are generated from `shared/docs` through `mdBook`, while Rust API docs are generated with `cargo doc --workspace --all-features --no-deps`
 - browser-export smoke checks run in `.github/workflows/godot-web-smoke.yml` and verify that the exported shell can be hosted by `dedicated_server`
 - deploy smoke checks run in `.github/workflows/deploy-stack-smoke.yml` and through `./server/scripts/docker-smoke.ps1`, validating the Docker image plus the checked-in compose path
@@ -318,6 +319,7 @@ Current manual full-loop slice:
 - aim with the mouse inside the arena
 - left click for melee
 - use `1`-`5` for the currently unlocked authored skill slots loaded from YAML
+- watch the cooldown HUD update from authoritative server snapshots as you fight
 - review the result screen and quit back to the central lobby
 
 Current easiest full-loop slice:

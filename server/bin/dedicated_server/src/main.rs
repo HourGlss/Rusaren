@@ -15,7 +15,7 @@ use game_domain::{
 };
 use game_lobby::{Lobby, LobbyEvent};
 use game_match::{MatchConfig, MatchEvent, MatchSession};
-use game_sim::{MovementIntent, SimPlayerSeed, SimulationEvent, SimulationWorld};
+use game_sim::{MovementIntent, SimPlayerSeed, SimulationEvent, SimulationWorld, COMBAT_FRAME_MS};
 use tracing::{error, info};
 use tracing_subscriber::filter::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
@@ -168,6 +168,34 @@ fn render_sim_event(event: &SimulationEvent) -> String {
             remaining_hit_points,
             defeated
         ),
+        SimulationEvent::HealingApplied {
+            source,
+            target,
+            amount,
+            resulting_hit_points,
+        } => format!(
+            "player {} healed player {} for {} (hp now {})",
+            source.get(),
+            target.get(),
+            amount,
+            resulting_hit_points
+        ),
+        SimulationEvent::StatusApplied {
+            source,
+            target,
+            slot,
+            kind,
+            stacks,
+            remaining_ms,
+        } => format!(
+            "player {} applied {:?} from slot {} to player {} (stacks {}, remaining {}ms)",
+            source.get(),
+            kind,
+            slot,
+            target.get(),
+            stacks,
+            remaining_ms
+        ),
     }
 }
 
@@ -197,7 +225,7 @@ fn default_web_client_root() -> PathBuf {
 fn parse_tick_interval(raw: Option<String>) -> Duration {
     raw.and_then(|value| value.parse::<u64>().ok())
         .filter(|millis| *millis > 0)
-        .map_or_else(|| Duration::from_secs(1), Duration::from_millis)
+        .map_or_else(|| Duration::from_millis(u64::from(COMBAT_FRAME_MS)), Duration::from_millis)
 }
 
 fn parse_log_format_from_env() -> Result<LogFormat, String> {
@@ -349,10 +377,34 @@ fn run_demo() -> Result<Vec<String>, String> {
             SimPlayerSeed {
                 assignment: roster[0].clone(),
                 hit_points: 100,
+                melee: content
+                    .skills()
+                    .melee_for(alice_choice.tree)
+                    .ok_or_else(|| String::from("demo melee content should exist"))?
+                    .clone(),
+                skills: [
+                    content.skills().resolve(alice_choice).cloned(),
+                    None,
+                    None,
+                    None,
+                    None,
+                ],
             },
             SimPlayerSeed {
                 assignment: roster[1].clone(),
                 hit_points: 100,
+                melee: content
+                    .skills()
+                    .melee_for(bob_choice.tree)
+                    .ok_or_else(|| String::from("demo melee content should exist"))?
+                    .clone(),
+                skills: [
+                    content.skills().resolve(bob_choice).cloned(),
+                    None,
+                    None,
+                    None,
+                    None,
+                ],
             },
         ],
         content.map(),
@@ -365,22 +417,17 @@ fn run_demo() -> Result<Vec<String>, String> {
             MovementIntent::new(1, 0).map_err(|error| error.to_string())?,
         )
         .map_err(|error| error.to_string())?;
-    for event in world.tick() {
+    for event in world.tick(COMBAT_FRAME_MS) {
         lines.push(render_sim_event(&event));
     }
 
-    for event in world
-        .cast_skill(
-            alice_id,
-            1,
-            content
-                .skills()
-                .resolve(alice_choice)
-                .ok_or_else(|| String::from("demo skill content should exist"))?,
-        )
-        .map_err(|error| error.to_string())?
-    {
-        lines.push(render_sim_event(&event));
+    world
+        .queue_cast(alice_id, 1)
+        .map_err(|error| error.to_string())?;
+    for _ in 0..6 {
+        for event in world.tick(COMBAT_FRAME_MS) {
+            lines.push(render_sim_event(&event));
+        }
     }
 
     for event in session
@@ -449,6 +496,7 @@ async fn main() {
         listener,
         DevServerOptions {
             tick_interval,
+            simulation_step_ms: COMBAT_FRAME_MS,
             record_store_path,
             content_root,
             web_client_root,
@@ -477,7 +525,7 @@ async fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_tick_interval, run_demo, LogFormat};
+    use super::{parse_tick_interval, run_demo, LogFormat, COMBAT_FRAME_MS};
     use std::time::Duration;
 
     #[test]
@@ -493,14 +541,17 @@ mod tests {
 
     #[test]
     fn parse_tick_interval_uses_default_for_missing_zero_or_invalid_values() {
-        assert_eq!(parse_tick_interval(None), Duration::from_secs(1));
+        assert_eq!(
+            parse_tick_interval(None),
+            Duration::from_millis(u64::from(COMBAT_FRAME_MS))
+        );
         assert_eq!(
             parse_tick_interval(Some(String::from("0"))),
-            Duration::from_secs(1)
+            Duration::from_millis(u64::from(COMBAT_FRAME_MS))
         );
         assert_eq!(
             parse_tick_interval(Some(String::from("abc"))),
-            Duration::from_secs(1)
+            Duration::from_millis(u64::from(COMBAT_FRAME_MS))
         );
     }
 

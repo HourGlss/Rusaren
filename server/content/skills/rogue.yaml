@@ -1,47 +1,86 @@
 tree: Rogue
+melee:
+  id: rogue_dual_cut
+  name: Dual Cut
+  description: A fast pair of short blades with high uptime.
+  cooldown_ms: 450
+  range: 86
+  radius: 38
+  effect: melee_swing
+  payload:
+    kind: damage
+    amount: 14
 skills:
   - tier: 1
-    id: rogue_shiv
-    name: Shiv
-    description: A tight line strike with high close-range pressure.
+    id: rogue_poison_knife
+    name: Poison Knife
+    description: A quick projectile that applies stacking poison.
     behavior:
-      kind: line
-      effect: beam
-      range: 1600
-      damage: 100
+      kind: projectile
+      effect: skill_shot
+      cooldown_ms: 650
+      speed: 360
+      range: 1500
+      radius: 14
+      payload:
+        kind: damage
+        amount: 10
+        status:
+          kind: poison
+          duration_ms: 3000
+          tick_interval_ms: 1000
+          magnitude: 5
+          max_stacks: 5
   - tier: 2
     id: rogue_shadowstep
     name: Shadowstep
-    description: A quick dash to slip around geometry.
+    description: A fast dash used to break angles around terrain.
     behavior:
       kind: dash
       effect: dash_trail
-      distance: 240
+      cooldown_ms: 1500
+      distance: 230
   - tier: 3
     id: rogue_poison_flask
     name: Poison Flask
-    description: A splash attack that bursts around the aimed point.
+    description: A burst of poison around the aimed point.
     behavior:
       kind: burst
       effect: burst
-      range: 260
-      radius: 96
-      damage: 24
+      cooldown_ms: 1900
+      range: 240
+      radius: 90
+      payload:
+        kind: damage
+        amount: 8
+        status:
+          kind: poison
+          duration_ms: 3000
+          tick_interval_ms: 1000
+          magnitude: 4
+          max_stacks: 5
   - tier: 4
     id: rogue_smoke_knives
     name: Smoke Knives
-    description: A circular flurry around the rogue.
+    description: A close flurry of blades around the rogue.
     behavior:
       kind: nova
       effect: nova
-      radius: 150
-      damage: 22
+      cooldown_ms: 2200
+      radius: 145
+      payload:
+        kind: damage
+        amount: 12
   - tier: 5
     id: rogue_assassinate
     name: Assassinate
-    description: A precise finishing strike projected in a straight line.
+    description: A lethal short-range execution beam.
     behavior:
-      kind: line
+      kind: beam
       effect: beam
-      range: 260
-      damage: 70
+      cooldown_ms: 3000
+      range: 180
+      radius: 36
+      payload:
+        kind: damage
+        amount: 42

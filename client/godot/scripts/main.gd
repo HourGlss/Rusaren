@@ -19,6 +19,7 @@ var identity_label: Label
 var phase_label: Label
 var countdown_value_label: Label
 var combat_hint_label: Label
+var cooldown_summary_label: Label
 var score_label: Label
 var outcome_label: Label
 var lobby_label: Label
@@ -382,6 +383,11 @@ func _build_match_panel() -> PanelContainer:
 	combat_hint_label.add_theme_color_override("font_color", Color8(214, 218, 208))
 	body.add_child(combat_hint_label)
 
+	cooldown_summary_label = Label.new()
+	cooldown_summary_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	cooldown_summary_label.add_theme_color_override("font_color", Color8(183, 204, 214))
+	body.add_child(cooldown_summary_label)
+
 	var combat_title := Label.new()
 	combat_title.text = "Combat controls"
 	combat_title.add_theme_color_override("font_color", Color8(244, 233, 216))
@@ -730,6 +736,7 @@ func _refresh_ui() -> void:
 	var unlocked_slots := int(local_player.get("unlocked_skill_slots", 0))
 	var alive_state := "alive" if bool(local_player.get("alive", false)) else "down"
 	combat_hint_label.text = "WASD move, aim with the mouse, left click for melee, and use 1-5 for combat skills. Unlocked slots: %d. Local state: %s." % [unlocked_slots, alive_state]
+	cooldown_summary_label.text = app_state.cooldown_summary_text()
 	outcome_label.text = result_text
 	central_directory_log.text = app_state.lobby_directory_bbcode()
 	roster_log.text = "\n".join(app_state.roster_lines())
@@ -745,7 +752,8 @@ func _refresh_ui() -> void:
 	ready_button.text = app_state.ready_button_text()
 	leave_lobby_button.disabled = not app_state.can_leave_lobby()
 	quit_results_button.disabled = not app_state.can_quit_results()
-	primary_attack_button.disabled = not app_state.can_send_combat_input()
+	primary_attack_button.disabled = not app_state.can_use_primary_attack()
+	primary_attack_button.text = "Primary Attack" if app_state.can_use_primary_attack() else "Primary Cooling"
 	for button in skill_buttons:
 		var tree_name := String(button.get_meta("tree_name", ""))
 		var tier := int(button.get_meta("tier", 0))

@@ -35,6 +35,7 @@ var arena_width := 0
 var arena_height := 0
 var arena_obstacles: Array[Dictionary] = []
 var arena_players := {}
+var arena_projectiles: Array[Dictionary] = []
 var arena_effects: Array[Dictionary] = []
 
 
@@ -292,6 +293,9 @@ func apply_server_event(event: Dictionary) -> void:
 			for player_data in snapshot.get("players", []):
 				var player_id := int(player_data.get("player_id", 0))
 				arena_players[player_id] = player_data.duplicate(true)
+			arena_projectiles.clear()
+			for projectile_data in snapshot.get("projectiles", []):
+				arena_projectiles.append((projectile_data as Dictionary).duplicate(true))
 		"ArenaEffectBatch":
 			for effect_data in event.get("effects", []):
 				var effect: Dictionary = (effect_data as Dictionary).duplicate(true)
@@ -464,13 +468,50 @@ func can_use_combat_slot(slot: int) -> bool:
 	if slot < 1 or slot > 5:
 		return false
 	var player := local_arena_player()
-	return can_send_combat_input() and slot <= int(player.get("unlocked_skill_slots", 0))
+	var cooldowns: Array = player.get("slot_cooldown_remaining_ms", [])
+	var remaining := int(cooldowns[slot - 1]) if cooldowns.size() >= slot else 0
+	return (
+		can_send_combat_input()
+		and slot <= int(player.get("unlocked_skill_slots", 0))
+		and remaining <= 0
+	)
+
+
+func can_use_primary_attack() -> bool:
+	var player := local_arena_player()
+	return can_send_combat_input() and int(player.get("primary_cooldown_remaining_ms", 0)) <= 0
 
 
 func local_arena_player() -> Dictionary:
 	if arena_players.has(local_player_id):
 		return arena_players[local_player_id]
 	return {}
+
+
+func arena_projectiles_list() -> Array[Dictionary]:
+	var projectiles: Array[Dictionary] = []
+	for projectile in arena_projectiles:
+		projectiles.append((projectile as Dictionary).duplicate(true))
+	return projectiles
+
+
+func cooldown_summary_text() -> String:
+	var player := local_arena_player()
+	if player.is_empty():
+		return "Cooldowns: waiting for a local combat snapshot."
+
+	var labels: Array[String] = []
+	labels.append("Melee %s" % _cooldown_token(
+		int(player.get("primary_cooldown_remaining_ms", 0)),
+		int(player.get("primary_cooldown_total_ms", 0))
+	))
+	var remaining_list: Array = player.get("slot_cooldown_remaining_ms", [])
+	var total_list: Array = player.get("slot_cooldown_total_ms", [])
+	for slot in range(1, 6):
+		var remaining := int(remaining_list[slot - 1]) if remaining_list.size() >= slot else 0
+		var total := int(total_list[slot - 1]) if total_list.size() >= slot else 0
+		labels.append("%d %s" % [slot, _cooldown_token(remaining, total)])
+	return "Cooldowns: %s" % "  |  ".join(labels)
 
 
 func arena_players_list() -> Array[Dictionary]:
@@ -557,6 +598,7 @@ func _clear_arena_state() -> void:
 	arena_height = 0
 	arena_obstacles.clear()
 	arena_players.clear()
+	arena_projectiles.clear()
 	arena_effects.clear()
 
 
@@ -572,3 +614,11 @@ func _effect_ttl_seconds(kind_name: String) -> float:
 			return 0.22
 		_:
 			return 0.35
+
+
+func _cooldown_token(remaining_ms: int, total_ms: int) -> String:
+	if total_ms <= 0:
+		return "-"
+	if remaining_ms <= 0:
+		return "ready"
+	return "%.1fs" % (float(remaining_ms) / 1000.0)

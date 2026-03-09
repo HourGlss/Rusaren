@@ -17,6 +17,7 @@ use futures_util::{SinkExt, StreamExt};
 use game_content::GameContent;
 use game_domain::PlayerId;
 use game_net::{NetworkSessionGuard, ServerControlEvent};
+use game_sim::COMBAT_FRAME_MS;
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio::task::JoinHandle;
@@ -47,9 +48,9 @@ impl RuntimeState {
         app.pump_transport(transport);
     }
 
-    fn advance_second(&mut self) {
+    fn advance_millis(&mut self, delta_ms: u16) {
         let Self { app, transport, .. } = self;
-        app.advance_seconds(transport, 1);
+        app.advance_millis(transport, delta_ms);
     }
 
     fn disconnect_connection(&mut self, connection_id: ConnectionId) {
@@ -132,6 +133,7 @@ pub struct DevServerHandle {
 #[derive(Clone, Debug)]
 pub struct DevServerOptions {
     pub tick_interval: Duration,
+    pub simulation_step_ms: u16,
     pub record_store_path: PathBuf,
     pub content_root: PathBuf,
     pub web_client_root: PathBuf,
@@ -141,7 +143,8 @@ pub struct DevServerOptions {
 impl Default for DevServerOptions {
     fn default() -> Self {
         Self {
-            tick_interval: Duration::from_secs(1),
+            tick_interval: Duration::from_millis(u64::from(COMBAT_FRAME_MS)),
+            simulation_step_ms: COMBAT_FRAME_MS,
             record_store_path: default_record_store_path(),
             content_root: default_content_root(),
             web_client_root: default_web_client_root(),
@@ -181,6 +184,12 @@ pub async fn spawn_dev_server_with_options(
             "tick interval must be greater than zero",
         ));
     }
+    if options.simulation_step_ms == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "simulation step must be greater than zero",
+        ));
+    }
 
     let local_addr = listener.local_addr()?;
     let content = GameContent::load_from_root(&options.content_root).map_err(io::Error::other)?;
@@ -201,7 +210,11 @@ pub async fn spawn_dev_server_with_options(
     };
 
     let ingress_task = tokio::spawn(run_ingress_loop(runtime.clone(), ingress_rx));
-    let tick_task = tokio::spawn(run_tick_loop(runtime.clone(), options.tick_interval));
+    let tick_task = tokio::spawn(run_tick_loop(
+        runtime.clone(),
+        options.tick_interval,
+        options.simulation_step_ms,
+    ));
 
     let app = build_router(state);
 
@@ -341,13 +354,17 @@ async fn run_ingress_loop(
     }
 }
 
-async fn run_tick_loop(runtime: Arc<Mutex<RuntimeState>>, tick_interval: Duration) {
+async fn run_tick_loop(
+    runtime: Arc<Mutex<RuntimeState>>,
+    tick_interval: Duration,
+    simulation_step_ms: u16,
+) {
     let mut interval = tokio::time::interval(tick_interval);
     loop {
         interval.tick().await;
         let mut runtime = runtime.lock().await;
         let started_at = Instant::now();
-        runtime.advance_second();
+        runtime.advance_millis(simulation_step_ms);
         let elapsed = started_at.elapsed();
         if let Some(observability) = &runtime.observability {
             observability.record_tick(elapsed);

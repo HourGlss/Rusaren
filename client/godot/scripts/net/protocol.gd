@@ -749,6 +749,14 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 				var max_hit_points = cursor.read_u16()
 				var alive = cursor.read_bool()
 				var unlocked_skill_slots = cursor.read_u8()
+				var primary_cooldown_remaining_ms = cursor.read_u16()
+				var primary_cooldown_total_ms = cursor.read_u16()
+				var slot_cooldown_remaining_ms: Array[int] = []
+				for _cooldown_index in range(5):
+					slot_cooldown_remaining_ms.append(int(cursor.read_u16()))
+				var slot_cooldown_total_ms: Array[int] = []
+				for _cooldown_total_index in range(5):
+					slot_cooldown_total_ms.append(int(cursor.read_u16()))
 				if cursor.has_error():
 					return _error(cursor.error_message)
 				players.append({
@@ -763,6 +771,31 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 					"max_hit_points": max_hit_points,
 					"alive": alive,
 					"unlocked_skill_slots": unlocked_skill_slots,
+					"primary_cooldown_remaining_ms": primary_cooldown_remaining_ms,
+					"primary_cooldown_total_ms": primary_cooldown_total_ms,
+					"slot_cooldown_remaining_ms": slot_cooldown_remaining_ms,
+					"slot_cooldown_total_ms": slot_cooldown_total_ms,
+				})
+			var projectile_count = cursor.read_u16()
+			if cursor.has_error():
+				return _error(cursor.error_message)
+			var projectiles: Array[Dictionary] = []
+			for _projectile_index in range(int(projectile_count)):
+				var owner = cursor.read_player_id()
+				var slot = cursor.read_u8()
+				var projectile_kind = cursor.read_arena_effect_kind()
+				var projectile_x = cursor.read_i16()
+				var projectile_y = cursor.read_i16()
+				var projectile_radius = cursor.read_u16()
+				if cursor.has_error():
+					return _error(cursor.error_message)
+				projectiles.append({
+					"owner": owner,
+					"slot": slot,
+					"kind": projectile_kind,
+					"x": projectile_x,
+					"y": projectile_y,
+					"radius": projectile_radius,
 				})
 			event = {
 				"type": "ArenaStateSnapshot",
@@ -771,6 +804,7 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 					"height": height,
 					"obstacles": obstacles,
 					"players": players,
+					"projectiles": projectiles,
 				},
 			}
 		20:

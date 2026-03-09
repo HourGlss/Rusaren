@@ -1,47 +1,86 @@
 tree: Mage
+melee:
+  id: mage_staff_bonk
+  name: Staff Bonk
+  description: A weak emergency tap with the staff.
+  cooldown_ms: 600
+  range: 84
+  radius: 36
+  effect: melee_swing
+  payload:
+    kind: damage
+    amount: 10
 skills:
   - tier: 1
     id: mage_arc_bolt
     name: Arc Bolt
-    description: A fast magical bolt fired straight toward the cursor.
+    description: A fast projectile that rewards clean aim through open lanes.
     behavior:
-      kind: line
+      kind: projectile
       effect: skill_shot
+      cooldown_ms: 700
+      speed: 320
       range: 1600
-      damage: 100
+      radius: 18
+      payload:
+        kind: damage
+        amount: 18
   - tier: 2
     id: mage_blink_step
     name: Blink Step
-    description: A short blink-like dash used to reposition.
+    description: A short repositioning dash.
     behavior:
       kind: dash
       effect: dash_trail
-      distance: 200
+      cooldown_ms: 1700
+      distance: 190
   - tier: 3
     id: mage_frost_burst
     name: Frost Burst
-    description: A delayed icy burst detonated at medium range.
+    description: A chilling explosion at medium range.
     behavior:
       kind: burst
       effect: burst
-      range: 280
-      radius: 100
-      damage: 26
+      cooldown_ms: 1900
+      range: 260
+      radius: 96
+      payload:
+        kind: damage
+        amount: 12
+        status:
+          kind: chill
+          duration_ms: 2200
+          magnitude: 1200
+          max_stacks: 3
+          trigger_duration_ms: 700
   - tier: 4
     id: mage_crystal_nova
     name: Crystal Nova
-    description: A defensive nova that erupts from the caster.
+    description: An expanding ring of ice around the caster.
     behavior:
       kind: nova
       effect: nova
+      cooldown_ms: 2300
       radius: 160
-      damage: 22
+      payload:
+        kind: damage
+        amount: 10
+        status:
+          kind: chill
+          duration_ms: 1800
+          magnitude: 900
+          max_stacks: 3
+          trigger_duration_ms: 600
   - tier: 5
     id: mage_prism_beam
     name: Prism Beam
-    description: A long beam that can punish exposed targets across the arena.
+    description: A precise beam that punishes exposed targets.
     behavior:
-      kind: line
+      kind: beam
       effect: beam
-      range: 1200
-      damage: 62
+      cooldown_ms: 2800
+      range: 760
+      radius: 24
+      payload:
+        kind: damage
+        amount: 28

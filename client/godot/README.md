@@ -8,11 +8,11 @@ What it does:
 - lets the server assign the runtime player ID after connect instead of exposing a player-id field in the UI
 - only enables legal skill buttons for the current round: tier 1 on unstarted trees or the next tier on started trees
 - sends real binary control packets
-- sends real binary combat input frames during the current placeholder combat slice
+- sends real binary combat input frames during the current prototype combat slice
 - decodes real binary server control events
 - renders central-lobby, game-lobby, countdown, match, and results screens
 - renders a simple top-down arena with a mostly empty floor, four central pillars, and shrub collars
-- renders authoritative player discs, names, hp bars, aim lines, and short-lived skill/melee effects
+- renders authoritative player circles, names, hp bars, aim lines, cooldown text, projectile state, and short-lived skill/melee effects
 - consumes authoritative lobby-directory and game-lobby snapshots
 - consumes authoritative arena snapshots and arena effect batches
 - lets players click an open lobby directly from the central directory
@@ -25,7 +25,7 @@ What it does not do yet:
 - interpolation
 
 Current shell limitation:
-- the combat loop is still prototype-level, even though the current map and slot skills now load from authored YAML and ASCII content files
+- the combat loop is still prototype-level, even though the current map and slot skills now load from authored YAML and ASCII content files and already support real melee/projectile/status interactions
 
 Run flow:
 1. start the Rust backend with `cd server && rustup run stable cargo run -p dedicated_server --quiet`
@@ -35,6 +35,7 @@ Run flow:
 5. open `http://127.0.0.1:3000/` in a browser, or run `res://scenes/main.tscn` in Godot 4
 6. connect, create or join a lobby, pick teams, ready up, choose skills, then use `WASD`, mouse aim, left click, and `1`-`5` during combat to drive the current backend slice end to end
    The shell asks for a player name only; the backend assigns the runtime player ID.
+   Cooldowns shown in the HUD are driven by authoritative server snapshots.
 
 Fast content iteration:
 1. edit `server/content/skills/*.yaml` or `server/content/maps/prototype_arena.txt`

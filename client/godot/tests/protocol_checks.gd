@@ -130,18 +130,36 @@ func _assert_decode_arena_state_snapshot() -> bool:
 	_push_u16(payload, 100)
 	payload.append(1)
 	payload.append(3)
+	_push_u16(payload, 180)
+	_push_u16(payload, 600)
+	for value in [0, 400, 0, 1200, 0]:
+		_push_u16(payload, value)
+	for value in [0, 900, 0, 1400, 0]:
+		_push_u16(payload, value)
+	_push_u16(payload, 1)
+	_push_u32(payload, 11)
+	payload.append(1)
+	payload.append(2)
+	_push_i16(payload, -520)
+	_push_i16(payload, 220)
+	_push_u16(payload, 28)
 	var decoded := Protocol.decode_server_event(_encode_server_event_packet(payload, 8, 21))
 	if not bool(decoded.get("ok", false)):
 		return _fail("arena state snapshot should decode")
 	var event: Dictionary = decoded.get("event", {})
 	var snapshot: Dictionary = event.get("snapshot", {})
 	var players: Array = snapshot.get("players", [])
+	var projectiles: Array = snapshot.get("projectiles", [])
 	if String(event.get("type", "")) != "ArenaStateSnapshot":
 		return _fail("arena state snapshot should use the ArenaStateSnapshot event type")
 	if players.size() != 1:
 		return _fail("arena state snapshot should decode one player")
 	if int(players[0].get("unlocked_skill_slots", 0)) != 3:
 		return _fail("arena state snapshot should preserve unlocked combat slots")
+	if int(players[0].get("primary_cooldown_remaining_ms", 0)) != 180:
+		return _fail("arena state snapshot should decode primary cooldown state")
+	if projectiles.size() != 1 or String(projectiles[0].get("kind", "")) != "SkillShot":
+		return _fail("arena state snapshot should decode projectile state")
 	return true
 
 

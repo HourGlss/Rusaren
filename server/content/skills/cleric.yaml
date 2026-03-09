@@ -1,47 +1,89 @@
 tree: Cleric
+melee:
+  id: cleric_mace_tap
+  name: Mace Tap
+  description: A steady close-range hit from the cleric's mace.
+  cooldown_ms: 550
+  range: 88
+  radius: 40
+  effect: melee_swing
+  payload:
+    kind: damage
+    amount: 12
 skills:
   - tier: 1
-    id: cleric_smite
-    name: Smite
-    description: A radiant bolt used as the cleric's basic ranged attack.
+    id: cleric_minor_heal
+    name: Minor Heal
+    description: A direct beam heal that affects the first player it reaches.
     behavior:
-      kind: line
-      effect: skill_shot
-      range: 1600
-      damage: 100
+      kind: beam
+      effect: beam
+      cooldown_ms: 900
+      range: 280
+      radius: 28
+      payload:
+        kind: heal
+        amount: 18
   - tier: 2
-    id: cleric_zeal_step
-    name: Zeal Step
-    description: A short surge forward to keep spacing favorable.
-    behavior:
-      kind: dash
-      effect: dash_trail
-      distance: 180
-  - tier: 3
-    id: cleric_consecrate
-    name: Consecrate
-    description: A holy burst placed at medium range.
+    id: cleric_sanctify
+    name: Sanctify
+    description: A targeted healing burst at medium range.
     behavior:
       kind: burst
       effect: burst
+      cooldown_ms: 1700
       range: 240
-      radius: 110
-      damage: 22
-  - tier: 4
-    id: cleric_halo
-    name: Halo
-    description: A circular pulse centered on the caster.
+      radius: 100
+      payload:
+        kind: heal
+        amount: 12
+  - tier: 3
+    id: cleric_renewing_aura
+    name: Renewing Aura
+    description: A healing pulse that also applies a heal-over-time effect.
     behavior:
       kind: nova
       effect: nova
-      radius: 160
-      damage: 20
-  - tier: 5
+      cooldown_ms: 2200
+      radius: 150
+      payload:
+        kind: heal
+        amount: 6
+        status:
+          kind: hot
+          duration_ms: 3000
+          tick_interval_ms: 1000
+          magnitude: 6
+          max_stacks: 1
+  - tier: 4
     id: cleric_solar_lance
     name: Solar Lance
-    description: A focused beam of light that reaches across open lanes.
+    description: A radiant projectile that gives the cleric a ranged damage option.
     behavior:
-      kind: line
-      effect: beam
-      range: 1000
-      damage: 54
+      kind: projectile
+      effect: skill_shot
+      cooldown_ms: 1800
+      speed: 280
+      range: 1500
+      radius: 16
+      payload:
+        kind: damage
+        amount: 16
+  - tier: 5
+    id: cleric_divine_intervention
+    name: Divine Intervention
+    description: A wide emergency heal across nearby players.
+    behavior:
+      kind: nova
+      effect: nova
+      cooldown_ms: 3200
+      radius: 180
+      payload:
+        kind: heal
+        amount: 22
+        status:
+          kind: hot
+          duration_ms: 3000
+          tick_interval_ms: 1000
+          magnitude: 4
+          max_stacks: 1

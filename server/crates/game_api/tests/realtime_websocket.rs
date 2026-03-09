@@ -12,6 +12,7 @@ use game_domain::{MatchOutcome, PlayerId, PlayerName, ReadyState, TeamSide};
 use game_net::{
     ClientControlCommand, ServerControlEvent, ValidatedInputFrame, BUTTON_CAST, BUTTON_PRIMARY,
 };
+use game_sim::COMBAT_FRAME_MS;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio_tungstenite::connect_async;
@@ -65,6 +66,28 @@ where
     panic!("expected predicate to succeed within {max_events} events, got {events:?}");
 }
 
+async fn recv_events_up_to<F>(
+    stream: &mut ClientStream,
+    max_events: usize,
+    mut predicate: F,
+) -> (Vec<ServerControlEvent>, bool)
+where
+    F: FnMut(&ServerControlEvent) -> bool,
+{
+    let mut events = Vec::new();
+
+    for _ in 0..max_events {
+        let event = recv_event(stream).await;
+        let satisfied = predicate(&event);
+        events.push(event);
+        if satisfied {
+            return (events, true);
+        }
+    }
+
+    (events, false)
+}
+
 async fn start_server() -> (game_api::DevServerHandle, String) {
     let listener = match TcpListener::bind("127.0.0.1:0").await {
         Ok(listener) => listener,
@@ -96,6 +119,7 @@ async fn start_server_with_options(
 async fn start_server_fast() -> (game_api::DevServerHandle, String) {
     start_server_with_options(DevServerOptions {
         tick_interval: Duration::from_millis(10),
+        simulation_step_ms: COMBAT_FRAME_MS,
         record_store_path: temp_record_store_path(),
         content_root: repo_content_root(),
         web_client_root: temp_web_client_root("fast-default", None),
@@ -109,6 +133,7 @@ async fn start_server_with_web_root(
 ) -> (game_api::DevServerHandle, String) {
     start_server_with_options(DevServerOptions {
         tick_interval: Duration::from_secs(1),
+        simulation_step_ms: COMBAT_FRAME_MS,
         record_store_path: temp_record_store_path(),
         content_root: repo_content_root(),
         web_client_root,
@@ -148,6 +173,50 @@ async fn send_input(
 fn slot_one_cast_input(client_input_tick: u32) -> ValidatedInputFrame {
     ValidatedInputFrame::new(client_input_tick, 0, 0, 0, 0, BUTTON_CAST, 1)
         .expect("slot one cast frame should be valid")
+}
+
+async fn cast_until_round_won(
+    alice: &mut ClientStream,
+    bob: &mut ClientStream,
+    round: u8,
+) -> (Vec<ServerControlEvent>, Vec<ServerControlEvent>) {
+    let mut alice_events = Vec::new();
+    let mut bob_events = Vec::new();
+
+    for offset in 0_u32..18 {
+        let sequence = u32::from(round) * 100 + offset + 1;
+        send_input(alice, slot_one_cast_input(sequence), sequence, sequence).await;
+
+        let (alice_batch, alice_finished) = recv_events_up_to(alice, 24, |event| {
+            matches!(
+                event,
+                ServerControlEvent::RoundWon {
+                    round: won_round,
+                    ..
+                } if won_round.get() == round
+            )
+        })
+        .await;
+        alice_events.extend(alice_batch);
+
+        let (bob_batch, bob_finished) = recv_events_up_to(bob, 24, |event| {
+            matches!(
+                event,
+                ServerControlEvent::RoundWon {
+                    round: won_round,
+                    ..
+                } if won_round.get() == round
+            )
+        })
+        .await;
+        bob_events.extend(bob_batch);
+
+        if alice_finished && bob_finished {
+            return (alice_events, bob_events);
+        }
+    }
+
+    panic!("expected round {round} to end after repeated slot-one casts");
 }
 
 async fn connect_player(stream: &mut ClientStream, raw_name: &str) {
@@ -502,6 +571,7 @@ async fn websocket_adapter_rejects_zero_tick_intervals() {
         listener,
         DevServerOptions {
             tick_interval: Duration::ZERO,
+            simulation_step_ms: COMBAT_FRAME_MS,
             record_store_path: temp_record_store_path(),
             content_root: repo_content_root(),
             web_client_root: temp_web_client_root("zero-tick", None),
@@ -567,6 +637,7 @@ async fn healthcheck_and_metrics_routes_report_expected_status_and_prometheus_te
     );
     let (server, base_url) = start_server_with_options(DevServerOptions {
         tick_interval: Duration::from_millis(10),
+        simulation_step_ms: COMBAT_FRAME_MS,
         record_store_path: temp_record_store_path(),
         content_root: repo_content_root(),
         web_client_root,
@@ -613,6 +684,7 @@ async fn metrics_route_returns_service_unavailable_when_observability_is_disable
     );
     let (server, base_url) = start_server_with_options(DevServerOptions {
         tick_interval: Duration::from_secs(1),
+        simulation_step_ms: COMBAT_FRAME_MS,
         record_store_path: temp_record_store_path(),
         content_root: repo_content_root(),
         web_client_root,
@@ -735,7 +807,9 @@ async fn websocket_adapter_finishes_a_full_match_loop_via_live_input_frames() {
     assert!(alice_snapshot_events.iter().any(|event| matches!(
         event,
         ServerControlEvent::ArenaStateSnapshot { snapshot }
-            if snapshot.players.len() == 2 && snapshot.obstacles.len() == 100
+            if snapshot.players.len() == 2
+                && snapshot.obstacles.len() == 100
+                && snapshot.projectiles.is_empty()
     )));
 
     for round in 1..=5 {
@@ -782,23 +856,9 @@ async fn websocket_adapter_finishes_a_full_match_loop_via_live_input_frames() {
         })
         .await;
 
-        send_input(
-            &mut alice,
-            slot_one_cast_input(u32::from(round)),
-            u32::from(round),
-            u32::from(round),
-        )
-        .await;
-
         if round < 5 {
-            let alice_round_events = recv_events_until(&mut alice, 3, |event| {
-                matches!(event, ServerControlEvent::RoundWon { round: won, .. } if won.get() == round)
-            })
-            .await;
-            let bob_round_events = recv_events_until(&mut bob, 3, |event| {
-                matches!(event, ServerControlEvent::RoundWon { round: won, .. } if won.get() == round)
-            })
-            .await;
+            let (alice_round_events, bob_round_events) =
+                cast_until_round_won(&mut alice, &mut bob, round).await;
             assert!(alice_round_events.iter().any(|event| matches!(
                 event,
                 ServerControlEvent::ArenaEffectBatch { effects }
@@ -823,14 +883,20 @@ async fn websocket_adapter_finishes_a_full_match_loop_via_live_input_frames() {
                 } if won.get() == round && *score_a == round && *score_b == 0
             )));
         } else {
-            let alice_match_events = recv_events_until(&mut alice, 4, |event| {
-                matches!(event, ServerControlEvent::MatchEnded { .. })
-            })
-            .await;
-            let bob_match_events = recv_events_until(&mut bob, 4, |event| {
-                matches!(event, ServerControlEvent::MatchEnded { .. })
-            })
-            .await;
+            let (mut alice_match_events, mut bob_match_events) =
+                cast_until_round_won(&mut alice, &mut bob, round).await;
+            alice_match_events.extend(
+                recv_events_until(&mut alice, 8, |event| {
+                    matches!(event, ServerControlEvent::MatchEnded { .. })
+                })
+                .await,
+            );
+            bob_match_events.extend(
+                recv_events_until(&mut bob, 8, |event| {
+                    matches!(event, ServerControlEvent::MatchEnded { .. })
+                })
+                .await,
+            );
             assert!(alice_match_events.iter().any(|event| matches!(
                 event,
                 ServerControlEvent::RoundWon {

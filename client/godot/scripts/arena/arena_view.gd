@@ -57,6 +57,7 @@ func _draw() -> void:
 	_draw_grid(arena_rect)
 	_draw_obstacles(arena_rect)
 	_draw_effects(arena_rect)
+	_draw_projectiles(arena_rect)
 	_draw_players(arena_rect)
 	_draw_border(arena_rect)
 
@@ -154,6 +155,18 @@ func _draw_effects(arena_rect: Rect2) -> void:
 				draw_line(start + Vector2(-radius, radius), start + Vector2(radius, -radius), color, 2.0)
 			_:
 				draw_circle(start, radius, color)
+
+
+func _draw_projectiles(arena_rect: Rect2) -> void:
+	for projectile in app_state.arena_projectiles_list():
+		var position := _world_to_canvas(
+			arena_rect,
+			Vector2(float(projectile.get("x", 0)), float(projectile.get("y", 0)))
+		)
+		var radius := _world_radius_to_canvas(arena_rect, float(projectile.get("radius", 0)))
+		var color := _effect_color(String(projectile.get("kind", "")), 0.95)
+		draw_circle(position, radius + 3.0, Color(0.08, 0.1, 0.12, 0.85))
+		draw_circle(position, radius, color)
 
 
 func _draw_players(arena_rect: Rect2) -> void:

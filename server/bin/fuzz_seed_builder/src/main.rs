@@ -438,6 +438,10 @@ fn write_server_control_event_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
                     max_hit_points: 100,
                     alive: true,
                     unlocked_skill_slots: 3,
+                    primary_cooldown_remaining_ms: 250,
+                    primary_cooldown_total_ms: 650,
+                    slot_cooldown_remaining_ms: [100, 0, 900, 0, 0],
+                    slot_cooldown_total_ms: [700, 1700, 2200, 0, 0],
                 },
                 ArenaPlayerSnapshot {
                     player_id: player_id(8)?,
@@ -451,8 +455,13 @@ fn write_server_control_event_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
                     max_hit_points: 100,
                     alive: true,
                     unlocked_skill_slots: 3,
+                    primary_cooldown_remaining_ms: 0,
+                    primary_cooldown_total_ms: 450,
+                    slot_cooldown_remaining_ms: [0, 0, 0, 0, 0],
+                    slot_cooldown_total_ms: [650, 1500, 1900, 0, 0],
                 },
             ],
+            projectiles: vec![],
         },
     }
     .encode_packet(4, 12)?;

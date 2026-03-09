@@ -12,8 +12,8 @@ mod ingress;
 
 pub use control::{
     ArenaEffectKind, ArenaEffectSnapshot, ArenaObstacleKind, ArenaObstacleSnapshot,
-    ArenaPlayerSnapshot, ArenaStateSnapshot, ClientControlCommand, LobbyDirectoryEntry,
-    LobbySnapshotPhase, LobbySnapshotPlayer, ServerControlEvent,
+    ArenaPlayerSnapshot, ArenaProjectileSnapshot, ArenaStateSnapshot, ClientControlCommand,
+    LobbyDirectoryEntry, LobbySnapshotPhase, LobbySnapshotPlayer, ServerControlEvent,
 };
 pub use ingress::{NetworkSessionGuard, MAX_INGRESS_PACKET_BYTES};
 

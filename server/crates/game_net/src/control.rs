@@ -265,6 +265,20 @@ pub struct ArenaPlayerSnapshot {
     pub max_hit_points: u16,
     pub alive: bool,
     pub unlocked_skill_slots: u8,
+    pub primary_cooldown_remaining_ms: u16,
+    pub primary_cooldown_total_ms: u16,
+    pub slot_cooldown_remaining_ms: [u16; 5],
+    pub slot_cooldown_total_ms: [u16; 5],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ArenaProjectileSnapshot {
+    pub owner: PlayerId,
+    pub slot: u8,
+    pub kind: ArenaEffectKind,
+    pub x: i16,
+    pub y: i16,
+    pub radius: u16,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -296,6 +310,7 @@ pub struct ArenaStateSnapshot {
     pub height: u16,
     pub obstacles: Vec<ArenaObstacleSnapshot>,
     pub players: Vec<ArenaPlayerSnapshot>,
+    pub projectiles: Vec<ArenaProjectileSnapshot>,
 }
 
 impl ServerControlEvent {
@@ -919,6 +934,29 @@ fn encode_arena_state_snapshot(
         payload.extend_from_slice(&player.max_hit_points.to_le_bytes());
         payload.push(u8::from(player.alive));
         payload.push(player.unlocked_skill_slots);
+        payload.extend_from_slice(&player.primary_cooldown_remaining_ms.to_le_bytes());
+        payload.extend_from_slice(&player.primary_cooldown_total_ms.to_le_bytes());
+        for remaining in player.slot_cooldown_remaining_ms {
+            payload.extend_from_slice(&remaining.to_le_bytes());
+        }
+        for total in player.slot_cooldown_total_ms {
+            payload.extend_from_slice(&total.to_le_bytes());
+        }
+    }
+
+    let projectile_count =
+        u16::try_from(snapshot.projectiles.len()).map_err(|_| PacketError::PayloadTooLarge {
+            actual: snapshot.projectiles.len(),
+            maximum: usize::from(u16::MAX),
+        })?;
+    payload.extend_from_slice(&projectile_count.to_le_bytes());
+    for projectile in &snapshot.projectiles {
+        payload.extend_from_slice(&projectile.owner.get().to_le_bytes());
+        payload.push(projectile.slot);
+        payload.push(encode_arena_effect_kind(projectile.kind));
+        payload.extend_from_slice(&projectile.x.to_le_bytes());
+        payload.extend_from_slice(&projectile.y.to_le_bytes());
+        payload.extend_from_slice(&projectile.radius.to_le_bytes());
     }
 
     Ok(())
@@ -945,18 +983,56 @@ fn decode_arena_state_snapshot(
     let player_count = usize::from(read_u16(payload, index, "ArenaStateSnapshot")?);
     let mut players = Vec::with_capacity(player_count);
     for _ in 0..player_count {
+        let player_id = read_player_id(payload, index, "ArenaStateSnapshot")?;
+        let player_name = read_player_name(payload, index, "ArenaStateSnapshot")?;
+        let team = read_team(payload, index, "ArenaStateSnapshot")?;
+        let x = read_i16(payload, index, "ArenaStateSnapshot")?;
+        let y = read_i16(payload, index, "ArenaStateSnapshot")?;
+        let aim_x = read_i16(payload, index, "ArenaStateSnapshot")?;
+        let aim_y = read_i16(payload, index, "ArenaStateSnapshot")?;
+        let hit_points = read_u16(payload, index, "ArenaStateSnapshot")?;
+        let max_hit_points = read_u16(payload, index, "ArenaStateSnapshot")?;
+        let alive = read_bool(payload, index, "ArenaStateSnapshot")?;
+        let unlocked_skill_slots = read_u8(payload, index, "ArenaStateSnapshot")?;
+        let primary_cooldown_remaining_ms = read_u16(payload, index, "ArenaStateSnapshot")?;
+        let primary_cooldown_total_ms = read_u16(payload, index, "ArenaStateSnapshot")?;
+        let mut slot_cooldown_remaining_ms = [0_u16; 5];
+        for remaining in &mut slot_cooldown_remaining_ms {
+            *remaining = read_u16(payload, index, "ArenaStateSnapshot")?;
+        }
+        let mut slot_cooldown_total_ms = [0_u16; 5];
+        for total in &mut slot_cooldown_total_ms {
+            *total = read_u16(payload, index, "ArenaStateSnapshot")?;
+        }
         players.push(ArenaPlayerSnapshot {
-            player_id: read_player_id(payload, index, "ArenaStateSnapshot")?,
-            player_name: read_player_name(payload, index, "ArenaStateSnapshot")?,
-            team: read_team(payload, index, "ArenaStateSnapshot")?,
+            player_id,
+            player_name,
+            team,
+            x,
+            y,
+            aim_x,
+            aim_y,
+            hit_points,
+            max_hit_points,
+            alive,
+            unlocked_skill_slots,
+            primary_cooldown_remaining_ms,
+            primary_cooldown_total_ms,
+            slot_cooldown_remaining_ms,
+            slot_cooldown_total_ms,
+        });
+    }
+
+    let projectile_count = usize::from(read_u16(payload, index, "ArenaStateSnapshot")?);
+    let mut projectiles = Vec::with_capacity(projectile_count);
+    for _ in 0..projectile_count {
+        projectiles.push(ArenaProjectileSnapshot {
+            owner: read_player_id(payload, index, "ArenaStateSnapshot")?,
+            slot: read_u8(payload, index, "ArenaStateSnapshot")?,
+            kind: read_arena_effect_kind(payload, index, "ArenaStateSnapshot")?,
             x: read_i16(payload, index, "ArenaStateSnapshot")?,
             y: read_i16(payload, index, "ArenaStateSnapshot")?,
-            aim_x: read_i16(payload, index, "ArenaStateSnapshot")?,
-            aim_y: read_i16(payload, index, "ArenaStateSnapshot")?,
-            hit_points: read_u16(payload, index, "ArenaStateSnapshot")?,
-            max_hit_points: read_u16(payload, index, "ArenaStateSnapshot")?,
-            alive: read_bool(payload, index, "ArenaStateSnapshot")?,
-            unlocked_skill_slots: read_u8(payload, index, "ArenaStateSnapshot")?,
+            radius: read_u16(payload, index, "ArenaStateSnapshot")?,
         });
     }
 
@@ -966,6 +1042,7 @@ fn decode_arena_state_snapshot(
             height,
             obstacles,
             players,
+            projectiles,
         },
     })
 }

@@ -176,6 +176,20 @@ func _assert_arena_state_updates_local_combat_slots_and_effects() -> bool:
 					"max_hit_points": 100,
 					"alive": true,
 					"unlocked_skill_slots": 3,
+					"primary_cooldown_remaining_ms": 150,
+					"primary_cooldown_total_ms": 600,
+					"slot_cooldown_remaining_ms": [0, 250, 0, 0, 0],
+					"slot_cooldown_total_ms": [0, 900, 0, 0, 0],
+				},
+			],
+			"projectiles": [
+				{
+					"owner": 11,
+					"slot": 1,
+					"kind": "SkillShot",
+					"x": -520,
+					"y": 220,
+					"radius": 28,
 				},
 			],
 		},
@@ -186,8 +200,17 @@ func _assert_arena_state_updates_local_combat_slots_and_effects() -> bool:
 		return _fail("unlocked combat slots should be usable")
 	if state.can_use_combat_slot(4):
 		return _fail("locked combat slots should stay unavailable")
+	if state.can_use_primary_attack():
+		return _fail("primary attack should be unavailable while its cooldown is active")
 	if int(state.local_arena_player().get("x", 0)) != -640:
 		return _fail("arena snapshots should update the local player's position")
+	if state.arena_projectiles_list().size() != 1:
+		return _fail("arena snapshots should retain projectile state")
+	var cooldown_text := state.cooldown_summary_text()
+	if not cooldown_text.contains("Melee"):
+		return _fail("cooldown summary should include the primary attack label")
+	if cooldown_text.contains("Melee ready"):
+		return _fail("cooldown summary should show the primary cooldown")
 
 	state.apply_server_event({
 		"type": "ArenaEffectBatch",
