@@ -56,6 +56,8 @@ jobs:
         run: ./scripts/quality.ps1 hack
 
       - name: Tests
+        env:
+          RARENA_NEXTEST_JSON_PATH: target/reports/tests/nextest.jsonl
         run: ./scripts/quality.ps1 test
 
       - name: Doc tests
@@ -112,6 +114,32 @@ jobs:
       - name: Report summary
         if: always()
         run: |
+          $testSummary = $null
+          $testSummaryPath = "target/reports/tests/nextest.jsonl"
+          if (Test-Path $testSummaryPath) {
+            $suiteEvents = @(
+              Get-Content -Path $testSummaryPath |
+                Where-Object { $_ -like '{"type":"suite"*' } |
+                ForEach-Object { $_ | ConvertFrom-Json }
+            )
+            $completedSuites = @($suiteEvents | Where-Object { $_.event -ne "started" })
+            if ($completedSuites.Count -gt 0) {
+              $testSummary = [pscustomobject]@{
+                Tests = [int](($completedSuites | Measure-Object -Property passed -Sum).Sum + ($completedSuites | Measure-Object -Property failed -Sum).Sum + ($completedSuites | Measure-Object -Property ignored -Sum).Sum)
+                Passed = [int](($completedSuites | Measure-Object -Property passed -Sum).Sum)
+                Failures = [int](($completedSuites | Measure-Object -Property failed -Sum).Sum)
+                Skipped = [int](($completedSuites | Measure-Object -Property ignored -Sum).Sum)
+                TimeSeconds = [double](($completedSuites | Measure-Object -Property exec_time -Sum).Sum)
+              }
+            }
+          }
+
+          $complexitySummary = $null
+          $complexitySummaryPath = "target/reports/complexity/summary.json"
+          if (Test-Path $complexitySummaryPath) {
+            $complexitySummary = Get-Content -Path $complexitySummaryPath -Raw | ConvertFrom-Json
+          }
+
           $summaryLines = @(
             "## Server reports",
             "",
@@ -131,6 +159,41 @@ jobs:
             "Coverage file inside artifact: `server/target/reports/coverage/output.html`",
             "Complexity file inside artifact: `server/target/reports/complexity/output.html`"
           )
+
+          if ($null -ne $testSummary) {
+            $summaryLines += @(
+              "",
+              "## Rust test summary",
+              "",
+              "- Tests: $($testSummary.Tests)",
+              "- Passed: $($testSummary.Passed)",
+              "- Failures: $($testSummary.Failures)",
+              "- Skipped: $($testSummary.Skipped)",
+              "- Duration: $([math]::Round([double]$testSummary.TimeSeconds, 2))s",
+              "- Structured nextest log inside artifact: `server/target/reports/tests/nextest.jsonl`"
+            )
+          }
+
+          if ($null -ne $complexitySummary) {
+            $worstFunctionLine = if ($null -ne $complexitySummary.worst.function) {
+              "- Worst function: $($complexitySummary.worst.function.file) :: $($complexitySummary.worst.function.name) [CC $($complexitySummary.worst.function.cyclomatic), $($complexitySummary.worst.function.cyclomatic_grade)]"
+            }
+            else {
+              "- Worst function: n/a"
+            }
+            $summaryLines += @(
+              "",
+              "## Complexity summary",
+              "",
+              "- Score: $($complexitySummary.score.value)/100 ($($complexitySummary.score.grade))",
+              "- Runtime files: $($complexitySummary.runtime.file_count)",
+              "- Runtime functions: $($complexitySummary.runtime.function_count)",
+              "- Runtime files without E/F hotspots: $($complexitySummary.runtime.files_without_ef_hotspots_percent)%",
+              $worstFunctionLine,
+              "- Summary JSON inside artifact: `server/target/reports/complexity/summary.json`"
+            )
+          }
+
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value $summaryLines -Encoding utf8
 
   deploy-pages:

@@ -1153,6 +1153,7 @@ function Invoke-ComplexityReport {
     $dataRoot = Join-Path $complexityRoot "data"
     $reportPath = Join-Path $complexityRoot "index.html"
     $outputPath = Join-Path $complexityRoot "output.html"
+    $summaryPath = Join-Path $complexityRoot "summary.json"
 
     if (-not (Test-ToolAvailable -CommandName "rust-code-analysis-cli")) {
         $notes.Add("Complexity report was skipped because rust-code-analysis-cli is not installed.")
@@ -1462,6 +1463,73 @@ $(($noteItems -join "`n"))
 
         Write-ReportHtml -Path $reportPath -Title "Complexity Report" -Body $body
         Write-ReportHtml -Path $outputPath -Title "Complexity Report" -Body $body
+
+        $summaryPayload = [pscustomobject]@{
+            commit = Get-GitValue -CommandArgs @("rev-parse", "--short", "HEAD") -Fallback "unknown"
+            score = [pscustomobject]@{
+                value = [math]::Round([double]$scoreSummary.Score, 2)
+                grade = $scoreSummary.Grade
+                formula = $scoreSummary.Formula
+                breakdown = @($scoreSummary.Breakdown)
+            }
+            runtime = [pscustomobject]@{
+                file_count = $scoredFileMetrics.Count
+                supplemental_file_count = $supplementalFileMetrics.Count
+                function_count = $scoredFunctionMetrics.Count
+                files_without_ef_hotspots_percent = [math]::Round([double]$manageableRuntimePercent, 2)
+            }
+            worst = [pscustomobject]@{
+                function = if ($null -ne $worstFunction) {
+                    [pscustomobject]@{
+                        file = $worstFunction.FilePath
+                        name = $worstFunction.Name
+                        cyclomatic = $worstFunction.Cyclomatic
+                        cyclomatic_grade = $worstFunction.CyclomaticGrade
+                        cognitive = $worstFunction.Cognitive
+                        maintainability_index = $worstFunction.Mi
+                        maintainability_grade = $worstFunction.MiGrade
+                        start_line = $worstFunction.StartLine
+                        end_line = $worstFunction.EndLine
+                    }
+                }
+                else {
+                    $null
+                }
+                file = if ($null -ne $worstFile) {
+                    [pscustomobject]@{
+                        path = $worstFile.DisplayPath
+                        average_function_cyclomatic = $worstFile.AverageFunctionCyclomatic
+                        average_function_grade = $worstFile.AverageFunctionGrade
+                        worst_function_cyclomatic = $worstFile.WorstFunctionCyclomatic
+                        worst_function_grade = $worstFile.WorstFunctionGrade
+                        maintainability_index = $worstFile.Mi
+                        maintainability_grade = $worstFile.MiGrade
+                    }
+                }
+                else {
+                    $null
+                }
+            }
+            hotspots = @(
+                $scoredFunctionMetrics |
+                    Select-Object -First 10 |
+                    ForEach-Object {
+                        [pscustomobject]@{
+                            file = $_.FilePath
+                            name = $_.Name
+                            cyclomatic = $_.Cyclomatic
+                            cyclomatic_grade = $_.CyclomaticGrade
+                            cognitive = $_.Cognitive
+                            maintainability_index = $_.Mi
+                            maintainability_grade = $_.MiGrade
+                            start_line = $_.StartLine
+                            end_line = $_.EndLine
+                        }
+                    }
+            )
+            notes = @($notes | Sort-Object -Unique)
+        }
+        $summaryPayload | ConvertTo-Json -Depth 8 | Set-Content -Path $summaryPath -Encoding UTF8
 
         return [pscustomobject]@{
             Name = "Complexity"

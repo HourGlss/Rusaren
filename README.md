@@ -261,6 +261,8 @@ The documentation artifacts live at:
 - `server/target/reports/docs/summary.json`
 - `server/target/reports/docs/site/index.html`
 - `server/target/reports/rustdoc/index.html`
+- `server/target/reports/tests/nextest.jsonl`
+- `server/target/reports/complexity/summary.json`
 
 On pushes to `main`, the same `server/target/reports/` tree is also published to GitHub Pages.
 The intended Pages landing URL for this repo is:
@@ -270,6 +272,10 @@ Useful Pages paths:
 - `https://hourglss.github.io/Rusaren/` for the report index
 - `https://hourglss.github.io/Rusaren/docs/site/` for the mdBook docs site
 - `https://hourglss.github.io/Rusaren/rustdoc/` for the Rust API docs
+
+The GitHub Actions job summary for `server-quality` now includes:
+- total Rust tests, passed tests, skipped tests, and total test duration from the structured `nextest` log
+- the current complexity score and the top worst-function hotspot from `server/target/reports/complexity/summary.json`
 
 If that URL does not come up after a successful `server-quality` run, the remaining GitHub-side step is:
 - repo `Settings -> Pages -> Source: GitHub Actions`

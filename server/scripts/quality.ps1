@@ -121,11 +121,37 @@ function Invoke-QualityTask {
         "lint" { rustup run stable cargo xlint }
         "hack" { rustup run stable cargo hack check --workspace --all-targets --each-feature }
         "test" {
+            $nextestJsonPath = $env:RARENA_NEXTEST_JSON_PATH
             if ($hasNextest) {
-                rustup run stable cargo nextest run --workspace --all-features
+                $nextestArgs = @("nextest", "run", "--workspace", "--all-features")
+                if (-not [string]::IsNullOrWhiteSpace($nextestJsonPath)) {
+                    $nextestJsonDirectory = Split-Path -Parent $nextestJsonPath
+                    if (-not [string]::IsNullOrWhiteSpace($nextestJsonDirectory)) {
+                        New-Item -ItemType Directory -Force -Path $nextestJsonDirectory | Out-Null
+                    }
+                    $nextestArgs += @("--message-format", "libtest-json-plus", "--status-level", "none", "--final-status-level", "none", "--cargo-quiet")
+                    $previousExperimentalValue = $env:NEXTEST_EXPERIMENTAL_LIBTEST_JSON
+                    try {
+                        $env:NEXTEST_EXPERIMENTAL_LIBTEST_JSON = "1"
+                        & rustup run stable cargo @nextestArgs 2>&1 | Tee-Object -FilePath $nextestJsonPath
+                    }
+                    finally {
+                        if ($null -eq $previousExperimentalValue) {
+                            Remove-Item Env:NEXTEST_EXPERIMENTAL_LIBTEST_JSON -ErrorAction SilentlyContinue
+                        }
+                        else {
+                            $env:NEXTEST_EXPERIMENTAL_LIBTEST_JSON = $previousExperimentalValue
+                        }
+                    }
+                    break
+                }
+                rustup run stable cargo @nextestArgs
             }
             else {
                 Write-Host "cargo-nextest is not installed; falling back to cargo test."
+                if (-not [string]::IsNullOrWhiteSpace($nextestJsonPath)) {
+                    Write-Host "Structured nextest export is unavailable without cargo-nextest."
+                }
                 rustup run stable cargo test --workspace --all-features
             }
         }
