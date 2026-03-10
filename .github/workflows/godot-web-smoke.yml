@@ -106,7 +106,7 @@ jobs:
             if ($index.StatusCode -ne 200) {
               throw "expected GET / to succeed but received $($index.StatusCode)"
             }
-            if ($index.Content -notmatch "Rusaren Control Shell") {
+            if ($index.Content -notmatch "Rusaren Shell") {
               throw "served index.html did not contain the expected shell marker."
             }
           }

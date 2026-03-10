@@ -20,7 +20,7 @@ if (Test-Path $cargoBin) {
 }
 
 $runtime = [System.Runtime.InteropServices.RuntimeInformation]
-$isWindows = $runtime::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Windows)
+$isWindowsHost = $runtime::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Windows)
 
 function Get-AllFuzzTargets {
     if (-not (Test-Path "fuzz/Cargo.toml")) {
@@ -79,7 +79,7 @@ function Copy-FuzzSeedCorpus {
 function Invoke-LiveFuzz {
     param([string[]]$Targets)
 
-    if ($isWindows) {
+    if ($isWindowsHost) {
         throw "Live cargo-fuzz execution is not supported on this native Windows/MSVC setup. Use Linux CI, Docker, or WSL for cargo fuzz run."
     }
 
@@ -154,7 +154,7 @@ function Invoke-QualityTask {
         }
         "fuzz" {
             $targets = Get-NetworkFuzzTargets
-            if ($isWindows) {
+            if ($isWindowsHost) {
                 Write-Host "Live cargo-fuzz execution is not available on native Windows/MSVC in this repo; building ingress fuzz targets instead."
                 Invoke-FuzzBuild -Targets $targets
             }

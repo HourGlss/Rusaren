@@ -112,28 +112,29 @@ jobs:
       - name: Report summary
         if: always()
         run: |
-          @"
-          ## Server reports
-
-          Commit: `${{ github.sha }}`
-          Artifact: `server-reports-${{ github.sha }}`
-          Main file inside artifact: `server/target/reports/output.html`
-          Fuzz coverage file inside artifact: `server/target/reports/fuzz/output.html`
-          Discovered fuzz corpus directory inside artifact: `server/target/fuzz-generated-corpus`
-          Fuzz findings directory inside artifact: `server/fuzz/artifacts`
-          Docs file inside artifact: `server/target/reports/docs/index.html`
-          Docs summary file inside artifact: `server/target/reports/docs/summary.json`
-          Docs site file inside artifact: `server/target/reports/docs/site/index.html`
-          Rust API docs file inside artifact: `server/target/reports/rustdoc/index.html`
-          Call graph file inside artifact: `server/target/reports/callgraph/output.html`
-          Backend overview graph inside artifact: `server/target/reports/callgraph/backend_core.overview.simple.svg`
-          Detailed backend graph inside artifact: `server/target/reports/callgraph/backend_core.simple.svg`
-          Coverage file inside artifact: `server/target/reports/coverage/output.html`
-          Complexity file inside artifact: `server/target/reports/complexity/output.html`
-          "@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          $summaryLines = @(
+            "## Server reports",
+            "",
+            "Commit: `${{ github.sha }}`",
+            "Artifact: `server-reports-${{ github.sha }}`",
+            "Main file inside artifact: `server/target/reports/output.html`",
+            "Fuzz coverage file inside artifact: `server/target/reports/fuzz/output.html`",
+            "Discovered fuzz corpus directory inside artifact: `server/target/fuzz-generated-corpus`",
+            "Fuzz findings directory inside artifact: `server/fuzz/artifacts`",
+            "Docs file inside artifact: `server/target/reports/docs/index.html`",
+            "Docs summary file inside artifact: `server/target/reports/docs/summary.json`",
+            "Docs site file inside artifact: `server/target/reports/docs/site/index.html`",
+            "Rust API docs file inside artifact: `server/target/reports/rustdoc/index.html`",
+            "Call graph file inside artifact: `server/target/reports/callgraph/output.html`",
+            "Backend overview graph inside artifact: `server/target/reports/callgraph/backend_core.overview.simple.svg`",
+            "Detailed backend graph inside artifact: `server/target/reports/callgraph/backend_core.simple.svg`",
+            "Coverage file inside artifact: `server/target/reports/coverage/output.html`",
+            "Complexity file inside artifact: `server/target/reports/complexity/output.html`"
+          )
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value $summaryLines -Encoding utf8
 
   deploy-pages:
-    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: quality
     runs-on: ubuntu-latest
     permissions:
