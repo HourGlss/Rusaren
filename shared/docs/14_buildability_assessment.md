@@ -12,7 +12,7 @@ Buildable today:
 - the backend app layer, lobby flow, match flow, persistent `W-L-NC`, fake-client tests, live websocket integration tests, and Rust-side WebRTC integration tests
 - the thin Godot shell under `client/godot`, including manual placeholder combat input over the live browser WebRTC transport
 - authoritative full and delta gameplay snapshots that carry match phase, hp, mana, cooldowns, active statuses, projectile state, per-player visible/explored fog masks, and only the terrain knowledge the viewing player has earned
-- runtime content loading from `server/content/skills/*.yaml` and `server/content/maps/prototype_arena.txt`
+- runtime content loading from `server/content/skills/*.yaml`, `server/content/maps/prototype_arena.txt`, and `server/content/mechanics/registry.yaml`
 - runtime validation that rejects malformed YAML skill shapes, duplicate authored ids, and malformed ASCII maps before boot
 - backend gameplay tests that directly exercise every currently shipped melee and authored slot skill for hit/miss/range/cooldown/status behavior
 - hot-path Criterion benchmark targets for simulation ticks and snapshot packet codec work
@@ -31,7 +31,9 @@ Not buildable yet:
 Current class-growth note:
 - authored skills are already sourced from runtime YAML files
 - the client skill picker already builds from backend-authored catalog data instead of local hardcoded button names
-- the main remaining growth bottleneck is the fixed `SkillTree` enum and wire ids in the domain/protocol layer
+- class names now flow through the protocol and Godot shell from backend-authored catalog data instead of a fixed four-class wire enum
+- implemented and planned mechanic families are now tracked in `server/content/mechanics/registry.yaml`
+- the main remaining growth bottleneck is only backend runtime execution when a class introduces a genuinely new mechanic family
 
 ## What is specified well enough to start coding
 

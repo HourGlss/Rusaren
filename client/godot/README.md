@@ -21,6 +21,7 @@ What it does:
 - puts skill picking ahead of the arena view during the round-opening skill-pick window so the legal choices stay visible without scrolling
 - can be hosted behind the documented Caddy reverse-proxy path from `deploy/`
 - consumes a runtime arena and skill set authored under `server/content/`
+- consumes the backend-authored mechanic registry under `server/content/mechanics/registry.yaml` for future class-growth planning
 
 What it does not do yet:
 - polished movement/combat rendering
@@ -51,7 +52,7 @@ Run flow:
    Cooldowns, mana, hp, and active statuses shown in the HUD are driven by authoritative server snapshots.
 
 Fast content iteration:
-1. edit `server/content/skills/*.yaml` or `server/content/maps/prototype_arena.txt`
+1. edit `server/content/skills/*.yaml`, `server/content/maps/prototype_arena.txt`, or `server/content/mechanics/registry.yaml`
 2. rerun `server/scripts/play-local.ps1` or restart `dedicated_server`
 3. reload the browser shell
 

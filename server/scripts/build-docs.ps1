@@ -227,6 +227,21 @@ foreach ($relativePath in $orderedSources) {
 
 Copy-Item -Path (Join-Path $bookSourceRoot "00_index.md") -Destination (Join-Path $bookSourceRoot "index.md") -Force
 
+$classSummaryEntries = Get-ChildItem -Path (Join-Path $bookSourceRoot "classes") -Filter *.md |
+    Sort-Object Name |
+    ForEach-Object {
+        $label = [System.Globalization.CultureInfo]::InvariantCulture.TextInfo.ToTitleCase(
+            [System.IO.Path]::GetFileNameWithoutExtension($_.Name).Replace("_", " ")
+        )
+        "  - [{0}](classes/{1})" -f $label, $_.Name
+    }
+
+$classSummaryBlock = if ($classSummaryEntries.Count -gt 0) {
+    ($classSummaryEntries -join "`n")
+} else {
+    "  - [No Class Docs Yet](11_classes.md)"
+}
+
 $summaryContent = @"
 # Summary
 
@@ -243,10 +258,7 @@ $summaryContent = @"
 - [Maps](10_maps.md)
   - [Map Template](maps/_template.md)
 - [Classes](11_classes.md)
-  - [Warrior](classes/warrior.md)
-  - [Rogue](classes/rogue.md)
-  - [Mage](classes/mage.md)
-  - [Cleric](classes/cleric.md)
+$classSummaryBlock
 - [Rust Tooling](12_rust_tooling.md)
 - [Verus Strategy](13_verus_strategy.md)
 - [Buildability Assessment](14_buildability_assessment.md)

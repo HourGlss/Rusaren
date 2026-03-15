@@ -27,6 +27,7 @@ fn assignment(raw_id: u32, raw_name: &str, team: TeamSide) -> TeamAssignment {
     }
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn seed(
     content: &GameContent,
     raw_id: u32,
@@ -40,14 +41,14 @@ fn seed(
         hit_points: 100,
         melee: content
             .skills()
-            .melee_for(primary_tree)
+            .melee_for(&primary_tree)
             .unwrap_or_else(|| panic!("bench melee should exist for {primary_tree}"))
             .clone(),
         skills: [
             Some(
                 content
                     .skills()
-                    .resolve(slot_one_choice)
+                    .resolve(&slot_one_choice)
                     .unwrap_or_else(|| panic!("bench slot one skill should exist"))
                     .clone(),
             ),

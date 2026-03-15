@@ -10,28 +10,6 @@ use std::path::{Path, PathBuf};
 use game_domain::{SkillChoice, SkillTree};
 use serde::Deserialize;
 
-const BUNDLED_SKILL_FILES: [(&str, &str); 4] = [
-    (
-        "skills/warrior.yaml",
-        include_str!("../../../content/skills/warrior.yaml"),
-    ),
-    (
-        "skills/mage.yaml",
-        include_str!("../../../content/skills/mage.yaml"),
-    ),
-    (
-        "skills/rogue.yaml",
-        include_str!("../../../content/skills/rogue.yaml"),
-    ),
-    (
-        "skills/cleric.yaml",
-        include_str!("../../../content/skills/cleric.yaml"),
-    ),
-];
-const BUNDLED_MAP_FILE: (&str, &str) = (
-    "maps/prototype_arena.txt",
-    include_str!("../../../content/maps/prototype_arena.txt"),
-);
 const DEFAULT_TILE_UNITS: u16 = 50;
 const MAX_MAP_DIMENSION_TILES: usize = 128;
 const MAX_SKILL_TEXT_LEN: usize = 120;
@@ -54,6 +32,12 @@ pub enum SkillEffectKind {
 pub enum CombatValueKind {
     Damage,
     Heal,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MechanicCategory {
+    Behavior,
+    Status,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -184,19 +168,19 @@ pub struct ClassDefinition {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SkillCatalog {
-    by_choice: BTreeMap<(usize, u8), SkillDefinition>,
-    melee_by_tree: BTreeMap<usize, MeleeDefinition>,
+    by_choice: BTreeMap<(SkillTree, u8), SkillDefinition>,
+    melee_by_tree: BTreeMap<SkillTree, MeleeDefinition>,
 }
 
 impl SkillCatalog {
     #[must_use]
-    pub fn resolve(&self, choice: SkillChoice) -> Option<&SkillDefinition> {
-        self.by_choice.get(&(choice.tree.as_index(), choice.tier))
+    pub fn resolve(&self, choice: &SkillChoice) -> Option<&SkillDefinition> {
+        self.by_choice.get(&(choice.tree.clone(), choice.tier))
     }
 
     #[must_use]
-    pub fn melee_for(&self, tree: SkillTree) -> Option<&MeleeDefinition> {
-        self.melee_by_tree.get(&tree.as_index())
+    pub fn melee_for(&self, tree: &SkillTree) -> Option<&MeleeDefinition> {
+        self.melee_by_tree.get(tree)
     }
 
     pub fn all(&self) -> impl Iterator<Item = &SkillDefinition> {
@@ -233,49 +217,36 @@ pub struct ArenaMapDefinition {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MechanicDefinition {
+    pub id: String,
+    pub label: String,
+    pub category: MechanicCategory,
+    pub implemented: bool,
+    pub inspiration: String,
+    pub notes: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MechanicCatalog {
+    pub behaviors: Vec<MechanicDefinition>,
+    pub statuses: Vec<MechanicDefinition>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GameContent {
     skills: SkillCatalog,
     map: ArenaMapDefinition,
+    mechanics: MechanicCatalog,
 }
 
 impl GameContent {
     pub fn bundled() -> Result<Self, ContentError> {
-        let skills = load_skill_catalog_from_pairs(&BUNDLED_SKILL_FILES)?;
-        let map = parse_ascii_map(BUNDLED_MAP_FILE.0, BUNDLED_MAP_FILE.1)?;
-        Ok(Self { skills, map })
+        Self::load_from_root(workspace_content_root())
     }
 
     pub fn load_from_root(root: impl AsRef<Path>) -> Result<Self, ContentError> {
         let root = root.as_ref();
-        let skills_dir = root.join("skills");
-        let mut yaml_paths = fs::read_dir(&skills_dir)
-            .map_err(|error| ContentError::Io {
-                path: skills_dir.clone(),
-                message: error.to_string(),
-            })?
-            .filter_map(|entry| entry.ok().map(|value| value.path()))
-            .filter(|path| {
-                path.extension()
-                    .and_then(|extension| extension.to_str())
-                    .is_some_and(|extension| extension.eq_ignore_ascii_case("yaml"))
-            })
-            .collect::<Vec<_>>();
-        yaml_paths.sort();
-        if yaml_paths.is_empty() {
-            return Err(ContentError::Validation {
-                source: skills_dir.display().to_string(),
-                message: String::from("no skill YAML files were found"),
-            });
-        }
-
-        let mut pairs = Vec::with_capacity(yaml_paths.len());
-        for path in yaml_paths {
-            let yaml = fs::read_to_string(&path).map_err(|error| ContentError::Io {
-                path: path.clone(),
-                message: error.to_string(),
-            })?;
-            pairs.push((path.display().to_string(), yaml));
-        }
+        let pairs = read_skill_file_pairs(root)?;
         let owned_pairs = pairs
             .iter()
             .map(|(source, yaml)| (source.as_str(), yaml.as_str()))
@@ -288,8 +259,20 @@ impl GameContent {
             message: error.to_string(),
         })?;
         let map = parse_ascii_map(&map_path.display().to_string(), &map_text)?;
+        let mechanics_path = root.join("mechanics").join("registry.yaml");
+        let mechanics_yaml =
+            fs::read_to_string(&mechanics_path).map_err(|error| ContentError::Io {
+                path: mechanics_path.clone(),
+                message: error.to_string(),
+            })?;
+        let mechanics =
+            parse_mechanics_yaml(&mechanics_path.display().to_string(), &mechanics_yaml)?;
 
-        Ok(Self { skills, map })
+        Ok(Self {
+            skills,
+            map,
+            mechanics,
+        })
     }
 
     #[must_use]
@@ -301,6 +284,51 @@ impl GameContent {
     pub const fn map(&self) -> &ArenaMapDefinition {
         &self.map
     }
+
+    #[must_use]
+    pub const fn mechanics(&self) -> &MechanicCatalog {
+        &self.mechanics
+    }
+}
+
+fn workspace_content_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("content")
+}
+
+fn read_skill_file_pairs(root: &Path) -> Result<Vec<(String, String)>, ContentError> {
+    let skills_dir = root.join("skills");
+    let mut yaml_paths = fs::read_dir(&skills_dir)
+        .map_err(|error| ContentError::Io {
+            path: skills_dir.clone(),
+            message: error.to_string(),
+        })?
+        .filter_map(|entry| entry.ok().map(|value| value.path()))
+        .filter(|path| {
+            path.extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("yaml"))
+        })
+        .collect::<Vec<_>>();
+    yaml_paths.sort();
+    if yaml_paths.is_empty() {
+        return Err(ContentError::Validation {
+            source: skills_dir.display().to_string(),
+            message: String::from("no skill YAML files were found"),
+        });
+    }
+
+    let mut pairs = Vec::with_capacity(yaml_paths.len());
+    for path in yaml_paths {
+        let yaml = fs::read_to_string(&path).map_err(|error| ContentError::Io {
+            path: path.clone(),
+            message: error.to_string(),
+        })?;
+        pairs.push((path.display().to_string(), yaml));
+    }
+    Ok(pairs)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -359,10 +387,29 @@ pub fn parse_skill_yaml(source: &str, yaml: &str) -> Result<ClassDefinition, Con
     validate_skill_file(source, document)
 }
 
+pub fn parse_mechanics_yaml(source: &str, yaml: &str) -> Result<MechanicCatalog, ContentError> {
+    let document =
+        serde_yaml::from_str::<MechanicsFileYaml>(yaml).map_err(|error| ContentError::Parse {
+            source: String::from(source),
+            message: error.to_string(),
+        })?;
+
+    Ok(MechanicCatalog {
+        behaviors: validate_mechanics(source, document.behaviors, MechanicCategory::Behavior)?,
+        statuses: validate_mechanics(source, document.statuses, MechanicCategory::Status)?,
+    })
+}
+
 fn load_skill_catalog_from_pairs(pairs: &[(&str, &str)]) -> Result<SkillCatalog, ContentError> {
     let mut by_choice = BTreeMap::new();
     let mut melee_by_tree = BTreeMap::new();
     let mut ids_by_owner = BTreeMap::<String, String>::new();
+    if pairs.is_empty() {
+        return Err(ContentError::Validation {
+            source: String::from("skills"),
+            message: String::from("at least one class skill file is required"),
+        });
+    }
     for (source, yaml) in pairs {
         let definition = parse_skill_yaml(source, yaml)?;
         if let Some(existing_owner) = ids_by_owner.insert(
@@ -378,7 +425,7 @@ fn load_skill_catalog_from_pairs(pairs: &[(&str, &str)]) -> Result<SkillCatalog,
             });
         }
         if melee_by_tree
-            .insert(definition.tree.as_index(), definition.melee.clone())
+            .insert(definition.tree.clone(), definition.melee.clone())
             .is_some()
         {
             return Err(ContentError::Validation {
@@ -400,7 +447,7 @@ fn load_skill_catalog_from_pairs(pairs: &[(&str, &str)]) -> Result<SkillCatalog,
                     ),
                 });
             }
-            let key = (skill.tree.as_index(), skill.tier);
+            let key = (skill.tree.clone(), skill.tier);
             if let Some(existing) = by_choice.insert(key, skill.clone()) {
                 return Err(ContentError::Validation {
                     source: String::from(*source),
@@ -413,28 +460,47 @@ fn load_skill_catalog_from_pairs(pairs: &[(&str, &str)]) -> Result<SkillCatalog,
         }
     }
 
-    for tree in SkillTree::ALL {
-        if !melee_by_tree.contains_key(&tree.as_index()) {
-            return Err(ContentError::Validation {
-                source: String::from("skills"),
-                message: format!("missing melee definition for {tree}"),
-            });
-        }
-
-        for tier in REQUIRED_TIERS {
-            if !by_choice.contains_key(&(tree.as_index(), tier)) {
-                return Err(ContentError::Validation {
-                    source: String::from("skills"),
-                    message: format!("missing definition for {tree} tier {tier}"),
-                });
-            }
-        }
-    }
-
     Ok(SkillCatalog {
         by_choice,
         melee_by_tree,
     })
+}
+
+fn validate_mechanics(
+    source: &str,
+    yaml_mechanics: Vec<MechanicYaml>,
+    category: MechanicCategory,
+) -> Result<Vec<MechanicDefinition>, ContentError> {
+    if yaml_mechanics.is_empty() {
+        return Err(ContentError::Validation {
+            source: String::from(source),
+            message: format!("{category:?} registry must contain at least one entry"),
+        });
+    }
+
+    let mut seen_ids = BTreeSet::new();
+    let mut mechanics = Vec::with_capacity(yaml_mechanics.len());
+    for yaml in yaml_mechanics {
+        validate_skill_text(source, "mechanic.id", &yaml.id)?;
+        validate_skill_text(source, "mechanic.label", &yaml.label)?;
+        validate_skill_text(source, "mechanic.inspiration", &yaml.inspiration)?;
+        validate_skill_text(source, "mechanic.notes", &yaml.notes)?;
+        if !seen_ids.insert(yaml.id.clone()) {
+            return Err(ContentError::Validation {
+                source: String::from(source),
+                message: format!("duplicate mechanic id '{}'", yaml.id),
+            });
+        }
+        mechanics.push(MechanicDefinition {
+            id: yaml.id,
+            label: yaml.label,
+            category,
+            implemented: yaml.implemented,
+            inspiration: yaml.inspiration,
+            notes: yaml.notes,
+        });
+    }
+    Ok(mechanics)
 }
 
 fn validate_skill_file(
@@ -442,7 +508,7 @@ fn validate_skill_file(
     document: SkillFileYaml,
 ) -> Result<ClassDefinition, ContentError> {
     let tree = parse_skill_tree(source, &document.tree)?;
-    let melee = parse_melee_definition(source, tree, document.melee)?;
+    let melee = parse_melee_definition(source, tree.clone(), document.melee)?;
     let mut seen_tiers = BTreeSet::new();
     let mut skills = Vec::with_capacity(document.skills.len());
 
@@ -467,7 +533,7 @@ fn validate_skill_file(
         validate_skill_text(source, "description", &yaml_skill.description)?;
         let behavior = parse_skill_behavior(source, &yaml_skill.behavior)?;
         skills.push(SkillDefinition {
-            tree,
+            tree: tree.clone(),
             tier: yaml_skill.tier,
             id: yaml_skill.id,
             name: yaml_skill.name,
@@ -1079,6 +1145,23 @@ struct SkillFileYaml {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct MechanicsFileYaml {
+    behaviors: Vec<MechanicYaml>,
+    statuses: Vec<MechanicYaml>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MechanicYaml {
+    id: String,
+    label: String,
+    implemented: bool,
+    inspiration: String,
+    notes: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct MeleeYaml {
     id: String,
     name: String,
@@ -1147,15 +1230,20 @@ mod tests {
 
         let mage_one = content
             .skills()
-            .resolve(SkillChoice::new(SkillTree::Mage, 1).expect("choice"))
+            .resolve(&SkillChoice::new(SkillTree::Mage, 1).expect("choice"))
             .expect("mage tier one should exist");
         assert!(matches!(
             mage_one.behavior,
             SkillBehavior::Projectile { .. }
         ));
-        assert!(content.skills().melee_for(SkillTree::Warrior).is_some());
+        assert!(content.skills().melee_for(&SkillTree::Warrior).is_some());
         assert_eq!(content.map().map_id, "prototype_arena");
         assert!(!content.map().obstacles.is_empty());
+        assert!(content
+            .mechanics()
+            .behaviors
+            .iter()
+            .any(|mechanic| mechanic.id == "summon" && !mechanic.implemented));
         assert_eq!(content.map().team_a_anchor.0, -650);
         assert_eq!(content.map().team_b_anchor.0, 650);
     }
@@ -1458,15 +1546,65 @@ skills:
     }
 
     #[test]
+    fn parse_mechanics_yaml_accepts_registry_entries_and_rejects_duplicates() {
+        let yaml = r"
+behaviors:
+  - id: summon
+    label: Summon
+    implemented: false
+    inspiration: WoW pets
+    notes: Summons a pet
+statuses:
+  - id: shield
+    label: Shield
+    implemented: false
+    inspiration: Priest bubbles
+    notes: Absorbs damage
+";
+        let mechanics = parse_mechanics_yaml("mechanics/registry.yaml", yaml)
+            .expect("mechanics yaml should parse");
+        assert_eq!(mechanics.behaviors[0].category, MechanicCategory::Behavior);
+        assert_eq!(mechanics.statuses[0].category, MechanicCategory::Status);
+
+        let duplicate = r"
+behaviors:
+  - id: summon
+    label: Summon
+    implemented: false
+    inspiration: WoW pets
+    notes: Summons a pet
+  - id: summon
+    label: Duplicate
+    implemented: false
+    inspiration: League summons
+    notes: duplicate
+statuses:
+  - id: shield
+    label: Shield
+    implemented: false
+    inspiration: Priest bubbles
+    notes: Absorbs damage
+";
+        assert!(matches!(
+            parse_mechanics_yaml("mechanics/registry.yaml", duplicate),
+            Err(ContentError::Validation { .. })
+        ));
+    }
+
+    #[test]
     fn load_skill_catalog_rejects_duplicate_authored_ids_across_files() {
-        let duplicate_mage = BUNDLED_SKILL_FILES[1]
+        let bundled_skill_files = workspace_skill_pairs();
+        let duplicate_mage = bundled_skill_files
+            .iter()
+            .find(|(source, _)| source.ends_with("mage.yaml"))
+            .expect("mage yaml should exist")
             .1
             .replace("mage_arc_bolt", "warrior_sweeping_slash");
         let pairs = vec![
-            BUNDLED_SKILL_FILES[0],
+            to_pair(&bundled_skill_files, "warrior.yaml"),
             ("skills/mage.yaml", duplicate_mage.as_str()),
-            BUNDLED_SKILL_FILES[2],
-            BUNDLED_SKILL_FILES[3],
+            to_pair(&bundled_skill_files, "rogue.yaml"),
+            to_pair(&bundled_skill_files, "cleric.yaml"),
         ];
         assert!(matches!(
             load_skill_catalog_from_pairs(&pairs),
@@ -1477,28 +1615,175 @@ skills:
     #[test]
     fn load_from_root_fails_cleanly_for_invalid_yaml_and_map_content() {
         let root = temp_content_root("invalid-content");
-        let skills_dir = root.join("skills");
-        let maps_dir = root.join("maps");
-        fs::create_dir_all(&skills_dir).expect("skills dir");
-        fs::create_dir_all(&maps_dir).expect("maps dir");
+        let (skills_dir, maps_dir, mechanics_dir) = create_content_root_dirs(&root);
 
-        for (source, yaml) in BUNDLED_SKILL_FILES {
+        for (source, yaml) in workspace_skill_pairs() {
             let path = skills_dir.join(
-                Path::new(source)
+                Path::new(&source)
                     .file_name()
                     .expect("bundled skill file should have a file name"),
             );
             let text = if source.ends_with("rogue.yaml") {
                 yaml.replacen("kind: projectile", "kind: dash", 1)
             } else {
-                String::from(yaml)
+                yaml
             };
             fs::write(path, text).expect("skill file");
         }
         fs::write(maps_dir.join("prototype_arena.txt"), "A..\n..B\n").expect("map file");
+        write_workspace_mechanics_registry(&mechanics_dir);
 
         let error = GameContent::load_from_root(&root).expect_err("invalid content should fail");
         assert!(matches!(error, ContentError::Validation { .. }));
+    }
+
+    #[test]
+    fn load_from_root_accepts_custom_class_files_without_rust_registry_changes() {
+        let root = temp_content_root("custom-class");
+        let (skills_dir, maps_dir, mechanics_dir) = create_content_root_dirs(&root);
+        write_workspace_skill_files(&skills_dir);
+        fs::write(skills_dir.join("druid.yaml"), druid_yaml()).expect("custom class file");
+        write_workspace_map_file(&maps_dir);
+        write_workspace_mechanics_registry(&mechanics_dir);
+
+        let content = GameContent::load_from_root(&root).expect("custom class content should load");
+        let druid = SkillTree::new("Druid").expect("custom tree");
+        let druid_tier_one = content
+            .skills()
+            .resolve(&SkillChoice::new(druid.clone(), 1).expect("choice"))
+            .expect("druid skill should exist");
+        assert_eq!(druid_tier_one.name, "Bramble Shot");
+        assert!(content.skills().melee_for(&druid).is_some());
+    }
+
+    fn create_content_root_dirs(root: &Path) -> (PathBuf, PathBuf, PathBuf) {
+        let skills_dir = root.join("skills");
+        let maps_dir = root.join("maps");
+        let mechanics_dir = root.join("mechanics");
+        fs::create_dir_all(&skills_dir).expect("skills dir");
+        fs::create_dir_all(&maps_dir).expect("maps dir");
+        fs::create_dir_all(&mechanics_dir).expect("mechanics dir");
+        (skills_dir, maps_dir, mechanics_dir)
+    }
+
+    fn write_workspace_skill_files(skills_dir: &Path) {
+        for (source, yaml) in workspace_skill_pairs() {
+            let path = skills_dir.join(
+                Path::new(&source)
+                    .file_name()
+                    .expect("bundled skill file should have a file name"),
+            );
+            fs::write(path, yaml).expect("skill file");
+        }
+    }
+
+    fn write_workspace_map_file(maps_dir: &Path) {
+        fs::write(
+            maps_dir.join("prototype_arena.txt"),
+            fs::read_to_string(
+                workspace_content_root()
+                    .join("maps")
+                    .join("prototype_arena.txt"),
+            )
+            .expect("workspace map"),
+        )
+        .expect("map file");
+    }
+
+    fn write_workspace_mechanics_registry(mechanics_dir: &Path) {
+        fs::write(
+            mechanics_dir.join("registry.yaml"),
+            fs::read_to_string(
+                workspace_content_root()
+                    .join("mechanics")
+                    .join("registry.yaml"),
+            )
+            .expect("workspace mechanics registry"),
+        )
+        .expect("mechanics registry");
+    }
+
+    fn druid_yaml() -> &'static str {
+        r"
+tree: Druid
+melee:
+  id: druid_claw
+  name: Claw
+  description: A quick beast-form slash.
+  cooldown_ms: 500
+  range: 84
+  radius: 38
+  effect: melee_swing
+  payload:
+    kind: damage
+    amount: 11
+skills:
+  - tier: 1
+    id: druid_bramble_shot
+    name: Bramble Shot
+    description: A thorn projectile.
+    behavior:
+      kind: projectile
+      effect: skill_shot
+      cooldown_ms: 800
+      speed: 260
+      range: 1200
+      radius: 18
+      payload:
+        kind: damage
+        amount: 14
+  - tier: 2
+    id: druid_feral_step
+    name: Feral Step
+    description: A short pounce.
+    behavior:
+      kind: dash
+      effect: dash_trail
+      cooldown_ms: 1400
+      distance: 180
+  - tier: 3
+    id: druid_bloom
+    name: Bloom
+    description: A healing pulse.
+    behavior:
+      kind: nova
+      effect: nova
+      cooldown_ms: 1800
+      radius: 120
+      payload:
+        kind: heal
+        amount: 10
+  - tier: 4
+    id: druid_root_snare
+    name: Root Snare
+    description: A targeted root burst.
+    behavior:
+      kind: burst
+      effect: burst
+      cooldown_ms: 2200
+      range: 220
+      radius: 90
+      payload:
+        kind: damage
+        amount: 6
+        status:
+          kind: root
+          duration_ms: 700
+          magnitude: 0
+  - tier: 5
+    id: druid_vine_lash
+    name: Vine Lash
+    description: A line strike.
+    behavior:
+      kind: beam
+      effect: beam
+      cooldown_ms: 2600
+      range: 240
+      radius: 28
+      payload:
+        kind: damage
+        amount: 24
+"
     }
 
     fn temp_content_root(label: &str) -> PathBuf {
@@ -1511,5 +1796,17 @@ skills:
             fs::remove_dir_all(&root).expect("existing temp dir should be removable");
         }
         root
+    }
+
+    fn workspace_skill_pairs() -> Vec<(String, String)> {
+        read_skill_file_pairs(&workspace_content_root()).expect("workspace content should load")
+    }
+
+    fn to_pair<'a>(pairs: &'a [(String, String)], suffix: &str) -> (&'a str, &'a str) {
+        let (source, yaml) = pairs
+            .iter()
+            .find(|(source, _)| source.ends_with(suffix))
+            .unwrap_or_else(|| panic!("expected skill file ending with {suffix}"));
+        (source.as_str(), yaml.as_str())
     }
 }

@@ -199,7 +199,7 @@ impl MatchSession {
                     assignment,
                     loadout_progress: LoadoutProgress::new(),
                     selected_for_round: None,
-                    equipped_slots: [None; 5],
+                    equipped_slots: [const { None }; 5],
                     alive: true,
                 },
             );
@@ -242,10 +242,10 @@ impl MatchSession {
 
         player
             .loadout_progress
-            .apply(choice)
+            .apply(&choice)
             .map_err(MatchError::InvalidSkillChoice)?;
-        player.selected_for_round = Some(choice);
-        player.equipped_slots[usize::from(self.current_round.get() - 1)] = Some(choice);
+        player.selected_for_round = Some(choice.clone());
+        player.equipped_slots[usize::from(self.current_round.get() - 1)] = Some(choice.clone());
 
         let mut events = vec![MatchEvent::SkillChosen { player_id, choice }];
         if self
@@ -442,7 +442,7 @@ impl MatchSession {
 
         self.players
             .get(&player_id)
-            .and_then(|player| player.equipped_slots[usize::from(slot - 1)])
+            .and_then(|player| player.equipped_slots[usize::from(slot - 1)].clone())
     }
 
     fn phase_name(&self) -> &'static str {

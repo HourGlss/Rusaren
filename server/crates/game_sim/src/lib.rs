@@ -1843,6 +1843,7 @@ mod tests {
         SkillChoice::new(tree, tier).expect("valid choice")
     }
 
+    #[allow(clippy::needless_pass_by_value)]
     fn seed(
         content: &GameContent,
         raw_id: u32,
@@ -1856,11 +1857,11 @@ mod tests {
             hit_points: 100,
             melee: content
                 .skills()
-                .melee_for(primary_tree)
+                .melee_for(&primary_tree)
                 .expect("melee should exist")
                 .clone(),
             skills: choices.map(|value| {
-                value.and_then(|skill_choice| content.skills().resolve(skill_choice).cloned())
+                value.and_then(|skill_choice| content.skills().resolve(&skill_choice).cloned())
             }),
         }
     }
@@ -1869,6 +1870,7 @@ mod tests {
         SimulationWorld::new(seeds, content.map()).expect("world should build")
     }
 
+    #[allow(clippy::needless_pass_by_value)]
     fn seed_with_slot_one_skill(
         content: &GameContent,
         raw_id: u32,
@@ -1882,7 +1884,7 @@ mod tests {
             hit_points: 100,
             melee: content
                 .skills()
-                .melee_for(tree)
+                .melee_for(&tree)
                 .expect("melee should exist")
                 .clone(),
             skills: [Some(skill.clone()), None, None, None, None],
@@ -2716,21 +2718,28 @@ mod tests {
         for tree in classes {
             let melee = content
                 .skills()
-                .melee_for(tree)
+                .melee_for(&tree)
                 .expect("melee should exist")
                 .clone();
 
             let mut hit_world = world(
                 &content,
                 vec![
-                    seed(&content, 1, "Alice", TeamSide::TeamA, tree, [None; 5]),
+                    seed(
+                        &content,
+                        1,
+                        "Alice",
+                        TeamSide::TeamA,
+                        tree.clone(),
+                        [const { None }; 5],
+                    ),
                     seed(
                         &content,
                         2,
                         "Bob",
                         TeamSide::TeamB,
                         SkillTree::Warrior,
-                        [None; 5],
+                        [const { None }; 5],
                     ),
                 ],
             );
@@ -2783,14 +2792,21 @@ mod tests {
             let mut miss_world = world(
                 &content,
                 vec![
-                    seed(&content, 1, "Alice", TeamSide::TeamA, tree, [None; 5]),
+                    seed(
+                        &content,
+                        1,
+                        "Alice",
+                        TeamSide::TeamA,
+                        tree.clone(),
+                        [const { None }; 5],
+                    ),
                     seed(
                         &content,
                         2,
                         "Bob",
                         TeamSide::TeamB,
                         SkillTree::Warrior,
-                        [None; 5],
+                        [const { None }; 5],
                     ),
                 ],
             );
@@ -2838,7 +2854,7 @@ mod tests {
                         1,
                         "Alice",
                         TeamSide::TeamA,
-                        skill.tree,
+                        skill.tree.clone(),
                         skill,
                     ),
                     seed(
@@ -2847,7 +2863,7 @@ mod tests {
                         "Bob",
                         TeamSide::TeamB,
                         SkillTree::Warrior,
-                        [None; 5],
+                        [const { None }; 5],
                     ),
                 ],
             );
@@ -3017,7 +3033,7 @@ mod tests {
                         1,
                         "Alice",
                         TeamSide::TeamA,
-                        skill.tree,
+                        skill.tree.clone(),
                         skill,
                     ),
                     seed(
@@ -3026,7 +3042,7 @@ mod tests {
                         "Bob",
                         TeamSide::TeamB,
                         SkillTree::Warrior,
-                        [None; 5],
+                        [const { None }; 5],
                     ),
                 ],
             );
@@ -3261,7 +3277,7 @@ mod tests {
                     SkillTree::Rogue,
                     content
                         .skills()
-                        .resolve(choice(SkillTree::Rogue, 4))
+                        .resolve(&choice(SkillTree::Rogue, 4))
                         .expect("rogue silence skill"),
                 ),
                 seed(
@@ -3349,7 +3365,7 @@ mod tests {
                     SkillTree::Warrior,
                     content
                         .skills()
-                        .resolve(choice(SkillTree::Warrior, 2))
+                        .resolve(&choice(SkillTree::Warrior, 2))
                         .expect("warrior stun skill"),
                 ),
                 seed(

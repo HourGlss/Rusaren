@@ -6,6 +6,7 @@
 - Server loads content on boot, validates, then treats it as read-only.
 - Client loads the same content for UI text only (never authoritative).
 - The current runtime source of truth lives under `server/content/skills/*.yaml`.
+- Implemented and planned mechanic families now live under `server/content/mechanics/registry.yaml`.
 
 ## Skill tree structure
 Tree: Rogue | Mage | Cleric
@@ -65,6 +66,11 @@ An ability is just:
 - cast model
 - delivery model
 - list of effects triggered on cast / on tick / on hit
+
+## Current extension path
+- Adding a class that only uses already-implemented runtime mechanics should now be mostly a content change: add one YAML file under `server/content/skills/`.
+- The protocol and Godot picker now use backend-authored class names instead of a fixed four-class wire enum.
+- If a new class needs a brand-new mechanic family, declare that family in `server/content/mechanics/registry.yaml` and then add the runtime execution path in the focused mechanic-specific locations in `game_sim`.
 
 ## Poison / Chill examples
 Poison-on-hit:

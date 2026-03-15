@@ -2,12 +2,13 @@
 
 #![forbid(unsafe_code)]
 
+use std::collections::BTreeMap;
 use std::fmt;
 
 pub const MAX_PLAYER_NAME_LEN: usize = 24;
+pub const MAX_SKILL_TREE_NAME_LEN: usize = 32;
 pub const MAX_SKILL_TIER: u8 = 5;
 pub const MAX_ROUNDS: u8 = 5;
-pub const SKILL_TREE_COUNT: usize = 4;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DomainError {
@@ -24,6 +25,14 @@ pub enum DomainError {
         tier: u8,
         min: u8,
         max: u8,
+    },
+    SkillTreeNameEmpty,
+    SkillTreeNameTooLong {
+        len: usize,
+        max: usize,
+    },
+    SkillTreeNameInvalidCharacter {
+        ch: char,
     },
     SkillTierGap {
         tree: SkillTree,
@@ -53,6 +62,13 @@ impl fmt::Display for DomainError {
                     f,
                     "skill tier {tier} is outside the allowed range {min}..={max}"
                 )
+            }
+            Self::SkillTreeNameEmpty => write!(f, "skill tree name must not be empty"),
+            Self::SkillTreeNameTooLong { len, max } => {
+                write!(f, "skill tree name length {len} exceeds maximum {max}")
+            }
+            Self::SkillTreeNameInvalidCharacter { ch } => {
+                write!(f, "skill tree name contains invalid character '{ch}'")
             }
             Self::SkillTierGap {
                 tree,
@@ -234,27 +250,16 @@ pub enum MatchOutcome {
     NoContest,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SkillTree {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum KnownSkillTree {
     Warrior,
     Rogue,
     Mage,
     Cleric,
 }
 
-impl SkillTree {
-    pub const ALL: [Self; SKILL_TREE_COUNT] =
-        [Self::Warrior, Self::Rogue, Self::Mage, Self::Cleric];
-
-    #[must_use]
-    pub const fn as_index(self) -> usize {
-        match self {
-            Self::Warrior => 0,
-            Self::Rogue => 1,
-            Self::Mage => 2,
-            Self::Cleric => 3,
-        }
-    }
+impl KnownSkillTree {
+    pub const ALL: [Self; 4] = [Self::Warrior, Self::Rogue, Self::Mage, Self::Cleric];
 
     #[must_use]
     pub const fn as_str(self) -> &'static str {
@@ -265,34 +270,72 @@ impl SkillTree {
             Self::Cleric => "Cleric",
         }
     }
+}
 
-    #[must_use]
-    pub const fn wire_id(self) -> u8 {
-        match self {
-            Self::Warrior => 1,
-            Self::Rogue => 2,
-            Self::Mage => 3,
-            Self::Cleric => 4,
-        }
-    }
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum SkillTree {
+    Known(KnownSkillTree),
+    Custom(String),
+}
 
-    #[must_use]
-    pub const fn from_wire_id(raw: u8) -> Option<Self> {
-        match raw {
-            1 => Some(Self::Warrior),
-            2 => Some(Self::Rogue),
-            3 => Some(Self::Mage),
-            4 => Some(Self::Cleric),
-            _ => None,
+impl SkillTree {
+    #[allow(non_upper_case_globals)]
+    pub const Warrior: Self = Self::Known(KnownSkillTree::Warrior);
+    #[allow(non_upper_case_globals)]
+    pub const Rogue: Self = Self::Known(KnownSkillTree::Rogue);
+    #[allow(non_upper_case_globals)]
+    pub const Mage: Self = Self::Known(KnownSkillTree::Mage);
+    #[allow(non_upper_case_globals)]
+    pub const Cleric: Self = Self::Known(KnownSkillTree::Cleric);
+
+    /// # Errors
+    ///
+    /// Returns a [`DomainError`] when the trimmed tree name is empty, too long,
+    /// or contains unsupported characters.
+    pub fn new(raw: impl Into<String>) -> Result<Self, DomainError> {
+        let raw = raw.into();
+        let trimmed = raw.trim();
+
+        if trimmed.is_empty() {
+            return Err(DomainError::SkillTreeNameEmpty);
         }
+
+        if trimmed.len() > MAX_SKILL_TREE_NAME_LEN {
+            return Err(DomainError::SkillTreeNameTooLong {
+                len: trimmed.len(),
+                max: MAX_SKILL_TREE_NAME_LEN,
+            });
+        }
+
+        if let Some(ch) = trimmed
+            .chars()
+            .find(|ch| !ch.is_ascii_alphanumeric() && *ch != '_' && *ch != '-' && *ch != ' ')
+        {
+            return Err(DomainError::SkillTreeNameInvalidCharacter { ch });
+        }
+
+        if let Some(known) = KnownSkillTree::ALL
+            .iter()
+            .copied()
+            .find(|known| known.as_str().eq_ignore_ascii_case(trimmed))
+        {
+            return Ok(Self::Known(known));
+        }
+
+        Ok(Self::Custom(trimmed.to_owned()))
     }
 
     #[must_use]
     pub fn parse(raw: &str) -> Option<Self> {
-        Self::ALL
-            .iter()
-            .copied()
-            .find(|tree| tree.as_str().eq_ignore_ascii_case(raw.trim()))
+        Self::new(raw).ok()
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Known(known) => known.as_str(),
+            Self::Custom(name) => name.as_str(),
+        }
     }
 }
 
@@ -302,7 +345,7 @@ impl fmt::Display for SkillTree {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SkillChoice {
     pub tree: SkillTree,
     pub tier: u8,
@@ -326,35 +369,35 @@ impl SkillChoice {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LoadoutProgress {
-    unlocked_tiers: [u8; SKILL_TREE_COUNT],
+    unlocked_tiers: BTreeMap<SkillTree, u8>,
 }
 
 impl LoadoutProgress {
     #[must_use]
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
-            unlocked_tiers: [0; SKILL_TREE_COUNT],
+            unlocked_tiers: BTreeMap::new(),
         }
     }
 
     #[must_use]
-    pub const fn tier_for(self, tree: SkillTree) -> u8 {
-        self.unlocked_tiers[tree.as_index()]
+    pub fn tier_for(&self, tree: &SkillTree) -> u8 {
+        self.unlocked_tiers.get(tree).copied().unwrap_or(0)
     }
 
     /// # Errors
     ///
     /// Returns [`DomainError::SkillTierGap`] when `choice` does not continue the
     /// caller's current progression for that tree.
-    pub fn can_apply(self, choice: SkillChoice) -> Result<(), DomainError> {
-        let current = self.tier_for(choice.tree);
+    pub fn can_apply(&self, choice: &SkillChoice) -> Result<(), DomainError> {
+        let current = self.tier_for(&choice.tree);
         let expected = if current == 0 { 1 } else { current + 1 };
 
         if choice.tier != expected {
             return Err(DomainError::SkillTierGap {
-                tree: choice.tree,
+                tree: choice.tree.clone(),
                 expected,
                 actual: choice.tier,
             });
@@ -367,9 +410,9 @@ impl LoadoutProgress {
     ///
     /// Returns the same errors as [`LoadoutProgress::can_apply`] when `choice`
     /// is not the next valid skill tier for its tree.
-    pub fn apply(&mut self, choice: SkillChoice) -> Result<(), DomainError> {
+    pub fn apply(&mut self, choice: &SkillChoice) -> Result<(), DomainError> {
         self.can_apply(choice)?;
-        self.unlocked_tiers[choice.tree.as_index()] = choice.tier;
+        self.unlocked_tiers.insert(choice.tree.clone(), choice.tier);
         Ok(())
     }
 }
@@ -548,7 +591,7 @@ mod tests {
 
         let progress = LoadoutProgress::new();
         assert_eq!(
-            progress.can_apply(rogue_two),
+            progress.can_apply(&rogue_two),
             Err(DomainError::SkillTierGap {
                 tree: SkillTree::Rogue,
                 expected: 1,
@@ -557,19 +600,39 @@ mod tests {
         );
 
         let mut progress = LoadoutProgress::new();
-        assert_eq!(progress.apply(rogue_one), Ok(()));
-        assert_eq!(progress.tier_for(SkillTree::Rogue), 1);
-        assert_eq!(progress.apply(rogue_two), Ok(()));
-        assert_eq!(progress.tier_for(SkillTree::Rogue), 2);
+        assert_eq!(progress.apply(&rogue_one), Ok(()));
+        assert_eq!(progress.tier_for(&SkillTree::Rogue), 1);
+        assert_eq!(progress.apply(&rogue_two), Ok(()));
+        assert_eq!(progress.tier_for(&SkillTree::Rogue), 2);
         assert_eq!(
-            progress.can_apply(rogue_one),
+            progress.can_apply(&rogue_one),
             Err(DomainError::SkillTierGap {
                 tree: SkillTree::Rogue,
                 expected: 3,
                 actual: 1,
             })
         );
-        assert_eq!(progress.can_apply(rogue_three), Ok(()));
+        assert_eq!(progress.can_apply(&rogue_three), Ok(()));
+    }
+
+    #[test]
+    fn skill_tree_accepts_custom_classes_and_rejects_bad_names() {
+        let druid = assert_ok(SkillTree::new("Druid"));
+        assert_eq!(druid.as_str(), "Druid");
+        assert_ne!(druid, SkillTree::Mage);
+
+        assert_eq!(SkillTree::new("   "), Err(DomainError::SkillTreeNameEmpty));
+        assert_eq!(
+            SkillTree::new("Beast@Master"),
+            Err(DomainError::SkillTreeNameInvalidCharacter { ch: '@' })
+        );
+        assert_eq!(
+            SkillTree::new("A".repeat(MAX_SKILL_TREE_NAME_LEN + 1)),
+            Err(DomainError::SkillTreeNameTooLong {
+                len: MAX_SKILL_TREE_NAME_LEN + 1,
+                max: MAX_SKILL_TREE_NAME_LEN,
+            })
+        );
     }
 
     #[test]

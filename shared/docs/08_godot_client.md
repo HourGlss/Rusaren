@@ -39,6 +39,7 @@ Current implementation status:
 - The Rust dev server can now host the exported shell directly at `/`.
 - The documented production path now places Caddy in front of the Rust server for same-origin TLS while preserving the `/ws` websocket endpoint.
 - The current runtime skills and prototype map load from `server/content/skills/*.yaml` and `server/content/maps/prototype_arena.txt`.
+- The current mechanic registry and future mechanic families load from `server/content/mechanics/registry.yaml`.
 - Combat rendering is still placeholder-only.
 - The older websocket gameplay adapter remains at `/ws-dev` for regression tests and debugging, but browser play is expected to use WebRTC.
 
@@ -51,7 +52,8 @@ Current backend limitations the shell must expose honestly:
 Class-growth note:
 - The current Godot shell no longer hardcodes the skill-pick columns in the scene layout.
 - The shell builds those columns from the backend skill catalog, so UI expansion is already driven by authored content metadata.
-- The remaining class-growth coupling is on the protocol/domain side where the fixed `SkillTree` wire enum still exists.
+- The protocol now carries backend-authored class names instead of a fixed four-class tree code, so classes using existing mechanics no longer need frontend registry edits.
+- The remaining growth coupling is only in backend runtime mechanic execution when a class introduces a genuinely new behavior family.
 
 Disconnect UX:
 - If a match is aborted because a player disconnects, show: `<PLAYER_NAME> has disconnected. Game is over.`

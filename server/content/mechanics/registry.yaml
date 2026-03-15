@@ -1,0 +1,118 @@
+behaviors:
+  - id: projectile
+    label: Projectile
+    implemented: true
+    inspiration: "League skillshots and WoW missiles"
+    notes: "A moving effect with speed, range, radius, and an impact payload."
+  - id: beam
+    label: Beam
+    implemented: true
+    inspiration: "WoW line spells and League piercing casts"
+    notes: "An immediate line effect that resolves against the first valid target or lane."
+  - id: dash
+    label: Dash
+    implemented: true
+    inspiration: "Mage blink and assassin gap-closers"
+    notes: "Moves the caster while optionally applying an impact payload at the destination."
+  - id: burst
+    label: Burst
+    implemented: true
+    inspiration: "Targeted AoE spells"
+    notes: "A targeted area effect centered at an aimed point."
+  - id: nova
+    label: Nova
+    implemented: true
+    inspiration: "Point-blank AoE spells"
+    notes: "A caster-centered radial effect."
+  - id: summon
+    label: Summon
+    implemented: false
+    inspiration: "WoW hunter/warlock pets and League summons"
+    notes: "Spawns a controllable or autonomous ally, pet, turret, or vision companion."
+  - id: barrier
+    label: Barrier
+    implemented: false
+    inspiration: "League terrain walls and deployable cover"
+    notes: "Creates a temporary obstacle that can block movement, projectiles, and/or vision."
+  - id: trap
+    label: Trap
+    implemented: false
+    inspiration: "League traps and WoW totems"
+    notes: "Creates a persistent armed object that triggers when enemies enter a radius."
+  - id: aura
+    label: Aura
+    implemented: false
+    inspiration: "Paladin/shaman style auras and proximity buffs"
+    notes: "Applies repeated buffs or debuffs to nearby units while the aura source persists."
+  - id: teleport
+    label: Teleport
+    implemented: false
+    inspiration: "Blink, swap, and relocation abilities"
+    notes: "Repositions a unit instantly rather than moving through intervening space."
+  - id: ward
+    label: Ward
+    implemented: false
+    inspiration: "League wards and scouting pets"
+    notes: "Places a vision-granting object without direct combat output."
+
+statuses:
+  - id: poison
+    label: Poison
+    implemented: true
+    inspiration: "Rogue and assassin damage-over-time effects"
+    notes: "A damaging periodic effect that stacks by source."
+  - id: hot
+    label: Heal Over Time
+    implemented: true
+    inspiration: "Cleric and healer maintenance spells"
+    notes: "A healing periodic effect that refreshes by source."
+  - id: chill
+    label: Chill
+    implemented: true
+    inspiration: "Mage slows that can escalate into roots"
+    notes: "A stacking slow that can trigger a follow-up crowd control state."
+  - id: root
+    label: Root
+    implemented: true
+    inspiration: "Snare and immobilize effects"
+    notes: "Prevents movement while allowing other actions unless another status forbids them."
+  - id: haste
+    label: Haste
+    implemented: true
+    inspiration: "Movement or action speed buffs"
+    notes: "Improves movement speed for a limited duration."
+  - id: silence
+    label: Silence
+    implemented: true
+    inspiration: "Spell lockout effects"
+    notes: "Prevents skill casts while active."
+  - id: stun
+    label: Stun
+    implemented: true
+    inspiration: "Hard crowd control"
+    notes: "Prevents movement and actions while active."
+  - id: shield
+    label: Shield
+    implemented: false
+    inspiration: "Priest bubbles, barriers, and absorb shields"
+    notes: "Absorbs incoming damage before hit points are reduced."
+  - id: stealth
+    label: Stealth
+    implemented: false
+    inspiration: "Rogue invisibility and hidden movement"
+    notes: "Removes the unit from normal visibility until revealed or broken."
+  - id: reveal
+    label: Reveal
+    implemented: false
+    inspiration: "Detection, flares, and anti-stealth counters"
+    notes: "Temporarily exposes otherwise hidden units to affected enemies."
+  - id: taunt
+    label: Taunt
+    implemented: false
+    inspiration: "Tank control and compelled targeting"
+    notes: "Forces or biases hostile behavior toward the source for a duration."
+  - id: fear
+    label: Fear
+    implemented: false
+    inspiration: "Panic and displacement control"
+    notes: "Forces involuntary movement or disables player-directed movement for a duration."

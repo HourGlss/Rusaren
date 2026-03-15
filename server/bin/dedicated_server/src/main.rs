@@ -399,13 +399,13 @@ fn run_demo() -> Result<Vec<String>, String> {
     let bob_choice = skill(SkillTree::Rogue, 1);
 
     for event in session
-        .submit_skill_pick(alice_id, alice_choice)
+        .submit_skill_pick(alice_id, alice_choice.clone())
         .map_err(|error| error.to_string())?
     {
         lines.push(render_match_event(&event));
     }
     for event in session
-        .submit_skill_pick(bob_id, bob_choice)
+        .submit_skill_pick(bob_id, bob_choice.clone())
         .map_err(|error| error.to_string())?
     {
         lines.push(render_match_event(&event));
@@ -424,11 +424,11 @@ fn run_demo() -> Result<Vec<String>, String> {
                 hit_points: 100,
                 melee: content
                     .skills()
-                    .melee_for(alice_choice.tree)
+                    .melee_for(&alice_choice.tree)
                     .ok_or_else(|| String::from("demo melee content should exist"))?
                     .clone(),
                 skills: [
-                    content.skills().resolve(alice_choice).cloned(),
+                    content.skills().resolve(&alice_choice).cloned(),
                     None,
                     None,
                     None,
@@ -440,11 +440,11 @@ fn run_demo() -> Result<Vec<String>, String> {
                 hit_points: 100,
                 melee: content
                     .skills()
-                    .melee_for(bob_choice.tree)
+                    .melee_for(&bob_choice.tree)
                     .ok_or_else(|| String::from("demo melee content should exist"))?
                     .clone(),
                 skills: [
-                    content.skills().resolve(bob_choice).cloned(),
+                    content.skills().resolve(&bob_choice).cloned(),
                     None,
                     None,
                     None,

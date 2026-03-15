@@ -12,6 +12,7 @@ func _init() -> void:
 	success = _assert_missing_cast_context_rejection() and success
 	success = _assert_unexpected_context_rejection() and success
 	success = _assert_aim_range_rejection() and success
+	success = _assert_choose_skill_uses_tree_strings() and success
 	success = _assert_decode_connected_with_skill_catalog() and success
 	success = _assert_decode_arena_state_snapshot() and success
 	success = _assert_decode_arena_delta_snapshot() and success
@@ -110,6 +111,26 @@ func _assert_aim_range_rejection() -> bool:
 	return _expect_error(encoded, "aim_horizontal_q=40000 is outside the allowed range -32768..=32767")
 
 
+func _assert_choose_skill_uses_tree_strings() -> bool:
+	var encoded := Protocol.encode_client_command("ChooseSkill", {
+		"tree": "Druid",
+		"tier": 1,
+	}, 5, 0)
+	if not bool(encoded.get("ok", false)):
+		return _fail("custom class choose-skill command should encode")
+	var decoded := Protocol.decode_packet(encoded.get("packet", PackedByteArray()))
+	if not bool(decoded.get("ok", false)):
+		return _fail("custom class choose-skill packet should decode")
+	var payload: PackedByteArray = decoded.get("payload", PackedByteArray())
+	if payload.size() < 4:
+		return _fail("choose-skill payload should include kind, tree string, and tier")
+	if int(payload[0]) != 7:
+		return _fail("choose-skill command should use kind 7")
+	if int(payload[1]) != 5:
+		return _fail("choose-skill command should prefix the tree string length")
+	return true
+
+
 func _assert_decode_connected_with_skill_catalog() -> bool:
 	var payload := PackedByteArray([1])
 	_push_u32(payload, 11)
@@ -118,11 +139,11 @@ func _assert_decode_connected_with_skill_catalog() -> bool:
 	_push_u16(payload, 2)
 	_push_u16(payload, 3)
 	_push_u16(payload, 2)
-	payload.append(Protocol.SKILL_TREE_MAGE)
+	_push_string(payload, "Mage")
 	payload.append(1)
 	_push_string(payload, "mage_t1_missile")
 	_push_string(payload, "Magic Missile")
-	payload.append(Protocol.SKILL_TREE_CLERIC)
+	_push_string(payload, "Cleric")
 	payload.append(1)
 	_push_string(payload, "cleric_t1_minor_heal")
 	_push_string(payload, "Minor Heal")

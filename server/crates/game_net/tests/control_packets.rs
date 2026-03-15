@@ -72,6 +72,10 @@ fn client_control_command_round_trips_all_variants() {
             tree: SkillTree::Mage,
             tier: 3,
         },
+        ClientControlCommand::ChooseSkill {
+            tree: SkillTree::new("Druid").expect("custom tree"),
+            tier: 1,
+        },
         ClientControlCommand::QuitToCentralLobby,
     ];
 
@@ -83,6 +87,24 @@ fn client_control_command_round_trips_all_variants() {
         let (_, decoded) = ClientControlCommand::decode_packet(&packet).expect("decode");
         assert_eq!(decoded, command);
     }
+}
+
+#[test]
+fn connected_event_round_trips_custom_class_catalog_entries() {
+    let event = ServerControlEvent::Connected {
+        player_id: player_id(9),
+        player_name: player_name("Alice"),
+        record: PlayerRecord::new(),
+        skill_catalog: vec![SkillCatalogEntry {
+            tree: SkillTree::new("Engineer").expect("custom tree"),
+            tier: 1,
+            skill_id: String::from("engineer_turret"),
+            skill_name: String::from("Pocket Turret"),
+        }],
+    };
+    let packet = event.clone().encode_packet(1, 0).expect("packet");
+    let (_, decoded) = ServerControlEvent::decode_packet(&packet).expect("decode");
+    assert_eq!(decoded, event);
 }
 
 #[test]

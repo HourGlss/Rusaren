@@ -6,6 +6,7 @@ const PROTOCOL_VERSION := 2
 const HEADER_LEN := 16
 const MAX_PLAYER_NAME_LEN := 24
 const MAX_MESSAGE_BYTES := 200
+const MAX_SKILL_TREE_NAME_BYTES := 32
 const MAX_SKILL_ID_BYTES := 64
 const MAX_SKILL_NAME_BYTES := 120
 
@@ -39,10 +40,6 @@ const TEAM_A := 1
 const TEAM_B := 2
 const READY_NOT_READY := 0
 const READY_READY := 1
-const SKILL_TREE_WARRIOR := 1
-const SKILL_TREE_ROGUE := 2
-const SKILL_TREE_MAGE := 3
-const SKILL_TREE_CLERIC := 4
 const MATCH_OUTCOME_TEAM_A_WIN := 1
 const MATCH_OUTCOME_TEAM_B_WIN := 2
 const MATCH_OUTCOME_NO_CONTEST := 3
@@ -243,21 +240,13 @@ class ByteCursor:
 				return null
 
 	func read_skill_tree_name() -> Variant:
-		var raw = read_u8()
+		var tree_name = read_string("skill_tree", MAX_SKILL_TREE_NAME_BYTES)
 		if has_error():
 			return null
-		match raw:
-			SKILL_TREE_WARRIOR:
-				return "Warrior"
-			SKILL_TREE_ROGUE:
-				return "Rogue"
-			SKILL_TREE_MAGE:
-				return "Mage"
-			SKILL_TREE_CLERIC:
-				return "Cleric"
-			_:
-				error_message = "encoded skill tree %d is invalid" % raw
-				return null
+		if String(tree_name).strip_edges() == "":
+			error_message = "skill_tree must not be empty"
+			return null
+		return tree_name
 
 	func read_match_outcome_name() -> Variant:
 		var raw = read_u8()
@@ -441,13 +430,18 @@ static func encode_client_command(
 		"ChooseSkill":
 			var tree_name := String(payload.get("tree", ""))
 			var tier := int(payload.get("tier", 0))
-			var tree_code := _skill_tree_code(tree_name)
-			if tree_code == -1:
-				return _error("skill tree must be Warrior, Rogue, Mage, or Cleric")
+			tree_name = tree_name.strip_edges()
+			if tree_name == "":
+				return _error("skill tree must not be empty")
+			if tree_name.length() > MAX_SKILL_TREE_NAME_BYTES:
+				return _error("skill tree length %d exceeds maximum %d" % [
+					tree_name.length(),
+					MAX_SKILL_TREE_NAME_BYTES,
+				])
 			if tier < 1 or tier > 5:
 				return _error("skill tier must be between 1 and 5")
 			body.append(7)
-			body.append(tree_code)
+			_push_string(body, tree_name)
 			body.append(tier)
 		"QuitToCentralLobby":
 			body.append(8)
@@ -1223,20 +1217,6 @@ static func _team_code(team_name: String) -> int:
 			return TEAM_A
 		"Team B":
 			return TEAM_B
-		_:
-			return -1
-
-
-static func _skill_tree_code(tree_name: String) -> int:
-	match tree_name:
-		"Warrior":
-			return SKILL_TREE_WARRIOR
-		"Rogue":
-			return SKILL_TREE_ROGUE
-		"Mage":
-			return SKILL_TREE_MAGE
-		"Cleric":
-			return SKILL_TREE_CLERIC
 		_:
 			return -1
 

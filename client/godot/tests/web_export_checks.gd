@@ -122,6 +122,36 @@ func _assert_skill_buttons_only_unlock_next_tiers() -> bool:
 	state.local_player_id = 11
 	state.local_player_name = "Alice"
 	state.apply_server_event({
+		"type": "Connected",
+		"player_id": 11,
+		"player_name": "Alice",
+		"record": {
+			"wins": 0,
+			"losses": 0,
+			"no_contests": 0,
+		},
+		"skill_catalog": [
+			{
+				"tree": "Mage",
+				"tier": 1,
+				"skill_id": "mage_t1_missile",
+				"skill_name": "Magic Missile",
+			},
+			{
+				"tree": "Mage",
+				"tier": 2,
+				"skill_id": "mage_t2_ice_lance",
+				"skill_name": "Ice Lance",
+			},
+			{
+				"tree": "Warrior",
+				"tier": 1,
+				"skill_id": "warrior_t1_bash",
+				"skill_name": "Bash",
+			},
+		],
+	})
+	state.apply_server_event({
 		"type": "MatchStarted",
 		"match_id": 3,
 		"round": 1,

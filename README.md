@@ -14,7 +14,7 @@ Buildable now:
 - a focused in-match Godot shell layout that hides the setup chrome after lobby join, surfaces skill picks before the arena during skill-pick windows, and returns to the central layout on disconnect
 - authoritative full and delta arena snapshots carrying match phase, hp, mana, cooldowns, active statuses, projectile state, and only the terrain/obstacles the viewing player is allowed to know about
 - a first playable arena slice with a mostly empty map, four central square pillars, traversable shrub collars, authoritative player circles, per-player fog-of-war, WASD movement, mouse aim, left-click melee, authored class melee/spells on `1`-`5`, projectile combat, debuffs, HoTs, health, mana, and cooldown state
-- runtime-loaded authored content under `server/content/skills/*.yaml` and `server/content/maps/prototype_arena.txt`
+- runtime-loaded authored content under `server/content/skills/*.yaml`, `server/content/maps/prototype_arena.txt`, and `server/content/mechanics/registry.yaml`
 - a same-origin Godot Web export path hosted directly by the Rust server at `/`
 - a documented production-style deploy path with Caddy, Prometheus, and `coturn`
 - stricter authored YAML and ASCII content validation with clean boot-time failures on invalid content
@@ -26,6 +26,7 @@ Buildable now:
 
 Not implemented yet:
 - the full 1.0 authored class and spell set beyond the current shipped runtime kit
+- planned mechanic families like summons, barriers, traps, wards, shields, stealth, reveal, taunt, and fear are now captured in YAML, but they are not yet bound to live authored skills
 - more aggressive snapshot compression beyond the current full-vs-delta split
 - the full 1.0 Godot gameplay presentation bar: HUD polish, stronger spell visuals, and always-readable health and mana display in crowded fights
 - rustdoc/API guidance that is complete enough for an external client or bot author to play through the game protocol without Godot
@@ -79,17 +80,17 @@ skill picker renders those backend-authored names on the buttons instead of loca
 The runtime game content now lives under:
 - `server/content/skills/*.yaml` for authored class/skill definitions
 - `server/content/maps/prototype_arena.txt` for the current ASCII arena map
+- `server/content/mechanics/registry.yaml` for implemented and planned mechanic families
 
 Those files are the live source of truth for the backend. The Markdown docs under `shared/docs/`
 document the design, but they are no longer treated as runtime content.
-Adding more classes is now partially centralized around three places:
-- the authored YAML file under `server/content/skills/`
-- the `SkillTree` registry in `server/crates/game_domain`
-- the per-skill simulation behavior in `server/crates/game_sim`
+Adding more classes is now mostly centralized around:
+- one new authored YAML file under `server/content/skills/`
+- optional mechanic-family additions in `server/content/mechanics/registry.yaml` when you want to declare a new planned mechanic
+- the small backend mechanic-specific execution locations in `server/crates/game_sim` only when a class needs a genuinely new runtime behavior
 
-The current UI and snapshot catalog path already follow backend-authored class metadata. The remaining
-non-content coupling is the fixed `SkillTree` wire enum, which is the main place that still needs to
-change when the class set grows beyond the current four shipped trees.
+The UI and network catalog path now follow backend-authored class names and skill IDs instead of a fixed four-class wire enum.
+That means classes using the existing runtime mechanic set can now be added without touching protocol or frontend registries.
 
 Open the Godot shell:
 
@@ -168,6 +169,7 @@ Edit gameplay content quickly:
 ```text
 server/content/skills/*.yaml
 server/content/maps/prototype_arena.txt
+server/content/mechanics/registry.yaml
 ```
 
 Restart the server or rerun `./server/scripts/play-local.ps1` after editing those files.

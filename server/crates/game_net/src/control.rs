@@ -6,6 +6,7 @@ use game_domain::{
 use crate::{ChannelId, PacketError, PacketHeader, PacketKind};
 
 const MAX_MESSAGE_BYTES: usize = 200;
+const MAX_SKILL_TREE_NAME_BYTES: usize = game_domain::MAX_SKILL_TREE_NAME_LEN;
 const MAX_SKILL_ID_BYTES: usize = 64;
 const MAX_SKILL_NAME_BYTES: usize = 120;
 
@@ -100,7 +101,12 @@ impl ClientControlCommand {
                 Ok(())
             }
             Self::ChooseSkill { tree, tier } => {
-                payload.push(encode_skill_tree(tree));
+                push_len_prefixed_string(
+                    payload,
+                    "skill_tree",
+                    tree.as_str(),
+                    MAX_SKILL_TREE_NAME_BYTES,
+                )?;
                 payload.push(tier);
                 Ok(())
             }
@@ -518,10 +524,7 @@ impl ServerControlEvent {
                 player_id,
                 tree,
                 tier,
-            } => {
-                encode_skill_chosen_event(payload, player_id, tree, tier);
-                Ok(())
-            }
+            } => encode_skill_chosen_event(payload, player_id, &tree, tier),
             Self::PreCombatStarted { seconds_remaining } => {
                 payload.push(seconds_remaining);
                 Ok(())
@@ -797,12 +800,18 @@ fn decode_match_started_event(
 fn encode_skill_chosen_event(
     payload: &mut Vec<u8>,
     player_id: PlayerId,
-    tree: SkillTree,
+    tree: &SkillTree,
     tier: u8,
-) {
+) -> Result<(), PacketError> {
     payload.extend_from_slice(&player_id.get().to_le_bytes());
-    payload.push(encode_skill_tree(tree));
+    push_len_prefixed_string(
+        payload,
+        "skill_tree",
+        tree.as_str(),
+        MAX_SKILL_TREE_NAME_BYTES,
+    )?;
     payload.push(tier);
+    Ok(())
 }
 
 fn decode_skill_chosen_event(
@@ -882,7 +891,12 @@ fn encode_skill_catalog(
     })?;
     payload.extend_from_slice(&entry_count.to_le_bytes());
     for entry in catalog {
-        payload.push(encode_skill_tree(entry.tree));
+        push_len_prefixed_string(
+            payload,
+            "skill_tree",
+            entry.tree.as_str(),
+            MAX_SKILL_TREE_NAME_BYTES,
+        )?;
         payload.push(entry.tier);
         push_len_prefixed_string(payload, "skill_id", &entry.skill_id, MAX_SKILL_ID_BYTES)?;
         push_len_prefixed_string(
@@ -1575,8 +1589,14 @@ fn read_skill_tree(
     index: &mut usize,
     kind: &'static str,
 ) -> Result<SkillTree, PacketError> {
-    let raw = read_u8(payload, index, kind)?;
-    SkillTree::from_wire_id(raw).ok_or(PacketError::InvalidEncodedSkillTree(raw))
+    let raw = read_string(
+        payload,
+        index,
+        kind,
+        "skill_tree",
+        MAX_SKILL_TREE_NAME_BYTES,
+    )?;
+    SkillTree::new(raw).map_err(PacketError::InvalidEncodedSkillTree)
 }
 
 fn read_match_outcome(
@@ -1657,10 +1677,6 @@ fn encode_ready_state(ready: ReadyState) -> u8 {
         ReadyState::NotReady => 0,
         ReadyState::Ready => 1,
     }
-}
-
-fn encode_skill_tree(tree: SkillTree) -> u8 {
-    tree.wire_id()
 }
 
 fn encode_match_outcome(outcome: MatchOutcome) -> u8 {

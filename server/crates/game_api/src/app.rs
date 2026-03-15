@@ -734,14 +734,14 @@ impl ServerApp {
             None => return,
         };
 
-        let choice = match SkillChoice::new(tree, tier) {
+        let choice = match SkillChoice::new(tree.clone(), tier) {
             Ok(choice) => choice,
             Err(error) => {
                 self.send_error(transport, sender_id, &error.to_string());
                 return;
             }
         };
-        if self.content.skills().resolve(choice).is_none() {
+        if self.content.skills().resolve(&choice).is_none() {
             self.send_error(
                 transport,
                 sender_id,
@@ -897,7 +897,7 @@ impl ServerApp {
                 );
                 return;
             };
-            let Some(skill) = self.content.skills().resolve(choice) else {
+            let Some(skill) = self.content.skills().resolve(&choice) else {
                 self.send_error(
                     transport,
                     sender_id,
@@ -1082,7 +1082,7 @@ impl ServerApp {
                         &self.match_recipients(match_id),
                         ServerControlEvent::SkillChosen {
                             player_id: *player_id,
-                            tree: choice.tree,
+                            tree: choice.tree.clone(),
                             tier: choice.tier,
                         },
                     );
@@ -1790,7 +1790,7 @@ impl ServerApp {
             .skills()
             .all()
             .map(|skill| SkillCatalogEntry {
-                tree: skill.tree,
+                tree: skill.tree.clone(),
                 tier: skill.tier,
                 skill_id: skill.id.clone(),
                 skill_name: skill.name.clone(),
@@ -2340,10 +2340,10 @@ fn build_world(
                     .equipped_choice(player_id, 1)
                     .map(|choice| choice.tree)
                     .unwrap_or(game_domain::SkillTree::Warrior);
-                let melee = if let Some(melee) = content.skills().melee_for(primary_tree) {
+                let melee = if let Some(melee) = content.skills().melee_for(&primary_tree) {
                     melee.clone()
                 } else if let Some(melee) =
-                    content.skills().melee_for(game_domain::SkillTree::Warrior)
+                    content.skills().melee_for(&game_domain::SkillTree::Warrior)
                 {
                     melee.clone()
                 } else {
@@ -2356,7 +2356,7 @@ fn build_world(
                     skills: std::array::from_fn(|index| {
                         session
                             .equipped_choice(player_id, u8::try_from(index + 1).unwrap_or(5))
-                            .and_then(|choice| content.skills().resolve(choice).cloned())
+                            .and_then(|choice| content.skills().resolve(&choice).cloned())
                     }),
                 }
             })

@@ -152,9 +152,18 @@ fn write_control_command_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
     let invalid_ready =
         PacketHeader::new(ChannelId::Control, PacketKind::ControlCommand, 0, 2, 12, 0)?
             .encode(&[6, 9]);
-    let invalid_skill_tree =
-        PacketHeader::new(ChannelId::Control, PacketKind::ControlCommand, 0, 3, 13, 0)?
-            .encode(&[7, 9, 1]);
+    let invalid_skill_tree = {
+        let payload = vec![7, 1, b'@', 1];
+        PacketHeader::new(
+            ChannelId::Control,
+            PacketKind::ControlCommand,
+            0,
+            u16::try_from(payload.len())?,
+            13,
+            0,
+        )?
+        .encode(&payload)
+    };
     let trailing_bytes =
         PacketHeader::new(ChannelId::Control, PacketKind::ControlCommand, 0, 2, 14, 0)?
             .encode(&[4, 99]);

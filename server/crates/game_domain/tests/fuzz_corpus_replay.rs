@@ -46,7 +46,21 @@ fn corpus_files(target: &str) -> Vec<Vec<u8>> {
 }
 
 fn tree_from_byte(raw: u8) -> SkillTree {
-    SkillTree::ALL[usize::from(raw) % SkillTree::ALL.len()]
+    match raw % 6 {
+        0 => SkillTree::Warrior,
+        1 => SkillTree::Rogue,
+        2 => SkillTree::Mage,
+        3 => SkillTree::Cleric,
+        4 => custom_tree("Druid"),
+        _ => custom_tree("Engineer"),
+    }
+}
+
+fn custom_tree(name: &str) -> SkillTree {
+    match SkillTree::new(name) {
+        Ok(tree) => tree,
+        Err(error) => panic!("custom skill tree {name} should parse: {error}"),
+    }
 }
 
 #[test]
@@ -57,7 +71,7 @@ fn replay_skill_progression_corpus() {
             let tree = tree_from_byte(chunk[0]);
             let tier = chunk[1];
             if let Ok(choice) = SkillChoice::new(tree, tier) {
-                let _ = progress.apply(choice);
+                let _ = progress.apply(&choice);
             }
         }
     }

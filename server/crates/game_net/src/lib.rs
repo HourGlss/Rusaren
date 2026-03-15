@@ -441,7 +441,7 @@ pub enum PacketError {
     InvalidEncodedTeam(u8),
     InvalidEncodedOptionalTeam(u8),
     InvalidEncodedReadyState(u8),
-    InvalidEncodedSkillTree(u8),
+    InvalidEncodedSkillTree(game_domain::DomainError),
     InvalidEncodedMatchOutcome(u8),
     InvalidEncodedLobbyPhase(u8),
     InvalidEncodedArenaMatchPhase(u8),
@@ -585,8 +585,8 @@ impl PacketError {
             Self::InvalidEncodedReadyState(raw) => {
                 Some(write!(f, "encoded ready state {raw} is invalid"))
             }
-            Self::InvalidEncodedSkillTree(raw) => {
-                Some(write!(f, "encoded skill tree {raw} is invalid"))
+            Self::InvalidEncodedSkillTree(error) | Self::InvalidEncodedPlayerName(error) => {
+                Some(fmt::Display::fmt(error, f))
             }
             Self::InvalidEncodedMatchOutcome(raw) => {
                 Some(write!(f, "encoded match outcome {raw} is invalid"))
@@ -607,7 +607,6 @@ impl PacketError {
                 Some(write!(f, "encoded arena status kind {raw} is invalid"))
             }
             Self::InvalidEncodedBoolean(raw) => Some(write!(f, "encoded boolean {raw} is invalid")),
-            Self::InvalidEncodedPlayerName(error) => Some(fmt::Display::fmt(error, f)),
             _ => None,
         }
     }

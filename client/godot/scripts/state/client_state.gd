@@ -3,7 +3,6 @@ class_name ClientState
 
 const MAX_EVENT_LINES := 28
 const WebSocketConfigScript := preload("res://scripts/net/websocket_config.gd")
-const KNOWN_SKILL_TREES := ["Warrior", "Rogue", "Mage", "Cleric"]
 
 var websocket_url := WebSocketConfigScript.new().runtime_default_url()
 var local_player_id := 0
@@ -495,7 +494,7 @@ func skill_tree_names() -> Array[String]:
 		if tree_name != "" and not ordered.has(tree_name):
 			ordered.append(tree_name)
 	if ordered.is_empty():
-		for tree_name in KNOWN_SKILL_TREES:
+		for tree_name in local_skill_progress.keys():
 			ordered.append(String(tree_name))
 	return ordered
 
