@@ -21,8 +21,9 @@ Buildable now:
 
 Not implemented yet:
 - delta snapshot replication
-- polished Godot gameplay rendering and interpolation
-- a broad final class/spell set and tuned combat balance
+- the full 1.0 authored class and spell set with complete backend spell-behavior coverage
+- the full 1.0 Godot gameplay presentation bar: basic HUD polish, spell visuals for every shipped spell, and always-readable health and mana display for all players
+- rustdoc/API guidance that is complete enough for an external client or bot author to play through the game protocol without Godot
 - final vision / fog-of-war logic beyond stubs
 
 ## Build and run
@@ -272,6 +273,14 @@ Useful Pages paths:
 - `https://hourglss.github.io/Rusaren/` for the report index
 - `https://hourglss.github.io/Rusaren/docs/site/` for the mdBook docs site
 - `https://hourglss.github.io/Rusaren/rustdoc/` for the Rust API docs
+
+For the `1.0.0` release line, `/rustdoc/` is not just a published artifact.
+It is expected to document how an external client or bot can play the game through the API:
+- session bootstrap
+- websocket signaling and WebRTC setup
+- control and input messages
+- snapshots and player status/state interpretation
+- enough example flow to connect, join a lobby, enter a match, and play
 
 The GitHub Actions job summary for `server-quality` now includes:
 - total Rust tests, passed tests, skipped tests, and total test duration from the structured `nextest` log
