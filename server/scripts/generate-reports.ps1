@@ -3000,10 +3000,6 @@ function Invoke-ReportGeneration {
     $generatedAt = (Get-Date).ToString("u")
     $sourceInventory = Get-SourceInventory
 
-    if (Test-Path $reportsRoot) {
-        Remove-Item -Recurse -Force -Path $reportsRoot
-    }
-
     New-Item -ItemType Directory -Force -Path $reportsRoot | Out-Null
 
     $results = @()

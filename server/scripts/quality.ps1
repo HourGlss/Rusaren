@@ -21,6 +21,12 @@ if (Test-Path $cargoBin) {
 
 $runtime = [System.Runtime.InteropServices.RuntimeInformation]
 $isWindowsHost = $runtime::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Windows)
+$nightlyToolchain = if ([string]::IsNullOrWhiteSpace($env:RARENA_NIGHTLY_TOOLCHAIN)) {
+    "nightly-2026-03-01"
+}
+else {
+    $env:RARENA_NIGHTLY_TOOLCHAIN
+}
 
 function Get-AllFuzzTargets {
     if (-not (Test-Path "fuzz/Cargo.toml")) {
@@ -53,7 +59,7 @@ function Invoke-FuzzBuild {
     }
 
     foreach ($target in $Targets) {
-        rustup run nightly cargo fuzz build $target
+        rustup run $nightlyToolchain cargo fuzz build $target
     }
 }
 
@@ -107,7 +113,7 @@ function Invoke-LiveFuzz {
         $artifactDir = Join-Path $artifactRoot $target
         New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
 
-        rustup run nightly cargo fuzz run $target $corpusDir -- "-artifact_prefix=$artifactDir/" "-max_total_time=$maxTotalTime"
+        rustup run $nightlyToolchain cargo fuzz run $target $corpusDir -- "-artifact_prefix=$artifactDir/" "-max_total_time=$maxTotalTime"
     }
 }
 
@@ -162,8 +168,8 @@ function Invoke-QualityTask {
         "reports" { & (Join-Path $PSScriptRoot "generate-reports.ps1") -Report all -FailOnCommandFailure }
         "deny" { rustup run stable cargo xdeny }
         "audit" { rustup run stable cargo xaudit }
-        "udeps" { rustup run nightly cargo udeps --workspace --all-targets }
-        "miri" { rustup run nightly cargo miri test --workspace }
+        "udeps" { rustup run $nightlyToolchain cargo udeps --workspace --all-targets }
+        "miri" { rustup run $nightlyToolchain cargo miri test --workspace }
         "complexity" { & (Join-Path $PSScriptRoot "generate-reports.ps1") -Report complexity -FailOnCommandFailure }
         "callgraph" { & (Join-Path $PSScriptRoot "generate-reports.ps1") -Report callgraph -FailOnCommandFailure }
         "verus" { & (Join-Path $PSScriptRoot "verus.ps1") }

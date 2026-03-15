@@ -14,10 +14,11 @@ $verusRoot = Join-Path $toolRoot "verus"
 $verusCurrentRoot = Join-Path $verusRoot "current"
 $verusRelease = "0.2026.03.01.25809cb"
 $verusTag = "release/$verusRelease"
+$nightlyToolchain = "nightly-2026-03-01"
 $runtime = [System.Runtime.InteropServices.RuntimeInformation]
-$isWindows = $runtime::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Windows)
-$isLinux = $runtime::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Linux)
-$isMacOS = $runtime::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::OSX)
+$isWindowsHost = $runtime::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Windows)
+$isLinuxHost = $runtime::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Linux)
+$isMacOSHost = $runtime::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::OSX)
 
 $stableComponents = @("clippy", "rustfmt", "llvm-tools-preview", "rust-analyzer")
 $stableTools = @(
@@ -40,15 +41,15 @@ function Get-VerusAssetName {
     $os = [System.Runtime.InteropServices.RuntimeInformation]::OSDescription
     $architecture = [System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture
 
-    if ($isWindows) {
+    if ($isWindowsHost) {
         return "verus-$verusRelease-x86-win.zip"
     }
 
-    if ($isLinux) {
+    if ($isLinuxHost) {
         return "verus-$verusRelease-x86-linux.zip"
     }
 
-    if ($isMacOS) {
+    if ($isMacOSHost) {
         if ($architecture -eq [System.Runtime.InteropServices.Architecture]::Arm64) {
             return "verus-$verusRelease-arm64-macos.zip"
         }
@@ -60,7 +61,7 @@ function Get-VerusAssetName {
 }
 
 function Get-VerusExecutableName {
-    if ($isWindows) {
+    if ($isWindowsHost) {
         return "verus.exe"
     }
 
@@ -118,7 +119,7 @@ function Install-Verus {
     Copy-Item -Path (Join-Path $bundleRoot.FullName "*") -Destination $verusCurrentRoot -Recurse -Force
     Set-Content -Path $versionMarker -Value $verusRelease -Encoding ASCII
 
-    if (-not $isWindows) {
+    if (-not $isWindowsHost) {
         foreach ($binary in @("verus", "cargo-verus", "rust_verify", "z3")) {
             $binaryPath = Join-Path $verusCurrentRoot $binary
             if (Test-Path $binaryPath) {
@@ -146,7 +147,7 @@ if ($CallgraphOnly) {
 }
 
 rustup toolchain install stable --profile minimal | Out-Host
-rustup toolchain install nightly --profile minimal | Out-Host
+rustup toolchain install $nightlyToolchain --profile minimal | Out-Host
 
 foreach ($component in $stableComponents) {
     rustup component add $component --toolchain stable | Out-Host
@@ -159,7 +160,7 @@ foreach ($tool in $stableTools) {
 Install-Verus
 
 if ($IncludeNightly) {
-    rustup component add miri --toolchain nightly | Out-Host
+    rustup component add miri --toolchain $nightlyToolchain | Out-Host
 
-    rustup run nightly cargo install --locked cargo-udeps | Out-Host
+    rustup run $nightlyToolchain cargo install --locked cargo-udeps | Out-Host
 }

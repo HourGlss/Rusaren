@@ -7,7 +7,7 @@ $serverRoot = Split-Path -Parent $PSScriptRoot
 $verusRoot = Join-Path $serverRoot "verus"
 $repoLocalVerusRoot = Join-Path $serverRoot "tools\verus\current"
 $runtime = [System.Runtime.InteropServices.RuntimeInformation]
-$isWindows = $runtime::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Windows)
+$isWindowsHost = $runtime::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Windows)
 Set-Location $serverRoot
 
 function Get-VerusCommandPath {
@@ -16,7 +16,7 @@ function Get-VerusCommandPath {
         return $command.Source
     }
 
-    $candidate = Join-Path $repoLocalVerusRoot $(if ($isWindows) { "verus.exe" } else { "verus" })
+    $candidate = Join-Path $repoLocalVerusRoot $(if ($isWindowsHost) { "verus.exe" } else { "verus" })
     if (Test-Path $candidate) {
         return $candidate
     }
