@@ -56,6 +56,7 @@ func _draw() -> void:
 	draw_rect(arena_rect, Color8(232, 232, 236))
 	_draw_grid(arena_rect)
 	_draw_obstacles(arena_rect)
+	_draw_visibility_overlay(arena_rect)
 	_draw_effects(arena_rect)
 	_draw_projectiles(arena_rect)
 	_draw_players(arena_rect)
@@ -143,9 +144,28 @@ func _draw_effects(arena_rect: Rect2) -> void:
 		var color: Color = _effect_color(String(effect.get("kind", "")), alpha)
 		match String(effect.get("kind", "")):
 			"MeleeSwing":
-				draw_arc(start, radius, -0.8, 0.8, 18, color, 3.0)
-			"SkillShot", "Beam":
+				var direction := (target - start).normalized()
+				if direction == Vector2.ZERO:
+					direction = Vector2.RIGHT
+				var angle := direction.angle()
+				var tangent := Vector2(-direction.y, direction.x)
+				var tip := start + direction * maxf(radius * 1.5, 18.0)
+				var left := start + direction * maxf(radius * 0.45, 12.0) + tangent * maxf(radius * 0.95, 12.0)
+				var right := start + direction * maxf(radius * 0.45, 12.0) - tangent * maxf(radius * 0.95, 12.0)
+				draw_colored_polygon(
+					PackedVector2Array([start, left, tip, right]),
+					Color(color.r, color.g, color.b, alpha * 0.32)
+				)
+				draw_circle(tip, maxf(radius * 0.55, 8.0), Color(color.r, color.g, color.b, alpha * 0.5))
+				draw_arc(start, radius * 1.2, angle - 0.9, angle + 0.9, 20, color, 4.0)
+				draw_line(start, tip, Color(color.r, color.g, color.b, alpha * 0.6), 3.0)
+			"SkillShot":
 				draw_line(start, target, color, 4.0)
+			"Beam":
+				draw_line(start, target, color, 7.0)
+				var progress := 1.0 - clampf(ttl / ttl_max, 0.0, 1.0)
+				var pulse := start.lerp(target, progress)
+				draw_circle(pulse, maxf(radius * 0.7, 8.0), Color(color.r, color.g, color.b, alpha * 0.85))
 			"DashTrail":
 				draw_line(start, target, color, 6.0)
 			"Burst", "Nova":
@@ -165,8 +185,10 @@ func _draw_projectiles(arena_rect: Rect2) -> void:
 		)
 		var radius := _world_radius_to_canvas(arena_rect, float(projectile.get("radius", 0)))
 		var color := _effect_color(String(projectile.get("kind", "")), 0.95)
+		draw_circle(position, radius + 8.0, Color(color.r, color.g, color.b, 0.18))
 		draw_circle(position, radius + 3.0, Color(0.08, 0.1, 0.12, 0.85))
 		draw_circle(position, radius, color)
+		draw_circle(position, maxf(radius * 0.42, 3.0), Color(1.0, 1.0, 1.0, 0.45))
 
 
 func _draw_players(arena_rect: Rect2) -> void:
@@ -188,7 +210,8 @@ func _draw_players(arena_rect: Rect2) -> void:
 		var radius: float = _world_radius_to_canvas(arena_rect, 28.0)
 		var outline: Color = Color.WHITE if int(player.get("player_id", 0)) == app_state.local_player_id else Color8(34, 34, 42)
 
-		draw_line(canvas_pos, aim_end, Color(body_color, 0.35), 2.0)
+		if int(player.get("player_id", 0)) == app_state.local_player_id:
+			draw_line(canvas_pos, aim_end, Color(body_color, 0.35), 2.0)
 		draw_circle(canvas_pos, radius + 4.0, outline)
 		draw_circle(canvas_pos, radius, body_color)
 
@@ -233,6 +256,33 @@ func _draw_players(arena_rect: Rect2) -> void:
 
 func _draw_border(arena_rect: Rect2) -> void:
 	draw_rect(arena_rect, Color8(58, 61, 68), false, 3.0)
+
+
+func _draw_visibility_overlay(arena_rect: Rect2) -> void:
+	var tile_width := app_state.arena_tile_width()
+	var tile_height := app_state.arena_tile_height()
+	if tile_width <= 0 or tile_height <= 0 or app_state.arena_tile_units <= 0:
+		return
+	var half_tile := float(app_state.arena_tile_units) * 0.5
+	for row in range(tile_height):
+		for column in range(tile_width):
+			if app_state.is_tile_visible(column, row):
+				continue
+			var center_x := -float(app_state.arena_width) * 0.5 + float(column * app_state.arena_tile_units) + half_tile
+			var center_y := -float(app_state.arena_height) * 0.5 + float(row * app_state.arena_tile_units) + half_tile
+			var rect := _world_rect_to_canvas(
+				arena_rect,
+				center_x,
+				center_y,
+				half_tile,
+				half_tile
+			)
+			var fog_color := (
+				Color(0.06, 0.08, 0.11, 0.56)
+				if app_state.is_tile_explored(column, row)
+				else Color(0.03, 0.04, 0.05, 0.96)
+			)
+			draw_rect(rect, fog_color)
 
 
 func _draw_centered_text(rect: Rect2, text: String) -> void:

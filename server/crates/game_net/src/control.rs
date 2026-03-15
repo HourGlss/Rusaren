@@ -342,6 +342,9 @@ pub struct ArenaStateSnapshot {
     pub phase_seconds_remaining: Option<u8>,
     pub width: u16,
     pub height: u16,
+    pub tile_units: u16,
+    pub visible_tiles: Vec<u8>,
+    pub explored_tiles: Vec<u8>,
     pub obstacles: Vec<ArenaObstacleSnapshot>,
     pub players: Vec<ArenaPlayerSnapshot>,
     pub projectiles: Vec<ArenaProjectileSnapshot>,
@@ -351,6 +354,9 @@ pub struct ArenaStateSnapshot {
 pub struct ArenaDeltaSnapshot {
     pub phase: ArenaMatchPhase,
     pub phase_seconds_remaining: Option<u8>,
+    pub tile_units: u16,
+    pub visible_tiles: Vec<u8>,
+    pub explored_tiles: Vec<u8>,
     pub players: Vec<ArenaPlayerSnapshot>,
     pub projectiles: Vec<ArenaProjectileSnapshot>,
 }
@@ -954,6 +960,9 @@ fn encode_arena_state_snapshot(
     encode_optional_u8(payload, snapshot.phase_seconds_remaining);
     payload.extend_from_slice(&snapshot.width.to_le_bytes());
     payload.extend_from_slice(&snapshot.height.to_le_bytes());
+    payload.extend_from_slice(&snapshot.tile_units.to_le_bytes());
+    encode_bytes(payload, "visible_tiles", &snapshot.visible_tiles)?;
+    encode_bytes(payload, "explored_tiles", &snapshot.explored_tiles)?;
 
     let obstacle_count =
         u16::try_from(snapshot.obstacles.len()).map_err(|_| PacketError::PayloadTooLarge {
@@ -983,6 +992,9 @@ fn decode_arena_state_snapshot(
     let phase_seconds_remaining = read_optional_u8(payload, index, "ArenaStateSnapshot")?;
     let width = read_u16(payload, index, "ArenaStateSnapshot")?;
     let height = read_u16(payload, index, "ArenaStateSnapshot")?;
+    let tile_units = read_u16(payload, index, "ArenaStateSnapshot")?;
+    let visible_tiles = decode_bytes(payload, index, "ArenaStateSnapshot", "visible_tiles")?;
+    let explored_tiles = decode_bytes(payload, index, "ArenaStateSnapshot", "explored_tiles")?;
     let obstacle_count = usize::from(read_u16(payload, index, "ArenaStateSnapshot")?);
     let mut obstacles = Vec::with_capacity(obstacle_count);
     for _ in 0..obstacle_count {
@@ -1004,6 +1016,9 @@ fn decode_arena_state_snapshot(
             phase_seconds_remaining,
             width,
             height,
+            tile_units,
+            visible_tiles,
+            explored_tiles,
             obstacles,
             players,
             projectiles,
@@ -1017,6 +1032,9 @@ fn encode_arena_delta_snapshot(
 ) -> Result<(), PacketError> {
     payload.push(encode_arena_match_phase(snapshot.phase));
     encode_optional_u8(payload, snapshot.phase_seconds_remaining);
+    payload.extend_from_slice(&snapshot.tile_units.to_le_bytes());
+    encode_bytes(payload, "visible_tiles", &snapshot.visible_tiles)?;
+    encode_bytes(payload, "explored_tiles", &snapshot.explored_tiles)?;
     encode_arena_players(payload, &snapshot.players)?;
     encode_arena_projectiles(payload, &snapshot.projectiles)?;
     Ok(())
@@ -1028,12 +1046,18 @@ fn decode_arena_delta_snapshot(
 ) -> Result<ServerControlEvent, PacketError> {
     let phase = read_arena_match_phase(payload, index, "ArenaDeltaSnapshot")?;
     let phase_seconds_remaining = read_optional_u8(payload, index, "ArenaDeltaSnapshot")?;
+    let tile_units = read_u16(payload, index, "ArenaDeltaSnapshot")?;
+    let visible_tiles = decode_bytes(payload, index, "ArenaDeltaSnapshot", "visible_tiles")?;
+    let explored_tiles = decode_bytes(payload, index, "ArenaDeltaSnapshot", "explored_tiles")?;
     let players = decode_arena_players(payload, index, "ArenaDeltaSnapshot")?;
     let projectiles = decode_arena_projectiles(payload, index, "ArenaDeltaSnapshot")?;
     Ok(ServerControlEvent::ArenaDeltaSnapshot {
         snapshot: ArenaDeltaSnapshot {
             phase,
             phase_seconds_remaining,
+            tile_units,
+            visible_tiles,
+            explored_tiles,
             players,
             projectiles,
         },
@@ -1250,6 +1274,35 @@ fn decode_arena_effect_batch(
     }
 
     Ok(ServerControlEvent::ArenaEffectBatch { effects })
+}
+
+fn encode_bytes(
+    payload: &mut Vec<u8>,
+    field: &'static str,
+    bytes: &[u8],
+) -> Result<(), PacketError> {
+    let byte_len = u16::try_from(bytes.len()).map_err(|_| PacketError::PayloadTooLarge {
+        actual: bytes.len(),
+        maximum: usize::from(u16::MAX),
+    })?;
+    let _ = field;
+    payload.extend_from_slice(&byte_len.to_le_bytes());
+    payload.extend_from_slice(bytes);
+    Ok(())
+}
+
+fn decode_bytes(
+    payload: &[u8],
+    index: &mut usize,
+    kind: &'static str,
+    field: &'static str,
+) -> Result<Vec<u8>, PacketError> {
+    let byte_len = usize::from(read_u16(payload, index, kind)?);
+    ensure_available(payload, *index, byte_len, kind)?;
+    let bytes = payload[*index..*index + byte_len].to_vec();
+    *index += byte_len;
+    let _ = field;
+    Ok(bytes)
 }
 
 fn read_u8(payload: &[u8], index: &mut usize, kind: &'static str) -> Result<u8, PacketError> {

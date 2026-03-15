@@ -174,6 +174,19 @@ class ByteCursor:
 		index += length
 		return bytes.get_string_from_utf8()
 
+	func read_blob(_field: String) -> Variant:
+		var length = read_u16()
+		if has_error():
+			return null
+		if not _ensure_available(length):
+			return null
+		var bytes := PackedByteArray()
+		bytes.resize(length)
+		for offset in range(length):
+			bytes[offset] = payload[index + offset]
+		index += length
+		return bytes
+
 	func read_record() -> Variant:
 		var wins = read_u16()
 		var losses = read_u16()
@@ -786,6 +799,9 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 			var full_phase_seconds = cursor.read_optional_u8()
 			var width = cursor.read_u16()
 			var height = cursor.read_u16()
+			var tile_units = cursor.read_u16()
+			var visible_tiles: PackedByteArray = cursor.read_blob("visible_tiles")
+			var explored_tiles: PackedByteArray = cursor.read_blob("explored_tiles")
 			var obstacle_count = cursor.read_u16()
 			if cursor.has_error():
 				return _error(cursor.error_message)
@@ -898,6 +914,9 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 					"phase_seconds_remaining": full_phase_seconds,
 					"width": width,
 					"height": height,
+					"tile_units": tile_units,
+					"visible_tiles": visible_tiles,
+					"explored_tiles": explored_tiles,
 					"obstacles": obstacles,
 					"players": players,
 					"projectiles": projectiles,
@@ -906,6 +925,9 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 		20:
 			var delta_phase = cursor.read_arena_match_phase()
 			var delta_phase_seconds = cursor.read_optional_u8()
+			var delta_tile_units = cursor.read_u16()
+			var delta_visible_tiles: PackedByteArray = cursor.read_blob("visible_tiles")
+			var delta_explored_tiles: PackedByteArray = cursor.read_blob("explored_tiles")
 			var delta_player_count = cursor.read_u16()
 			if cursor.has_error():
 				return _error(cursor.error_message)
@@ -997,6 +1019,9 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 				"snapshot": {
 					"phase": delta_phase,
 					"phase_seconds_remaining": delta_phase_seconds,
+					"tile_units": delta_tile_units,
+					"visible_tiles": delta_visible_tiles,
+					"explored_tiles": delta_explored_tiles,
 					"players": delta_players,
 					"projectiles": delta_projectiles,
 				},

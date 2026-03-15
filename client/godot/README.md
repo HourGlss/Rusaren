@@ -13,7 +13,7 @@ What it does:
 - decodes real binary server control events
 - renders central-lobby, game-lobby, countdown, match, and results screens
 - renders a simple top-down arena with a mostly empty floor, four central pillars, and shrub collars
-- renders authoritative player circles, names, hp bars, mana bars, active status labels, aim lines, cooldown text, projectile state, and short-lived skill/melee effects
+- renders authoritative player circles, names, hp bars, mana bars, active status labels, cooldown text, projectile state, short-lived skill/melee effects, and per-player fog-of-war
 - consumes authoritative lobby-directory and game-lobby snapshots
 - consumes authoritative full arena snapshots, delta arena snapshots, and arena effect batches
 - lets players click an open lobby directly from the central directory
@@ -30,7 +30,8 @@ What it does not do yet:
 
 Current shell limitation:
 - the combat loop is still prototype-level, even though the current map and slot skills now load from authored YAML and ASCII content files and already support real melee/projectile/status interactions
-- the shell now has a usable HUD and basic spell/melee visuals, but not final readability polish or final effects for every future spell
+- shrubs are traversable cover: they no longer block movement, but they do block sight through the authoritative fog-of-war
+- the shell now has a usable HUD and clearer melee/beam/projectile visuals, but not final readability polish or final effects for every future spell
 - disconnecting or transport failure now returns the shell to the central-state layout instead of leaving stale match UI on screen
 - the current snapshot delta is a simple dynamic-state packet, not a final compressed rollback/interpolation format
 - native/headless transport testing depends on the `webrtc-native` extension being available to the editor/runtime; if your local Godot install ships it under a folder like `Godot/webrtc/`, `server/scripts/export-web-client.ps1` now syncs that bundle into the ignored local project path `client/godot/webrtc/`

@@ -33,10 +33,13 @@ var local_skill_progress := {}
 var local_round_skill_locked := false
 var arena_width := 0
 var arena_height := 0
+var arena_tile_units := 0
 var arena_obstacles: Array[Dictionary] = []
 var arena_players := {}
 var arena_projectiles: Array[Dictionary] = []
 var arena_effects: Array[Dictionary] = []
+var visible_tiles := PackedByteArray()
+var explored_tiles := PackedByteArray()
 
 
 func prepare_for_connection(url: String, player_name: String) -> void:
@@ -296,6 +299,9 @@ func apply_server_event(event: Dictionary) -> void:
 			_apply_arena_phase(snapshot)
 			arena_width = int(snapshot.get("width", 0))
 			arena_height = int(snapshot.get("height", 0))
+			arena_tile_units = int(snapshot.get("tile_units", 0))
+			visible_tiles = snapshot.get("visible_tiles", PackedByteArray())
+			explored_tiles = snapshot.get("explored_tiles", PackedByteArray())
 			arena_obstacles.clear()
 			for obstacle_data in snapshot.get("obstacles", []):
 				arena_obstacles.append((obstacle_data as Dictionary).duplicate(true))
@@ -309,6 +315,9 @@ func apply_server_event(event: Dictionary) -> void:
 		"ArenaDeltaSnapshot":
 			var delta_snapshot: Dictionary = event.get("snapshot", {})
 			_apply_arena_phase(delta_snapshot)
+			arena_tile_units = int(delta_snapshot.get("tile_units", arena_tile_units))
+			visible_tiles = delta_snapshot.get("visible_tiles", PackedByteArray())
+			explored_tiles = delta_snapshot.get("explored_tiles", PackedByteArray())
 			arena_players.clear()
 			for player_delta in delta_snapshot.get("players", []):
 				var delta_player_id := int(player_delta.get("player_id", 0))
@@ -543,6 +552,26 @@ func arena_players_list() -> Array[Dictionary]:
 	return players
 
 
+func arena_tile_width() -> int:
+	if arena_tile_units <= 0:
+		return 0
+	return int(arena_width / arena_tile_units)
+
+
+func arena_tile_height() -> int:
+	if arena_tile_units <= 0:
+		return 0
+	return int(arena_height / arena_tile_units)
+
+
+func is_tile_visible(column: int, row: int) -> bool:
+	return _mask_has_tile(visible_tiles, column, row)
+
+
+func is_tile_explored(column: int, row: int) -> bool:
+	return _mask_has_tile(explored_tiles, column, row)
+
+
 func advance_visuals(delta: float) -> void:
 	for index in range(arena_effects.size() - 1, -1, -1):
 		var effect: Dictionary = arena_effects[index]
@@ -635,10 +664,28 @@ func _reset_local_skill_progress() -> void:
 func _clear_arena_state() -> void:
 	arena_width = 0
 	arena_height = 0
+	arena_tile_units = 0
 	arena_obstacles.clear()
 	arena_players.clear()
 	arena_projectiles.clear()
 	arena_effects.clear()
+	visible_tiles = PackedByteArray()
+	explored_tiles = PackedByteArray()
+
+
+func _mask_has_tile(mask: PackedByteArray, column: int, row: int) -> bool:
+	var tile_width := arena_tile_width()
+	var tile_height := arena_tile_height()
+	if tile_width <= 0 or tile_height <= 0:
+		return true
+	if column < 0 or row < 0 or column >= tile_width or row >= tile_height:
+		return false
+	var index := row * tile_width + column
+	var byte_index := int(index / 8)
+	var bit_index := int(index % 8)
+	if byte_index < 0 or byte_index >= mask.size():
+		return false
+	return (int(mask[byte_index]) & (1 << bit_index)) != 0
 
 
 func _effect_ttl_seconds(kind_name: String) -> float:

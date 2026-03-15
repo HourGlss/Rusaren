@@ -17,6 +17,7 @@ pub const COMBAT_FRAME_MS: u16 = 100;
 pub const PLAYER_MOVE_SPEED_UNITS_PER_SECOND: u16 = 260;
 pub const PLAYER_MAX_MANA: u16 = 100;
 pub const PLAYER_MANA_REGEN_PER_SECOND: u16 = 12;
+pub const VISION_RADIUS_UNITS: u16 = 450;
 const SPAWN_SPACING_UNITS: i16 = 120;
 const DEFAULT_AIM_X: i16 = 120;
 const DEFAULT_AIM_Y: i16 = 0;
@@ -692,21 +693,20 @@ impl SimulationWorld {
             if !snapshot.alive {
                 continue;
             }
-            let (casts_blocked, actions_blocked) = self
-                .players
-                .get(&player_id)
-                .map(|player| {
-                    (
-                        player.statuses.iter().any(|status| {
-                            matches!(status.kind, StatusKind::Silence | StatusKind::Stun)
-                        }),
-                        player
-                            .statuses
-                            .iter()
-                            .any(|status| status.kind == StatusKind::Stun),
-                    )
-                })
-                .unwrap_or((false, false));
+            let (casts_blocked, actions_blocked) =
+                self.players
+                    .get(&player_id)
+                    .map_or((false, false), |player| {
+                        (
+                            player.statuses.iter().any(|status| {
+                                matches!(status.kind, StatusKind::Silence | StatusKind::Stun)
+                            }),
+                            player
+                                .statuses
+                                .iter()
+                                .any(|status| status.kind == StatusKind::Stun),
+                        )
+                    });
 
             let queued_primary = self
                 .players
@@ -1541,7 +1541,9 @@ fn total_move_modifier_bps(statuses: &[StatusInstance]) -> i16 {
 }
 
 fn adjusted_move_speed(delta_ms: u16, move_modifier_bps: i16) -> u16 {
-    let scale_bps = (10_000_i32 + i32::from(move_modifier_bps)).clamp(2_000, 16_000) as u32;
+    let scale_bps = (10_000_i32 + i32::from(move_modifier_bps))
+        .clamp(2_000, 16_000)
+        .cast_unsigned();
     let effective_speed =
         u32::from(PLAYER_MOVE_SPEED_UNITS_PER_SECOND).saturating_mul(scale_bps) / 10_000;
     let distance = effective_speed.saturating_mul(u32::from(delta_ms)) / 1000;
@@ -1592,9 +1594,13 @@ fn resolve_movement(
 
     let mut resolved_x = saturating_i16(candidate_x);
     let mut resolved_y = saturating_i16(candidate_y);
-    if obstacles.iter().any(|obstacle| {
-        circle_intersects_rect(resolved_x, resolved_y, PLAYER_RADIUS_UNITS, obstacle)
-    }) {
+    if obstacles
+        .iter()
+        .filter(|obstacle| obstacle_blocks_movement(obstacle))
+        .any(|obstacle| {
+            circle_intersects_rect(resolved_x, resolved_y, PLAYER_RADIUS_UNITS, obstacle)
+        })
+    {
         resolved_x = start_x;
         resolved_y = start_y;
     }
@@ -1614,13 +1620,48 @@ fn circle_intersects_rect(x: i16, y: i16, radius: u16, obstacle: &ArenaObstacle)
     dx * dx + dy * dy <= i32::from(radius) * i32::from(radius)
 }
 
+#[must_use]
+pub const fn obstacle_blocks_movement(obstacle: &ArenaObstacle) -> bool {
+    matches!(obstacle.kind, ArenaObstacleKind::Pillar)
+}
+
+#[must_use]
+pub const fn obstacle_blocks_projectiles(obstacle: &ArenaObstacle) -> bool {
+    matches!(obstacle.kind, ArenaObstacleKind::Pillar)
+}
+
+#[must_use]
+pub const fn obstacle_blocks_vision(obstacle: &ArenaObstacle) -> bool {
+    matches!(
+        obstacle.kind,
+        ArenaObstacleKind::Pillar | ArenaObstacleKind::Shrub
+    )
+}
+
+#[must_use]
+pub fn obstacle_contains_point(x: i16, y: i16, obstacle: &ArenaObstacle) -> bool {
+    let left = obstacle.center_x - i16::try_from(obstacle.half_width).unwrap_or(i16::MAX);
+    let right = obstacle.center_x + i16::try_from(obstacle.half_width).unwrap_or(i16::MAX);
+    let top = obstacle.center_y - i16::try_from(obstacle.half_height).unwrap_or(i16::MAX);
+    let bottom = obstacle.center_y + i16::try_from(obstacle.half_height).unwrap_or(i16::MAX);
+    x >= left && x <= right && y >= top && y <= bottom
+}
+
+#[must_use]
+pub fn segment_hits_obstacle(start: (i16, i16), end: (i16, i16), obstacle: &ArenaObstacle) -> bool {
+    segment_rect_intersection_t(start, end, obstacle).is_some()
+}
+
 fn truncate_line_to_obstacles(
     start: (i16, i16),
     end: (i16, i16),
     obstacles: &[ArenaObstacle],
 ) -> (i16, i16) {
     let mut closest_t = 1.0_f32;
-    for obstacle in obstacles {
+    for obstacle in obstacles
+        .iter()
+        .filter(|obstacle| obstacle_blocks_projectiles(obstacle))
+    {
         if let Some(intersection_t) = segment_rect_intersection_t(start, end, obstacle) {
             if intersection_t < closest_t {
                 closest_t = intersection_t;
@@ -1953,7 +1994,7 @@ mod tests {
     }
 
     #[test]
-    fn movement_stops_on_pillars_and_players_are_circles() {
+    fn movement_passes_through_shrubs_but_stops_on_pillars() {
         let content = content();
         let mut world = world(
             &content,
@@ -1987,10 +2028,90 @@ mod tests {
         }
         let state = world.player_state(player_id(1)).expect("player");
         assert!(
+            state.x > shrub.center_x - i16::try_from(shrub.half_width).expect("fits"),
+            "shrubs should be traversable and allow the player to enter the bush footprint"
+        );
+
+        let pillar = *world
+            .obstacles()
+            .iter()
+            .find(|obstacle| obstacle.kind == ArenaObstacleKind::Pillar)
+            .expect("pillar exists");
+        {
+            let player = world.players.get_mut(&player_id(1)).expect("player");
+            player.x = pillar.center_x
+                - i16::try_from(pillar.half_width).expect("fits")
+                - i16::try_from(PLAYER_RADIUS_UNITS).expect("fits")
+                - 30;
+            player.y = pillar.center_y;
+        }
+        world
+            .submit_input(player_id(1), MovementIntent::new(1, 0).expect("intent"))
+            .expect("input");
+        for _ in 0..10 {
+            let _ = world.tick(COMBAT_FRAME_MS);
+        }
+        let state = world.player_state(player_id(1)).expect("player");
+        assert!(
             state.x
-                <= shrub.center_x
-                    - i16::try_from(shrub.half_width).expect("fits")
+                <= pillar.center_x
+                    - i16::try_from(pillar.half_width).expect("fits")
                     - i16::try_from(PLAYER_RADIUS_UNITS).expect("fits")
+        );
+    }
+
+    #[test]
+    fn projectiles_travel_through_shrubs_but_stop_on_pillars() {
+        let content = content();
+        let mut world = world(
+            &content,
+            vec![
+                seed(
+                    &content,
+                    1,
+                    "Alice",
+                    TeamSide::TeamA,
+                    SkillTree::Mage,
+                    [Some(choice(SkillTree::Mage, 1)), None, None, None, None],
+                ),
+                seed(
+                    &content,
+                    2,
+                    "Bob",
+                    TeamSide::TeamB,
+                    SkillTree::Warrior,
+                    [None, None, None, None, None],
+                ),
+            ],
+        );
+        let shrub = *world
+            .obstacles()
+            .iter()
+            .find(|obstacle| obstacle.kind == ArenaObstacleKind::Shrub)
+            .expect("shrub exists");
+        set_player_pose(
+            &mut world,
+            player_id(1),
+            shrub.center_x - 220,
+            shrub.center_y,
+            TEST_AIM_X,
+            TEST_AIM_Y,
+        );
+        set_player_pose(
+            &mut world,
+            player_id(2),
+            shrub.center_x + 220,
+            shrub.center_y,
+            -TEST_AIM_X,
+            TEST_AIM_Y,
+        );
+
+        world.queue_cast(player_id(1), 1).expect("projectile cast");
+        let mut events = world.tick(COMBAT_FRAME_MS);
+        events.extend(collect_ticks(&mut world, 24));
+        assert!(
+            damage_to(&events, player_id(2)).is_some(),
+            "projectiles should travel through shrubs"
         );
     }
 
@@ -2582,6 +2703,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn every_authored_melee_hits_when_targets_are_in_range_and_misses_when_not() {
         let content = content();
         let classes = [
@@ -2703,6 +2825,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn every_authored_skill_hits_with_valid_geometry_and_resources() {
         let content = content();
 
@@ -2881,6 +3004,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn every_authored_skill_misses_targets_outside_its_effective_geometry() {
         let content = content();
 

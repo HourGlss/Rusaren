@@ -309,6 +309,9 @@ fn arena_status_kinds_round_trip_for_all_runtime_statuses() {
             snapshot: ArenaDeltaSnapshot {
                 phase: ArenaMatchPhase::Combat,
                 phase_seconds_remaining: None,
+                tile_units: 50,
+                visible_tiles: vec![0b0011_1111, 0b0000_0011],
+                explored_tiles: vec![0b1111_1111, 0b0000_1111],
                 players: vec![ArenaPlayerSnapshot {
                     player_id: player_id(7),
                     player_name: player_name("Alice"),
@@ -367,6 +370,9 @@ fn sample_full_arena_snapshot_event() -> ServerControlEvent {
             phase_seconds_remaining: None,
             width: 1800,
             height: 1200,
+            tile_units: 50,
+            visible_tiles: vec![0b0011_1111, 0b0000_0011],
+            explored_tiles: vec![0b1111_1111, 0b0000_1111],
             obstacles: vec![
                 ArenaObstacleSnapshot {
                     kind: ArenaObstacleKind::Shrub,
@@ -419,6 +425,9 @@ fn sample_delta_arena_snapshot_event() -> ServerControlEvent {
         snapshot: ArenaDeltaSnapshot {
             phase: ArenaMatchPhase::Combat,
             phase_seconds_remaining: None,
+            tile_units: 50,
+            visible_tiles: vec![0b0011_1111, 0b0000_0011],
+            explored_tiles: vec![0b1111_1111, 0b0000_1111],
             players: vec![ArenaPlayerSnapshot {
                 player_id: player_id(7),
                 player_name: player_name("Alice"),
@@ -489,6 +498,9 @@ fn server_control_event_rejects_invalid_arena_kinds() {
     let mut arena_payload = vec![19, 3, 0];
     arena_payload.extend_from_slice(&1800_u16.to_le_bytes());
     arena_payload.extend_from_slice(&1200_u16.to_le_bytes());
+    arena_payload.extend_from_slice(&50_u16.to_le_bytes());
+    arena_payload.extend_from_slice(&0_u16.to_le_bytes());
+    arena_payload.extend_from_slice(&0_u16.to_le_bytes());
     arena_payload.extend_from_slice(&1_u16.to_le_bytes());
     arena_payload.push(9);
     arena_payload.extend_from_slice(&0_i16.to_le_bytes());
@@ -539,9 +551,7 @@ fn server_control_event_rejects_invalid_arena_kinds() {
 
 #[test]
 fn server_control_event_rejects_invalid_delta_snapshot_phase_and_status_values() {
-    let mut bad_phase_payload = vec![20, 9, 0];
-    bad_phase_payload.extend_from_slice(&0_u16.to_le_bytes());
-    bad_phase_payload.extend_from_slice(&0_u16.to_le_bytes());
+    let bad_phase_payload = vec![20, 9];
     let header = PacketHeader::new(
         ChannelId::Snapshot,
         PacketKind::DeltaSnapshot,
@@ -558,6 +568,9 @@ fn server_control_event_rejects_invalid_delta_snapshot_phase_and_status_values()
     );
 
     let mut bad_status_payload = vec![20, 3, 0];
+    bad_status_payload.extend_from_slice(&50_u16.to_le_bytes());
+    bad_status_payload.extend_from_slice(&0_u16.to_le_bytes());
+    bad_status_payload.extend_from_slice(&0_u16.to_le_bytes());
     bad_status_payload.extend_from_slice(&1_u16.to_le_bytes());
     bad_status_payload.extend_from_slice(&7_u32.to_le_bytes());
     bad_status_payload.push(5);

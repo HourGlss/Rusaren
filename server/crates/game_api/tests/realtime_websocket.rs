@@ -197,6 +197,7 @@ async fn cast_until_round_won(
     for offset in 0_u32..18 {
         let sequence = u32::from(round) * 100 + offset + 1;
         send_input(alice, slot_one_cast_input(sequence), sequence, sequence).await;
+        tokio::time::sleep(Duration::from_millis(250)).await;
 
         let (alice_batch, alice_finished) = recv_events_up_to(alice, 24, |event| {
             matches!(
@@ -859,8 +860,10 @@ async fn websocket_adapter_finishes_a_full_match_loop_via_live_input_frames() {
     assert!(alice_snapshot_events.iter().any(|event| matches!(
         event,
         ServerControlEvent::ArenaStateSnapshot { snapshot }
-            if snapshot.players.len() == 2
-                && snapshot.obstacles.len() == 100
+            if snapshot.players.iter().any(|player| player.player_name.as_str() == "Alice")
+                && !snapshot.players.iter().any(|player| player.player_name.as_str() == "Bob")
+                && !snapshot.obstacles.is_empty()
+                && !snapshot.visible_tiles.is_empty()
                 && snapshot.projectiles.is_empty()
     )));
 
@@ -884,11 +887,11 @@ async fn websocket_adapter_finishes_a_full_match_loop_via_live_input_frames() {
         )
         .await;
 
-        let alice_skill_events = recv_events_until(&mut alice, 10, |event| {
+        let alice_skill_events = recv_events_until(&mut alice, 24, |event| {
             matches!(event, ServerControlEvent::PreCombatStarted { .. })
         })
         .await;
-        let bob_skill_events = recv_events_until(&mut bob, 10, |event| {
+        let bob_skill_events = recv_events_until(&mut bob, 24, |event| {
             matches!(event, ServerControlEvent::PreCombatStarted { .. })
         })
         .await;
@@ -914,7 +917,7 @@ async fn websocket_adapter_finishes_a_full_match_loop_via_live_input_frames() {
             assert!(alice_round_events.iter().any(|event| matches!(
                 event,
                 ServerControlEvent::ArenaDeltaSnapshot { snapshot }
-                    if snapshot.players.len() == 2
+                    if snapshot.players.iter().any(|player| player.player_name.as_str() == "Alice")
             )));
             assert!(alice_round_events.iter().any(|event| matches!(
                 event,
@@ -945,7 +948,7 @@ async fn websocket_adapter_finishes_a_full_match_loop_via_live_input_frames() {
             assert!(alice_match_events.iter().any(|event| matches!(
                 event,
                 ServerControlEvent::ArenaDeltaSnapshot { snapshot }
-                    if snapshot.players.len() == 2
+                    if snapshot.players.iter().any(|player| player.player_name.as_str() == "Alice")
             )));
             alice_match_events.extend(
                 recv_events_until(&mut alice, 8, |event| {
@@ -991,11 +994,11 @@ async fn websocket_adapter_finishes_a_full_match_loop_via_live_input_frames() {
 
     send_command(&mut alice, ClientControlCommand::QuitToCentralLobby, 10).await;
     send_command(&mut bob, ClientControlCommand::QuitToCentralLobby, 10).await;
-    let alice_return_events = recv_events_until(&mut alice, 3, |event| {
+    let alice_return_events = recv_events_until(&mut alice, 8, |event| {
         matches!(event, ServerControlEvent::ReturnedToCentralLobby { .. })
     })
     .await;
-    let bob_return_events = recv_events_until(&mut bob, 3, |event| {
+    let bob_return_events = recv_events_until(&mut bob, 8, |event| {
         matches!(event, ServerControlEvent::ReturnedToCentralLobby { .. })
     })
     .await;
@@ -1148,11 +1151,11 @@ async fn websocket_adapter_rejects_skill_tier_skips_and_accepts_the_next_valid_p
     )
     .await;
 
-    let alice_events = recv_events_until(&mut alice, 10, |event| {
+    let alice_events = recv_events_until(&mut alice, 24, |event| {
         matches!(event, ServerControlEvent::PreCombatStarted { .. })
     })
     .await;
-    let bob_events = recv_events_until(&mut bob, 10, |event| {
+    let bob_events = recv_events_until(&mut bob, 24, |event| {
         matches!(event, ServerControlEvent::PreCombatStarted { .. })
     })
     .await;

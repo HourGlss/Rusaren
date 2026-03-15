@@ -405,6 +405,9 @@ fn write_server_control_event_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
             phase_seconds_remaining: None,
             width: 1800,
             height: 1200,
+            tile_units: 50,
+            visible_tiles: vec![0b0011_1111, 0b0000_0011],
+            explored_tiles: vec![0b1111_1111, 0b0000_1111],
             obstacles: vec![
                 ArenaObstacleSnapshot {
                     kind: ArenaObstacleKind::Shrub,
@@ -497,6 +500,9 @@ fn write_server_control_event_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
         snapshot: ArenaDeltaSnapshot {
             phase: ArenaMatchPhase::Combat,
             phase_seconds_remaining: None,
+            tile_units: 50,
+            visible_tiles: vec![0b0011_1111, 0b0000_0011],
+            explored_tiles: vec![0b1111_1111, 0b0000_1111],
             players: vec![ArenaPlayerSnapshot {
                 player_id: player_id(7)?,
                 player_name: player_name("Alice")?,
@@ -704,6 +710,9 @@ fn write_arena_full_snapshot_decode_corpus(dir: &Path) -> Result<(), Box<dyn Err
             phase_seconds_remaining: None,
             width: 1800,
             height: 1200,
+            tile_units: 50,
+            visible_tiles: vec![0b0011_1111, 0b0000_0011],
+            explored_tiles: vec![0b1111_1111, 0b0000_1111],
             obstacles: vec![ArenaObstacleSnapshot {
                 kind: ArenaObstacleKind::Pillar,
                 center_x: 0,
@@ -753,6 +762,9 @@ fn write_arena_delta_snapshot_decode_corpus(dir: &Path) -> Result<(), Box<dyn Er
         snapshot: ArenaDeltaSnapshot {
             phase: ArenaMatchPhase::Combat,
             phase_seconds_remaining: None,
+            tile_units: 50,
+            visible_tiles: vec![0b0011_1111, 0b0000_0011],
+            explored_tiles: vec![0b1111_1111, 0b0000_1111],
             players: vec![ArenaPlayerSnapshot {
                 player_id: player_id(7)?,
                 player_name: player_name("Alice")?,
@@ -786,6 +798,9 @@ fn write_arena_delta_snapshot_decode_corpus(dir: &Path) -> Result<(), Box<dyn Er
 
     let invalid_phase = {
         let mut payload = vec![20, 9, 0];
+        payload.extend_from_slice(&50_u16.to_le_bytes());
+        payload.extend_from_slice(&0_u16.to_le_bytes());
+        payload.extend_from_slice(&0_u16.to_le_bytes());
         payload.extend_from_slice(&0_u16.to_le_bytes());
         payload.extend_from_slice(&0_u16.to_le_bytes());
         PacketHeader::new(
@@ -913,6 +928,7 @@ fn write_ascii_map_parse_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)]
 fn write_skill_yaml_parse_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
     recreate_dir(dir)?;
 

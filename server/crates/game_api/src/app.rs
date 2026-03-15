@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::PathBuf;
 
-use game_content::GameContent;
+use game_content::{ArenaMapDefinition, GameContent};
 use game_domain::{
     LobbyId, MatchId, MatchOutcome, PlayerId, PlayerName, PlayerRecord, ReadyState, SkillChoice,
     TeamAssignment, TeamSide,
@@ -25,8 +25,9 @@ use game_net::{
     ValidatedInputFrame, BUTTON_CAST, BUTTON_PRIMARY, BUTTON_QUIT_TO_LOBBY,
 };
 use game_sim::{
-    ArenaEffect, ArenaObstacle, MovementIntent, SimPlayerSeed, SimulationEvent, SimulationWorld,
-    COMBAT_FRAME_MS,
+    obstacle_blocks_vision, obstacle_contains_point, segment_hits_obstacle, ArenaEffect,
+    ArenaObstacle, ArenaObstacleKind as SimArenaObstacleKind, MovementIntent, SimPlayerSeed,
+    SimulationEvent, SimulationWorld, COMBAT_FRAME_MS, VISION_RADIUS_UNITS,
 };
 use getrandom::fill as fill_random;
 
@@ -93,6 +94,7 @@ struct MatchRuntime {
     participants: Vec<PlayerId>,
     session: MatchSession,
     world: SimulationWorld,
+    explored_tiles: BTreeMap<PlayerId, Vec<u8>>,
 }
 
 impl MatchRuntime {
@@ -1320,16 +1322,23 @@ impl ServerApp {
         })
     }
 
-    fn build_arena_state_snapshot(&self, match_id: MatchId) -> Option<ArenaStateSnapshot> {
-        let runtime = self.matches.get(&match_id)?;
+    fn build_arena_state_snapshot(
+        &mut self,
+        match_id: MatchId,
+        viewer_id: PlayerId,
+        map: &ArenaMapDefinition,
+    ) -> Option<ArenaStateSnapshot> {
+        let runtime = self.matches.get_mut(&match_id)?;
         let obstacles = runtime
             .world
             .obstacles()
             .iter()
             .map(Self::arena_obstacle_snapshot)
             .collect();
-        let players = Self::arena_players_snapshot(runtime);
-        let projectiles = Self::arena_projectiles_snapshot(runtime);
+        let (visible_tiles, explored_tiles) =
+            Self::build_visibility_masks(runtime, viewer_id, map)?;
+        let players = Self::arena_players_snapshot(runtime, viewer_id, map, &visible_tiles);
+        let projectiles = Self::arena_projectiles_snapshot(runtime, viewer_id, map, &visible_tiles);
         let (phase, phase_seconds_remaining) = Self::arena_match_phase_snapshot(&runtime.session);
 
         Some(ArenaStateSnapshot {
@@ -1337,21 +1346,34 @@ impl ServerApp {
             phase_seconds_remaining,
             width: runtime.world.arena_width_units(),
             height: runtime.world.arena_height_units(),
+            tile_units: map.tile_units,
+            visible_tiles,
+            explored_tiles,
             obstacles,
             players,
             projectiles,
         })
     }
 
-    fn build_arena_delta_snapshot(&self, match_id: MatchId) -> Option<ArenaDeltaSnapshot> {
-        let runtime = self.matches.get(&match_id)?;
-        let players = Self::arena_players_snapshot(runtime);
-        let projectiles = Self::arena_projectiles_snapshot(runtime);
+    fn build_arena_delta_snapshot(
+        &mut self,
+        match_id: MatchId,
+        viewer_id: PlayerId,
+        map: &ArenaMapDefinition,
+    ) -> Option<ArenaDeltaSnapshot> {
+        let runtime = self.matches.get_mut(&match_id)?;
+        let (visible_tiles, explored_tiles) =
+            Self::build_visibility_masks(runtime, viewer_id, map)?;
+        let players = Self::arena_players_snapshot(runtime, viewer_id, map, &visible_tiles);
+        let projectiles = Self::arena_projectiles_snapshot(runtime, viewer_id, map, &visible_tiles);
         let (phase, phase_seconds_remaining) = Self::arena_match_phase_snapshot(&runtime.session);
 
         Some(ArenaDeltaSnapshot {
             phase,
             phase_seconds_remaining,
+            tile_units: map.tile_units,
+            visible_tiles,
+            explored_tiles,
             players,
             projectiles,
         })
@@ -1366,15 +1388,17 @@ impl ServerApp {
         if recipients.is_empty() {
             return;
         }
-
-        let Some(snapshot) = self.build_arena_state_snapshot(match_id) else {
-            return;
-        };
-        self.broadcast_event(
-            transport,
-            &recipients,
-            ServerControlEvent::ArenaStateSnapshot { snapshot },
-        );
+        let map = self.content.map().clone();
+        for recipient in recipients {
+            let Some(snapshot) = self.build_arena_state_snapshot(match_id, recipient, &map) else {
+                continue;
+            };
+            self.send_event(
+                transport,
+                recipient,
+                ServerControlEvent::ArenaStateSnapshot { snapshot },
+            );
+        }
     }
 
     fn broadcast_arena_delta_snapshot<T: AppTransport>(
@@ -1386,15 +1410,17 @@ impl ServerApp {
         if recipients.is_empty() {
             return;
         }
-
-        let Some(snapshot) = self.build_arena_delta_snapshot(match_id) else {
-            return;
-        };
-        self.broadcast_event(
-            transport,
-            &recipients,
-            ServerControlEvent::ArenaDeltaSnapshot { snapshot },
-        );
+        let map = self.content.map().clone();
+        for recipient in recipients {
+            let Some(snapshot) = self.build_arena_delta_snapshot(match_id, recipient, &map) else {
+                continue;
+            };
+            self.send_event(
+                transport,
+                recipient,
+                ServerControlEvent::ArenaDeltaSnapshot { snapshot },
+            );
+        }
     }
 
     fn broadcast_arena_effect_batch<T: AppTransport>(
@@ -1411,14 +1437,18 @@ impl ServerApp {
         if recipients.is_empty() {
             return;
         }
-
-        self.broadcast_event(
-            transport,
-            &recipients,
-            ServerControlEvent::ArenaEffectBatch {
-                effects: effects.to_vec(),
-            },
-        );
+        let map = self.content.map().clone();
+        for recipient in recipients {
+            let filtered = self.filter_arena_effects(match_id, recipient, effects, &map);
+            if filtered.is_empty() {
+                continue;
+            }
+            self.send_event(
+                transport,
+                recipient,
+                ServerControlEvent::ArenaEffectBatch { effects: filtered },
+            );
+        }
     }
 
     fn arena_obstacle_snapshot(obstacle: &ArenaObstacle) -> ArenaObstacleSnapshot {
@@ -1467,7 +1497,12 @@ impl ServerApp {
         }
     }
 
-    fn arena_players_snapshot(runtime: &MatchRuntime) -> Vec<ArenaPlayerSnapshot> {
+    fn arena_players_snapshot(
+        runtime: &MatchRuntime,
+        viewer_id: PlayerId,
+        map: &ArenaMapDefinition,
+        visible_tiles: &[u8],
+    ) -> Vec<ArenaPlayerSnapshot> {
         let unlocked_skill_slots = runtime.session.current_round().get();
         runtime
             .roster
@@ -1476,6 +1511,10 @@ impl ServerApp {
                 runtime
                     .world
                     .player_state(assignment.player_id)
+                    .filter(|state| {
+                        assignment.player_id == viewer_id
+                            || Self::mask_contains_point(map, visible_tiles, state.x, state.y)
+                    })
                     .map(|state| {
                         Self::arena_player_snapshot(
                             &runtime.world,
@@ -1488,11 +1527,20 @@ impl ServerApp {
             .collect()
     }
 
-    fn arena_projectiles_snapshot(runtime: &MatchRuntime) -> Vec<ArenaProjectileSnapshot> {
+    fn arena_projectiles_snapshot(
+        runtime: &MatchRuntime,
+        viewer_id: PlayerId,
+        map: &ArenaMapDefinition,
+        visible_tiles: &[u8],
+    ) -> Vec<ArenaProjectileSnapshot> {
         runtime
             .world
             .projectiles()
             .into_iter()
+            .filter(|projectile| {
+                projectile.owner == viewer_id
+                    || Self::mask_contains_point(map, visible_tiles, projectile.x, projectile.y)
+            })
             .map(|projectile| ArenaProjectileSnapshot {
                 owner: projectile.owner,
                 slot: projectile.slot,
@@ -1510,6 +1558,180 @@ impl ServerApp {
                 radius: projectile.radius,
             })
             .collect()
+    }
+
+    fn filter_arena_effects(
+        &mut self,
+        match_id: MatchId,
+        viewer_id: PlayerId,
+        effects: &[ArenaEffectSnapshot],
+        map: &ArenaMapDefinition,
+    ) -> Vec<ArenaEffectSnapshot> {
+        let Some(runtime) = self.matches.get_mut(&match_id) else {
+            return Vec::new();
+        };
+        let Some((visible_tiles, _)) = Self::build_visibility_masks(runtime, viewer_id, map) else {
+            return Vec::new();
+        };
+        effects
+            .iter()
+            .copied()
+            .filter(|effect| {
+                effect.owner == viewer_id
+                    || Self::mask_contains_point(map, &visible_tiles, effect.x, effect.y)
+                    || Self::mask_contains_point(
+                        map,
+                        &visible_tiles,
+                        effect.target_x,
+                        effect.target_y,
+                    )
+            })
+            .collect()
+    }
+
+    fn build_visibility_masks(
+        runtime: &mut MatchRuntime,
+        viewer_id: PlayerId,
+        map: &ArenaMapDefinition,
+    ) -> Option<(Vec<u8>, Vec<u8>)> {
+        let viewer_state = runtime.world.player_state(viewer_id)?;
+        let mut visible_tiles = Self::blank_visibility_mask(map);
+        let viewer_position = (viewer_state.x, viewer_state.y);
+        if let Some(tile_index) = Self::tile_index_for_point(map, viewer_state.x, viewer_state.y) {
+            Self::set_mask_bit(&mut visible_tiles, tile_index);
+        }
+
+        for row in 0..usize::from(map.height_tiles) {
+            for column in 0..usize::from(map.width_tiles) {
+                let tile_center = Self::tile_center_units(map, column, row);
+                if Self::point_is_visible_to_viewer(
+                    viewer_position,
+                    tile_center,
+                    runtime.world.obstacles(),
+                ) {
+                    let tile_index = row * usize::from(map.width_tiles) + column;
+                    Self::set_mask_bit(&mut visible_tiles, tile_index);
+                }
+            }
+        }
+
+        let explored_tiles = runtime
+            .explored_tiles
+            .entry(viewer_id)
+            .or_insert_with(|| Self::blank_visibility_mask(map));
+        if explored_tiles.len() != visible_tiles.len() {
+            *explored_tiles = Self::blank_visibility_mask(map);
+        }
+        for (explored, visible) in explored_tiles.iter_mut().zip(&visible_tiles) {
+            *explored |= *visible;
+        }
+
+        Some((visible_tiles, explored_tiles.clone()))
+    }
+
+    fn point_is_visible_to_viewer(
+        viewer_position: (i16, i16),
+        target_position: (i16, i16),
+        obstacles: &[ArenaObstacle],
+    ) -> bool {
+        let delta_x = i32::from(target_position.0) - i32::from(viewer_position.0);
+        let delta_y = i32::from(target_position.1) - i32::from(viewer_position.1);
+        let radius_sq = i32::from(VISION_RADIUS_UNITS) * i32::from(VISION_RADIUS_UNITS);
+        if delta_x.saturating_mul(delta_x) + delta_y.saturating_mul(delta_y) > radius_sq {
+            return false;
+        }
+
+        let viewer_shrub = Self::containing_shrub(obstacles, viewer_position.0, viewer_position.1);
+        let target_shrub = Self::containing_shrub(obstacles, target_position.0, target_position.1);
+        if (viewer_shrub.is_some() || target_shrub.is_some()) && viewer_shrub != target_shrub {
+            return false;
+        }
+
+        for obstacle in obstacles
+            .iter()
+            .filter(|obstacle| obstacle_blocks_vision(obstacle))
+        {
+            if viewer_shrub.is_some()
+                && viewer_shrub == target_shrub
+                && Some(*obstacle) == viewer_shrub
+            {
+                continue;
+            }
+            if segment_hits_obstacle(viewer_position, target_position, obstacle) {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    fn containing_shrub(obstacles: &[ArenaObstacle], x: i16, y: i16) -> Option<ArenaObstacle> {
+        obstacles.iter().copied().find(|obstacle| {
+            obstacle.kind == SimArenaObstacleKind::Shrub && obstacle_contains_point(x, y, obstacle)
+        })
+    }
+
+    fn blank_visibility_mask(map: &ArenaMapDefinition) -> Vec<u8> {
+        vec![0_u8; Self::visibility_mask_len(map)]
+    }
+
+    fn visibility_mask_len(map: &ArenaMapDefinition) -> usize {
+        (usize::from(map.width_tiles) * usize::from(map.height_tiles)).div_ceil(8)
+    }
+
+    fn set_mask_bit(mask: &mut [u8], index: usize) {
+        let byte_index = index / 8;
+        let bit_index = index % 8;
+        if let Some(byte) = mask.get_mut(byte_index) {
+            *byte |= 1_u8 << bit_index;
+        }
+    }
+
+    fn mask_contains_point(map: &ArenaMapDefinition, mask: &[u8], x: i16, y: i16) -> bool {
+        let Some(index) = Self::tile_index_for_point(map, x, y) else {
+            return false;
+        };
+        let byte_index = index / 8;
+        let bit_index = index % 8;
+        mask.get(byte_index)
+            .is_some_and(|byte| (byte & (1_u8 << bit_index)) != 0)
+    }
+
+    fn tile_index_for_point(map: &ArenaMapDefinition, x: i16, y: i16) -> Option<usize> {
+        let tile_units = i32::from(map.tile_units);
+        if tile_units <= 0 {
+            return None;
+        }
+        let half_width_units = i32::from(map.width_units) / 2;
+        let half_height_units = i32::from(map.height_units) / 2;
+        let relative_x = i32::from(x) + half_width_units;
+        let relative_y = i32::from(y) + half_height_units;
+        if relative_x < 0
+            || relative_y < 0
+            || relative_x >= i32::from(map.width_units)
+            || relative_y >= i32::from(map.height_units)
+        {
+            return None;
+        }
+        let column = usize::try_from(relative_x / tile_units).ok()?;
+        let row = usize::try_from(relative_y / tile_units).ok()?;
+        Some(row * usize::from(map.width_tiles) + column)
+    }
+
+    fn tile_center_units(map: &ArenaMapDefinition, column: usize, row: usize) -> (i16, i16) {
+        let half_width_units = i32::from(map.width_units) / 2;
+        let half_height_units = i32::from(map.height_units) / 2;
+        let tile_units = i32::from(map.tile_units);
+        let center_x = -half_width_units
+            + i32::try_from(column).unwrap_or(i32::MAX) * tile_units
+            + tile_units / 2;
+        let center_y = -half_height_units
+            + i32::try_from(row).unwrap_or(i32::MAX) * tile_units
+            + tile_units / 2;
+        (
+            i16::try_from(center_x).unwrap_or(i16::MAX),
+            i16::try_from(center_y).unwrap_or(i16::MAX),
+        )
     }
 
     fn arena_status_snapshot(status: game_sim::SimStatusState) -> ArenaStatusSnapshot {
@@ -1640,6 +1862,11 @@ impl ServerApp {
                 roster,
                 participants: participants.clone(),
                 session,
+                explored_tiles: participants
+                    .iter()
+                    .copied()
+                    .map(|player_id| (player_id, Self::blank_visibility_mask(self.content.map())))
+                    .collect(),
             },
         );
         self.game_lobbies.remove(&lobby_id);
@@ -2325,11 +2552,16 @@ mod tests {
                 _ => None,
             })
             .expect("match should start");
+        let alice_player_id = alice.player_id().expect("alice id");
+        let bob_player_id = bob.player_id().expect("bob id");
         assert!(alice_events.iter().any(|event| matches!(
             event,
             ServerControlEvent::ArenaStateSnapshot { snapshot }
-                if snapshot.players.len() == 2
+                if snapshot.players.iter().any(|player| player.player_id == alice_player_id)
+                    && !snapshot.players.iter().any(|player| player.player_id == bob_player_id)
                     && snapshot.obstacles.len() == server.content.map().obstacles.len()
+                    && snapshot.tile_units == server.content.map().tile_units
+                    && !snapshot.visible_tiles.is_empty()
         )));
         assert!(bob_events.iter().any(|event| matches!(
             event,
@@ -2347,6 +2579,37 @@ mod tests {
 
         let match_id = launch_match(&mut server, &mut transport, &mut alice, &mut bob);
         assert_eq!(match_id.get(), 1);
+    }
+
+    #[test]
+    fn shrubs_block_vision_for_outside_observers() {
+        let mut server = ServerApp::new();
+        let mut transport = InMemoryTransport::new();
+        let (mut alice, mut bob) = connect_pair(&mut server, &mut transport);
+        let match_id = launch_match(&mut server, &mut transport, &mut alice, &mut bob);
+
+        let runtime = server.matches.get(&match_id).expect("match runtime");
+        let alice_state = runtime
+            .world
+            .player_state(alice.player_id().expect("alice id"))
+            .expect("alice state");
+        let shrub = *runtime
+            .world
+            .obstacles()
+            .iter()
+            .find(|obstacle| obstacle.kind == game_sim::ArenaObstacleKind::Shrub)
+            .expect("shrub obstacle");
+
+        assert!(ServerApp::point_is_visible_to_viewer(
+            (alice_state.x, alice_state.y),
+            (alice_state.x + 100, alice_state.y),
+            runtime.world.obstacles(),
+        ));
+        assert!(!ServerApp::point_is_visible_to_viewer(
+            (alice_state.x, alice_state.y),
+            (shrub.center_x, shrub.center_y),
+            runtime.world.obstacles(),
+        ));
     }
 
     #[test]

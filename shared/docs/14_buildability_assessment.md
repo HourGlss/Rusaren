@@ -11,7 +11,7 @@ Buildable today:
 - the WebRTC gameplay transport, websocket signaling path, and the raw websocket dev adapter fallback
 - the backend app layer, lobby flow, match flow, persistent `W-L-NC`, fake-client tests, live websocket integration tests, and Rust-side WebRTC integration tests
 - the thin Godot shell under `client/godot`, including manual placeholder combat input over the live browser WebRTC transport
-- authoritative full and delta gameplay snapshots that carry match phase, hp, mana, cooldowns, active statuses, and projectile state
+- authoritative full and delta gameplay snapshots that carry match phase, hp, mana, cooldowns, active statuses, projectile state, and per-player visible/explored fog masks
 - runtime content loading from `server/content/skills/*.yaml` and `server/content/maps/prototype_arena.txt`
 - runtime validation that rejects malformed YAML skill shapes, duplicate authored ids, and malformed ASCII maps before boot
 - backend gameplay tests that directly exercise every currently shipped melee and authored slot skill for hit/miss/range/cooldown/status behavior
@@ -50,7 +50,7 @@ Still open, but no longer blocking:
 The next implementation steps should be:
 1. keep the Godot shell and backend packet surface synced while the current WebRTC path gets more real-world playtime
 2. expand authored content and backend gameplay correctness coverage now that the runtime transport surface is in place
-3. continue gameplay presentation and HUD work on top of the working snapshot/delta path
+3. continue gameplay presentation and HUD work on top of the working snapshot/delta path, especially readability under fog-of-war
 4. use the checked-in hosting stack plus the Linode deployment guide to perform the first real hosted-domain rollout once operator secrets and DNS are available
 
 The next decisions should come from implementation feedback, not more speculative architecture drafting.

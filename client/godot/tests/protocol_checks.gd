@@ -115,6 +115,13 @@ func _assert_decode_arena_state_snapshot() -> bool:
 	payload.append(0)
 	_push_u16(payload, 1800)
 	_push_u16(payload, 1200)
+	_push_u16(payload, 50)
+	_push_u16(payload, 2)
+	payload.append(0x3F)
+	payload.append(0x03)
+	_push_u16(payload, 2)
+	payload.append(0xFF)
+	payload.append(0x0F)
 	_push_u16(payload, 1)
 	payload.append(1)
 	_push_i16(payload, -220)
@@ -167,6 +174,11 @@ func _assert_decode_arena_state_snapshot() -> bool:
 		return _fail("arena state snapshot should decode one player")
 	if String(snapshot.get("phase", "")) != "Combat":
 		return _fail("arena state snapshot should decode the arena phase")
+	if int(snapshot.get("tile_units", 0)) != 50:
+		return _fail("arena state snapshot should decode tile units")
+	var visible_tiles: PackedByteArray = snapshot.get("visible_tiles", PackedByteArray())
+	if visible_tiles.size() != 2 or int(visible_tiles[0]) != 0x3F:
+		return _fail("arena state snapshot should decode visible tile masks")
 	if int(players[0].get("unlocked_skill_slots", 0)) != 3:
 		return _fail("arena state snapshot should preserve unlocked combat slots")
 	if int(players[0].get("mana", 0)) != 72:
@@ -185,6 +197,13 @@ func _assert_decode_arena_delta_snapshot() -> bool:
 	var payload := PackedByteArray([20])
 	payload.append(3)
 	payload.append(0)
+	_push_u16(payload, 50)
+	_push_u16(payload, 2)
+	payload.append(0x3F)
+	payload.append(0x03)
+	_push_u16(payload, 2)
+	payload.append(0xFF)
+	payload.append(0x0F)
 	_push_u16(payload, 1)
 	_push_u32(payload, 11)
 	_push_string(payload, "Alice")
@@ -222,6 +241,8 @@ func _assert_decode_arena_delta_snapshot() -> bool:
 	var players: Array = snapshot.get("players", [])
 	if String(snapshot.get("phase", "")) != "Combat":
 		return _fail("arena delta snapshot should preserve phase")
+	if int(snapshot.get("tile_units", 0)) != 50:
+		return _fail("arena delta snapshot should preserve tile units")
 	if players.size() != 1 or int(players[0].get("mana", 0)) != 64:
 		return _fail("arena delta snapshot should decode player state")
 	return true

@@ -124,28 +124,24 @@ fn must<T, E: std::fmt::Display>(result: Result<T, E>, context: &str) -> T {
 }
 
 fn bench_simulation_tick(c: &mut Criterion) {
-    let content = GameContent::bundled().expect("bundled content should load");
+    let content = must(GameContent::bundled(), "bundled content should load");
     let base_world = build_world(&content);
-    let move_right = MovementIntent::new(1, 0).expect("movement should be valid");
-    let move_left = MovementIntent::new(-1, 0).expect("movement should be valid");
+    let move_right = must(MovementIntent::new(1, 0), "movement should be valid");
+    let move_left = must(MovementIntent::new(-1, 0), "movement should be valid");
 
     c.bench_function("simulation_tick_six_players", |b| {
         b.iter_batched(
             || base_world.clone(),
             |mut world| {
                 for player in [player_id(1), player_id(2), player_id(3)] {
-                    world
-                        .submit_input(player, move_right)
-                        .expect("movement input");
-                    world.update_aim(player, 120, 0).expect("aim update");
-                    world.queue_cast(player, 1).expect("cast queue");
+                    must(world.submit_input(player, move_right), "movement input");
+                    must(world.update_aim(player, 120, 0), "aim update");
+                    must(world.queue_cast(player, 1), "cast queue");
                 }
                 for player in [player_id(4), player_id(5), player_id(6)] {
-                    world
-                        .submit_input(player, move_left)
-                        .expect("movement input");
-                    world.update_aim(player, -120, 0).expect("aim update");
-                    world.queue_cast(player, 1).expect("cast queue");
+                    must(world.submit_input(player, move_left), "movement input");
+                    must(world.update_aim(player, -120, 0), "aim update");
+                    must(world.queue_cast(player, 1), "cast queue");
                 }
                 let events = world.tick(COMBAT_FRAME_MS);
                 black_box(events);

@@ -13,7 +13,7 @@ Buildable now:
 - a Godot 4 shell under `client/godot` that drives the browser gameplay path through websocket signaling at `/ws` and binary WebRTC data channels
 - a focused in-match Godot shell layout that hides the setup chrome after lobby join, surfaces skill picks before the arena during skill-pick windows, and returns to the central layout on disconnect
 - authoritative full and delta arena snapshots carrying match phase, hp, mana, cooldowns, active statuses, and projectile state
-- a first playable arena slice with a mostly empty map, four central square pillars, shrub collars, authoritative player circles, WASD movement, mouse aim, left-click melee, authored class melee/spells on `1`-`5`, projectile combat, debuffs, HoTs, health, and cooldown state
+- a first playable arena slice with a mostly empty map, four central square pillars, traversable shrub collars, authoritative player circles, per-player fog-of-war, WASD movement, mouse aim, left-click melee, authored class melee/spells on `1`-`5`, projectile combat, debuffs, HoTs, health, mana, and cooldown state
 - runtime-loaded authored content under `server/content/skills/*.yaml` and `server/content/maps/prototype_arena.txt`
 - a same-origin Godot Web export path hosted directly by the Rust server at `/`
 - a documented production-style deploy path with Caddy, Prometheus, and `coturn`
@@ -29,7 +29,7 @@ Not implemented yet:
 - more aggressive snapshot compression beyond the current full-vs-delta split
 - the full 1.0 Godot gameplay presentation bar: HUD polish, stronger spell visuals, and always-readable health and mana display in crowded fights
 - rustdoc/API guidance that is complete enough for an external client or bot author to play through the game protocol without Godot
-- final vision / fog-of-war logic beyond stubs
+- advanced vision features beyond the current per-player fog-of-war, explored-tile memory, and shrub sight blocking
 
 ## Build and run
 
@@ -91,7 +91,7 @@ The current Godot shell is wired to `/session/bootstrap` for a one-time websocke
 The project metadata version is currently `0.8.0`.
 Known shell limitations:
 - the arena slice is intentionally simple, even though the current skills and map now load from authored content files
-- visibility is still a stubbed/minimal system; movement, health, cooldowns, and spell use are the priority slice
+- the current fog-of-war is authoritative and per-player, but it is still a simple radius-and-blocker implementation rather than the final polished vision system
 - the shell now consumes authoritative full and delta arena snapshots plus effect batches, but the current delta format is still a simple dynamic-state packet rather than a heavily compressed baseline-referenced diff
 - native/headless Godot transport testing depends on the `webrtc-native` extension being available to the editor/runtime; if your local Godot install ships that extension under a folder like `Godot/webrtc/`, `export-web-client.ps1` now syncs that bundle into the ignored local project path `client/godot/webrtc/` before export or headless checks
 - browser play remains the primary supported networked path on this machine; the synced native extension is for local editor/headless validation and is not tracked in git

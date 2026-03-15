@@ -120,4 +120,5 @@ Current prototype glyphs:
 Current purpose:
 - validate server-authoritative movement and collision
 - validate mouse aim + simple skill/melee effects in the browser shell
+- validate that shrubs are traversable cover: movement passes through them, but server-authoritative fog-of-war does not
 - provide a predictable layout for early fuzzing, tests, and packet debugging

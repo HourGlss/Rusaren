@@ -566,12 +566,18 @@ async fn webrtc_transport_connects_and_streams_control_plus_snapshot_events() {
     assert!(alice_launch_events.iter().any(|event| matches!(
         event,
         ServerControlEvent::ArenaStateSnapshot { snapshot }
-            if snapshot.players.len() == 2 && !snapshot.obstacles.is_empty()
+            if snapshot.players.iter().any(|player| player.player_name.as_str() == "Alice")
+                && !snapshot.players.iter().any(|player| player.player_name.as_str() == "Bob")
+                && !snapshot.obstacles.is_empty()
+                && !snapshot.visible_tiles.is_empty()
     )));
     assert!(bob_launch_events.iter().any(|event| matches!(
         event,
         ServerControlEvent::ArenaStateSnapshot { snapshot }
-            if snapshot.players.len() == 2 && !snapshot.obstacles.is_empty()
+            if snapshot.players.iter().any(|player| player.player_name.as_str() == "Bob")
+                && !snapshot.players.iter().any(|player| player.player_name.as_str() == "Alice")
+                && !snapshot.obstacles.is_empty()
+                && !snapshot.visible_tiles.is_empty()
     )));
 
     alice
@@ -621,7 +627,7 @@ async fn webrtc_transport_connects_and_streams_control_plus_snapshot_events() {
             matches!(
                 event,
                 ServerControlEvent::ArenaDeltaSnapshot { snapshot }
-                    if !snapshot.projectiles.is_empty()
+                    if snapshot.players.iter().any(|player| player.player_name.as_str() == "Bob")
             )
         })
         .await;
@@ -633,7 +639,7 @@ async fn webrtc_transport_connects_and_streams_control_plus_snapshot_events() {
     assert!(bob_combat_events.iter().any(|event| matches!(
         event,
         ServerControlEvent::ArenaDeltaSnapshot { snapshot }
-            if !snapshot.projectiles.is_empty()
+            if snapshot.players.iter().any(|player| player.player_name.as_str() == "Bob")
     )));
 
     alice.close().await;
