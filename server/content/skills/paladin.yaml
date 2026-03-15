@@ -1,0 +1,95 @@
+tree: Paladin
+melee:
+  id: paladin_hammer_swing
+  name: Hammer Swing
+  description: A disciplined hammer strike with holy weight behind it.
+  cooldown_ms: 600
+  range: 90
+  radius: 40
+  effect: melee_swing
+  payload:
+    kind: damage
+    amount: 16
+skills:
+  - tier: 1
+    id: paladin_judgment_lance
+    name: Judgment Lance
+    description: A straight holy lance that punishes exposed lanes.
+    behavior:
+      kind: beam
+      effect: beam
+      cooldown_ms: 850
+      mana_cost: 18
+      range: 300
+      radius: 26
+      payload:
+        kind: damage
+        amount: 18
+  - tier: 2
+    id: paladin_avenger_step
+    name: Avenger Step
+    description: A shield-led rush that stuns whatever is clipped at the landing point.
+    behavior:
+      kind: dash
+      effect: dash_trail
+      cooldown_ms: 1700
+      mana_cost: 24
+      distance: 185
+      impact_radius: 44
+      payload:
+        kind: damage
+        amount: 10
+        status:
+          kind: stun
+          duration_ms: 600
+          magnitude: 0
+  - tier: 3
+    id: paladin_sanctified_ring
+    name: Sanctified Ring
+    description: A nearby pulse that steadies allies or accidentally blesses enemies caught inside.
+    behavior:
+      kind: nova
+      effect: nova
+      cooldown_ms: 2100
+      mana_cost: 28
+      radius: 145
+      payload:
+        kind: heal
+        amount: 10
+        status:
+          kind: haste
+          duration_ms: 1800
+          magnitude: 1200
+          max_stacks: 1
+  - tier: 4
+    id: paladin_rebuke_burst
+    name: Rebuke Burst
+    description: A targeted holy burst that silences clustered casters.
+    behavior:
+      kind: burst
+      effect: burst
+      cooldown_ms: 2300
+      mana_cost: 32
+      range: 240
+      radius: 92
+      payload:
+        kind: damage
+        amount: 12
+        status:
+          kind: silence
+          duration_ms: 1000
+          magnitude: 0
+  - tier: 5
+    id: paladin_final_verdict
+    name: Final Verdict
+    description: A crushing execution beam for decisive frontline trades.
+    behavior:
+      kind: beam
+      effect: beam
+      cooldown_ms: 3100
+      mana_cost: 44
+      range: 240
+      radius: 48
+      payload:
+        kind: damage
+        amount: 32

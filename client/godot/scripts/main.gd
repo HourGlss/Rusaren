@@ -47,7 +47,8 @@ var primary_attack_button: Button
 var right_column: VBoxContainer
 var skill_pick_panel: PanelContainer
 var skill_pick_summary_label: Label
-var skill_columns: HBoxContainer
+var skill_scroll: ScrollContainer
+var skill_columns: GridContainer
 var combat_panel: VBoxContainer
 var arena_view = null
 var skill_buttons: Array[Button] = []
@@ -395,14 +396,17 @@ func _build_match_panel() -> PanelContainer:
 	skill_pick_summary_label.add_theme_color_override("font_color", Color8(222, 210, 192))
 	skill_pick_body.add_child(skill_pick_summary_label)
 
-	var skill_scroll := ScrollContainer.new()
+	skill_scroll = ScrollContainer.new()
 	skill_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
-	skill_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	skill_scroll.custom_minimum_size = Vector2(0, 320)
+	skill_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	skill_scroll.custom_minimum_size = Vector2(0, 360)
+	skill_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	skill_pick_body.add_child(skill_scroll)
 
-	skill_columns = HBoxContainer.new()
+	skill_columns = GridContainer.new()
+	skill_columns.columns = 3
 	skill_columns.add_theme_constant_override("separation", 10)
+	skill_columns.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	skill_scroll.add_child(skill_columns)
 	_rebuild_skill_buttons()
 
@@ -892,10 +896,28 @@ func _rebuild_skill_buttons() -> void:
 	skill_buttons.clear()
 
 	for tree_name in app_state.skill_tree_names():
+		var column_panel := PanelContainer.new()
+		var column_style := StyleBoxFlat.new()
+		column_style.bg_color = Color8(46, 36, 30)
+		column_style.border_color = Color8(129, 97, 69)
+		column_style.set_border_width_all(1)
+		column_style.corner_radius_top_left = 12
+		column_style.corner_radius_top_right = 12
+		column_style.corner_radius_bottom_right = 12
+		column_style.corner_radius_bottom_left = 12
+		column_style.content_margin_left = 12
+		column_style.content_margin_top = 12
+		column_style.content_margin_right = 12
+		column_style.content_margin_bottom = 12
+		column_panel.add_theme_stylebox_override("panel", column_style)
+		column_panel.custom_minimum_size = Vector2(240, 0)
+		column_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		skill_columns.add_child(column_panel)
+
 		var column := VBoxContainer.new()
 		column.custom_minimum_size = Vector2(220, 0)
 		column.add_theme_constant_override("separation", 6)
-		skill_columns.add_child(column)
+		column_panel.add_child(column)
 
 		var tree_label := Label.new()
 		tree_label.text = tree_name

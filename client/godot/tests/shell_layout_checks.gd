@@ -88,6 +88,8 @@ func _assert_skill_pick_layout_prioritizes_skill_buttons() -> bool:
 		success = _fail("skill pick phase should show the dedicated skill picker panel") and success
 	if shell.combat_panel.visible:
 		success = _fail("skill pick phase should hide the combat arena panel") and success
+	if shell.skill_scroll == null or shell.skill_scroll.vertical_scroll_mode == ScrollContainer.SCROLL_MODE_DISABLED:
+		success = _fail("skill pick phase should expose a scrollable catalog for larger class sets") and success
 
 	var has_enabled_button := false
 	for button in shell.skill_buttons:

@@ -1227,6 +1227,21 @@ mod tests {
     #[test]
     fn bundled_content_loads_all_classes_and_the_ascii_map() {
         let content = GameContent::bundled().expect("bundled content should load");
+        for tree_name in [
+            "Paladin",
+            "Ranger",
+            "Bard",
+            "Druid",
+            "Necromancer",
+        ] {
+            let tree = SkillTree::new(tree_name).expect("authored tree should parse");
+            let tier_one = content
+                .skills()
+                .resolve(&SkillChoice::new(tree.clone(), 1).expect("choice"))
+                .unwrap_or_else(|| panic!("{tree_name} tier one should exist"));
+            assert_eq!(tier_one.tree, tree);
+            assert!(content.skills().melee_for(&tree).is_some());
+        }
 
         let mage_one = content
             .skills()

@@ -1,0 +1,108 @@
+tree: Necromancer
+melee:
+  id: necromancer_bone_knife
+  name: Bone Knife
+  description: A short ritual blade for desperate close fights.
+  cooldown_ms: 540
+  range: 82
+  radius: 36
+  effect: melee_swing
+  payload:
+    kind: damage
+    amount: 12
+skills:
+  - tier: 1
+    id: necromancer_grave_bolt
+    name: Grave Bolt
+    description: A cursed projectile that starts the attrition game immediately.
+    behavior:
+      kind: projectile
+      effect: skill_shot
+      cooldown_ms: 700
+      mana_cost: 16
+      speed: 310
+      range: 1500
+      radius: 16
+      payload:
+        kind: damage
+        amount: 10
+        status:
+          kind: poison
+          duration_ms: 3000
+          tick_interval_ms: 1000
+          magnitude: 4
+          max_stacks: 5
+  - tier: 2
+    id: necromancer_bone_cage
+    name: Bone Cage
+    description: A targeted burst of skeletal bindings that roots players in place.
+    behavior:
+      kind: burst
+      effect: burst
+      cooldown_ms: 1800
+      mana_cost: 24
+      range: 230
+      radius: 88
+      payload:
+        kind: damage
+        amount: 8
+        status:
+          kind: root
+          duration_ms: 900
+          magnitude: 0
+  - tier: 3
+    id: necromancer_soul_siphon
+    name: Soul Siphon
+    description: A dark pulse that restores nearby allies and mistakes alike.
+    behavior:
+      kind: nova
+      effect: nova
+      cooldown_ms: 2200
+      mana_cost: 30
+      radius: 150
+      payload:
+        kind: heal
+        amount: 10
+        status:
+          kind: hot
+          duration_ms: 2000
+          tick_interval_ms: 1000
+          magnitude: 4
+          max_stacks: 1
+  - tier: 4
+    id: necromancer_wailing_line
+    name: Wailing Line
+    description: A scream-thin beam that silences any caster caught in it.
+    behavior:
+      kind: beam
+      effect: beam
+      cooldown_ms: 2300
+      mana_cost: 34
+      range: 520
+      radius: 22
+      payload:
+        kind: damage
+        amount: 12
+        status:
+          kind: silence
+          duration_ms: 1200
+          magnitude: 0
+  - tier: 5
+    id: necromancer_plague_storm
+    name: Plague Storm
+    description: A spreading death-bloom that layers poison over a packed fight.
+    behavior:
+      kind: nova
+      effect: nova
+      cooldown_ms: 3200
+      mana_cost: 46
+      radius: 170
+      payload:
+        kind: damage
+        amount: 12
+        status:
+          kind: poison
+          duration_ms: 4000
+          tick_interval_ms: 1000
+          magnitude: 5
+          max_stacks: 5

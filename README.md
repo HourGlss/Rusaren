@@ -14,6 +14,7 @@ Buildable now:
 - a focused in-match Godot shell layout that hides the setup chrome after lobby join, surfaces skill picks before the arena during skill-pick windows, and returns to the central layout on disconnect
 - authoritative full and delta arena snapshots carrying match phase, hp, mana, cooldowns, active statuses, projectile state, and only the terrain/obstacles the viewing player is allowed to know about
 - a first playable arena slice with a mostly empty map, four central square pillars, traversable shrub collars, authoritative player circles, per-player fog-of-war, WASD movement, mouse aim, left-click melee, authored class melee/spells on `1`-`5`, projectile combat, debuffs, HoTs, health, mana, and cooldown state
+- a shipped authored class roster of Warrior, Rogue, Mage, Cleric, Paladin, Ranger, Bard, Druid, and Necromancer
 - runtime-loaded authored content under `server/content/skills/*.yaml`, `server/content/maps/prototype_arena.txt`, and `server/content/mechanics/registry.yaml`
 - a same-origin Godot Web export path hosted directly by the Rust server at `/`
 - a documented production-style deploy path with Caddy, Prometheus, and `coturn`
@@ -74,7 +75,8 @@ The client no longer chooses its own runtime player ID.
 The connect packet now sends only the player name, the Rust backend assigns a random player ID,
 and the current persistent `W-L-NC` store is keyed by player name.
 The skill-pick flow is server-gated by tree progression, and the Godot shell only enables tier 1
-for unstarted trees or the next tier for trees the player has already advanced.
+for unstarted trees or the next tier for trees the player has already advanced inside a scrollable
+catalog that can handle larger class sets.
 The backend now also sends the authored skill catalog in the `Connected` event, and the Godot
 skill picker renders those backend-authored names on the buttons instead of local placeholder labels.
 The runtime game content now lives under:

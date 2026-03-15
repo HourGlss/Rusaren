@@ -1,0 +1,99 @@
+tree: Druid
+melee:
+  id: druid_claw
+  name: Claw
+  description: A quick beast-form slash for close scrambles.
+  cooldown_ms: 500
+  range: 84
+  radius: 38
+  effect: melee_swing
+  payload:
+    kind: damage
+    amount: 14
+skills:
+  - tier: 1
+    id: druid_bramble_shot
+    name: Bramble Shot
+    description: A thorn projectile that keeps natural pressure on open lanes.
+    behavior:
+      kind: projectile
+      effect: skill_shot
+      cooldown_ms: 760
+      mana_cost: 16
+      speed: 300
+      range: 1450
+      radius: 18
+      payload:
+        kind: damage
+        amount: 15
+  - tier: 2
+    id: druid_feral_step
+    name: Feral Step
+    description: A short pounce to cross cover and pressure vulnerable targets.
+    behavior:
+      kind: dash
+      effect: dash_trail
+      cooldown_ms: 1500
+      mana_cost: 20
+      distance: 210
+      impact_radius: 36
+      payload:
+        kind: damage
+        amount: 8
+  - tier: 3
+    id: druid_bloom
+    name: Bloom
+    description: A healing pulse that leaves a lingering regeneration effect.
+    behavior:
+      kind: nova
+      effect: nova
+      cooldown_ms: 2200
+      mana_cost: 30
+      radius: 145
+      payload:
+        kind: heal
+        amount: 8
+        status:
+          kind: hot
+          duration_ms: 3000
+          tick_interval_ms: 1000
+          magnitude: 5
+          max_stacks: 1
+  - tier: 4
+    id: druid_root_snare
+    name: Root Snare
+    description: A targeted grove that locks down anyone fighting inside it.
+    behavior:
+      kind: burst
+      effect: burst
+      cooldown_ms: 2300
+      mana_cost: 32
+      range: 230
+      radius: 92
+      payload:
+        kind: damage
+        amount: 7
+        status:
+          kind: root
+          duration_ms: 900
+          magnitude: 0
+  - tier: 5
+    id: druid_moonfire_lance
+    name: Moonfire Lance
+    description: A lunar beam that chills anything it burns through.
+    behavior:
+      kind: beam
+      effect: beam
+      cooldown_ms: 3000
+      mana_cost: 42
+      range: 700
+      radius: 24
+      payload:
+        kind: damage
+        amount: 24
+        status:
+          kind: chill
+          duration_ms: 1600
+          magnitude: 800
+          max_stacks: 3
+          trigger_duration_ms: 600

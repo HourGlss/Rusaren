@@ -4,6 +4,17 @@ A "class" is a 5-tier skill tree.
 Players pick exactly ONE skill node per round.
 Match is best-of-5 rounds, so a player makes 5 picks total.
 
+Current authored runtime trees:
+- Warrior
+- Rogue
+- Mage
+- Cleric
+- Paladin
+- Ranger
+- Bard
+- Druid
+- Necromancer
+
 ## Progression rule (per player)
 Each tree tracks an independent tier level in {0..5}.
 

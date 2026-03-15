@@ -1,0 +1,92 @@
+tree: Bard
+melee:
+  id: bard_rapier_tap
+  name: Rapier Tap
+  description: A quick thrust timed between songs and footwork.
+  cooldown_ms: 520
+  range: 86
+  radius: 36
+  effect: melee_swing
+  payload:
+    kind: damage
+    amount: 12
+skills:
+  - tier: 1
+    id: bard_sonic_note
+    name: Sonic Note
+    description: A resonant projectile that keeps constant tempo on distant targets.
+    behavior:
+      kind: projectile
+      effect: skill_shot
+      cooldown_ms: 680
+      mana_cost: 14
+      speed: 330
+      range: 1550
+      radius: 16
+      payload:
+        kind: damage
+        amount: 14
+  - tier: 2
+    id: bard_quickstep
+    name: Quickstep
+    description: A performance dash that repositions the bard around the fight.
+    behavior:
+      kind: dash
+      effect: dash_trail
+      cooldown_ms: 1450
+      mana_cost: 20
+      distance: 210
+  - tier: 3
+    id: bard_rallying_chorus
+    name: Rallying Chorus
+    description: A nearby anthem that accelerates everyone it reaches.
+    behavior:
+      kind: nova
+      effect: nova
+      cooldown_ms: 2100
+      mana_cost: 28
+      radius: 150
+      payload:
+        kind: heal
+        amount: 6
+        status:
+          kind: haste
+          duration_ms: 2200
+          magnitude: 1600
+          max_stacks: 1
+  - tier: 4
+    id: bard_dissonant_verse
+    name: Dissonant Verse
+    description: A cutting refrain that silences players caught in the line.
+    behavior:
+      kind: beam
+      effect: beam
+      cooldown_ms: 2200
+      mana_cost: 30
+      range: 340
+      radius: 24
+      payload:
+        kind: damage
+        amount: 10
+        status:
+          kind: silence
+          duration_ms: 1100
+          magnitude: 0
+  - tier: 5
+    id: bard_grand_crescendo
+    name: Grand Crescendo
+    description: A crashing aria that briefly stuns players packed around the target point.
+    behavior:
+      kind: burst
+      effect: burst
+      cooldown_ms: 3100
+      mana_cost: 44
+      range: 260
+      radius: 124
+      payload:
+        kind: damage
+        amount: 16
+        status:
+          kind: stun
+          duration_ms: 700
+          magnitude: 0

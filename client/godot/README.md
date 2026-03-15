@@ -18,10 +18,11 @@ What it does:
 - consumes authoritative full arena snapshots, delta arena snapshots, and arena effect batches
 - lets players click an open lobby directly from the central directory
 - collapses the setup chrome once a player joins a lobby so the shell can focus on lobby or match actions
-- puts skill picking ahead of the arena view during the round-opening skill-pick window so the legal choices stay visible without scrolling
+- puts skill picking ahead of the arena view during the round-opening skill-pick window and keeps the class catalog scrollable as more trees are added
 - can be hosted behind the documented Caddy reverse-proxy path from `deploy/`
 - consumes a runtime arena and skill set authored under `server/content/`
 - consumes the backend-authored mechanic registry under `server/content/mechanics/registry.yaml` for future class-growth planning
+- currently ships nine authored class trees: Warrior, Rogue, Mage, Cleric, Paladin, Ranger, Bard, Druid, and Necromancer
 
 What it does not do yet:
 - polished movement/combat rendering

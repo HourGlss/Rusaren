@@ -1,0 +1,84 @@
+tree: Ranger
+melee:
+  id: ranger_hatchet_cut
+  name: Hatchet Cut
+  description: A quick hatchet slash when the fight gets too close.
+  cooldown_ms: 500
+  range: 84
+  radius: 36
+  effect: melee_swing
+  payload:
+    kind: damage
+    amount: 13
+skills:
+  - tier: 1
+    id: ranger_longshot
+    name: Longshot
+    description: A fast arrow for winning open-map sightlines.
+    behavior:
+      kind: projectile
+      effect: skill_shot
+      cooldown_ms: 700
+      mana_cost: 16
+      speed: 360
+      range: 1800
+      radius: 14
+      payload:
+        kind: damage
+        amount: 16
+  - tier: 2
+    id: ranger_disengage
+    name: Disengage
+    description: A backward roll that creates breathing room without losing pressure.
+    behavior:
+      kind: dash
+      effect: dash_trail
+      cooldown_ms: 1500
+      mana_cost: 18
+      distance: 220
+  - tier: 3
+    id: ranger_briar_burst
+    name: Briar Burst
+    description: A snaring burst that punishes players pushing through choke points.
+    behavior:
+      kind: burst
+      effect: burst
+      cooldown_ms: 1900
+      mana_cost: 24
+      range: 280
+      radius: 88
+      payload:
+        kind: damage
+        amount: 10
+        status:
+          kind: root
+          duration_ms: 800
+          magnitude: 0
+  - tier: 4
+    id: ranger_hawk_barrage
+    name: Hawk Barrage
+    description: A thin arrow lane that threads between pillars.
+    behavior:
+      kind: beam
+      effect: beam
+      cooldown_ms: 2200
+      mana_cost: 30
+      range: 860
+      radius: 20
+      payload:
+        kind: damage
+        amount: 20
+  - tier: 5
+    id: ranger_starfall_volley
+    name: Starfall Volley
+    description: A wide targeted barrage for breaking entrenched teams.
+    behavior:
+      kind: burst
+      effect: burst
+      cooldown_ms: 3200
+      mana_cost: 42
+      range: 340
+      radius: 132
+      payload:
+        kind: damage
+        amount: 24
