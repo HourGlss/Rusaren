@@ -29,6 +29,7 @@ var record := {
 var lobby_directory: Array[Dictionary] = []
 var roster := {}
 var recent_events: Array[String] = []
+var skill_catalog: Array[Dictionary] = []
 var local_skill_progress := {}
 var local_round_skill_locked := false
 var arena_width := 0
@@ -65,6 +66,7 @@ func prepare_for_connection(url: String, player_name: String) -> void:
 	lobby_directory.clear()
 	roster.clear()
 	recent_events.clear()
+	skill_catalog.clear()
 	_reset_local_skill_progress()
 	local_round_skill_locked = false
 	_clear_arena_state()
@@ -125,6 +127,9 @@ func apply_server_event(event: Dictionary) -> void:
 			outcome_label = ""
 			lobby_directory.clear()
 			roster.clear()
+			skill_catalog.clear()
+			for catalog_entry in event.get("skill_catalog", []):
+				skill_catalog.append((catalog_entry as Dictionary).duplicate(true))
 			_reset_local_skill_progress()
 			local_round_skill_locked = false
 			_clear_arena_state()
@@ -238,8 +243,8 @@ func apply_server_event(event: Dictionary) -> void:
 			var skill_member := _ensure_roster_entry(skill_player_id)
 			var tree_name := String(event.get("tree", "Unknown"))
 			var tier := int(event.get("tier", 0))
-			skill_member["skill"] = "%s %d" % [tree_name, tier]
-			if skill_player_id == local_player_id and KNOWN_SKILL_TREES.has(tree_name):
+			skill_member["skill"] = skill_name_for(tree_name, tier)
+			if skill_player_id == local_player_id and tree_name != "":
 				local_skill_progress[tree_name] = tier
 				local_round_skill_locked = true
 			banner_message = "%s locked %s." % [_display_name(skill_player_id), skill_member["skill"]]
@@ -318,6 +323,9 @@ func apply_server_event(event: Dictionary) -> void:
 			arena_tile_units = int(delta_snapshot.get("tile_units", arena_tile_units))
 			visible_tiles = delta_snapshot.get("visible_tiles", PackedByteArray())
 			explored_tiles = delta_snapshot.get("explored_tiles", PackedByteArray())
+			arena_obstacles.clear()
+			for obstacle_delta in delta_snapshot.get("obstacles", []):
+				arena_obstacles.append((obstacle_delta as Dictionary).duplicate(true))
 			arena_players.clear()
 			for player_delta in delta_snapshot.get("players", []):
 				var delta_player_id := int(player_delta.get("player_id", 0))
@@ -466,7 +474,9 @@ func can_choose_skill() -> bool:
 
 
 func next_skill_tier_for(tree_name: String) -> int:
-	if not KNOWN_SKILL_TREES.has(tree_name):
+	if tree_name == "":
+		return 0
+	if not skill_tree_names().has(tree_name):
 		return 0
 	var current_tier := int(local_skill_progress.get(tree_name, 0))
 	if current_tier >= 5:
@@ -476,6 +486,47 @@ func next_skill_tier_for(tree_name: String) -> int:
 
 func can_choose_skill_option(tree_name: String, tier: int) -> bool:
 	return can_choose_skill() and tier == next_skill_tier_for(tree_name)
+
+
+func skill_tree_names() -> Array[String]:
+	var ordered: Array[String] = []
+	for entry in skill_catalog:
+		var tree_name := String(entry.get("tree", ""))
+		if tree_name != "" and not ordered.has(tree_name):
+			ordered.append(tree_name)
+	if ordered.is_empty():
+		for tree_name in KNOWN_SKILL_TREES:
+			ordered.append(String(tree_name))
+	return ordered
+
+
+func skill_entries_for(tree_name: String) -> Array[Dictionary]:
+	var entries: Array[Dictionary] = []
+	for entry in skill_catalog:
+		if String(entry.get("tree", "")) == tree_name:
+			entries.append((entry as Dictionary).duplicate(true))
+	entries.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		return int(a.get("tier", 0)) < int(b.get("tier", 0))
+	)
+	return entries
+
+
+func skill_name_for(tree_name: String, tier: int) -> String:
+	for entry in skill_catalog:
+		if String(entry.get("tree", "")) == tree_name and int(entry.get("tier", 0)) == tier:
+			return String(entry.get("skill_name", "%s %d" % [tree_name, tier]))
+	return "%s %d" % [tree_name, tier]
+
+
+func skill_catalog_signature() -> String:
+	var parts: Array[String] = []
+	for entry in skill_catalog:
+		parts.append("%s:%d:%s" % [
+			String(entry.get("tree", "")),
+			int(entry.get("tier", 0)),
+			String(entry.get("skill_id", "")),
+		])
+	return "|".join(parts)
 
 
 func can_quit_results() -> bool:
@@ -653,12 +704,9 @@ func _clear_round_skills() -> void:
 
 
 func _reset_local_skill_progress() -> void:
-	local_skill_progress = {
-		"Warrior": 0,
-		"Rogue": 0,
-		"Mage": 0,
-		"Cleric": 0,
-	}
+	local_skill_progress.clear()
+	for tree_name in skill_tree_names():
+		local_skill_progress[tree_name] = 0
 
 
 func _clear_arena_state() -> void:

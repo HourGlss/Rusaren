@@ -170,6 +170,7 @@ fn sample_delta_snapshot() -> ServerControlEvent {
             tile_units: 50,
             visible_tiles: vec![0b0011_1111, 0b0000_0011],
             explored_tiles: vec![0b1111_1111, 0b0000_1111],
+            obstacles: sample_obstacles(),
             players: sample_players(),
             projectiles: sample_projectiles(),
         },

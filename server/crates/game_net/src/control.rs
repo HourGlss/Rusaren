@@ -6,6 +6,8 @@ use game_domain::{
 use crate::{ChannelId, PacketError, PacketHeader, PacketKind};
 
 const MAX_MESSAGE_BYTES: usize = 200;
+const MAX_SKILL_ID_BYTES: usize = 64;
+const MAX_SKILL_NAME_BYTES: usize = 120;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ClientControlCommand {
@@ -132,6 +134,7 @@ pub enum ServerControlEvent {
         player_id: PlayerId,
         player_name: PlayerName,
         record: PlayerRecord,
+        skill_catalog: Vec<SkillCatalogEntry>,
     },
     GameLobbyCreated {
         lobby_id: LobbyId,
@@ -211,6 +214,14 @@ pub enum ServerControlEvent {
     Error {
         message: String,
     },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SkillCatalogEntry {
+    pub tree: SkillTree,
+    pub tier: u8,
+    pub skill_id: String,
+    pub skill_name: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -357,6 +368,7 @@ pub struct ArenaDeltaSnapshot {
     pub tile_units: u16,
     pub visible_tiles: Vec<u8>,
     pub explored_tiles: Vec<u8>,
+    pub obstacles: Vec<ArenaObstacleSnapshot>,
     pub players: Vec<ArenaPlayerSnapshot>,
     pub projectiles: Vec<ArenaProjectileSnapshot>,
 }
@@ -450,7 +462,8 @@ impl ServerControlEvent {
                 player_id,
                 player_name,
                 record,
-            } => encode_connected_event(payload, player_id, &player_name, record),
+                skill_catalog,
+            } => encode_connected_event(payload, player_id, &player_name, record, &skill_catalog),
             Self::GameLobbyCreated { lobby_id } => {
                 encode_lobby_id_event(payload, lobby_id);
                 Ok(())
@@ -645,6 +658,7 @@ fn encode_connected_event(
     player_id: PlayerId,
     player_name: &PlayerName,
     record: PlayerRecord,
+    skill_catalog: &[SkillCatalogEntry],
 ) -> Result<(), PacketError> {
     payload.extend_from_slice(&player_id.get().to_le_bytes());
     push_len_prefixed_string(
@@ -654,6 +668,7 @@ fn encode_connected_event(
         game_domain::MAX_PLAYER_NAME_LEN,
     )?;
     encode_player_record(payload, record);
+    encode_skill_catalog(payload, skill_catalog)?;
     Ok(())
 }
 
@@ -665,6 +680,7 @@ fn decode_connected_event(
         player_id: read_player_id(payload, index, "Connected")?,
         player_name: read_player_name(payload, index, "Connected")?,
         record: read_player_record(payload, index, "Connected")?,
+        skill_catalog: decode_skill_catalog(payload, index, "Connected")?,
     })
 }
 
@@ -856,6 +872,29 @@ fn encode_player_record(payload: &mut Vec<u8>, record: PlayerRecord) {
     payload.extend_from_slice(&record.no_contests.to_le_bytes());
 }
 
+fn encode_skill_catalog(
+    payload: &mut Vec<u8>,
+    catalog: &[SkillCatalogEntry],
+) -> Result<(), PacketError> {
+    let entry_count = u16::try_from(catalog.len()).map_err(|_| PacketError::PayloadTooLarge {
+        actual: catalog.len(),
+        maximum: usize::from(u16::MAX),
+    })?;
+    payload.extend_from_slice(&entry_count.to_le_bytes());
+    for entry in catalog {
+        payload.push(encode_skill_tree(entry.tree));
+        payload.push(entry.tier);
+        push_len_prefixed_string(payload, "skill_id", &entry.skill_id, MAX_SKILL_ID_BYTES)?;
+        push_len_prefixed_string(
+            payload,
+            "skill_name",
+            &entry.skill_name,
+            MAX_SKILL_NAME_BYTES,
+        )?;
+    }
+    Ok(())
+}
+
 fn encode_lobby_directory_snapshot(
     payload: &mut Vec<u8>,
     lobbies: &[LobbyDirectoryEntry],
@@ -995,17 +1034,7 @@ fn decode_arena_state_snapshot(
     let tile_units = read_u16(payload, index, "ArenaStateSnapshot")?;
     let visible_tiles = decode_bytes(payload, index, "ArenaStateSnapshot", "visible_tiles")?;
     let explored_tiles = decode_bytes(payload, index, "ArenaStateSnapshot", "explored_tiles")?;
-    let obstacle_count = usize::from(read_u16(payload, index, "ArenaStateSnapshot")?);
-    let mut obstacles = Vec::with_capacity(obstacle_count);
-    for _ in 0..obstacle_count {
-        obstacles.push(ArenaObstacleSnapshot {
-            kind: read_arena_obstacle_kind(payload, index, "ArenaStateSnapshot")?,
-            center_x: read_i16(payload, index, "ArenaStateSnapshot")?,
-            center_y: read_i16(payload, index, "ArenaStateSnapshot")?,
-            half_width: read_u16(payload, index, "ArenaStateSnapshot")?,
-            half_height: read_u16(payload, index, "ArenaStateSnapshot")?,
-        });
-    }
+    let obstacles = decode_arena_obstacles(payload, index, "ArenaStateSnapshot")?;
 
     let players = decode_arena_players(payload, index, "ArenaStateSnapshot")?;
     let projectiles = decode_arena_projectiles(payload, index, "ArenaStateSnapshot")?;
@@ -1035,6 +1064,7 @@ fn encode_arena_delta_snapshot(
     payload.extend_from_slice(&snapshot.tile_units.to_le_bytes());
     encode_bytes(payload, "visible_tiles", &snapshot.visible_tiles)?;
     encode_bytes(payload, "explored_tiles", &snapshot.explored_tiles)?;
+    encode_arena_obstacles(payload, &snapshot.obstacles)?;
     encode_arena_players(payload, &snapshot.players)?;
     encode_arena_projectiles(payload, &snapshot.projectiles)?;
     Ok(())
@@ -1049,6 +1079,7 @@ fn decode_arena_delta_snapshot(
     let tile_units = read_u16(payload, index, "ArenaDeltaSnapshot")?;
     let visible_tiles = decode_bytes(payload, index, "ArenaDeltaSnapshot", "visible_tiles")?;
     let explored_tiles = decode_bytes(payload, index, "ArenaDeltaSnapshot", "explored_tiles")?;
+    let obstacles = decode_arena_obstacles(payload, index, "ArenaDeltaSnapshot")?;
     let players = decode_arena_players(payload, index, "ArenaDeltaSnapshot")?;
     let projectiles = decode_arena_projectiles(payload, index, "ArenaDeltaSnapshot")?;
     Ok(ServerControlEvent::ArenaDeltaSnapshot {
@@ -1058,10 +1089,50 @@ fn decode_arena_delta_snapshot(
             tile_units,
             visible_tiles,
             explored_tiles,
+            obstacles,
             players,
             projectiles,
         },
     })
+}
+
+fn encode_arena_obstacles(
+    payload: &mut Vec<u8>,
+    obstacles: &[ArenaObstacleSnapshot],
+) -> Result<(), PacketError> {
+    let obstacle_count =
+        u16::try_from(obstacles.len()).map_err(|_| PacketError::PayloadTooLarge {
+            actual: obstacles.len(),
+            maximum: usize::from(u16::MAX),
+        })?;
+    payload.extend_from_slice(&obstacle_count.to_le_bytes());
+    for obstacle in obstacles {
+        payload.push(encode_arena_obstacle_kind(obstacle.kind));
+        payload.extend_from_slice(&obstacle.center_x.to_le_bytes());
+        payload.extend_from_slice(&obstacle.center_y.to_le_bytes());
+        payload.extend_from_slice(&obstacle.half_width.to_le_bytes());
+        payload.extend_from_slice(&obstacle.half_height.to_le_bytes());
+    }
+    Ok(())
+}
+
+fn decode_arena_obstacles(
+    payload: &[u8],
+    index: &mut usize,
+    kind: &'static str,
+) -> Result<Vec<ArenaObstacleSnapshot>, PacketError> {
+    let obstacle_count = usize::from(read_u16(payload, index, kind)?);
+    let mut obstacles = Vec::with_capacity(obstacle_count);
+    for _ in 0..obstacle_count {
+        obstacles.push(ArenaObstacleSnapshot {
+            kind: read_arena_obstacle_kind(payload, index, kind)?,
+            center_x: read_i16(payload, index, kind)?,
+            center_y: read_i16(payload, index, kind)?,
+            half_width: read_u16(payload, index, kind)?,
+            half_height: read_u16(payload, index, kind)?,
+        });
+    }
+    Ok(obstacles)
 }
 
 fn encode_arena_players(
@@ -1444,6 +1515,24 @@ fn read_player_record(
     })
 }
 
+fn decode_skill_catalog(
+    payload: &[u8],
+    index: &mut usize,
+    kind: &'static str,
+) -> Result<Vec<SkillCatalogEntry>, PacketError> {
+    let entry_count = usize::from(read_u16(payload, index, kind)?);
+    let mut entries = Vec::with_capacity(entry_count);
+    for _ in 0..entry_count {
+        entries.push(SkillCatalogEntry {
+            tree: read_skill_tree(payload, index, kind)?,
+            tier: read_u8(payload, index, kind)?,
+            skill_id: read_string(payload, index, kind, "skill_id", MAX_SKILL_ID_BYTES)?,
+            skill_name: read_string(payload, index, kind, "skill_name", MAX_SKILL_NAME_BYTES)?,
+        });
+    }
+    Ok(entries)
+}
+
 fn read_team(
     payload: &[u8],
     index: &mut usize,
@@ -1486,13 +1575,8 @@ fn read_skill_tree(
     index: &mut usize,
     kind: &'static str,
 ) -> Result<SkillTree, PacketError> {
-    match read_u8(payload, index, kind)? {
-        1 => Ok(SkillTree::Warrior),
-        2 => Ok(SkillTree::Rogue),
-        3 => Ok(SkillTree::Mage),
-        4 => Ok(SkillTree::Cleric),
-        other => Err(PacketError::InvalidEncodedSkillTree(other)),
-    }
+    let raw = read_u8(payload, index, kind)?;
+    SkillTree::from_wire_id(raw).ok_or(PacketError::InvalidEncodedSkillTree(raw))
 }
 
 fn read_match_outcome(
@@ -1576,12 +1660,7 @@ fn encode_ready_state(ready: ReadyState) -> u8 {
 }
 
 fn encode_skill_tree(tree: SkillTree) -> u8 {
-    match tree {
-        SkillTree::Warrior => 1,
-        SkillTree::Rogue => 2,
-        SkillTree::Mage => 3,
-        SkillTree::Cleric => 4,
-    }
+    tree.wire_id()
 }
 
 fn encode_match_outcome(outcome: MatchOutcome) -> u8 {

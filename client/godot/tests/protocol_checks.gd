@@ -12,6 +12,7 @@ func _init() -> void:
 	success = _assert_missing_cast_context_rejection() and success
 	success = _assert_unexpected_context_rejection() and success
 	success = _assert_aim_range_rejection() and success
+	success = _assert_decode_connected_with_skill_catalog() and success
 	success = _assert_decode_arena_state_snapshot() and success
 	success = _assert_decode_arena_delta_snapshot() and success
 	success = _assert_decode_arena_effect_batch() and success
@@ -109,6 +110,36 @@ func _assert_aim_range_rejection() -> bool:
 	return _expect_error(encoded, "aim_horizontal_q=40000 is outside the allowed range -32768..=32767")
 
 
+func _assert_decode_connected_with_skill_catalog() -> bool:
+	var payload := PackedByteArray([1])
+	_push_u32(payload, 11)
+	_push_string(payload, "Alice")
+	_push_u16(payload, 1)
+	_push_u16(payload, 2)
+	_push_u16(payload, 3)
+	_push_u16(payload, 2)
+	payload.append(Protocol.SKILL_TREE_MAGE)
+	payload.append(1)
+	_push_string(payload, "mage_t1_missile")
+	_push_string(payload, "Magic Missile")
+	payload.append(Protocol.SKILL_TREE_CLERIC)
+	payload.append(1)
+	_push_string(payload, "cleric_t1_minor_heal")
+	_push_string(payload, "Minor Heal")
+	var decoded := Protocol.decode_server_event(_encode_server_event_packet(payload, 7, 0))
+	if not bool(decoded.get("ok", false)):
+		return _fail("connected event with skill catalog should decode")
+	var event: Dictionary = decoded.get("event", {})
+	var skill_catalog: Array = event.get("skill_catalog", [])
+	if String(event.get("type", "")) != "Connected":
+		return _fail("connected payload should decode as a Connected event")
+	if skill_catalog.size() != 2:
+		return _fail("connected event should decode the skill catalog entries")
+	if String(skill_catalog[0].get("skill_name", "")) != "Magic Missile":
+		return _fail("connected event should preserve catalog skill names")
+	return true
+
+
 func _assert_decode_arena_state_snapshot() -> bool:
 	var payload := PackedByteArray([19])
 	payload.append(3)
@@ -204,6 +235,12 @@ func _assert_decode_arena_delta_snapshot() -> bool:
 	_push_u16(payload, 2)
 	payload.append(0xFF)
 	payload.append(0x0F)
+	_push_u16(payload, 1)
+	payload.append(2)
+	_push_i16(payload, -220)
+	_push_i16(payload, -150)
+	_push_u16(payload, 92)
+	_push_u16(payload, 92)
 	_push_u16(payload, 1)
 	_push_u32(payload, 11)
 	_push_string(payload, "Alice")

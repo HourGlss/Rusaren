@@ -47,9 +47,11 @@ var primary_attack_button: Button
 var right_column: VBoxContainer
 var skill_pick_panel: PanelContainer
 var skill_pick_summary_label: Label
+var skill_columns: HBoxContainer
 var combat_panel: VBoxContainer
 var arena_view = null
 var skill_buttons: Array[Button] = []
+var _rendered_skill_catalog_signature := ""
 var _next_client_input_tick := 1
 var _pending_primary_attack := false
 var _pending_cast_slot := 0
@@ -393,28 +395,16 @@ func _build_match_panel() -> PanelContainer:
 	skill_pick_summary_label.add_theme_color_override("font_color", Color8(222, 210, 192))
 	skill_pick_body.add_child(skill_pick_summary_label)
 
-	var skill_columns := HBoxContainer.new()
+	var skill_scroll := ScrollContainer.new()
+	skill_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	skill_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	skill_scroll.custom_minimum_size = Vector2(0, 320)
+	skill_pick_body.add_child(skill_scroll)
+
+	skill_columns = HBoxContainer.new()
 	skill_columns.add_theme_constant_override("separation", 10)
-	skill_pick_body.add_child(skill_columns)
-
-	for tree_name in ["Warrior", "Rogue", "Mage", "Cleric"]:
-		var column := VBoxContainer.new()
-		column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		column.add_theme_constant_override("separation", 6)
-		skill_columns.add_child(column)
-
-		var tree_label := Label.new()
-		tree_label.text = tree_name
-		tree_label.add_theme_color_override("font_color", Color8(255, 208, 138))
-		column.add_child(tree_label)
-
-		for tier in range(1, 6):
-			var button := _action_button("Tier %d" % tier, Color8(74, 61, 52))
-			button.set_meta("tree_name", tree_name)
-			button.set_meta("tier", tier)
-			button.pressed.connect(_on_skill_pressed.bind(tree_name, tier))
-			column.add_child(button)
-			skill_buttons.append(button)
+	skill_scroll.add_child(skill_columns)
+	_rebuild_skill_buttons()
 
 	body.add_child(skill_pick_panel)
 
@@ -808,6 +798,10 @@ func _on_packet_received(decoded_event: Dictionary) -> void:
 
 
 func _refresh_ui() -> void:
+	var skill_catalog_signature := app_state.skill_catalog_signature()
+	if skill_catalog_signature != _rendered_skill_catalog_signature:
+		_rebuild_skill_buttons()
+
 	var identity_text := "Not connected"
 	if app_state.local_player_id > 0 and app_state.local_player_name != "":
 		identity_text = "%s (#%d)" % [app_state.local_player_name, app_state.local_player_id]
@@ -862,12 +856,17 @@ func _refresh_ui() -> void:
 		var tier := int(button.get_meta("tier", 0))
 		var selectable := app_state.can_choose_skill_option(tree_name, tier)
 		button.disabled = not selectable
+		button.text = "%d. %s" % [tier, app_state.skill_name_for(tree_name, tier)]
 		if app_state.can_choose_skill():
 			var next_tier := app_state.next_skill_tier_for(tree_name)
 			if next_tier == 0:
 				button.tooltip_text = "%s is fully unlocked." % tree_name
 			elif tier == next_tier:
-				button.tooltip_text = "Select %s tier %d." % [tree_name, tier]
+				button.tooltip_text = "Select %s for %s tier %d." % [
+					app_state.skill_name_for(tree_name, tier),
+					tree_name,
+					tier,
+				]
 			else:
 				button.tooltip_text = "Only tier %d is currently available for %s." % [next_tier, tree_name]
 		else:
@@ -881,6 +880,46 @@ func _refresh_ui() -> void:
 	right_column.visible = app_state.screen == "central"
 	skill_pick_panel.visible = show_skill_pick
 	combat_panel.visible = app_state.screen == "match" and not show_skill_pick
+
+
+func _rebuild_skill_buttons() -> void:
+	_rendered_skill_catalog_signature = app_state.skill_catalog_signature()
+	if skill_columns == null:
+		return
+
+	for child in skill_columns.get_children():
+		child.queue_free()
+	skill_buttons.clear()
+
+	for tree_name in app_state.skill_tree_names():
+		var column := VBoxContainer.new()
+		column.custom_minimum_size = Vector2(220, 0)
+		column.add_theme_constant_override("separation", 6)
+		skill_columns.add_child(column)
+
+		var tree_label := Label.new()
+		tree_label.text = tree_name
+		tree_label.add_theme_color_override("font_color", Color8(255, 208, 138))
+		column.add_child(tree_label)
+
+		var entries := app_state.skill_entries_for(tree_name)
+		if entries.is_empty():
+			for tier in range(1, 6):
+				entries.append({
+					"tree": tree_name,
+					"tier": tier,
+					"skill_name": "%s %d" % [tree_name, tier],
+				})
+
+		for entry in entries:
+			var tier := int(entry.get("tier", 0))
+			var skill_name := String(entry.get("skill_name", "%s %d" % [tree_name, tier]))
+			var button := _action_button("%d. %s" % [tier, skill_name], Color8(74, 61, 52))
+			button.set_meta("tree_name", tree_name)
+			button.set_meta("tier", tier)
+			button.pressed.connect(_on_skill_pressed.bind(tree_name, tier))
+			column.add_child(button)
+			skill_buttons.append(button)
 
 
 func _queue_combat_cast(slot: int) -> void:

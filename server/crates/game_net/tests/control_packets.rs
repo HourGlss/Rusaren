@@ -9,6 +9,7 @@ use game_net::{
     ArenaObstacleSnapshot, ArenaPlayerSnapshot, ArenaStateSnapshot, ArenaStatusKind,
     ArenaStatusSnapshot, ChannelId, ClientControlCommand, LobbyDirectoryEntry, LobbySnapshotPhase,
     LobbySnapshotPlayer, PacketError, PacketHeader, PacketKind, ServerControlEvent,
+    SkillCatalogEntry,
 };
 
 fn player_id(raw: u32) -> PlayerId {
@@ -21,6 +22,23 @@ fn player_name(raw: &str) -> PlayerName {
 
 fn lobby_id(raw: u32) -> LobbyId {
     LobbyId::new(raw).expect("valid lobby id")
+}
+
+fn sample_skill_catalog() -> Vec<SkillCatalogEntry> {
+    vec![
+        SkillCatalogEntry {
+            tree: SkillTree::Warrior,
+            tier: 1,
+            skill_id: String::from("warrior_t1_bash"),
+            skill_name: String::from("Bash"),
+        },
+        SkillCatalogEntry {
+            tree: SkillTree::Mage,
+            tier: 1,
+            skill_id: String::from("mage_t1_missile"),
+            skill_name: String::from("Magic Missile"),
+        },
+    ]
 }
 
 #[test]
@@ -269,6 +287,23 @@ fn server_control_event_round_trips_lobby_directory_and_snapshot_packets() {
 }
 
 #[test]
+fn connected_event_round_trips_skill_catalog() {
+    let event = ServerControlEvent::Connected {
+        player_id: player_id(7),
+        player_name: player_name("Alice"),
+        record: PlayerRecord {
+            wins: 1,
+            losses: 2,
+            no_contests: 3,
+        },
+        skill_catalog: sample_skill_catalog(),
+    };
+    let packet = event.clone().encode_packet(1, 3).expect("packet");
+    let (_, decoded) = ServerControlEvent::decode_packet(&packet).expect("decode");
+    assert_eq!(decoded, event);
+}
+
+#[test]
 fn server_control_event_round_trips_full_arena_snapshot() {
     let arena_state = sample_full_arena_snapshot_event();
     let arena_packet = arena_state.clone().encode_packet(6, 22).expect("packet");
@@ -312,6 +347,13 @@ fn arena_status_kinds_round_trip_for_all_runtime_statuses() {
                 tile_units: 50,
                 visible_tiles: vec![0b0011_1111, 0b0000_0011],
                 explored_tiles: vec![0b1111_1111, 0b0000_1111],
+                obstacles: vec![ArenaObstacleSnapshot {
+                    kind: ArenaObstacleKind::Shrub,
+                    center_x: -220,
+                    center_y: -150,
+                    half_width: 92,
+                    half_height: 92,
+                }],
                 players: vec![ArenaPlayerSnapshot {
                     player_id: player_id(7),
                     player_name: player_name("Alice"),
@@ -428,6 +470,13 @@ fn sample_delta_arena_snapshot_event() -> ServerControlEvent {
             tile_units: 50,
             visible_tiles: vec![0b0011_1111, 0b0000_0011],
             explored_tiles: vec![0b1111_1111, 0b0000_1111],
+            obstacles: vec![ArenaObstacleSnapshot {
+                kind: ArenaObstacleKind::Pillar,
+                center_x: -220,
+                center_y: -150,
+                half_width: 70,
+                half_height: 70,
+            }],
             players: vec![ArenaPlayerSnapshot {
                 player_id: player_id(7),
                 player_name: player_name("Alice"),
@@ -569,6 +618,7 @@ fn server_control_event_rejects_invalid_delta_snapshot_phase_and_status_values()
 
     let mut bad_status_payload = vec![20, 3, 0];
     bad_status_payload.extend_from_slice(&50_u16.to_le_bytes());
+    bad_status_payload.extend_from_slice(&0_u16.to_le_bytes());
     bad_status_payload.extend_from_slice(&0_u16.to_le_bytes());
     bad_status_payload.extend_from_slice(&0_u16.to_le_bytes());
     bad_status_payload.extend_from_slice(&1_u16.to_le_bytes());

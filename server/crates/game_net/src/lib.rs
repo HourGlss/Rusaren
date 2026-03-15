@@ -14,7 +14,7 @@ pub use control::{
     ArenaDeltaSnapshot, ArenaEffectKind, ArenaEffectSnapshot, ArenaMatchPhase, ArenaObstacleKind,
     ArenaObstacleSnapshot, ArenaPlayerSnapshot, ArenaProjectileSnapshot, ArenaStateSnapshot,
     ArenaStatusKind, ArenaStatusSnapshot, ClientControlCommand, LobbyDirectoryEntry,
-    LobbySnapshotPhase, LobbySnapshotPlayer, ServerControlEvent,
+    LobbySnapshotPhase, LobbySnapshotPlayer, ServerControlEvent, SkillCatalogEntry,
 };
 pub use ingress::{NetworkSessionGuard, MAX_INGRESS_PACKET_BYTES};
 

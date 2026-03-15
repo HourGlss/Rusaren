@@ -16,8 +16,8 @@ use game_net::{
     ArenaDeltaSnapshot, ArenaEffectKind, ArenaEffectSnapshot, ArenaMatchPhase, ArenaObstacleKind,
     ArenaObstacleSnapshot, ArenaPlayerSnapshot, ArenaStateSnapshot, ArenaStatusKind,
     ArenaStatusSnapshot, ChannelId, ClientControlCommand, LobbyDirectoryEntry, LobbySnapshotPhase,
-    LobbySnapshotPlayer, PacketHeader, PacketKind, ServerControlEvent, ValidatedInputFrame,
-    BUTTON_CAST, BUTTON_PRIMARY,
+    LobbySnapshotPlayer, PacketHeader, PacketKind, ServerControlEvent, SkillCatalogEntry,
+    ValidatedInputFrame, BUTTON_CAST, BUTTON_PRIMARY,
 };
 
 const PROTOTYPE_ARENA_ASCII: &str = include_str!("../../../content/maps/prototype_arena.txt");
@@ -25,6 +25,35 @@ const WARRIOR_SKILLS_YAML: &str = include_str!("../../../content/skills/warrior.
 const MAGE_SKILLS_YAML: &str = include_str!("../../../content/skills/mage.yaml");
 const ROGUE_SKILLS_YAML: &str = include_str!("../../../content/skills/rogue.yaml");
 const CLERIC_SKILLS_YAML: &str = include_str!("../../../content/skills/cleric.yaml");
+
+fn sample_skill_catalog() -> Vec<SkillCatalogEntry> {
+    vec![
+        SkillCatalogEntry {
+            tree: SkillTree::Warrior,
+            tier: 1,
+            skill_id: String::from("warrior_t1_bash"),
+            skill_name: String::from("Bash"),
+        },
+        SkillCatalogEntry {
+            tree: SkillTree::Cleric,
+            tier: 1,
+            skill_id: String::from("cleric_t1_minor_heal"),
+            skill_name: String::from("Minor Heal"),
+        },
+        SkillCatalogEntry {
+            tree: SkillTree::Mage,
+            tier: 1,
+            skill_id: String::from("mage_t1_missile"),
+            skill_name: String::from("Magic Missile"),
+        },
+        SkillCatalogEntry {
+            tree: SkillTree::Rogue,
+            tier: 1,
+            skill_id: String::from("rogue_t1_stab"),
+            skill_name: String::from("Stab"),
+        },
+    ]
+}
 
 fn main() -> Result<(), Box<dyn Error>> {
     let corpus_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -280,6 +309,7 @@ fn write_server_control_event_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
             losses: 2,
             no_contests: 3,
         },
+        skill_catalog: sample_skill_catalog(),
     }
     .encode_packet(1, 0)?;
     let created = ServerControlEvent::GameLobbyCreated {
@@ -503,6 +533,13 @@ fn write_server_control_event_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
             tile_units: 50,
             visible_tiles: vec![0b0011_1111, 0b0000_0011],
             explored_tiles: vec![0b1111_1111, 0b0000_1111],
+            obstacles: vec![ArenaObstacleSnapshot {
+                kind: ArenaObstacleKind::Shrub,
+                center_x: -220,
+                center_y: -150,
+                half_width: 92,
+                half_height: 92,
+            }],
             players: vec![ArenaPlayerSnapshot {
                 player_id: player_id(7)?,
                 player_name: player_name("Alice")?,
@@ -765,6 +802,13 @@ fn write_arena_delta_snapshot_decode_corpus(dir: &Path) -> Result<(), Box<dyn Er
             tile_units: 50,
             visible_tiles: vec![0b0011_1111, 0b0000_0011],
             explored_tiles: vec![0b1111_1111, 0b0000_1111],
+            obstacles: vec![ArenaObstacleSnapshot {
+                kind: ArenaObstacleKind::Pillar,
+                center_x: 0,
+                center_y: 0,
+                half_width: 70,
+                half_height: 70,
+            }],
             players: vec![ArenaPlayerSnapshot {
                 player_id: player_id(7)?,
                 player_name: player_name("Alice")?,

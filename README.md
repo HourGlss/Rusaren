@@ -12,7 +12,7 @@ Buildable now:
 - a real WebRTC gameplay transport on top of websocket signaling, plus the older raw websocket dev adapter at `/ws-dev`
 - a Godot 4 shell under `client/godot` that drives the browser gameplay path through websocket signaling at `/ws` and binary WebRTC data channels
 - a focused in-match Godot shell layout that hides the setup chrome after lobby join, surfaces skill picks before the arena during skill-pick windows, and returns to the central layout on disconnect
-- authoritative full and delta arena snapshots carrying match phase, hp, mana, cooldowns, active statuses, and projectile state
+- authoritative full and delta arena snapshots carrying match phase, hp, mana, cooldowns, active statuses, projectile state, and only the terrain/obstacles the viewing player is allowed to know about
 - a first playable arena slice with a mostly empty map, four central square pillars, traversable shrub collars, authoritative player circles, per-player fog-of-war, WASD movement, mouse aim, left-click melee, authored class melee/spells on `1`-`5`, projectile combat, debuffs, HoTs, health, mana, and cooldown state
 - runtime-loaded authored content under `server/content/skills/*.yaml` and `server/content/maps/prototype_arena.txt`
 - a same-origin Godot Web export path hosted directly by the Rust server at `/`
@@ -74,12 +74,22 @@ The connect packet now sends only the player name, the Rust backend assigns a ra
 and the current persistent `W-L-NC` store is keyed by player name.
 The skill-pick flow is server-gated by tree progression, and the Godot shell only enables tier 1
 for unstarted trees or the next tier for trees the player has already advanced.
+The backend now also sends the authored skill catalog in the `Connected` event, and the Godot
+skill picker renders those backend-authored names on the buttons instead of local placeholder labels.
 The runtime game content now lives under:
 - `server/content/skills/*.yaml` for authored class/skill definitions
 - `server/content/maps/prototype_arena.txt` for the current ASCII arena map
 
 Those files are the live source of truth for the backend. The Markdown docs under `shared/docs/`
 document the design, but they are no longer treated as runtime content.
+Adding more classes is now partially centralized around three places:
+- the authored YAML file under `server/content/skills/`
+- the `SkillTree` registry in `server/crates/game_domain`
+- the per-skill simulation behavior in `server/crates/game_sim`
+
+The current UI and snapshot catalog path already follow backend-authored class metadata. The remaining
+non-content coupling is the fixed `SkillTree` wire enum, which is the main place that still needs to
+change when the class set grows beyond the current four shipped trees.
 
 Open the Godot shell:
 

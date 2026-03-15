@@ -7,6 +7,7 @@ use std::fmt;
 pub const MAX_PLAYER_NAME_LEN: usize = 24;
 pub const MAX_SKILL_TIER: u8 = 5;
 pub const MAX_ROUNDS: u8 = 5;
+pub const SKILL_TREE_COUNT: usize = 4;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DomainError {
@@ -242,6 +243,9 @@ pub enum SkillTree {
 }
 
 impl SkillTree {
+    pub const ALL: [Self; SKILL_TREE_COUNT] =
+        [Self::Warrior, Self::Rogue, Self::Mage, Self::Cleric];
+
     #[must_use]
     pub const fn as_index(self) -> usize {
         match self {
@@ -251,18 +255,50 @@ impl SkillTree {
             Self::Cleric => 3,
         }
     }
-}
 
-impl fmt::Display for SkillTree {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let name = match self {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
             Self::Warrior => "Warrior",
             Self::Rogue => "Rogue",
             Self::Mage => "Mage",
             Self::Cleric => "Cleric",
-        };
+        }
+    }
 
-        f.write_str(name)
+    #[must_use]
+    pub const fn wire_id(self) -> u8 {
+        match self {
+            Self::Warrior => 1,
+            Self::Rogue => 2,
+            Self::Mage => 3,
+            Self::Cleric => 4,
+        }
+    }
+
+    #[must_use]
+    pub const fn from_wire_id(raw: u8) -> Option<Self> {
+        match raw {
+            1 => Some(Self::Warrior),
+            2 => Some(Self::Rogue),
+            3 => Some(Self::Mage),
+            4 => Some(Self::Cleric),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub fn parse(raw: &str) -> Option<Self> {
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|tree| tree.as_str().eq_ignore_ascii_case(raw.trim()))
+    }
+}
+
+impl fmt::Display for SkillTree {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
     }
 }
 
@@ -292,14 +328,14 @@ impl SkillChoice {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct LoadoutProgress {
-    unlocked_tiers: [u8; 4],
+    unlocked_tiers: [u8; SKILL_TREE_COUNT],
 }
 
 impl LoadoutProgress {
     #[must_use]
     pub const fn new() -> Self {
         Self {
-            unlocked_tiers: [0; 4],
+            unlocked_tiers: [0; SKILL_TREE_COUNT],
         }
     }
 

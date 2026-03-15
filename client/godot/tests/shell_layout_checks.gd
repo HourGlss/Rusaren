@@ -44,6 +44,36 @@ func _assert_skill_pick_layout_prioritizes_skill_buttons() -> bool:
 	shell.app_state.local_player_id = 11
 	shell.app_state.local_player_name = "Alice"
 	shell.app_state.apply_server_event({
+		"type": "Connected",
+		"player_id": 11,
+		"player_name": "Alice",
+		"record": {
+			"wins": 0,
+			"losses": 0,
+			"no_contests": 0,
+		},
+		"skill_catalog": [
+			{
+				"tree": "Mage",
+				"tier": 1,
+				"skill_id": "mage_t1_missile",
+				"skill_name": "Magic Missile",
+			},
+			{
+				"tree": "Mage",
+				"tier": 2,
+				"skill_id": "mage_t2_ice_lance",
+				"skill_name": "Ice Lance",
+			},
+			{
+				"tree": "Warrior",
+				"tier": 1,
+				"skill_id": "warrior_t1_bash",
+				"skill_name": "Bash",
+			},
+		],
+	})
+	shell.app_state.apply_server_event({
 		"type": "MatchStarted",
 		"match_id": 3,
 		"round": 1,
@@ -66,6 +96,8 @@ func _assert_skill_pick_layout_prioritizes_skill_buttons() -> bool:
 			break
 	if not has_enabled_button:
 		success = _fail("skill pick phase should expose at least one enabled skill choice") and success
+	if shell.skill_buttons.is_empty() or not shell.skill_buttons[0].text.contains("Magic Missile"):
+		success = _fail("skill buttons should render backend-authored skill names") and success
 
 	await _despawn_shell(shell)
 	return success

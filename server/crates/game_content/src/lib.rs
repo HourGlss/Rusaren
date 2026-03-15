@@ -413,12 +413,7 @@ fn load_skill_catalog_from_pairs(pairs: &[(&str, &str)]) -> Result<SkillCatalog,
         }
     }
 
-    for tree in [
-        SkillTree::Warrior,
-        SkillTree::Rogue,
-        SkillTree::Mage,
-        SkillTree::Cleric,
-    ] {
+    for tree in SkillTree::ALL {
         if !melee_by_tree.contains_key(&tree.as_index()) {
             return Err(ContentError::Validation {
                 source: String::from("skills"),
@@ -540,14 +535,11 @@ fn validate_skill_text(source: &str, field: &str, value: &str) -> Result<(), Con
 }
 
 fn parse_skill_tree(source: &str, raw: &str) -> Result<SkillTree, ContentError> {
-    match raw {
-        "Warrior" => Ok(SkillTree::Warrior),
-        "Rogue" => Ok(SkillTree::Rogue),
-        "Mage" => Ok(SkillTree::Mage),
-        "Cleric" => Ok(SkillTree::Cleric),
-        other => Err(ContentError::Validation {
+    match SkillTree::parse(raw) {
+        Some(tree) => Ok(tree),
+        None => Err(ContentError::Validation {
             source: String::from(source),
-            message: format!("unknown skill tree '{other}'"),
+            message: format!("unknown skill tree '{}'", raw.trim()),
         }),
     }
 }

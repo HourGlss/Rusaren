@@ -46,12 +46,7 @@ fn corpus_files(target: &str) -> Vec<Vec<u8>> {
 }
 
 fn tree_from_byte(raw: u8) -> SkillTree {
-    match raw % 4 {
-        0 => SkillTree::Warrior,
-        1 => SkillTree::Rogue,
-        2 => SkillTree::Mage,
-        _ => SkillTree::Cleric,
-    }
+    SkillTree::ALL[usize::from(raw) % SkillTree::ALL.len()]
 }
 
 #[test]

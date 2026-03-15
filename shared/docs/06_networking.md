@@ -64,7 +64,8 @@ Lobby-oriented snapshots should include each visible player's `W-L-NC` record.
 Current working implementation:
 - Send a full `ArenaStateSnapshot` when combat starts, when phase transitions happen, and when the client needs a clean authoritative reset of the arena state.
 - Send `ArenaDeltaSnapshot` packets during live combat frames and on aim changes.
-- Keep static arena geometry in the full snapshot and send only dynamic player, projectile, and match-phase state in the delta snapshot.
+- Include only viewer-allowed terrain knowledge in both full and delta snapshots.
+- The backend computes visible and explored tiles, filters terrain/obstacle entries against that mask, and never relies on the Godot client to decide what terrain is visible.
 - Send short-lived combat visuals separately through `ArenaEffectBatch`.
 
 Current note:
@@ -169,11 +170,14 @@ u8  phase
 opt<u8> phase_seconds_remaining
 u16 arena_width
 u16 arena_height
-u8  obstacle_count
+u16 tile_units
+blob visible_tiles
+blob explored_tiles
+u16 obstacle_count
 ... obstacle entries ...
-u8  player_count
+u16 player_count
 ... player snapshot entries ...
-u8  projectile_count
+u16 projectile_count
 ... projectile entries ...
 ```
 
@@ -182,9 +186,14 @@ Current delta snapshot body:
 u8  event_kind = 20
 u8  phase
 opt<u8> phase_seconds_remaining
-u8  player_count
+u16 tile_units
+blob visible_tiles
+blob explored_tiles
+u16 obstacle_count
+... obstacle entries ...
+u16 player_count
 ... player snapshot entries ...
-u8  projectile_count
+u16 projectile_count
 ... projectile entries ...
 ```
 
@@ -199,12 +208,17 @@ Current player snapshot payload includes:
 - `player_id`
 - `player_name`
 - `team`
-- `x`, `y`, `facing_deg`
+- `x`, `y`, `aim_x`, `aim_y`
 - `hp`, `max_hp`
 - `mana`, `max_mana`
 - melee and slot cooldown remaining/total arrays
-- `defeated`
+- `alive`
+- `unlocked_skill_slots`
 - `active_statuses`
+
+Current `Connected` event payload also includes:
+- authoritative player record
+- the authored skill catalog used by the client to label skill-pick buttons and drive UI ordering
 
 Current active status payload includes:
 - kind (`Poison`, `Hot`, `Chill`, `Root`, `Silence`, `Stun`)

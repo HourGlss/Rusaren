@@ -6,6 +6,8 @@ const PROTOCOL_VERSION := 2
 const HEADER_LEN := 16
 const MAX_PLAYER_NAME_LEN := 24
 const MAX_MESSAGE_BYTES := 200
+const MAX_SKILL_ID_BYTES := 64
+const MAX_SKILL_NAME_BYTES := 120
 
 const CHANNEL_CONTROL := 0
 const CHANNEL_INPUT := 1
@@ -582,6 +584,21 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 			var player_id = cursor.read_player_id()
 			var player_name = cursor.read_string("player_name", MAX_PLAYER_NAME_LEN)
 			var record = cursor.read_record()
+			var skill_catalog_count = cursor.read_u16()
+			var skill_catalog: Array[Dictionary] = []
+			for _catalog_index in range(int(skill_catalog_count)):
+				var catalog_tree = cursor.read_skill_tree_name()
+				var catalog_tier = cursor.read_u8()
+				var skill_id = cursor.read_string("skill_id", MAX_SKILL_ID_BYTES)
+				var skill_name = cursor.read_string("skill_name", MAX_SKILL_NAME_BYTES)
+				if cursor.has_error():
+					return _error(cursor.error_message)
+				skill_catalog.append({
+					"tree": catalog_tree,
+					"tier": catalog_tier,
+					"skill_id": skill_id,
+					"skill_name": skill_name,
+				})
 			if cursor.has_error():
 				return _error(cursor.error_message)
 			event = {
@@ -589,6 +606,7 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 				"player_id": player_id,
 				"player_name": player_name,
 				"record": record,
+				"skill_catalog": skill_catalog,
 			}
 		2:
 			var lobby_id = cursor.read_lobby_id()
@@ -928,6 +946,25 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 			var delta_tile_units = cursor.read_u16()
 			var delta_visible_tiles: PackedByteArray = cursor.read_blob("visible_tiles")
 			var delta_explored_tiles: PackedByteArray = cursor.read_blob("explored_tiles")
+			var delta_obstacle_count = cursor.read_u16()
+			if cursor.has_error():
+				return _error(cursor.error_message)
+			var delta_obstacles: Array[Dictionary] = []
+			for _delta_obstacle_index in range(int(delta_obstacle_count)):
+				var delta_obstacle_kind = cursor.read_arena_obstacle_kind()
+				var delta_center_x = cursor.read_i16()
+				var delta_center_y = cursor.read_i16()
+				var delta_half_width = cursor.read_u16()
+				var delta_half_height = cursor.read_u16()
+				if cursor.has_error():
+					return _error(cursor.error_message)
+				delta_obstacles.append({
+					"kind": delta_obstacle_kind,
+					"center_x": delta_center_x,
+					"center_y": delta_center_y,
+					"half_width": delta_half_width,
+					"half_height": delta_half_height,
+				})
 			var delta_player_count = cursor.read_u16()
 			if cursor.has_error():
 				return _error(cursor.error_message)
@@ -1022,6 +1059,7 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 					"tile_units": delta_tile_units,
 					"visible_tiles": delta_visible_tiles,
 					"explored_tiles": delta_explored_tiles,
+					"obstacles": delta_obstacles,
 					"players": delta_players,
 					"projectiles": delta_projectiles,
 				},

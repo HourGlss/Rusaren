@@ -11,7 +11,7 @@ Buildable today:
 - the WebRTC gameplay transport, websocket signaling path, and the raw websocket dev adapter fallback
 - the backend app layer, lobby flow, match flow, persistent `W-L-NC`, fake-client tests, live websocket integration tests, and Rust-side WebRTC integration tests
 - the thin Godot shell under `client/godot`, including manual placeholder combat input over the live browser WebRTC transport
-- authoritative full and delta gameplay snapshots that carry match phase, hp, mana, cooldowns, active statuses, projectile state, and per-player visible/explored fog masks
+- authoritative full and delta gameplay snapshots that carry match phase, hp, mana, cooldowns, active statuses, projectile state, per-player visible/explored fog masks, and only the terrain knowledge the viewing player has earned
 - runtime content loading from `server/content/skills/*.yaml` and `server/content/maps/prototype_arena.txt`
 - runtime validation that rejects malformed YAML skill shapes, duplicate authored ids, and malformed ASCII maps before boot
 - backend gameplay tests that directly exercise every currently shipped melee and authored slot skill for hit/miss/range/cooldown/status behavior
@@ -27,6 +27,11 @@ Not buildable yet:
 - a broader final class/spell content set beyond the current shipped 20-skill runtime slice
 - rustdoc/API guidance that is sufficient for an external client or bot to play through the protocol without Godot
 - a proven hosted-domain live deployment on operator infrastructure such as Linode
+
+Current class-growth note:
+- authored skills are already sourced from runtime YAML files
+- the client skill picker already builds from backend-authored catalog data instead of local hardcoded button names
+- the main remaining growth bottleneck is the fixed `SkillTree` enum and wire ids in the domain/protocol layer
 
 ## What is specified well enough to start coding
 
