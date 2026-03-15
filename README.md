@@ -11,6 +11,7 @@ Buildable now:
 - a scripted backend-only gameplay slice that exercises lobby -> match -> combat -> no-contest flow
 - a real WebRTC gameplay transport on top of websocket signaling, plus the older raw websocket dev adapter at `/ws-dev`
 - a Godot 4 shell under `client/godot` that drives the browser gameplay path through websocket signaling at `/ws` and binary WebRTC data channels
+- a focused in-match Godot shell layout that hides the setup chrome after lobby join, surfaces skill picks before the arena during skill-pick windows, and returns to the central layout on disconnect
 - authoritative full and delta arena snapshots carrying match phase, hp, mana, cooldowns, active statuses, and projectile state
 - a first playable arena slice with a mostly empty map, four central square pillars, shrub collars, authoritative player circles, WASD movement, mouse aim, left-click melee, authored class melee/spells on `1`-`5`, projectile combat, debuffs, HoTs, health, and cooldown state
 - runtime-loaded authored content under `server/content/skills/*.yaml` and `server/content/maps/prototype_arena.txt`
@@ -117,6 +118,18 @@ On this machine, the equivalent command is:
 
 ```powershell
 <GODOT_EXECUTABLE> --headless --path client\godot -s res://tests/web_export_checks.gd
+```
+
+Run the shell layout checks headlessly:
+
+```powershell
+godot4 --headless --path client/godot -s res://tests/shell_layout_checks.gd
+```
+
+On this machine, the equivalent command is:
+
+```powershell
+<GODOT_EXECUTABLE> --headless --path client\godot -s res://tests/shell_layout_checks.gd
 ```
 
 Export the Godot web client into the Rust server static root:

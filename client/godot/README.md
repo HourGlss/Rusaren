@@ -17,6 +17,8 @@ What it does:
 - consumes authoritative lobby-directory and game-lobby snapshots
 - consumes authoritative full arena snapshots, delta arena snapshots, and arena effect batches
 - lets players click an open lobby directly from the central directory
+- collapses the setup chrome once a player joins a lobby so the shell can focus on lobby or match actions
+- puts skill picking ahead of the arena view during the round-opening skill-pick window so the legal choices stay visible without scrolling
 - can be hosted behind the documented Caddy reverse-proxy path from `deploy/`
 - consumes a runtime arena and skill set authored under `server/content/`
 
@@ -29,6 +31,7 @@ What it does not do yet:
 Current shell limitation:
 - the combat loop is still prototype-level, even though the current map and slot skills now load from authored YAML and ASCII content files and already support real melee/projectile/status interactions
 - the shell now has a usable HUD and basic spell/melee visuals, but not final readability polish or final effects for every future spell
+- disconnecting or transport failure now returns the shell to the central-state layout instead of leaving stale match UI on screen
 - the current snapshot delta is a simple dynamic-state packet, not a final compressed rollback/interpolation format
 - native/headless transport testing depends on the `webrtc-native` extension being available to the editor/runtime; if your local Godot install ships it under a folder like `Godot/webrtc/`, `server/scripts/export-web-client.ps1` now syncs that bundle into the ignored local project path `client/godot/webrtc/`
 - browser play remains the primary supported networked path on this machine; the synced native extension is only for local editor/headless validation
@@ -37,11 +40,12 @@ Run flow:
 1. start the Rust backend with `cd server && rustup run stable cargo run -p dedicated_server --quiet`
 2. optionally validate the packet encoder with `godot4 --headless --path client/godot -s res://tests/protocol_checks.gd`
 3. optionally validate the web-export defaults with `godot4 --headless --path client/godot -s res://tests/web_export_checks.gd`
-4. export the web shell with `powershell -NoProfile -ExecutionPolicy Bypass -File server/scripts/export-web-client.ps1 -InstallTemplates`
+4. optionally validate the shell layout flow with `godot4 --headless --path client/godot -s res://tests/shell_layout_checks.gd`
+5. export the web shell with `powershell -NoProfile -ExecutionPolicy Bypass -File server/scripts/export-web-client.ps1 -InstallTemplates`
    If a local `Godot/webrtc/` bundle exists, the export script syncs it into the ignored local project path `client/godot/webrtc/` first.
-5. open `http://127.0.0.1:3000/` in a browser, or run `res://scenes/main.tscn` in Godot 4
+6. open `http://127.0.0.1:3000/` in a browser, or run `res://scenes/main.tscn` in Godot 4
    Browser play is the supported networked path on this machine.
-6. connect, create or join a lobby, pick teams, ready up, choose skills, then use `WASD`, mouse aim, left click, and `1`-`5` during combat to drive the current backend slice end to end
+7. connect, create or join a lobby, pick teams, ready up, choose skills, then use `WASD`, mouse aim, left click, and `1`-`5` during combat to drive the current backend slice end to end
    The shell asks for a player name only; the backend assigns the runtime player ID.
    Cooldowns, mana, hp, and active statuses shown in the HUD are driven by authoritative server snapshots.
 

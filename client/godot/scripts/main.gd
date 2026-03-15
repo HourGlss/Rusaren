@@ -12,6 +12,7 @@ var websocket_config := WebSocketConfigScript.new()
 
 var connect_button: Button
 var disconnect_button: Button
+var connection_panel: PanelContainer
 var ws_url_input: LineEdit
 var player_name_input: LineEdit
 var banner_label: Label
@@ -43,6 +44,10 @@ var join_lobby_button: Button
 var team_a_button: Button
 var team_b_button: Button
 var primary_attack_button: Button
+var right_column: VBoxContainer
+var skill_pick_panel: PanelContainer
+var skill_pick_summary_label: Label
+var combat_panel: VBoxContainer
 var arena_view = null
 var skill_buttons: Array[Button] = []
 var _next_client_input_tick := 1
@@ -178,6 +183,7 @@ func _build_header() -> Control:
 
 func _build_connection_panel() -> Control:
 	var panel := _make_panel(Color8(29, 42, 53), Color8(92, 120, 143))
+	connection_panel = panel
 	var body := panel.get_meta("body") as VBoxContainer
 
 	var heading := Label.new()
@@ -245,7 +251,7 @@ func _build_body() -> Control:
 	left_column.add_child(match_panel)
 	left_column.add_child(results_panel)
 
-	var right_column := VBoxContainer.new()
+	right_column = VBoxContainer.new()
 	right_column.custom_minimum_size = Vector2(360, 0)
 	right_column.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	right_column.add_theme_constant_override("separation", 14)
@@ -373,50 +379,23 @@ func _build_match_panel() -> PanelContainer:
 	countdown_value_label.add_theme_color_override("font_color", Color8(203, 197, 192))
 	body.add_child(countdown_value_label)
 
-	var placeholder := Label.new()
-	placeholder.text = "The first arena slice is live here: a mostly empty map, central shrub-encased pillars, authoritative snapshots, WASD movement, mouse aim, left-click melee, and authored combat skills on 1-5."
-	placeholder.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	placeholder.add_theme_color_override("font_color", Color8(179, 180, 174))
-	body.add_child(placeholder)
+	skill_pick_panel = _make_panel(Color8(60, 47, 38), Color8(191, 135, 88))
+	var skill_pick_body := skill_pick_panel.get_meta("body") as VBoxContainer
 
-	arena_view = ArenaViewScript.new()
-	arena_view.custom_minimum_size = Vector2(0, 460)
-	arena_view.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	arena_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	arena_view.set_client_state(app_state)
-	body.add_child(arena_view)
+	var skill_pick_title := Label.new()
+	skill_pick_title.text = "Skill picks"
+	skill_pick_title.add_theme_color_override("font_color", Color8(252, 235, 209))
+	skill_pick_title.add_theme_font_size_override("font_size", 18)
+	skill_pick_body.add_child(skill_pick_title)
 
-	combat_hint_label = Label.new()
-	combat_hint_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	combat_hint_label.add_theme_color_override("font_color", Color8(214, 218, 208))
-	body.add_child(combat_hint_label)
-
-	cooldown_summary_label = Label.new()
-	cooldown_summary_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	cooldown_summary_label.add_theme_color_override("font_color", Color8(183, 204, 214))
-	body.add_child(cooldown_summary_label)
-
-	var combat_title := Label.new()
-	combat_title.text = "Combat controls"
-	combat_title.add_theme_color_override("font_color", Color8(244, 233, 216))
-	body.add_child(combat_title)
-
-	var combat_row := HBoxContainer.new()
-	combat_row.add_theme_constant_override("separation", 10)
-	body.add_child(combat_row)
-
-	primary_attack_button = _action_button("Primary Attack", Color8(120, 78, 34))
-	primary_attack_button.pressed.connect(_on_primary_attack_pressed)
-	combat_row.add_child(primary_attack_button)
-
-	var skill_title := Label.new()
-	skill_title.text = "Skill picks"
-	skill_title.add_theme_color_override("font_color", Color8(244, 233, 216))
-	body.add_child(skill_title)
+	skill_pick_summary_label = Label.new()
+	skill_pick_summary_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	skill_pick_summary_label.add_theme_color_override("font_color", Color8(222, 210, 192))
+	skill_pick_body.add_child(skill_pick_summary_label)
 
 	var skill_columns := HBoxContainer.new()
 	skill_columns.add_theme_constant_override("separation", 10)
-	body.add_child(skill_columns)
+	skill_pick_body.add_child(skill_columns)
 
 	for tree_name in ["Warrior", "Rogue", "Mage", "Cleric"]:
 		var column := VBoxContainer.new()
@@ -436,6 +415,50 @@ func _build_match_panel() -> PanelContainer:
 			button.pressed.connect(_on_skill_pressed.bind(tree_name, tier))
 			column.add_child(button)
 			skill_buttons.append(button)
+
+	body.add_child(skill_pick_panel)
+
+	combat_panel = VBoxContainer.new()
+	combat_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	combat_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	combat_panel.add_theme_constant_override("separation", 10)
+	body.add_child(combat_panel)
+
+	var placeholder := Label.new()
+	placeholder.text = "The first arena slice is live here: a mostly empty map, central shrub-encased pillars, authoritative snapshots, WASD movement, mouse aim, left-click melee, and authored combat skills on 1-5."
+	placeholder.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	placeholder.add_theme_color_override("font_color", Color8(179, 180, 174))
+	combat_panel.add_child(placeholder)
+
+	arena_view = ArenaViewScript.new()
+	arena_view.custom_minimum_size = Vector2(0, 460)
+	arena_view.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	arena_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	arena_view.set_client_state(app_state)
+	combat_panel.add_child(arena_view)
+
+	combat_hint_label = Label.new()
+	combat_hint_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	combat_hint_label.add_theme_color_override("font_color", Color8(214, 218, 208))
+	combat_panel.add_child(combat_hint_label)
+
+	cooldown_summary_label = Label.new()
+	cooldown_summary_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	cooldown_summary_label.add_theme_color_override("font_color", Color8(183, 204, 214))
+	combat_panel.add_child(cooldown_summary_label)
+
+	var combat_title := Label.new()
+	combat_title.text = "Combat controls"
+	combat_title.add_theme_color_override("font_color", Color8(244, 233, 216))
+	combat_panel.add_child(combat_title)
+
+	var combat_row := HBoxContainer.new()
+	combat_row.add_theme_constant_override("separation", 10)
+	combat_panel.add_child(combat_row)
+
+	primary_attack_button = _action_button("Primary Attack", Color8(120, 78, 34))
+	primary_attack_button.pressed.connect(_on_primary_attack_pressed)
+	combat_row.add_child(primary_attack_button)
 
 	return panel
 
@@ -808,6 +831,13 @@ func _refresh_ui() -> void:
 	var local_player := app_state.local_arena_player()
 	var unlocked_slots := int(local_player.get("unlocked_skill_slots", 0))
 	var alive_state := "alive" if bool(local_player.get("alive", false)) else "down"
+	var show_skill_pick := app_state.screen == "match" and app_state.match_phase == "skill_pick"
+	if app_state.can_choose_skill():
+		skill_pick_summary_label.text = "Choose one legal tier now. Only the next tier in a started tree, or tier 1 in an unstarted tree, is enabled."
+	elif show_skill_pick:
+		skill_pick_summary_label.text = "Your pick is locked. Waiting for the round to leave the skill-pick phase."
+	else:
+		skill_pick_summary_label.text = "Skill picks appear here at the start of each round."
 	combat_hint_label.text = "WASD move, aim with the mouse, left click for melee, and use 1-5 for combat skills. Unlocked slots: %d. Local state: %s." % [unlocked_slots, alive_state]
 	cooldown_summary_label.text = app_state.cooldown_summary_text()
 	outcome_label.text = result_text
@@ -847,6 +877,10 @@ func _refresh_ui() -> void:
 	lobby_panel.visible = app_state.screen == "lobby"
 	match_panel.visible = app_state.screen == "match"
 	results_panel.visible = app_state.screen == "results"
+	connection_panel.visible = app_state.screen == "central"
+	right_column.visible = app_state.screen == "central"
+	skill_pick_panel.visible = show_skill_pick
+	combat_panel.visible = app_state.screen == "match" and not show_skill_pick
 
 
 func _queue_combat_cast(slot: int) -> void:

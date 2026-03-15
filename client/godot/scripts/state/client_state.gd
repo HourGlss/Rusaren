@@ -84,9 +84,18 @@ func mark_transport_state(state_name: String) -> void:
 
 func mark_transport_closed(reason: String) -> void:
 	transport_state = "closed"
-	if reason != "":
-		banner_message = reason
-		_append_event(reason)
+	var had_active_session := (
+		screen != "central"
+		or current_lobby_id != 0
+		or current_match_id != 0
+		or not roster.is_empty()
+		or not arena_players.is_empty()
+	)
+	if had_active_session:
+		_reset_to_central()
+	local_player_id = 0
+	banner_message = reason if reason != "" else "Realtime transport closed."
+	_append_event(banner_message)
 
 
 func mark_transport_error(message: String) -> void:
