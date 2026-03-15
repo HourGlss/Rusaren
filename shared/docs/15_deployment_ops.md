@@ -1,7 +1,7 @@
 # Deployment and Ops
 
 ## Goal
-`0.6.0` adds one documented production-style deploy path for the current same-origin hosted shell and Rust backend.
+`0.8.0` keeps the same deployment shape, but the current hosted slice now includes authored YAML/ASCII content loading, a real WebRTC gameplay path, a minimally usable HUD, and backend-tested spell/status behavior.
 
 This is the current hosted topology:
 - `https://domain.com` -> Caddy reverse proxy with automatic TLS
@@ -12,6 +12,11 @@ This is the current hosted topology:
 Current transport note:
 - the public shell now uses `/session/bootstrap` plus websocket signaling at `/ws` and WebRTC data channels for live gameplay traffic
 - `coturn` is provisioned because TURN relay fallback is required for reliable browser connectivity on real networks
+
+Current hosting honesty:
+- the current architecture is still single-app-host oriented because match sessions and player records are local to the running server
+- for the first real hosted playtests, use one app host and treat it as a live-test/staging environment
+- do not design around active-active multi-node gameplay yet until persistence and session ownership are reworked
 
 ## Checked-in stack
 Files:
@@ -60,6 +65,35 @@ What each part does:
    - `https://domain.com/`
    - `https://domain.com/healthz`
    - Prometheus locally on the bind from `PROMETHEUS_BIND`
+
+## Recommended Linode targets
+
+Live-test / staging target:
+- one shared or dedicated Ubuntu LTS Linode for:
+  - Caddy
+  - `rarena-server`
+  - Prometheus
+  - the exported Godot web bundle
+- one TURN host:
+  - either the same Linode for a cheap first live test
+  - or a second small Linode for cleaner isolation
+
+Practical minimum for the first live internet test:
+- app host: `Linode 4 GB` or better
+- TURN host: `Linode 2 GB` or better if separated
+- backups enabled
+- Cloud Firewall enabled
+
+Production-quality target for the current 1.0 architecture:
+- app host: `Linode 8 GB` or better
+- separate TURN host
+- operator-owned domain, TLS, backups, monitoring, and routine deploy verification
+
+Reason for the single-app-host recommendation:
+- the repo still uses local player-record persistence and single-process match ownership
+- moving to multiple active gameplay hosts before reworking persistence/session ownership would add operational complexity that the codebase does not support yet
+
+For exact Linode bring-up steps, see `17_linode_deploy.md`.
 
 ## Local smoke before host deploy
 From the repo root, run:

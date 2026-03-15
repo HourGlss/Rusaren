@@ -325,6 +325,12 @@ class ByteCursor:
 				return "Chill"
 			4:
 				return "Root"
+			5:
+				return "Haste"
+			6:
+				return "Silence"
+			7:
+				return "Stun"
 			_:
 				error_message = "encoded arena status kind %d is invalid" % raw
 				return null

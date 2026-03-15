@@ -1,8 +1,8 @@
 # Rusaren TODO
 
 Current target release line: `1.0.0`
-Current repo version: `0.6.0`
-Current roadmap position: `0.8.0 Content and Gameplay Hardening`
+Current repo version: `0.8.0`
+Current roadmap position: `0.9.0 Beta Hardening`
 
 Completed:
 - `0.3.0 Quality Foundation`
@@ -10,6 +10,7 @@ Completed:
 - `0.5.0 Godot Web MVP`
 - `0.6.0 Hosting and Ops MVP`
 - `0.7.0 Final Transport and Replication`
+- `0.8.0 Content and Gameplay Hardening`
 
 ## 0.7.0 Final Transport and Replication
 
@@ -28,14 +29,14 @@ Release gate:
 ## 0.8.0 Content and Gameplay Hardening
 
 - [x] Load authored skills and maps from runtime content files.
-- [ ] Harden YAML skill validation and ASCII map validation so invalid content fails cleanly at boot.
-- [ ] Expand the v1 authored class and spell set so every intended spell exists and functions.
-- [ ] Ensure all authored spells work in backend simulation, including melee, projectile, AoE, buffs, debuffs, HoTs, DoTs, silence, slow, stun, and cooldown behavior.
-- [ ] Add backend gameplay tests for all authored spells, including hit, miss, range, duration, stack, refresh, removal, and cooldown edge cases.
-- [ ] Add content fuzzing and schema-style validation around authored YAML and ASCII inputs.
-- [ ] Add replay and regression tests for gameplay transitions.
-- [ ] Keep vision and fog-of-war intentionally minimal unless they block playability.
-- [ ] Add Criterion benchmarks for hot-path sim and net code.
+- [x] Harden YAML skill validation and ASCII map validation so invalid content fails cleanly at boot.
+- [x] Expand the v1 authored class and spell set so every intended spell exists and functions.
+- [x] Ensure all authored spells work in backend simulation, including melee, projectile, AoE, buffs, debuffs, HoTs, DoTs, silence, slow, stun, and cooldown behavior.
+- [x] Add backend gameplay tests for all authored spells, including hit, miss, range, duration, stack, refresh, removal, and cooldown edge cases.
+- [x] Add content fuzzing and schema-style validation around authored YAML and ASCII inputs.
+- [x] Add replay and regression tests for gameplay transitions.
+- [x] Keep vision and fog-of-war intentionally minimal unless they block playability.
+- [x] Add Criterion benchmarks for hot-path sim and net code.
 
 Release gate:
 - authored content loads from files and fails cleanly on invalid input

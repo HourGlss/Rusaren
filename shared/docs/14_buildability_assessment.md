@@ -2,7 +2,7 @@
 
 ## Current state
 
-The repo is now buildable as a backend-first multiplayer prototype with a thin Godot shell, same-origin web hosting, observability endpoints, and a documented production-style deploy path. The current browser shell completes its live gameplay path through websocket signaling plus WebRTC data channels, the shell has a real Godot Web export path, and the repo includes a reverse-proxy/TLS/container stack for hosted operation. It is still not buildable as the intended final browser-playable game because broader gameplay presentation, richer spell/content breadth, and the external-client API documentation are not done yet.
+The repo is now buildable as a backend-first multiplayer prototype with a thin Godot shell, same-origin web hosting, observability endpoints, and a documented production-style deploy path. The current browser shell completes its live gameplay path through websocket signaling plus WebRTC data channels, the shell has a real Godot Web export path, and the repo includes a reverse-proxy/TLS/container stack for hosted operation. It is still not buildable as the intended final browser-playable game because broader content breadth, richer presentation polish, live hosted validation, and the external-client API documentation are not done yet.
 
 ## What is buildable now
 
@@ -13,6 +13,9 @@ Buildable today:
 - the thin Godot shell under `client/godot`, including manual placeholder combat input over the live browser WebRTC transport
 - authoritative full and delta gameplay snapshots that carry match phase, hp, mana, cooldowns, active statuses, and projectile state
 - runtime content loading from `server/content/skills/*.yaml` and `server/content/maps/prototype_arena.txt`
+- runtime validation that rejects malformed YAML skill shapes, duplicate authored ids, and malformed ASCII maps before boot
+- backend gameplay tests that directly exercise every currently shipped melee and authored slot skill for hit/miss/range/cooldown/status behavior
+- hot-path Criterion benchmark targets for simulation ticks and snapshot packet codec work
 - a Godot Web export pipeline plus CI smoke checks
 - same-origin static hosting of the exported web shell from `dedicated_server`
 - structured logs, `/healthz`, `/metrics`, and Prometheus-friendly observability on the Rust server
@@ -20,9 +23,10 @@ Buildable today:
 - CI and local quality commands
 
 Not buildable yet:
-- full combat rendering and snapshot-driven gameplay presentation in Godot
-- a broad final class/spell content set
+- the final presentation bar for 1.0 combat readability and polish
+- a broader final class/spell content set beyond the current shipped 20-skill runtime slice
 - rustdoc/API guidance that is sufficient for an external client or bot to play through the protocol without Godot
+- a proven hosted-domain live deployment on operator infrastructure such as Linode
 
 ## What is specified well enough to start coding
 
@@ -47,6 +51,6 @@ The next implementation steps should be:
 1. keep the Godot shell and backend packet surface synced while the current WebRTC path gets more real-world playtime
 2. expand authored content and backend gameplay correctness coverage now that the runtime transport surface is in place
 3. continue gameplay presentation and HUD work on top of the working snapshot/delta path
-4. use the checked-in hosting stack to perform the real production-domain rollout once operator secrets and DNS are available
+4. use the checked-in hosting stack plus the Linode deployment guide to perform the first real hosted-domain rollout once operator secrets and DNS are available
 
 The next decisions should come from implementation feedback, not more speculative architecture drafting.

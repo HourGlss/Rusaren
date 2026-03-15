@@ -29,6 +29,7 @@ Current implementation status:
 - The current shell now sends real binary `InputFrame` packets over the unordered WebRTC input data channel.
 - The current shell now renders a simple top-down arena with a mostly empty floor, four central square pillars, and shrub collars.
 - The current shell now consumes authoritative `ArenaStateSnapshot`, `ArenaDeltaSnapshot`, and `ArenaEffectBatch` events to draw players, aim lines, hp bars, mana bars, active statuses, cooldown state, projectile state, and short-lived combat effects.
+- The current shell now has a minimally usable combat HUD: readable hp/mana above players, basic cooldown display, and simple spell/melee visuals driven by authoritative events.
 - The current shell only enables legal skill picks for the local player: tier 1 for unstarted trees or the next tier in a tree already started this match.
 - The current shell now exports to Web and defaults browser builds to the same-origin `/ws` endpoint.
 - The current shell first fetches `/session/bootstrap`, then upgrades `/ws` with a short-lived one-time token.
@@ -40,7 +41,7 @@ Current implementation status:
 
 Current backend limitations the shell must expose honestly:
 - Combat content is still prototype-level even though the shell now shows a real arena and consumes authored YAML/ASCII content.
-- The current combat slice is intentionally narrow: once combat starts, the shell supports `WASD` movement, mouse aim, left-click melee, authored slot skills on `1`-`5`, projectile combat, debuffs, HoTs, and authoritative cooldown display, but not the final class set yet.
+- The current combat slice is intentionally narrow: once combat starts, the shell supports `WASD` movement, mouse aim, left-click melee, authored slot skills on `1`-`5`, projectile combat, AoE skills, haste/silence/stun/chill/poison/hot statuses, and authoritative cooldown display, but not the final class set yet.
 - The current delta packet is authoritative and works for live play, but it is not yet the final compressed/interpolated replication format.
 - Vision is still intentionally minimal/stubbed compared with the rest of the combat slice.
 

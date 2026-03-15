@@ -1,6 +1,6 @@
 # Rarena
 
-Current repo version: `0.6.0`
+Current repo version: `0.8.0`
 
 Rarena is a server-authoritative arena game prototype. The current repository now contains a backend-first vertical slice for lobby, match flow, simulation, and packet validation, plus local and CI quality tooling around it.
 
@@ -16,14 +16,17 @@ Buildable now:
 - runtime-loaded authored content under `server/content/skills/*.yaml` and `server/content/maps/prototype_arena.txt`
 - a same-origin Godot Web export path hosted directly by the Rust server at `/`
 - a documented production-style deploy path with Caddy, Prometheus, and `coturn`
+- stricter authored YAML and ASCII content validation with clean boot-time failures on invalid content
+- backend gameplay tests that exercise every shipped melee and authored slot skill directly against the sim, including hit, miss, range, cooldown, mana, and status behavior
+- Criterion benchmark targets for hot-path sim ticks and snapshot packet codec work
 - persistent player records under `server/var/player_records.tsv`
 - local quality scripts under `server/scripts`
 - GitHub Actions quality workflows plus Godot web export and deploy smoke workflows
 
 Not implemented yet:
-- the full 1.0 authored class and spell set with complete backend spell-behavior coverage
+- the full 1.0 authored class and spell set beyond the current shipped runtime kit
 - more aggressive snapshot compression beyond the current full-vs-delta split
-- the full 1.0 Godot gameplay presentation bar: basic HUD polish, spell visuals for every shipped spell, and always-readable health and mana display for all players
+- the full 1.0 Godot gameplay presentation bar: HUD polish, stronger spell visuals, and always-readable health and mana display in crowded fights
 - rustdoc/API guidance that is complete enough for an external client or bot author to play through the game protocol without Godot
 - final vision / fog-of-war logic beyond stubs
 
@@ -84,7 +87,7 @@ client/godot/project.godot
 ```
 
 The current Godot shell is wired to `/session/bootstrap` for a one-time websocket token, then `/ws` for websocket signaling and WebRTC data channels for live gameplay traffic.
-The project metadata version is currently `0.6.0`.
+The project metadata version is currently `0.8.0`.
 Known shell limitations:
 - the arena slice is intentionally simple, even though the current skills and map now load from authored content files
 - visibility is still a stubbed/minimal system; movement, health, cooldowns, and spell use are the priority slice
@@ -178,6 +181,13 @@ cd server
 That script now installs Verus into the repo-local cache at `server/tools/verus/current`.
 It also installs `mdbook`, `cargo-fuzz`, and the nightly toolchain required by the pre-commit ingress fuzz hook.
 The backend call-graph report now uses the repo-local `backend_callgraph` binary in this workspace plus `rust-analyzer`, so there is no separate call-graph tool checkout to manage.
+
+Compile the hot-path benchmarks:
+
+```powershell
+cd server
+rustup run stable cargo bench --workspace --no-run
+```
 
 Run the Rust WebRTC integration suite:
 
@@ -384,7 +394,7 @@ Current easiest full-loop slice:
 
 ## Deploy
 
-The checked-in `0.6.0` hosted path is:
+The checked-in `0.8.0` hosted path is:
 - `server/Dockerfile`
 - `deploy/docker-compose.yml`
 - `deploy/Caddyfile`
@@ -404,6 +414,15 @@ Local container smoke before a real host deploy:
 
 Use:
 - `shared/docs/15_deployment_ops.md`
+- `shared/docs/17_linode_deploy.md`
+
+For the first real internet-reachable test, the current recommended shape is:
+- one app host
+- optional separate TURN host
+- Docker Compose deploy
+- exported Godot web bundle copied to the host before `docker compose build`
+
+That is the honest target for the current codebase because match ownership and player records are still local to the running server.
 - `shared/docs/16_runbooks.md`
 
 ## Docs

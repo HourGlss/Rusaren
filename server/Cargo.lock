@@ -192,7 +192,7 @@ dependencies = [
 
 [[package]]
 name = "backend_callgraph"
-version = "0.6.0"
+version = "0.8.0"
 dependencies = [
  "protobuf",
  "scip",
@@ -597,7 +597,7 @@ checksum = "d7a1e2f27636f116493b8b860f5546edb47c8d8f8ea73e1d2a20be88e28d1fea"
 
 [[package]]
 name = "dedicated_server"
-version = "0.6.0"
+version = "0.8.0"
 dependencies = [
  "game_api",
  "game_content",
@@ -899,7 +899,7 @@ dependencies = [
 
 [[package]]
 name = "fuzz_seed_builder"
-version = "0.6.0"
+version = "0.8.0"
 dependencies = [
  "game_api",
  "game_content",
@@ -909,7 +909,7 @@ dependencies = [
 
 [[package]]
 name = "game_api"
-version = "0.6.0"
+version = "0.8.0"
 dependencies = [
  "axum",
  "base64",
@@ -935,7 +935,7 @@ dependencies = [
 
 [[package]]
 name = "game_content"
-version = "0.6.0"
+version = "0.8.0"
 dependencies = [
  "game_domain",
  "serde",
@@ -944,14 +944,14 @@ dependencies = [
 
 [[package]]
 name = "game_domain"
-version = "0.6.0"
+version = "0.8.0"
 dependencies = [
  "proptest",
 ]
 
 [[package]]
 name = "game_lobby"
-version = "0.6.0"
+version = "0.8.0"
 dependencies = [
  "game_domain",
  "proptest",
@@ -959,22 +959,23 @@ dependencies = [
 
 [[package]]
 name = "game_match"
-version = "0.6.0"
+version = "0.8.0"
 dependencies = [
  "game_domain",
 ]
 
 [[package]]
 name = "game_net"
-version = "0.6.0"
+version = "0.8.0"
 dependencies = [
+ "criterion",
  "game_domain",
  "proptest",
 ]
 
 [[package]]
 name = "game_sim"
-version = "0.6.0"
+version = "0.8.0"
 dependencies = [
  "criterion",
  "game_content",
@@ -2237,7 +2238,7 @@ dependencies = [
 
 [[package]]
 name = "scip_json_dump"
-version = "0.6.0"
+version = "0.8.0"
 dependencies = [
  "protobuf",
  "scip",

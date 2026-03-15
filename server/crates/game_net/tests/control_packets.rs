@@ -293,6 +293,62 @@ fn server_control_event_round_trips_delta_arena_snapshot() {
 }
 
 #[test]
+fn arena_status_kinds_round_trip_for_all_runtime_statuses() {
+    let statuses = [
+        ArenaStatusKind::Poison,
+        ArenaStatusKind::Hot,
+        ArenaStatusKind::Chill,
+        ArenaStatusKind::Root,
+        ArenaStatusKind::Haste,
+        ArenaStatusKind::Silence,
+        ArenaStatusKind::Stun,
+    ];
+
+    for (index, kind) in statuses.into_iter().enumerate() {
+        let event = ServerControlEvent::ArenaDeltaSnapshot {
+            snapshot: ArenaDeltaSnapshot {
+                phase: ArenaMatchPhase::Combat,
+                phase_seconds_remaining: None,
+                players: vec![ArenaPlayerSnapshot {
+                    player_id: player_id(7),
+                    player_name: player_name("Alice"),
+                    team: TeamSide::TeamA,
+                    x: -620,
+                    y: 220,
+                    aim_x: 90,
+                    aim_y: -40,
+                    hit_points: 92,
+                    max_hit_points: 100,
+                    mana: 64,
+                    max_mana: 100,
+                    alive: true,
+                    unlocked_skill_slots: 3,
+                    primary_cooldown_remaining_ms: 180,
+                    primary_cooldown_total_ms: 650,
+                    slot_cooldown_remaining_ms: [0, 0, 800, 0, 0],
+                    slot_cooldown_total_ms: [700, 1700, 2200, 0, 0],
+                    active_statuses: vec![ArenaStatusSnapshot {
+                        source: player_id(8),
+                        slot: 2,
+                        kind,
+                        stacks: 2,
+                        remaining_ms: 1400,
+                    }],
+                }],
+                projectiles: vec![],
+            },
+        };
+
+        let packet = event
+            .clone()
+            .encode_packet(u32::try_from(index + 1).expect("index should fit"), 22)
+            .expect("packet");
+        let (_, decoded) = ServerControlEvent::decode_packet(&packet).expect("decode");
+        assert_eq!(decoded, event);
+    }
+}
+
+#[test]
 fn server_control_event_round_trips_arena_effect_batch() {
     let effect_batch = sample_arena_effect_batch_event();
     let effects_packet = effect_batch.clone().encode_packet(8, 22).expect("packet");

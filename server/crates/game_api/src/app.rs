@@ -1521,6 +1521,9 @@ impl ServerApp {
                 game_content::StatusKind::Hot => ArenaStatusKind::Hot,
                 game_content::StatusKind::Chill => ArenaStatusKind::Chill,
                 game_content::StatusKind::Root => ArenaStatusKind::Root,
+                game_content::StatusKind::Haste => ArenaStatusKind::Haste,
+                game_content::StatusKind::Silence => ArenaStatusKind::Silence,
+                game_content::StatusKind::Stun => ArenaStatusKind::Stun,
             },
             stacks: status.stacks,
             remaining_ms: status.remaining_ms,
@@ -2083,7 +2086,9 @@ mod tests {
 
     use crate::transport::{ConnectionId, HeadlessClient, InMemoryTransport};
     use game_domain::{PlayerName, SkillTree};
-    use game_net::{LobbyDirectoryEntry, LobbySnapshotPlayer, ServerControlEvent};
+    use game_net::{
+        ArenaStateSnapshot, LobbyDirectoryEntry, LobbySnapshotPlayer, ServerControlEvent,
+    };
 
     fn connection_id(raw: u64) -> ConnectionId {
         ConnectionId::new(raw).expect("valid connection id")
@@ -2187,6 +2192,13 @@ mod tests {
     fn lobby_snapshot_players(entries: &[ServerControlEvent]) -> Option<&[LobbySnapshotPlayer]> {
         entries.iter().rev().find_map(|event| match event {
             ServerControlEvent::GameLobbySnapshot { players, .. } => Some(players.as_slice()),
+            _ => None,
+        })
+    }
+
+    fn arena_state_snapshot(entries: &[ServerControlEvent]) -> Option<&ArenaStateSnapshot> {
+        entries.iter().rev().find_map(|event| match event {
+            ServerControlEvent::ArenaStateSnapshot { snapshot } => Some(snapshot),
             _ => None,
         })
     }
@@ -2379,6 +2391,77 @@ mod tests {
                         && player.active_statuses.iter().any(|status| status.kind == ArenaStatusKind::Poison)
                 })
         )));
+    }
+
+    #[test]
+    fn round_transition_rebuilds_a_clean_world_for_the_next_combat_phase() {
+        let mut server = ServerApp::new();
+        let mut transport = InMemoryTransport::new();
+        let (mut alice, mut bob) = connect_pair(&mut server, &mut transport);
+
+        let _ = launch_match(&mut server, &mut transport, &mut alice, &mut bob);
+
+        alice
+            .choose_skill(&mut transport, skill(SkillTree::Rogue, 1))
+            .expect("alice round-one skill");
+        bob.choose_skill(&mut transport, skill(SkillTree::Warrior, 1))
+            .expect("bob round-one skill");
+        server.pump_transport(&mut transport);
+        let _ = alice
+            .drain_events(&mut transport)
+            .expect("alice round-one skill events");
+        let _ = bob
+            .drain_events(&mut transport)
+            .expect("bob round-one skill events");
+
+        server.advance_seconds(&mut transport, 5);
+        let _ = alice
+            .drain_events(&mut transport)
+            .expect("alice round-one pre-combat events");
+        let _ = bob
+            .drain_events(&mut transport)
+            .expect("bob round-one pre-combat events");
+
+        let _ = cast_until_round_won(&mut server, &mut transport, &mut alice, &mut bob, 1);
+
+        alice
+            .choose_skill(&mut transport, skill(SkillTree::Rogue, 2))
+            .expect("alice round-two skill");
+        bob.choose_skill(&mut transport, skill(SkillTree::Warrior, 2))
+            .expect("bob round-two skill");
+        server.pump_transport(&mut transport);
+        let _ = alice
+            .drain_events(&mut transport)
+            .expect("alice round-two skill events");
+        let _ = bob
+            .drain_events(&mut transport)
+            .expect("bob round-two skill events");
+
+        server.advance_seconds(&mut transport, 5);
+        let alice_events = alice
+            .drain_events(&mut transport)
+            .expect("alice round-two combat events");
+        let bob_events = bob
+            .drain_events(&mut transport)
+            .expect("bob round-two combat events");
+
+        for snapshot in [
+            arena_state_snapshot(&alice_events)
+                .expect("alice should receive a fresh arena snapshot"),
+            arena_state_snapshot(&bob_events).expect("bob should receive a fresh arena snapshot"),
+        ] {
+            assert!(snapshot.projectiles.is_empty());
+            assert!(snapshot.players.iter().all(|player| {
+                player.hit_points == player.max_hit_points
+                    && player.mana == player.max_mana
+                    && player.primary_cooldown_remaining_ms == 0
+                    && player
+                        .slot_cooldown_remaining_ms
+                        .iter()
+                        .all(|remaining| *remaining == 0)
+                    && player.active_statuses.is_empty()
+            }));
+        }
     }
 
     #[test]

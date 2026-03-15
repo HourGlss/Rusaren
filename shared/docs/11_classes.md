@@ -37,13 +37,15 @@ Example valid sequence:
   - CastTime: requires stillness; cancels on movement; can be interrupted
   - Channel: requires stillness; ticks; stops on movement/interrupt/cancel
 
-## Status families (starter set)
+## Runtime status families (current 0.8 slice)
 - Poison: DoT (damage over time), stacks up to 5 per source player
 - Chill: slow (movement modifier), stacks to 3 per source player and then roots
 - HoT: heal over time, refreshed per caster and spell source
-- Silence: prevents CastTime/Channel (still allows Instant melee)
-	- Silence does not interrupt spells that are being cast
-- Root: prevents movement (still allows casting)
-- Reveal: defeats Stealth hiding for owner only
-- Stealth: Causes the player to be unseen by other players
-- Interrupt: interrupt the current spell being cast
+- Haste: movement-speed buff with authored duration and magnitude
+- Silence: blocks skill casts, but still allows melee and movement
+- Root: prevents movement, but still allows melee and casting
+- Stun: prevents movement and both melee/skill actions for its authored duration
+
+Not a current runtime focus:
+- Reveal and Stealth remain future mechanics
+- Interrupt remains future explicit content; the current control slice uses Silence and Stun instead

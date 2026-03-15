@@ -1,8 +1,8 @@
 
-tree: Mage
+tree: Rogue
 melee:
-  id: mage_staff
-  name: Staff
+  id: rogue_test
+  name: Test
   description: Test melee
   cooldown_ms: 500
   range: 80
@@ -13,12 +13,13 @@ melee:
     amount: 1
 skills:
   - tier: 1
-    id: mage_arc
-    name: Arc
-    description: Unknown behavior.
+    id: rogue_dash
+    name: Dash
+    description: Invalid dash shape.
     behavior:
-      kind: wall
-      effect: skill_shot
-      range: 10
+      kind: dash
+      effect: dash_trail
       cooldown_ms: 700
       mana_cost: 10
+      distance: 160
+      range: 400

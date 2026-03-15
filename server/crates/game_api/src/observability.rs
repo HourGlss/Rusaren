@@ -410,7 +410,7 @@ mod tests {
 
     #[test]
     fn prometheus_render_includes_http_websocket_ingress_and_tick_metrics() {
-        let observability = ServerObservability::new("0.6.0-test");
+        let observability = ServerObservability::new("0.8.0-test");
         observability.record_http_request(HttpRouteLabel::Root);
         observability.record_http_request(HttpRouteLabel::Healthz);
         observability.record_http_request(HttpRouteLabel::Metrics);
@@ -431,6 +431,6 @@ mod tests {
         assert!(metrics.contains("rarena_ingress_packets_total{result=\"accepted\"} 1"));
         assert!(metrics.contains("rarena_ingress_packets_total{result=\"rejected\"} 1"));
         assert!(metrics.contains("rarena_tick_iterations_total 1"));
-        assert!(metrics.contains("rarena_build_info{version=\"0.6.0-test\"} 1"));
+        assert!(metrics.contains("rarena_build_info{version=\"0.8.0-test\"} 1"));
     }
 }

@@ -258,6 +258,9 @@ pub enum ArenaStatusKind {
     Hot,
     Chill,
     Root,
+    Haste,
+    Silence,
+    Stun,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1490,6 +1493,9 @@ fn read_arena_status_kind(
         2 => Ok(ArenaStatusKind::Hot),
         3 => Ok(ArenaStatusKind::Chill),
         4 => Ok(ArenaStatusKind::Root),
+        5 => Ok(ArenaStatusKind::Haste),
+        6 => Ok(ArenaStatusKind::Silence),
+        7 => Ok(ArenaStatusKind::Stun),
         other => Err(PacketError::InvalidEncodedArenaStatusKind(other)),
     }
 }
@@ -1555,6 +1561,9 @@ fn encode_arena_status_kind(kind: ArenaStatusKind) -> u8 {
         ArenaStatusKind::Hot => 2,
         ArenaStatusKind::Chill => 3,
         ArenaStatusKind::Root => 4,
+        ArenaStatusKind::Haste => 5,
+        ArenaStatusKind::Silence => 6,
+        ArenaStatusKind::Stun => 7,
     }
 }
 

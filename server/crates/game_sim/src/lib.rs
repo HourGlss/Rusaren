@@ -618,7 +618,11 @@ impl SimulationWorld {
                     StatusKind::Hot => {
                         events.extend(self.apply_healing_internal(source, &[player_id], amount));
                     }
-                    StatusKind::Chill | StatusKind::Root => {}
+                    StatusKind::Chill
+                    | StatusKind::Root
+                    | StatusKind::Haste
+                    | StatusKind::Silence
+                    | StatusKind::Stun => {}
                 }
             }
         }
@@ -634,11 +638,11 @@ impl SimulationWorld {
                 continue;
             }
 
-            let rooted = player
+            let movement_blocked = player
                 .statuses
                 .iter()
-                .any(|status| status.kind == StatusKind::Root);
-            let movement = if rooted {
+                .any(|status| matches!(status.kind, StatusKind::Root | StatusKind::Stun));
+            let movement = if movement_blocked {
                 MovementIntent::zero()
             } else {
                 player.movement_intent
@@ -648,8 +652,8 @@ impl SimulationWorld {
                 continue;
             }
 
-            let slow_bps = total_slow_bps(&player.statuses);
-            let speed = adjusted_move_speed(delta_ms, slow_bps);
+            let speed_modifier_bps = total_move_modifier_bps(&player.statuses);
+            let speed = adjusted_move_speed(delta_ms, speed_modifier_bps);
             if speed == 0 {
                 continue;
             }
@@ -688,6 +692,21 @@ impl SimulationWorld {
             if !snapshot.alive {
                 continue;
             }
+            let (casts_blocked, actions_blocked) = self
+                .players
+                .get(&player_id)
+                .map(|player| {
+                    (
+                        player.statuses.iter().any(|status| {
+                            matches!(status.kind, StatusKind::Silence | StatusKind::Stun)
+                        }),
+                        player
+                            .statuses
+                            .iter()
+                            .any(|status| status.kind == StatusKind::Stun),
+                    )
+                })
+                .unwrap_or((false, false));
 
             let queued_primary = self
                 .players
@@ -698,11 +717,13 @@ impl SimulationWorld {
                 .get(&player_id)
                 .and_then(|player| player.queued_cast_slot);
 
-            if queued_primary {
+            if queued_primary && !actions_blocked {
                 events.extend(self.resolve_primary_attack(player_id, snapshot));
             }
             if let Some(slot) = queued_cast_slot {
-                events.extend(self.resolve_cast(player_id, snapshot, slot));
+                if !casts_blocked {
+                    events.extend(self.resolve_cast(player_id, snapshot, slot));
+                }
             }
 
             if let Some(player) = self.players.get_mut(&player_id) {
@@ -1500,10 +1521,29 @@ fn total_slow_bps(statuses: &[StatusInstance]) -> u16 {
         })
 }
 
-fn adjusted_move_speed(delta_ms: u16, slow_bps: u16) -> u16 {
-    let effective_speed = u32::from(PLAYER_MOVE_SPEED_UNITS_PER_SECOND)
-        .saturating_mul(u32::from(10_000_u16.saturating_sub(slow_bps)))
-        / 10_000;
+fn total_haste_bps(statuses: &[StatusInstance]) -> u16 {
+    statuses
+        .iter()
+        .filter(|status| status.kind == StatusKind::Haste)
+        .fold(0_u16, |accumulator, status| {
+            let haste = status
+                .magnitude
+                .saturating_mul(u16::from(status.stacks))
+                .min(6_000);
+            accumulator.saturating_add(haste).min(6_000)
+        })
+}
+
+fn total_move_modifier_bps(statuses: &[StatusInstance]) -> i16 {
+    let haste = i32::from(total_haste_bps(statuses));
+    let slow = i32::from(total_slow_bps(statuses));
+    i16::try_from((haste - slow).clamp(-8_000, 6_000)).unwrap_or(0)
+}
+
+fn adjusted_move_speed(delta_ms: u16, move_modifier_bps: i16) -> u16 {
+    let scale_bps = (10_000_i32 + i32::from(move_modifier_bps)).clamp(2_000, 16_000) as u32;
+    let effective_speed =
+        u32::from(PLAYER_MOVE_SPEED_UNITS_PER_SECOND).saturating_mul(scale_bps) / 10_000;
     let distance = effective_speed.saturating_mul(u32::from(delta_ms)) / 1000;
     u16::try_from(distance).unwrap_or(u16::MAX)
 }
@@ -1736,6 +1776,11 @@ mod tests {
     use game_content::GameContent;
     use game_domain::{PlayerName, PlayerRecord, SkillChoice, SkillTree};
 
+    const TEST_ATTACKER_X: i16 = -620;
+    const TEST_OPEN_LANE_Y: i16 = 0;
+    const TEST_AIM_X: i16 = 120;
+    const TEST_AIM_Y: i16 = 0;
+
     fn player_id(raw: u32) -> PlayerId {
         PlayerId::new(raw).expect("valid player id")
     }
@@ -1781,6 +1826,130 @@ mod tests {
 
     fn world(content: &GameContent, seeds: Vec<SimPlayerSeed>) -> SimulationWorld {
         SimulationWorld::new(seeds, content.map()).expect("world should build")
+    }
+
+    fn seed_with_slot_one_skill(
+        content: &GameContent,
+        raw_id: u32,
+        raw_name: &str,
+        team: TeamSide,
+        tree: SkillTree,
+        skill: &SkillDefinition,
+    ) -> SimPlayerSeed {
+        SimPlayerSeed {
+            assignment: assignment(raw_id, raw_name, team),
+            hit_points: 100,
+            melee: content
+                .skills()
+                .melee_for(tree)
+                .expect("melee should exist")
+                .clone(),
+            skills: [Some(skill.clone()), None, None, None, None],
+        }
+    }
+
+    fn set_player_pose(
+        world: &mut SimulationWorld,
+        player_id: PlayerId,
+        x: i16,
+        y: i16,
+        aim_x: i16,
+        aim_y: i16,
+    ) {
+        let player = world
+            .players
+            .get_mut(&player_id)
+            .expect("player should exist");
+        player.x = x;
+        player.y = y;
+        player.aim_x = aim_x;
+        player.aim_y = aim_y;
+    }
+
+    fn collect_ticks(world: &mut SimulationWorld, frames: usize) -> Vec<SimulationEvent> {
+        let mut events = Vec::new();
+        for _ in 0..frames {
+            events.extend(world.tick(COMBAT_FRAME_MS));
+        }
+        events
+    }
+
+    fn projectile_frame_budget(speed: u16, range: u16) -> usize {
+        let travel_per_frame = usize::from(travel_distance_units(speed, COMBAT_FRAME_MS).max(1));
+        usize::from(range).div_ceil(travel_per_frame) + 3
+    }
+
+    fn effect_spawned_by(events: &[SimulationEvent], owner: PlayerId, slot: u8) -> bool {
+        events.iter().any(|event| {
+            matches!(
+                event,
+                SimulationEvent::EffectSpawned { effect }
+                    if effect.owner == owner && effect.slot == slot
+            )
+        })
+    }
+
+    fn moved_player(events: &[SimulationEvent], player_id: PlayerId) -> Option<(i16, i16)> {
+        events.iter().find_map(|event| match event {
+            SimulationEvent::PlayerMoved {
+                player_id: moved,
+                x,
+                y,
+            } if *moved == player_id => Some((*x, *y)),
+            _ => None,
+        })
+    }
+
+    fn damage_to(events: &[SimulationEvent], target: PlayerId) -> Option<u16> {
+        events.iter().find_map(|event| match event {
+            SimulationEvent::DamageApplied {
+                target: damaged,
+                amount,
+                ..
+            } if *damaged == target => Some(*amount),
+            _ => None,
+        })
+    }
+
+    fn healing_to(events: &[SimulationEvent], target: PlayerId) -> Option<u16> {
+        events.iter().find_map(|event| match event {
+            SimulationEvent::HealingApplied {
+                target: healed,
+                amount,
+                ..
+            } if *healed == target => Some(*amount),
+            _ => None,
+        })
+    }
+
+    fn status_applied_to(
+        events: &[SimulationEvent],
+        target: PlayerId,
+        kind: StatusKind,
+    ) -> Option<u8> {
+        events.iter().find_map(|event| match event {
+            SimulationEvent::StatusApplied {
+                target: applied,
+                kind: applied_kind,
+                stacks,
+                ..
+            } if *applied == target && *applied_kind == kind => Some(*stacks),
+            _ => None,
+        })
+    }
+
+    fn behavior_payload(behavior: SkillBehavior) -> Option<game_content::EffectPayload> {
+        match behavior {
+            SkillBehavior::Projectile { payload, .. }
+            | SkillBehavior::Beam { payload, .. }
+            | SkillBehavior::Burst { payload, .. }
+            | SkillBehavior::Nova { payload, .. } => Some(payload),
+            SkillBehavior::Dash { payload, .. } => payload,
+        }
+    }
+
+    fn miss_offset_units(radius: u16) -> i16 {
+        i16::try_from(u32::from(radius) + u32::from(PLAYER_RADIUS_UNITS) + 80).unwrap_or(i16::MAX)
     }
 
     #[test]
@@ -2226,6 +2395,89 @@ mod tests {
     }
 
     #[test]
+    fn poison_and_hot_remove_themselves_after_their_authored_durations() {
+        let content = content();
+
+        let mut poison_world = world(
+            &content,
+            vec![
+                seed(
+                    &content,
+                    1,
+                    "Rogue",
+                    TeamSide::TeamA,
+                    SkillTree::Rogue,
+                    [Some(choice(SkillTree::Rogue, 1)), None, None, None, None],
+                ),
+                seed(
+                    &content,
+                    2,
+                    "Bob",
+                    TeamSide::TeamB,
+                    SkillTree::Warrior,
+                    [None, None, None, None, None],
+                ),
+            ],
+        );
+        set_player_pose(
+            &mut poison_world,
+            player_id(1),
+            -360,
+            TEST_OPEN_LANE_Y,
+            TEST_AIM_X,
+            TEST_AIM_Y,
+        );
+        set_player_pose(
+            &mut poison_world,
+            player_id(2),
+            -200,
+            TEST_OPEN_LANE_Y,
+            -TEST_AIM_X,
+            TEST_AIM_Y,
+        );
+        poison_world
+            .queue_cast(player_id(1), 1)
+            .expect("poison cast should queue");
+        let _ = poison_world.tick(COMBAT_FRAME_MS);
+        let _ = collect_ticks(&mut poison_world, 45);
+        assert!(
+            poison_world
+                .statuses_for(player_id(2))
+                .expect("statuses")
+                .iter()
+                .all(|status| status.kind != StatusKind::Poison),
+            "poison should expire after its duration"
+        );
+
+        let mut hot_world = world(
+            &content,
+            vec![seed(
+                &content,
+                1,
+                "Cleric",
+                TeamSide::TeamA,
+                SkillTree::Cleric,
+                [None, None, Some(choice(SkillTree::Cleric, 3)), None, None],
+            )],
+        );
+        {
+            let cleric = hot_world.players.get_mut(&player_id(1)).expect("cleric");
+            cleric.hit_points = 70;
+        }
+        hot_world.queue_cast(player_id(1), 3).expect("hot cast");
+        let _ = hot_world.tick(COMBAT_FRAME_MS);
+        let _ = collect_ticks(&mut hot_world, 35);
+        assert!(
+            hot_world
+                .statuses_for(player_id(1))
+                .expect("statuses")
+                .iter()
+                .all(|status| status.kind != StatusKind::Hot),
+            "hot should expire after its duration"
+        );
+    }
+
+    #[test]
     fn chill_stacks_slow_then_root_target() {
         let content = content();
         let mut world = world(
@@ -2327,5 +2579,803 @@ mod tests {
         let bob = world.player_state(player_id(2)).expect("bob");
         assert!(bob.hit_points > 60);
         assert!(bob.hit_points <= bob.max_hit_points);
+    }
+
+    #[test]
+    fn every_authored_melee_hits_when_targets_are_in_range_and_misses_when_not() {
+        let content = content();
+        let classes = [
+            SkillTree::Warrior,
+            SkillTree::Rogue,
+            SkillTree::Mage,
+            SkillTree::Cleric,
+        ];
+
+        for tree in classes {
+            let melee = content
+                .skills()
+                .melee_for(tree)
+                .expect("melee should exist")
+                .clone();
+
+            let mut hit_world = world(
+                &content,
+                vec![
+                    seed(&content, 1, "Alice", TeamSide::TeamA, tree, [None; 5]),
+                    seed(
+                        &content,
+                        2,
+                        "Bob",
+                        TeamSide::TeamB,
+                        SkillTree::Warrior,
+                        [None; 5],
+                    ),
+                ],
+            );
+            let target_point = project_from_aim(
+                TEST_ATTACKER_X,
+                TEST_OPEN_LANE_Y,
+                TEST_AIM_X,
+                TEST_AIM_Y,
+                melee.range,
+            );
+            set_player_pose(
+                &mut hit_world,
+                player_id(1),
+                TEST_ATTACKER_X,
+                TEST_OPEN_LANE_Y,
+                TEST_AIM_X,
+                TEST_AIM_Y,
+            );
+            set_player_pose(
+                &mut hit_world,
+                player_id(2),
+                target_point.0,
+                target_point.1,
+                -TEST_AIM_X,
+                TEST_AIM_Y,
+            );
+            hit_world
+                .queue_primary_attack(player_id(1))
+                .expect("melee queue should succeed");
+            let hit_events = hit_world.tick(COMBAT_FRAME_MS);
+            assert!(
+                effect_spawned_by(&hit_events, player_id(1), 0),
+                "{} melee should spawn an effect",
+                melee.id
+            );
+            match melee.payload.kind {
+                CombatValueKind::Damage => assert_eq!(
+                    damage_to(&hit_events, player_id(2)),
+                    Some(melee.payload.amount),
+                    "{} melee should damage targets in range",
+                    melee.id
+                ),
+                CombatValueKind::Heal => assert!(
+                    healing_to(&hit_events, player_id(2)).is_some(),
+                    "{} melee should heal targets in range",
+                    melee.id
+                ),
+            }
+
+            let mut miss_world = world(
+                &content,
+                vec![
+                    seed(&content, 1, "Alice", TeamSide::TeamA, tree, [None; 5]),
+                    seed(
+                        &content,
+                        2,
+                        "Bob",
+                        TeamSide::TeamB,
+                        SkillTree::Warrior,
+                        [None; 5],
+                    ),
+                ],
+            );
+            let miss_offset = miss_offset_units(melee.radius);
+            set_player_pose(
+                &mut miss_world,
+                player_id(1),
+                TEST_ATTACKER_X,
+                TEST_OPEN_LANE_Y,
+                TEST_AIM_X,
+                TEST_AIM_Y,
+            );
+            set_player_pose(
+                &mut miss_world,
+                player_id(2),
+                target_point.0,
+                target_point.1 + miss_offset,
+                -TEST_AIM_X,
+                TEST_AIM_Y,
+            );
+            miss_world
+                .queue_primary_attack(player_id(1))
+                .expect("melee queue should succeed");
+            let miss_events = miss_world.tick(COMBAT_FRAME_MS);
+            assert!(
+                damage_to(&miss_events, player_id(2)).is_none()
+                    && healing_to(&miss_events, player_id(2)).is_none(),
+                "{} melee should miss targets outside its radius",
+                melee.id
+            );
+        }
+    }
+
+    #[test]
+    fn every_authored_skill_hits_with_valid_geometry_and_resources() {
+        let content = content();
+
+        for skill in content.skills().all() {
+            let mut world = world(
+                &content,
+                vec![
+                    seed_with_slot_one_skill(
+                        &content,
+                        1,
+                        "Alice",
+                        TeamSide::TeamA,
+                        skill.tree,
+                        skill,
+                    ),
+                    seed(
+                        &content,
+                        2,
+                        "Bob",
+                        TeamSide::TeamB,
+                        SkillTree::Warrior,
+                        [None; 5],
+                    ),
+                ],
+            );
+            let payload = behavior_payload(skill.behavior);
+            let attacker_id = player_id(1);
+            let target_id = player_id(2);
+
+            set_player_pose(
+                &mut world,
+                attacker_id,
+                TEST_ATTACKER_X,
+                TEST_OPEN_LANE_Y,
+                TEST_AIM_X,
+                TEST_AIM_Y,
+            );
+
+            match skill.behavior {
+                SkillBehavior::Projectile { range, .. } | SkillBehavior::Beam { range, .. } => {
+                    let distance = i16::try_from(range.min(240)).unwrap_or(240);
+                    set_player_pose(
+                        &mut world,
+                        target_id,
+                        TEST_ATTACKER_X + distance,
+                        TEST_OPEN_LANE_Y,
+                        -TEST_AIM_X,
+                        TEST_AIM_Y,
+                    );
+                }
+                SkillBehavior::Burst { range, .. } => {
+                    let center = project_from_aim(
+                        TEST_ATTACKER_X,
+                        TEST_OPEN_LANE_Y,
+                        TEST_AIM_X,
+                        TEST_AIM_Y,
+                        range,
+                    );
+                    set_player_pose(
+                        &mut world,
+                        target_id,
+                        center.0,
+                        center.1,
+                        -TEST_AIM_X,
+                        TEST_AIM_Y,
+                    );
+                }
+                SkillBehavior::Nova { radius, .. } => {
+                    let radius_offset = i16::try_from((radius / 2).max(40)).unwrap_or(40);
+                    set_player_pose(
+                        &mut world,
+                        target_id,
+                        TEST_ATTACKER_X + radius_offset,
+                        TEST_OPEN_LANE_Y,
+                        -TEST_AIM_X,
+                        TEST_AIM_Y,
+                    );
+                }
+                SkillBehavior::Dash { distance, .. } => {
+                    let dash_end = project_from_aim(
+                        TEST_ATTACKER_X,
+                        TEST_OPEN_LANE_Y,
+                        TEST_AIM_X,
+                        TEST_AIM_Y,
+                        distance,
+                    );
+                    set_player_pose(
+                        &mut world,
+                        target_id,
+                        dash_end.0,
+                        dash_end.1,
+                        -TEST_AIM_X,
+                        TEST_AIM_Y,
+                    );
+                }
+            }
+
+            if let Some(payload) = payload {
+                if payload.kind == CombatValueKind::Heal {
+                    let target = world
+                        .players
+                        .get_mut(&target_id)
+                        .expect("target should exist");
+                    target.hit_points = 60;
+                }
+            }
+
+            world.queue_cast(attacker_id, 1).expect("cast should queue");
+            let mut events = world.tick(COMBAT_FRAME_MS);
+            assert!(
+                effect_spawned_by(&events, attacker_id, 1),
+                "{} should spawn a visible effect",
+                skill.id
+            );
+            let after_cast = world.player_state(attacker_id).expect("attacker");
+            assert_eq!(
+                after_cast.mana,
+                after_cast
+                    .max_mana
+                    .saturating_sub(skill.behavior.mana_cost()),
+                "{} should consume the authored mana cost",
+                skill.id
+            );
+            assert_eq!(
+                after_cast.slot_cooldown_total_ms[0],
+                skill.behavior.cooldown_ms(),
+                "{} should expose the authored cooldown",
+                skill.id
+            );
+            assert!(
+                after_cast.slot_cooldown_remaining_ms[0] > 0,
+                "{} should start cooling down after a valid cast",
+                skill.id
+            );
+
+            if let SkillBehavior::Projectile { speed, range, .. } = skill.behavior {
+                events.extend(collect_ticks(
+                    &mut world,
+                    projectile_frame_budget(speed, range),
+                ));
+            }
+
+            if let Some(payload) = payload {
+                match payload.kind {
+                    CombatValueKind::Damage => assert!(
+                        damage_to(&events, target_id).is_some(),
+                        "{} should damage a target inside its geometry",
+                        skill.id
+                    ),
+                    CombatValueKind::Heal => assert!(
+                        healing_to(&events, target_id).is_some(),
+                        "{} should heal a target inside its geometry",
+                        skill.id
+                    ),
+                }
+
+                if let Some(status) = payload.status {
+                    assert!(
+                        status_applied_to(&events, target_id, status.kind).is_some(),
+                        "{} should apply its authored status",
+                        skill.id
+                    );
+                }
+            }
+
+            if matches!(skill.behavior, SkillBehavior::Dash { .. }) {
+                let moved = moved_player(&events, attacker_id)
+                    .unwrap_or_else(|| panic!("{} should move the caster", skill.id));
+                assert_ne!(
+                    moved.0, TEST_ATTACKER_X,
+                    "{} should change x position",
+                    skill.id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_authored_skill_misses_targets_outside_its_effective_geometry() {
+        let content = content();
+
+        for skill in content.skills().all() {
+            let mut world = world(
+                &content,
+                vec![
+                    seed_with_slot_one_skill(
+                        &content,
+                        1,
+                        "Alice",
+                        TeamSide::TeamA,
+                        skill.tree,
+                        skill,
+                    ),
+                    seed(
+                        &content,
+                        2,
+                        "Bob",
+                        TeamSide::TeamB,
+                        SkillTree::Warrior,
+                        [None; 5],
+                    ),
+                ],
+            );
+            let payload = behavior_payload(skill.behavior);
+            let attacker_id = player_id(1);
+            let target_id = player_id(2);
+            let starting_hit_points = match payload {
+                Some(effect_payload) if effect_payload.kind == CombatValueKind::Heal => 60,
+                _ => 100,
+            };
+
+            set_player_pose(
+                &mut world,
+                attacker_id,
+                TEST_ATTACKER_X,
+                TEST_OPEN_LANE_Y,
+                TEST_AIM_X,
+                TEST_AIM_Y,
+            );
+            {
+                let target = world
+                    .players
+                    .get_mut(&target_id)
+                    .expect("target should exist");
+                target.hit_points = starting_hit_points;
+            }
+
+            match skill.behavior {
+                SkillBehavior::Projectile { radius, range, .. }
+                | SkillBehavior::Beam { radius, range, .. } => {
+                    set_player_pose(
+                        &mut world,
+                        target_id,
+                        TEST_ATTACKER_X + i16::try_from(range.min(240)).unwrap_or(240),
+                        TEST_OPEN_LANE_Y + miss_offset_units(radius),
+                        -TEST_AIM_X,
+                        TEST_AIM_Y,
+                    );
+                }
+                SkillBehavior::Burst { range, radius, .. } => {
+                    let center = project_from_aim(
+                        TEST_ATTACKER_X,
+                        TEST_OPEN_LANE_Y,
+                        TEST_AIM_X,
+                        TEST_AIM_Y,
+                        range,
+                    );
+                    set_player_pose(
+                        &mut world,
+                        target_id,
+                        center.0,
+                        center.1 + miss_offset_units(radius),
+                        -TEST_AIM_X,
+                        TEST_AIM_Y,
+                    );
+                }
+                SkillBehavior::Nova { radius, .. } => {
+                    set_player_pose(
+                        &mut world,
+                        target_id,
+                        TEST_ATTACKER_X,
+                        TEST_OPEN_LANE_Y + miss_offset_units(radius),
+                        -TEST_AIM_X,
+                        TEST_AIM_Y,
+                    );
+                }
+                SkillBehavior::Dash {
+                    distance,
+                    impact_radius,
+                    ..
+                } => {
+                    let dash_end = project_from_aim(
+                        TEST_ATTACKER_X,
+                        TEST_OPEN_LANE_Y,
+                        TEST_AIM_X,
+                        TEST_AIM_Y,
+                        distance,
+                    );
+                    let radius = impact_radius.unwrap_or(PLAYER_RADIUS_UNITS);
+                    set_player_pose(
+                        &mut world,
+                        target_id,
+                        dash_end.0,
+                        dash_end.1 + miss_offset_units(radius),
+                        -TEST_AIM_X,
+                        TEST_AIM_Y,
+                    );
+                }
+            }
+
+            world.queue_cast(attacker_id, 1).expect("cast should queue");
+            let mut events = world.tick(COMBAT_FRAME_MS);
+            if let SkillBehavior::Projectile { speed, range, .. } = skill.behavior {
+                events.extend(collect_ticks(
+                    &mut world,
+                    projectile_frame_budget(speed, range),
+                ));
+            }
+
+            assert!(
+                damage_to(&events, target_id).is_none(),
+                "{} should not damage a target outside its geometry",
+                skill.id
+            );
+            assert!(
+                healing_to(&events, target_id).is_none(),
+                "{} should not heal a target outside its geometry",
+                skill.id
+            );
+            let target_state = world.player_state(target_id).expect("target");
+            assert_eq!(
+                target_state.hit_points, starting_hit_points,
+                "{} should leave target hit points untouched on a miss",
+                skill.id
+            );
+            assert!(
+                world
+                    .statuses_for(target_id)
+                    .expect("target statuses should exist")
+                    .is_empty(),
+                "{} should not apply statuses outside its geometry",
+                skill.id
+            );
+        }
+    }
+
+    #[test]
+    fn haste_increases_movement_speed_and_expires_cleanly() {
+        let content = content();
+        let mut world = world(
+            &content,
+            vec![
+                seed(
+                    &content,
+                    1,
+                    "Cleric",
+                    TeamSide::TeamA,
+                    SkillTree::Cleric,
+                    [Some(choice(SkillTree::Cleric, 2)), None, None, None, None],
+                ),
+                seed(
+                    &content,
+                    2,
+                    "Bob",
+                    TeamSide::TeamB,
+                    SkillTree::Warrior,
+                    [None, None, None, None, None],
+                ),
+            ],
+        );
+        set_player_pose(
+            &mut world,
+            player_id(1),
+            -700,
+            TEST_OPEN_LANE_Y,
+            TEST_AIM_X,
+            TEST_AIM_Y,
+        );
+        set_player_pose(
+            &mut world,
+            player_id(2),
+            -460,
+            TEST_OPEN_LANE_Y,
+            -TEST_AIM_X,
+            TEST_AIM_Y,
+        );
+
+        world.queue_cast(player_id(1), 1).expect("sanctify cast");
+        let cast_events = world.tick(COMBAT_FRAME_MS);
+        assert!(status_applied_to(&cast_events, player_id(2), StatusKind::Haste).is_some());
+
+        let bob_before = world.player_state(player_id(2)).expect("bob");
+        world
+            .submit_input(player_id(2), MovementIntent::new(1, 0).expect("intent"))
+            .expect("movement input");
+        let move_events = world.tick(COMBAT_FRAME_MS);
+        let bob_after_haste = world.player_state(player_id(2)).expect("bob");
+        assert!(moved_player(&move_events, player_id(2)).is_some());
+        let hasted_distance = bob_after_haste.x - bob_before.x;
+        assert!(
+            hasted_distance
+                > i16::try_from(travel_distance_units(
+                    PLAYER_MOVE_SPEED_UNITS_PER_SECOND,
+                    COMBAT_FRAME_MS
+                ))
+                .unwrap_or(i16::MAX),
+            "haste should increase movement distance per frame"
+        );
+
+        world
+            .submit_input(player_id(2), MovementIntent::zero())
+            .expect("stop movement");
+        let _ = collect_ticks(&mut world, 25);
+        assert!(
+            world
+                .statuses_for(player_id(2))
+                .expect("statuses")
+                .iter()
+                .all(|status| status.kind != StatusKind::Haste),
+            "haste should expire after its duration"
+        );
+
+        let bob_before_normal = world.player_state(player_id(2)).expect("bob");
+        world
+            .submit_input(player_id(2), MovementIntent::new(1, 0).expect("intent"))
+            .expect("movement input");
+        let _ = world.tick(COMBAT_FRAME_MS);
+        let bob_after_normal = world.player_state(player_id(2)).expect("bob");
+        let normal_distance = bob_after_normal.x - bob_before_normal.x;
+        assert_eq!(
+            normal_distance,
+            i16::try_from(travel_distance_units(
+                PLAYER_MOVE_SPEED_UNITS_PER_SECOND,
+                COMBAT_FRAME_MS
+            ))
+            .unwrap_or(i16::MAX),
+            "movement should return to the baseline speed after haste expires"
+        );
+    }
+
+    #[test]
+    fn silence_blocks_skill_casts_but_not_primary_attacks_until_it_expires() {
+        let content = content();
+        let mut world = world(
+            &content,
+            vec![
+                seed_with_slot_one_skill(
+                    &content,
+                    1,
+                    "Alice",
+                    TeamSide::TeamA,
+                    SkillTree::Rogue,
+                    content
+                        .skills()
+                        .resolve(choice(SkillTree::Rogue, 4))
+                        .expect("rogue silence skill"),
+                ),
+                seed(
+                    &content,
+                    2,
+                    "Bob",
+                    TeamSide::TeamB,
+                    SkillTree::Mage,
+                    [Some(choice(SkillTree::Mage, 1)), None, None, None, None],
+                ),
+            ],
+        );
+        set_player_pose(
+            &mut world,
+            player_id(1),
+            -220,
+            TEST_OPEN_LANE_Y,
+            TEST_AIM_X,
+            TEST_AIM_Y,
+        );
+        set_player_pose(
+            &mut world,
+            player_id(2),
+            -140,
+            TEST_OPEN_LANE_Y,
+            -TEST_AIM_X,
+            TEST_AIM_Y,
+        );
+
+        world.queue_cast(player_id(1), 1).expect("silence cast");
+        let cast_events = world.tick(COMBAT_FRAME_MS);
+        assert!(status_applied_to(&cast_events, player_id(2), StatusKind::Silence).is_some());
+
+        world
+            .queue_primary_attack(player_id(2))
+            .expect("primary queue");
+        world.queue_cast(player_id(2), 1).expect("cast queue");
+        let blocked_events = world.tick(COMBAT_FRAME_MS);
+        assert!(
+            damage_to(&blocked_events, player_id(1)).is_some(),
+            "silenced players should still be able to melee"
+        );
+        assert!(
+            !effect_spawned_by(&blocked_events, player_id(2), 1),
+            "silenced players should not cast skills"
+        );
+        let bob_state = world.player_state(player_id(2)).expect("bob");
+        assert_eq!(
+            bob_state.slot_cooldown_remaining_ms[0], 0,
+            "blocked casts should not start cooldowns"
+        );
+
+        let _ = collect_ticks(&mut world, 13);
+        assert!(
+            world
+                .statuses_for(player_id(2))
+                .expect("statuses")
+                .iter()
+                .all(|status| status.kind != StatusKind::Silence),
+            "silence should expire"
+        );
+
+        world
+            .queue_cast(player_id(2), 1)
+            .expect("post-silence cast");
+        let mut post_events = world.tick(COMBAT_FRAME_MS);
+        post_events.extend(collect_ticks(&mut world, 10));
+        assert!(
+            effect_spawned_by(&post_events, player_id(2), 1),
+            "casts should resume after silence expires"
+        );
+    }
+
+    #[test]
+    fn stun_blocks_movement_and_all_actions_until_it_expires() {
+        let content = content();
+        let mut world = world(
+            &content,
+            vec![
+                seed_with_slot_one_skill(
+                    &content,
+                    1,
+                    "Alice",
+                    TeamSide::TeamA,
+                    SkillTree::Warrior,
+                    content
+                        .skills()
+                        .resolve(choice(SkillTree::Warrior, 2))
+                        .expect("warrior stun skill"),
+                ),
+                seed(
+                    &content,
+                    2,
+                    "Bob",
+                    TeamSide::TeamB,
+                    SkillTree::Rogue,
+                    [Some(choice(SkillTree::Rogue, 1)), None, None, None, None],
+                ),
+            ],
+        );
+        set_player_pose(
+            &mut world,
+            player_id(1),
+            -700,
+            TEST_OPEN_LANE_Y,
+            TEST_AIM_X,
+            TEST_AIM_Y,
+        );
+        set_player_pose(
+            &mut world,
+            player_id(2),
+            -520,
+            TEST_OPEN_LANE_Y,
+            -TEST_AIM_X,
+            TEST_AIM_Y,
+        );
+
+        world.queue_cast(player_id(1), 1).expect("stun cast");
+        let cast_events = world.tick(COMBAT_FRAME_MS);
+        assert!(status_applied_to(&cast_events, player_id(2), StatusKind::Stun).is_some());
+
+        let bob_before = world.player_state(player_id(2)).expect("bob");
+        world
+            .submit_input(player_id(2), MovementIntent::new(1, 0).expect("intent"))
+            .expect("movement queue");
+        world
+            .queue_primary_attack(player_id(2))
+            .expect("primary queue");
+        world.queue_cast(player_id(2), 1).expect("cast queue");
+        let blocked_events = world.tick(COMBAT_FRAME_MS);
+        let bob_after = world.player_state(player_id(2)).expect("bob");
+        assert_eq!(bob_after.x, bob_before.x, "stun should block movement");
+        assert!(
+            moved_player(&blocked_events, player_id(2)).is_none(),
+            "stun should not emit movement events for the stunned player"
+        );
+        assert!(
+            !effect_spawned_by(&blocked_events, player_id(2), 0)
+                && !effect_spawned_by(&blocked_events, player_id(2), 1),
+            "stun should block both melee and skill actions"
+        );
+        assert_eq!(
+            bob_after.slot_cooldown_remaining_ms[0], 0,
+            "blocked stunned casts should not start cooldowns"
+        );
+
+        let _ = collect_ticks(&mut world, 8);
+        assert!(
+            world
+                .statuses_for(player_id(2))
+                .expect("statuses")
+                .iter()
+                .all(|status| status.kind != StatusKind::Stun),
+            "stun should expire"
+        );
+
+        world.queue_cast(player_id(2), 1).expect("post-stun cast");
+        let mut post_events = world.tick(COMBAT_FRAME_MS);
+        post_events.extend(collect_ticks(&mut world, 10));
+        assert!(
+            effect_spawned_by(&post_events, player_id(2), 1),
+            "stunned players should be able to cast again once the stun ends"
+        );
+    }
+
+    #[test]
+    fn chill_reduces_movement_speed_before_root_expires_cleanly() {
+        let content = content();
+        let mut world = world(
+            &content,
+            vec![
+                seed(
+                    &content,
+                    1,
+                    "Mage",
+                    TeamSide::TeamA,
+                    SkillTree::Mage,
+                    [None, None, Some(choice(SkillTree::Mage, 3)), None, None],
+                ),
+                seed(
+                    &content,
+                    2,
+                    "Bob",
+                    TeamSide::TeamB,
+                    SkillTree::Warrior,
+                    [None, None, None, None, None],
+                ),
+            ],
+        );
+        set_player_pose(
+            &mut world,
+            player_id(1),
+            -260,
+            TEST_OPEN_LANE_Y,
+            TEST_AIM_X,
+            TEST_AIM_Y,
+        );
+        set_player_pose(
+            &mut world,
+            player_id(2),
+            0,
+            TEST_OPEN_LANE_Y,
+            -TEST_AIM_X,
+            TEST_AIM_Y,
+        );
+
+        world.queue_cast(player_id(1), 3).expect("frost burst");
+        let cast_events = world.tick(COMBAT_FRAME_MS);
+        assert_eq!(
+            status_applied_to(&cast_events, player_id(2), StatusKind::Chill),
+            Some(1)
+        );
+
+        let bob_before = world.player_state(player_id(2)).expect("bob");
+        world
+            .submit_input(player_id(2), MovementIntent::new(1, 0).expect("intent"))
+            .expect("movement queue");
+        let _ = world.tick(COMBAT_FRAME_MS);
+        let bob_after = world.player_state(player_id(2)).expect("bob");
+        let chilled_distance = bob_after.x - bob_before.x;
+        assert!(
+            chilled_distance
+                < i16::try_from(travel_distance_units(
+                    PLAYER_MOVE_SPEED_UNITS_PER_SECOND,
+                    COMBAT_FRAME_MS
+                ))
+                .unwrap_or(i16::MAX),
+            "chill should slow movement before rooting"
+        );
+
+        let _ = collect_ticks(&mut world, 25);
+        assert!(
+            world
+                .statuses_for(player_id(2))
+                .expect("statuses")
+                .iter()
+                .all(|status| status.kind != StatusKind::Chill && status.kind != StatusKind::Root),
+            "chill and its derived root should both expire"
+        );
     }
 }

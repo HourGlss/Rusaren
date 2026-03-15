@@ -62,6 +62,9 @@ pub enum StatusKind {
     Hot,
     Chill,
     Root,
+    Haste,
+    Silence,
+    Stun,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -359,8 +362,21 @@ pub fn parse_skill_yaml(source: &str, yaml: &str) -> Result<ClassDefinition, Con
 fn load_skill_catalog_from_pairs(pairs: &[(&str, &str)]) -> Result<SkillCatalog, ContentError> {
     let mut by_choice = BTreeMap::new();
     let mut melee_by_tree = BTreeMap::new();
+    let mut ids_by_owner = BTreeMap::<String, String>::new();
     for (source, yaml) in pairs {
         let definition = parse_skill_yaml(source, yaml)?;
+        if let Some(existing_owner) = ids_by_owner.insert(
+            definition.melee.id.clone(),
+            format!("{} melee", definition.tree),
+        ) {
+            return Err(ContentError::Validation {
+                source: String::from(*source),
+                message: format!(
+                    "duplicate authored id '{}' already used by {existing_owner}",
+                    definition.melee.id
+                ),
+            });
+        }
         if melee_by_tree
             .insert(definition.tree.as_index(), definition.melee.clone())
             .is_some()
@@ -372,6 +388,18 @@ fn load_skill_catalog_from_pairs(pairs: &[(&str, &str)]) -> Result<SkillCatalog,
         }
 
         for skill in definition.skills {
+            if let Some(existing_owner) = ids_by_owner.insert(
+                skill.id.clone(),
+                format!("{} tier {}", skill.tree, skill.tier),
+            ) {
+                return Err(ContentError::Validation {
+                    source: String::from(*source),
+                    message: format!(
+                        "duplicate authored id '{}' already used by {existing_owner}",
+                        skill.id
+                    ),
+                });
+            }
             let key = (skill.tree.as_index(), skill.tier);
             if let Some(existing) = by_choice.insert(key, skill.clone()) {
                 return Err(ContentError::Validation {
@@ -528,6 +556,7 @@ fn parse_skill_behavior(
     source: &str,
     yaml: &SkillBehaviorYaml,
 ) -> Result<SkillBehavior, ContentError> {
+    validate_behavior_shape(source, yaml)?;
     let effect = parse_effect_kind(source, &yaml.effect)?;
     let cooldown_ms = require_positive_u16(source, "cooldown_ms", yaml.cooldown_ms)?;
     let mana_cost = yaml.mana_cost.unwrap_or(0);
@@ -650,27 +679,61 @@ fn parse_status(source: &str, yaml: &StatusYaml) -> Result<StatusDefinition, Con
                 trigger_duration_ms: None,
             })
         }
-        StatusKind::Chill => Ok(StatusDefinition {
+        StatusKind::Chill | StatusKind::Haste => Ok(StatusDefinition {
             kind,
             duration_ms,
             tick_interval_ms: None,
             magnitude: require_positive_u16(source, "status.magnitude", Some(yaml.magnitude))?,
             max_stacks,
-            trigger_duration_ms: yaml
-                .trigger_duration_ms
-                .map(|value| {
-                    require_positive_u16(source, "status.trigger_duration_ms", Some(value))
-                })
-                .transpose()?,
+            trigger_duration_ms: if kind == StatusKind::Chill {
+                yaml.trigger_duration_ms
+                    .map(|value| {
+                        require_positive_u16(source, "status.trigger_duration_ms", Some(value))
+                    })
+                    .transpose()?
+            } else {
+                forbid_numeric_status_field(
+                    source,
+                    "status.trigger_duration_ms",
+                    yaml.trigger_duration_ms,
+                )?;
+                None
+            },
         }),
-        StatusKind::Root => Ok(StatusDefinition {
-            kind,
-            duration_ms,
-            tick_interval_ms: None,
-            magnitude: 0,
-            max_stacks: 1,
-            trigger_duration_ms: None,
-        }),
+        StatusKind::Root | StatusKind::Silence | StatusKind::Stun => {
+            if yaml.tick_interval_ms.is_some() {
+                return Err(ContentError::Validation {
+                    source: String::from(source),
+                    message: format!("status.tick_interval_ms is not valid for {kind:?}"),
+                });
+            }
+            if yaml.trigger_duration_ms.is_some() {
+                return Err(ContentError::Validation {
+                    source: String::from(source),
+                    message: format!("status.trigger_duration_ms is not valid for {kind:?}"),
+                });
+            }
+            if yaml.magnitude != 0 {
+                return Err(ContentError::Validation {
+                    source: String::from(source),
+                    message: format!("status.magnitude must be zero for {kind:?}"),
+                });
+            }
+            if yaml.max_stacks.unwrap_or(1) != 1 {
+                return Err(ContentError::Validation {
+                    source: String::from(source),
+                    message: format!("status.max_stacks must be 1 for {kind:?}"),
+                });
+            }
+            Ok(StatusDefinition {
+                kind,
+                duration_ms,
+                tick_interval_ms: None,
+                magnitude: 0,
+                max_stacks: 1,
+                trigger_duration_ms: None,
+            })
+        }
     }
 }
 
@@ -680,11 +743,69 @@ fn parse_status_kind(source: &str, raw: &str) -> Result<StatusKind, ContentError
         "hot" => Ok(StatusKind::Hot),
         "chill" => Ok(StatusKind::Chill),
         "root" => Ok(StatusKind::Root),
+        "haste" => Ok(StatusKind::Haste),
+        "silence" => Ok(StatusKind::Silence),
+        "stun" => Ok(StatusKind::Stun),
         other => Err(ContentError::Validation {
             source: String::from(source),
             message: format!("unknown status kind '{other}'"),
         }),
     }
+}
+
+fn validate_behavior_shape(source: &str, yaml: &SkillBehaviorYaml) -> Result<(), ContentError> {
+    match yaml.kind.as_str() {
+        "projectile" => {
+            forbid_behavior_field(source, "distance", yaml.distance)?;
+            forbid_behavior_field(source, "impact_radius", yaml.impact_radius)?;
+        }
+        "beam" | "burst" => {
+            forbid_behavior_field(source, "speed", yaml.speed)?;
+            forbid_behavior_field(source, "distance", yaml.distance)?;
+            forbid_behavior_field(source, "impact_radius", yaml.impact_radius)?;
+        }
+        "dash" => {
+            forbid_behavior_field(source, "speed", yaml.speed)?;
+            forbid_behavior_field(source, "range", yaml.range)?;
+            forbid_behavior_field(source, "radius", yaml.radius)?;
+        }
+        "nova" => {
+            forbid_behavior_field(source, "speed", yaml.speed)?;
+            forbid_behavior_field(source, "distance", yaml.distance)?;
+            forbid_behavior_field(source, "range", yaml.range)?;
+            forbid_behavior_field(source, "impact_radius", yaml.impact_radius)?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn forbid_behavior_field(
+    source: &str,
+    field: &str,
+    value: Option<u16>,
+) -> Result<(), ContentError> {
+    if value.is_some() {
+        return Err(ContentError::Validation {
+            source: String::from(source),
+            message: format!("{field} is not valid for this behavior kind"),
+        });
+    }
+    Ok(())
+}
+
+fn forbid_numeric_status_field(
+    source: &str,
+    field: &str,
+    value: Option<u16>,
+) -> Result<(), ContentError> {
+    if value.is_some() {
+        return Err(ContentError::Validation {
+            source: String::from(source),
+            message: format!("{field} is not valid for this status kind"),
+        });
+    }
+    Ok(())
 }
 
 fn parse_effect_kind(source: &str, raw: &str) -> Result<SkillEffectKind, ContentError> {
@@ -1024,6 +1145,9 @@ struct SkillBehaviorYaml {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn bundled_content_loads_all_classes_and_the_ascii_map() {
@@ -1045,7 +1169,8 @@ mod tests {
     }
 
     #[test]
-    fn parse_skill_yaml_rejects_unknown_trees_and_duplicate_tiers() {
+    #[allow(clippy::too_many_lines)]
+    fn parse_skill_yaml_rejects_unknown_trees_duplicate_tiers_and_invalid_field_shapes() {
         let unknown_tree = r"
 tree: Druid
 melee:
@@ -1124,6 +1249,88 @@ skills:
 ";
         assert!(matches!(
             parse_skill_yaml("skills/mage.yaml", duplicate_tier),
+            Err(ContentError::Validation { .. })
+        ));
+
+        let invalid_dash_shape = r"
+tree: Rogue
+melee:
+  id: rogue_blade
+  name: Blade
+  description: blade
+  cooldown_ms: 100
+  range: 50
+  radius: 20
+  effect: melee_swing
+  payload:
+    kind: damage
+    amount: 10
+skills:
+  - tier: 1
+    id: rogue_dash
+    name: Dash
+    description: dash
+    behavior:
+      kind: dash
+      effect: dash_trail
+      cooldown_ms: 100
+      distance: 120
+      range: 40
+  - tier: 2
+    id: rogue_two
+    name: Two
+    description: Two
+    behavior:
+      kind: beam
+      effect: beam
+      cooldown_ms: 100
+      range: 20
+      radius: 10
+      payload:
+        kind: damage
+        amount: 2
+  - tier: 3
+    id: rogue_three
+    name: Three
+    description: Three
+    behavior:
+      kind: beam
+      effect: beam
+      cooldown_ms: 100
+      range: 20
+      radius: 10
+      payload:
+        kind: damage
+        amount: 2
+  - tier: 4
+    id: rogue_four
+    name: Four
+    description: Four
+    behavior:
+      kind: beam
+      effect: beam
+      cooldown_ms: 100
+      range: 20
+      radius: 10
+      payload:
+        kind: damage
+        amount: 2
+  - tier: 5
+    id: rogue_five
+    name: Five
+    description: Five
+    behavior:
+      kind: beam
+      effect: beam
+      cooldown_ms: 100
+      range: 20
+      radius: 10
+      payload:
+        kind: damage
+        amount: 2
+";
+        assert!(matches!(
+            parse_skill_yaml("skills/rogue.yaml", invalid_dash_shape),
             Err(ContentError::Validation { .. })
         ));
     }
@@ -1238,10 +1445,16 @@ skills:
     }
 
     #[test]
-    fn parse_ascii_map_rejects_ragged_rows_and_missing_anchors() {
+    fn parse_ascii_map_rejects_ragged_rows_bad_glyphs_and_missing_anchors() {
         let ragged = "A..\n..\n";
         assert!(matches!(
             parse_ascii_map("maps/ragged.txt", ragged),
+            Err(ContentError::Validation { .. })
+        ));
+
+        let invalid_glyph = "A..\n.@.\n..B\n";
+        assert!(matches!(
+            parse_ascii_map("maps/invalid.txt", invalid_glyph),
             Err(ContentError::Validation { .. })
         ));
 
@@ -1250,5 +1463,61 @@ skills:
             parse_ascii_map("maps/missing.txt", missing_anchor),
             Err(ContentError::Validation { .. })
         ));
+    }
+
+    #[test]
+    fn load_skill_catalog_rejects_duplicate_authored_ids_across_files() {
+        let duplicate_mage = BUNDLED_SKILL_FILES[1]
+            .1
+            .replace("mage_arc_bolt", "warrior_sweeping_slash");
+        let pairs = vec![
+            BUNDLED_SKILL_FILES[0],
+            ("skills/mage.yaml", duplicate_mage.as_str()),
+            BUNDLED_SKILL_FILES[2],
+            BUNDLED_SKILL_FILES[3],
+        ];
+        assert!(matches!(
+            load_skill_catalog_from_pairs(&pairs),
+            Err(ContentError::Validation { .. })
+        ));
+    }
+
+    #[test]
+    fn load_from_root_fails_cleanly_for_invalid_yaml_and_map_content() {
+        let root = temp_content_root("invalid-content");
+        let skills_dir = root.join("skills");
+        let maps_dir = root.join("maps");
+        fs::create_dir_all(&skills_dir).expect("skills dir");
+        fs::create_dir_all(&maps_dir).expect("maps dir");
+
+        for (source, yaml) in BUNDLED_SKILL_FILES {
+            let path = skills_dir.join(
+                Path::new(source)
+                    .file_name()
+                    .expect("bundled skill file should have a file name"),
+            );
+            let text = if source.ends_with("rogue.yaml") {
+                yaml.replacen("kind: projectile", "kind: dash", 1)
+            } else {
+                String::from(yaml)
+            };
+            fs::write(path, text).expect("skill file");
+        }
+        fs::write(maps_dir.join("prototype_arena.txt"), "A..\n..B\n").expect("map file");
+
+        let error = GameContent::load_from_root(&root).expect_err("invalid content should fail");
+        assert!(matches!(error, ContentError::Validation { .. }));
+    }
+
+    fn temp_content_root(label: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("current time should be after unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("rarena-{label}-{nonce}"));
+        if root.exists() {
+            fs::remove_dir_all(&root).expect("existing temp dir should be removable");
+        }
+        root
     }
 }

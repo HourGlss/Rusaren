@@ -24,3 +24,4 @@ Docs:
 - 14_buildability_assessment.md
 - 15_deployment_ops.md
 - 16_runbooks.md
+- 17_linode_deploy.md

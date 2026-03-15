@@ -1,6 +1,6 @@
 # Godot Shell
 
-This is the `0.6.0` browser-safe Godot shell for the current Rust backend.
+This is the `0.8.0` browser-safe Godot shell for the current Rust backend.
 
 What it does:
 - fetches a short-lived bootstrap token from `http://127.0.0.1:3000/session/bootstrap`
@@ -24,9 +24,11 @@ What it does not do yet:
 - polished movement/combat rendering
 - interpolation
 - native desktop WebRTC transport without the `webrtc-native` extension
+- the final 1.0 API-doc-quality surface for non-Godot clients
 
 Current shell limitation:
 - the combat loop is still prototype-level, even though the current map and slot skills now load from authored YAML and ASCII content files and already support real melee/projectile/status interactions
+- the shell now has a usable HUD and basic spell/melee visuals, but not final readability polish or final effects for every future spell
 - the current snapshot delta is a simple dynamic-state packet, not a final compressed rollback/interpolation format
 - native/headless transport testing depends on the `webrtc-native` extension being available to the editor/runtime; if your local Godot install ships it under a folder like `Godot/webrtc/`, `server/scripts/export-web-client.ps1` now syncs that bundle into the ignored local project path `client/godot/webrtc/`
 - browser play remains the primary supported networked path on this machine; the synced native extension is only for local editor/headless validation

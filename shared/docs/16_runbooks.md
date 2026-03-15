@@ -16,6 +16,8 @@ Success criteria:
 - `/healthz` returns `ok`
 - Prometheus sees the backend target as `UP`
 
+If the deploy target is Linode, follow the host/DNS/firewall setup in `17_linode_deploy.md` first.
+
 ## Roll back the hosted stack
 1. Restore the previous image or git revision.
 2. Rebuild or pull the prior backend image.

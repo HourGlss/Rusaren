@@ -2,18 +2,20 @@
 
 ## Content validation tests
 On server boot:
-- ensure every skill node references valid prerequisites
-- ensure no circular prereqs
-- ensure every ability references valid effects/status/projectiles
-- ensure every stat/modifier uses known enum keys
-- fuzz malformed content payloads and graph edge cases in `game_content`
+- ensure every class file defines melee plus tiers 1..=5
+- ensure authored skill ids stay globally unique across files
+- ensure every ability uses a valid behavior shape for its kind
+- ensure every status kind uses only the fields legal for that status
+- ensure malformed ASCII maps fail cleanly before boot
+- fuzz malformed YAML and ASCII content payloads in `game_content`
 
 ## Simulation unit tests
-- CastTime cancels on movement
-- Channel ticks apply on schedule and stop on movement
-- Interrupt events cancel casting
-- Round win condition correct
+- every currently shipped melee and authored slot skill hits valid targets and misses invalid ones
+- cooldowns and mana costs match authored content
+- poison, hot, chill, root, haste, silence, and stun all apply and remove when they should
 - Skill progression rule enforced (tier gating)
+- round transition rebuilds a clean combat world
+- Round win condition correct
 - disconnect after countdown causes immediate match abort and `No Contest` result for every player
 - property-test cast/channel/interruption transitions in `game_domain` and `game_sim`
 
@@ -41,6 +43,7 @@ Replay:
 - disconnect after launch countdown immediately ends the match
 - no reconnect-to-match flow in v1
 - fuzz protocol decode and invalid client command sequences in `game_net`
+- fuzz snapshot and delta decode at the network boundary
 - fuzz the low-cardinality HTTP route classifier that feeds the observability layer
 - fuzz the Prometheus observability renderer and counter/gauge update paths that back `/metrics`
 - fuzz persisted player-record TSV parsing and canonicalization before disk state is trusted

@@ -1,21 +1,43 @@
 
 tree: Mage
+melee:
+  id: mage_staff
+  name: Staff
+  description: Test melee
+  cooldown_ms: 500
+  range: 80
+  radius: 30
+  effect: melee_swing
+  payload:
+    kind: damage
+    amount: 1
 skills:
   - tier: 1
     id: mage_a
     name: A
     description: A
     behavior:
-      kind: line
+      kind: projectile
       effect: skill_shot
-      range: 10
-      damage: 1
+      cooldown_ms: 700
+      mana_cost: 10
+      speed: 300
+      range: 400
+      radius: 12
+      payload:
+        kind: damage
+        amount: 1
   - tier: 1
     id: mage_b
     name: B
     description: B
     behavior:
-      kind: line
+      kind: beam
       effect: beam
-      range: 20
-      damage: 2
+      cooldown_ms: 800
+      mana_cost: 12
+      range: 160
+      radius: 24
+      payload:
+        kind: damage
+        amount: 2

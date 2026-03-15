@@ -21,7 +21,10 @@ use game_net::{
 };
 
 const PROTOTYPE_ARENA_ASCII: &str = include_str!("../../../content/maps/prototype_arena.txt");
+const WARRIOR_SKILLS_YAML: &str = include_str!("../../../content/skills/warrior.yaml");
 const MAGE_SKILLS_YAML: &str = include_str!("../../../content/skills/mage.yaml");
+const ROGUE_SKILLS_YAML: &str = include_str!("../../../content/skills/rogue.yaml");
+const CLERIC_SKILLS_YAML: &str = include_str!("../../../content/skills/cleric.yaml");
 
 fn main() -> Result<(), Box<dyn Error>> {
     let corpus_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -824,13 +827,13 @@ fn write_observability_metrics_render_corpus(dir: &Path) -> Result<(), Box<dyn E
     write_seed(
         dir,
         "version_only.bin",
-        &observability_metrics_seed(b"0.6.0", &[]),
+        &observability_metrics_seed(b"0.8.0", &[]),
     )?;
     write_seed(
         dir,
         "escaped_version_and_all_ops.bin",
         &observability_metrics_seed(
-            b"0.6.0-\"beta\"\\canary\nbuild",
+            b"0.8.0-\"beta\"\\canary\nbuild",
             &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
         ),
     )?;
@@ -928,40 +931,87 @@ skills:
 ";
     let duplicate_tier = r"
 tree: Mage
+melee:
+  id: mage_staff
+  name: Staff
+  description: Test melee
+  cooldown_ms: 500
+  range: 80
+  radius: 30
+  effect: melee_swing
+  payload:
+    kind: damage
+    amount: 1
 skills:
   - tier: 1
     id: mage_a
     name: A
     description: A
     behavior:
-      kind: line
+      kind: projectile
       effect: skill_shot
-      range: 10
-      damage: 1
+      cooldown_ms: 700
+      mana_cost: 10
+      speed: 300
+      range: 400
+      radius: 12
+      payload:
+        kind: damage
+        amount: 1
   - tier: 1
     id: mage_b
     name: B
     description: B
     behavior:
-      kind: line
+      kind: beam
       effect: beam
-      range: 20
-      damage: 2
+      cooldown_ms: 800
+      mana_cost: 12
+      range: 160
+      radius: 24
+      payload:
+        kind: damage
+        amount: 2
 ";
-    let missing_damage = r"
-tree: Mage
+    let invalid_dash_shape = r"
+tree: Rogue
+melee:
+  id: rogue_test
+  name: Test
+  description: Test melee
+  cooldown_ms: 500
+  range: 80
+  radius: 30
+  effect: melee_swing
+  payload:
+    kind: damage
+    amount: 1
 skills:
   - tier: 1
-    id: mage_arc
-    name: Arc
-    description: Missing damage.
+    id: rogue_dash
+    name: Dash
+    description: Invalid dash shape.
     behavior:
-      kind: line
-      effect: skill_shot
-      range: 10
+      kind: dash
+      effect: dash_trail
+      cooldown_ms: 700
+      mana_cost: 10
+      distance: 160
+      range: 400
 ";
     let invalid_behavior = r"
 tree: Mage
+melee:
+  id: mage_staff
+  name: Staff
+  description: Test melee
+  cooldown_ms: 500
+  range: 80
+  radius: 30
+  effect: melee_swing
+  payload:
+    kind: damage
+    amount: 1
 skills:
   - tier: 1
     id: mage_arc
@@ -971,16 +1021,64 @@ skills:
       kind: wall
       effect: skill_shot
       range: 10
-      damage: 1
+      cooldown_ms: 700
+      mana_cost: 10
+";
+    let invalid_silence_status = r"
+tree: Rogue
+melee:
+  id: rogue_test
+  name: Test
+  description: Test melee
+  cooldown_ms: 500
+  range: 80
+  radius: 30
+  effect: melee_swing
+  payload:
+    kind: damage
+    amount: 1
+skills:
+  - tier: 1
+    id: rogue_silence
+    name: Silence
+    description: Invalid silence shape.
+    behavior:
+      kind: nova
+      effect: nova
+      cooldown_ms: 900
+      mana_cost: 10
+      radius: 100
+      payload:
+        kind: damage
+        amount: 1
+        status:
+          kind: silence
+          duration_ms: 1200
+          magnitude: 5
 ";
 
+    let _ = parse_skill_yaml("skills/warrior.yaml", WARRIOR_SKILLS_YAML)?;
     let _ = parse_skill_yaml("skills/mage.yaml", MAGE_SKILLS_YAML)?;
+    let _ = parse_skill_yaml("skills/rogue.yaml", ROGUE_SKILLS_YAML)?;
+    let _ = parse_skill_yaml("skills/cleric.yaml", CLERIC_SKILLS_YAML)?;
 
+    write_seed(dir, "warrior.yaml", WARRIOR_SKILLS_YAML.as_bytes())?;
     write_seed(dir, "mage.yaml", MAGE_SKILLS_YAML.as_bytes())?;
+    write_seed(dir, "rogue.yaml", ROGUE_SKILLS_YAML.as_bytes())?;
+    write_seed(dir, "cleric.yaml", CLERIC_SKILLS_YAML.as_bytes())?;
     write_seed(dir, "unknown_tree.yaml", unknown_tree.as_bytes())?;
     write_seed(dir, "duplicate_tier.yaml", duplicate_tier.as_bytes())?;
-    write_seed(dir, "missing_damage.yaml", missing_damage.as_bytes())?;
+    write_seed(
+        dir,
+        "invalid_dash_shape.yaml",
+        invalid_dash_shape.as_bytes(),
+    )?;
     write_seed(dir, "invalid_behavior.yaml", invalid_behavior.as_bytes())?;
+    write_seed(
+        dir,
+        "invalid_silence_status.yaml",
+        invalid_silence_status.as_bytes(),
+    )?;
     write_seed(dir, "empty.bin", &[])?;
     Ok(())
 }

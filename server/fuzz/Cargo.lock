@@ -726,7 +726,7 @@ dependencies = [
 
 [[package]]
 name = "game_api"
-version = "0.6.0"
+version = "0.8.0"
 dependencies = [
  "axum",
  "base64",
@@ -751,7 +751,7 @@ dependencies = [
 
 [[package]]
 name = "game_content"
-version = "0.6.0"
+version = "0.8.0"
 dependencies = [
  "game_domain",
  "serde",
@@ -760,32 +760,32 @@ dependencies = [
 
 [[package]]
 name = "game_domain"
-version = "0.6.0"
+version = "0.8.0"
 
 [[package]]
 name = "game_lobby"
-version = "0.6.0"
+version = "0.8.0"
 dependencies = [
  "game_domain",
 ]
 
 [[package]]
 name = "game_match"
-version = "0.6.0"
+version = "0.8.0"
 dependencies = [
  "game_domain",
 ]
 
 [[package]]
 name = "game_net"
-version = "0.6.0"
+version = "0.8.0"
 dependencies = [
  "game_domain",
 ]
 
 [[package]]
 name = "game_sim"
-version = "0.6.0"
+version = "0.8.0"
 dependencies = [
  "game_content",
  "game_domain",
