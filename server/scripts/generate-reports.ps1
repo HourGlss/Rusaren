@@ -795,6 +795,28 @@ function Get-FuzzReplaySuites {
     )
 }
 
+function Get-Sha256Hex {
+    param(
+        [string]$Path
+    )
+
+    $stream = [System.IO.File]::OpenRead($Path)
+    try {
+        $sha256 = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            $hashBytes = $sha256.ComputeHash($stream)
+        }
+        finally {
+            $sha256.Dispose()
+        }
+    }
+    finally {
+        $stream.Dispose()
+    }
+
+    return -join ($hashBytes | ForEach-Object { $_.ToString("x2") })
+}
+
 function Get-FuzzCorpusStats {
     param(
         [string]$ServerRoot,
@@ -818,12 +840,12 @@ function Get-FuzzCorpusStats {
 
     $seedHashes = @{}
     foreach ($seedFile in $seedFiles) {
-        $seedHashes[(Get-FileHash -Algorithm SHA256 -Path $seedFile.FullName).Hash] = $true
+        $seedHashes[(Get-Sha256Hex -Path $seedFile.FullName)] = $true
     }
 
     $discoveredFiles = @(
         foreach ($generatedFile in $generatedFiles) {
-            $hash = (Get-FileHash -Algorithm SHA256 -Path $generatedFile.FullName).Hash
+            $hash = Get-Sha256Hex -Path $generatedFile.FullName
             if (-not $seedHashes.ContainsKey($hash)) {
                 $generatedFile
             }
@@ -876,7 +898,7 @@ function Get-FuzzArtifactFindings {
                 else {
                     ""
                 }
-                $sha256 = (Get-FileHash -Algorithm SHA256 -Path $_.FullName).Hash
+                $sha256 = Get-Sha256Hex -Path $_.FullName
 
                 [pscustomobject]@{
                     Target = $targetName
