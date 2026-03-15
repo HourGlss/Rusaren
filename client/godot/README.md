@@ -13,9 +13,9 @@ What it does:
 - decodes real binary server control events
 - renders central-lobby, game-lobby, countdown, match, and results screens
 - renders a simple top-down arena with a mostly empty floor, four central pillars, and shrub collars
-- renders authoritative player circles, names, hp bars, aim lines, cooldown text, projectile state, and short-lived skill/melee effects
+- renders authoritative player circles, names, hp bars, mana bars, active status labels, aim lines, cooldown text, projectile state, and short-lived skill/melee effects
 - consumes authoritative lobby-directory and game-lobby snapshots
-- consumes authoritative arena snapshots and arena effect batches
+- consumes authoritative full arena snapshots, delta arena snapshots, and arena effect batches
 - lets players click an open lobby directly from the central directory
 - can be hosted behind the documented Caddy reverse-proxy path from `deploy/`
 - consumes a runtime arena and skill set authored under `server/content/`
@@ -27,6 +27,7 @@ What it does not do yet:
 
 Current shell limitation:
 - the combat loop is still prototype-level, even though the current map and slot skills now load from authored YAML and ASCII content files and already support real melee/projectile/status interactions
+- the current snapshot delta is a simple dynamic-state packet, not a final compressed rollback/interpolation format
 - native/headless transport testing depends on the `webrtc-native` extension being available to the editor/runtime; if your local Godot install ships it under a folder like `Godot/webrtc/`, `server/scripts/export-web-client.ps1` now syncs that bundle into the ignored local project path `client/godot/webrtc/`
 - browser play remains the primary supported networked path on this machine; the synced native extension is only for local editor/headless validation
 
@@ -40,7 +41,7 @@ Run flow:
    Browser play is the supported networked path on this machine.
 6. connect, create or join a lobby, pick teams, ready up, choose skills, then use `WASD`, mouse aim, left click, and `1`-`5` during combat to drive the current backend slice end to end
    The shell asks for a player name only; the backend assigns the runtime player ID.
-   Cooldowns shown in the HUD are driven by authoritative server snapshots.
+   Cooldowns, mana, hp, and active statuses shown in the HUD are driven by authoritative server snapshots.
 
 Fast content iteration:
 1. edit `server/content/skills/*.yaml` or `server/content/maps/prototype_arena.txt`

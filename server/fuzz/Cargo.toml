@@ -54,6 +54,20 @@ doc = false
 bench = false
 
 [[bin]]
+name = "arena_full_snapshot_decode"
+path = "fuzz_targets/arena_full_snapshot_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "arena_delta_snapshot_decode"
+path = "fuzz_targets/arena_delta_snapshot_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "http_route_classification"
 path = "fuzz_targets/http_route_classification.rs"
 test = false

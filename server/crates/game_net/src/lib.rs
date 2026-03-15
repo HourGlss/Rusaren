@@ -11,14 +11,15 @@ mod control;
 mod ingress;
 
 pub use control::{
-    ArenaEffectKind, ArenaEffectSnapshot, ArenaObstacleKind, ArenaObstacleSnapshot,
-    ArenaPlayerSnapshot, ArenaProjectileSnapshot, ArenaStateSnapshot, ClientControlCommand,
-    LobbyDirectoryEntry, LobbySnapshotPhase, LobbySnapshotPlayer, ServerControlEvent,
+    ArenaDeltaSnapshot, ArenaEffectKind, ArenaEffectSnapshot, ArenaMatchPhase, ArenaObstacleKind,
+    ArenaObstacleSnapshot, ArenaPlayerSnapshot, ArenaProjectileSnapshot, ArenaStateSnapshot,
+    ArenaStatusKind, ArenaStatusSnapshot, ClientControlCommand, LobbyDirectoryEntry,
+    LobbySnapshotPhase, LobbySnapshotPlayer, ServerControlEvent,
 };
 pub use ingress::{NetworkSessionGuard, MAX_INGRESS_PACKET_BYTES};
 
 pub const PACKET_MAGIC: u16 = 0x5241;
-pub const PROTOCOL_VERSION: u8 = 1;
+pub const PROTOCOL_VERSION: u8 = 2;
 pub const HEADER_LEN: usize = 16;
 pub const INPUT_PAYLOAD_LEN: usize = 16;
 pub const INPUT_PAYLOAD_LEN_U16: u16 = 16;
@@ -443,8 +444,10 @@ pub enum PacketError {
     InvalidEncodedSkillTree(u8),
     InvalidEncodedMatchOutcome(u8),
     InvalidEncodedLobbyPhase(u8),
+    InvalidEncodedArenaMatchPhase(u8),
     InvalidEncodedArenaObstacleKind(u8),
     InvalidEncodedArenaEffectKind(u8),
+    InvalidEncodedArenaStatusKind(u8),
     InvalidEncodedBoolean(u8),
     InvalidEncodedPlayerName(DomainError),
     InvalidUtf8String {
@@ -591,11 +594,17 @@ impl PacketError {
             Self::InvalidEncodedLobbyPhase(raw) => {
                 Some(write!(f, "encoded lobby phase {raw} is invalid"))
             }
+            Self::InvalidEncodedArenaMatchPhase(raw) => {
+                Some(write!(f, "encoded arena match phase {raw} is invalid"))
+            }
             Self::InvalidEncodedArenaObstacleKind(raw) => {
                 Some(write!(f, "encoded arena obstacle kind {raw} is invalid"))
             }
             Self::InvalidEncodedArenaEffectKind(raw) => {
                 Some(write!(f, "encoded arena effect kind {raw} is invalid"))
+            }
+            Self::InvalidEncodedArenaStatusKind(raw) => {
+                Some(write!(f, "encoded arena status kind {raw} is invalid"))
             }
             Self::InvalidEncodedBoolean(raw) => Some(write!(f, "encoded boolean {raw} is invalid")),
             Self::InvalidEncodedPlayerName(error) => Some(fmt::Display::fmt(error, f)),

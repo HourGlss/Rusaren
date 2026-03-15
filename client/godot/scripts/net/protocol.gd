@@ -2,7 +2,7 @@ extends RefCounted
 class_name RarenaProtocol
 
 const PACKET_MAGIC := 0x5241
-const PROTOCOL_VERSION := 1
+const PROTOCOL_VERSION := 2
 const HEADER_LEN := 16
 const MAX_PLAYER_NAME_LEN := 24
 const MAX_MESSAGE_BYTES := 200
@@ -89,6 +89,14 @@ class ByteCursor:
 			return true
 		error_message = "encoded boolean %d is invalid" % raw
 		return null
+
+	func read_optional_u8() -> Variant:
+		var has_value = read_bool()
+		if has_error():
+			return null
+		if not has_value:
+			return null
+		return read_u8()
 
 	func read_u16() -> Variant:
 		if not _ensure_available(2):
@@ -285,6 +293,40 @@ class ByteCursor:
 				return "HitSpark"
 			_:
 				error_message = "encoded arena effect kind %d is invalid" % raw
+				return null
+
+	func read_arena_match_phase() -> Variant:
+		var raw = read_u8()
+		if has_error():
+			return null
+		match raw:
+			1:
+				return "SkillPick"
+			2:
+				return "PreCombat"
+			3:
+				return "Combat"
+			4:
+				return "MatchEnd"
+			_:
+				error_message = "encoded arena match phase %d is invalid" % raw
+				return null
+
+	func read_arena_status_kind() -> Variant:
+		var raw = read_u8()
+		if has_error():
+			return null
+		match raw:
+			1:
+				return "Poison"
+			2:
+				return "Hot"
+			3:
+				return "Chill"
+			4:
+				return "Root"
+			_:
+				error_message = "encoded arena status kind %d is invalid" % raw
 				return null
 
 	func read_lobby_phase() -> Variant:
@@ -494,11 +536,15 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 		channel_id == CHANNEL_SNAPSHOT
 		and packet_kind == PACKET_KIND_FULL_SNAPSHOT
 	)
+	var is_delta_snapshot := (
+		channel_id == CHANNEL_SNAPSHOT
+		and packet_kind == PACKET_KIND_DELTA_SNAPSHOT
+	)
 	var is_event_batch := (
 		channel_id == CHANNEL_SNAPSHOT
 		and packet_kind == PACKET_KIND_EVENT_BATCH
 	)
-	if not is_control_event and not is_full_snapshot and not is_event_batch:
+	if not is_control_event and not is_full_snapshot and not is_delta_snapshot and not is_event_batch:
 		return _error("expected Control/ControlEvent but received %s/%s" % [
 			str(channel_id),
 			str(packet_kind),
@@ -730,6 +776,8 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 				"players": players,
 			}
 		19:
+			var full_phase = cursor.read_arena_match_phase()
+			var full_phase_seconds = cursor.read_optional_u8()
 			var width = cursor.read_u16()
 			var height = cursor.read_u16()
 			var obstacle_count = cursor.read_u16()
@@ -765,6 +813,8 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 				var aim_y = cursor.read_i16()
 				var hit_points = cursor.read_u16()
 				var max_hit_points = cursor.read_u16()
+				var mana = cursor.read_u16()
+				var max_mana = cursor.read_u16()
 				var alive = cursor.read_bool()
 				var unlocked_skill_slots = cursor.read_u8()
 				var primary_cooldown_remaining_ms = cursor.read_u16()
@@ -775,6 +825,23 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 				var slot_cooldown_total_ms: Array[int] = []
 				for _cooldown_total_index in range(5):
 					slot_cooldown_total_ms.append(int(cursor.read_u16()))
+				var status_count = cursor.read_u8()
+				var active_statuses: Array[Dictionary] = []
+				for _status_index in range(int(status_count)):
+					var status_source = cursor.read_player_id()
+					var status_slot = cursor.read_u8()
+					var status_kind = cursor.read_arena_status_kind()
+					var status_stacks = cursor.read_u8()
+					var status_remaining_ms = cursor.read_u16()
+					if cursor.has_error():
+						return _error(cursor.error_message)
+					active_statuses.append({
+						"source": status_source,
+						"slot": status_slot,
+						"kind": status_kind,
+						"stacks": status_stacks,
+						"remaining_ms": status_remaining_ms,
+					})
 				if cursor.has_error():
 					return _error(cursor.error_message)
 				players.append({
@@ -787,12 +854,15 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 					"aim_y": aim_y,
 					"hit_points": hit_points,
 					"max_hit_points": max_hit_points,
+					"mana": mana,
+					"max_mana": max_mana,
 					"alive": alive,
 					"unlocked_skill_slots": unlocked_skill_slots,
 					"primary_cooldown_remaining_ms": primary_cooldown_remaining_ms,
 					"primary_cooldown_total_ms": primary_cooldown_total_ms,
 					"slot_cooldown_remaining_ms": slot_cooldown_remaining_ms,
 					"slot_cooldown_total_ms": slot_cooldown_total_ms,
+					"active_statuses": active_statuses,
 				})
 			var projectile_count = cursor.read_u16()
 			if cursor.has_error():
@@ -818,6 +888,8 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 			event = {
 				"type": "ArenaStateSnapshot",
 				"snapshot": {
+					"phase": full_phase,
+					"phase_seconds_remaining": full_phase_seconds,
 					"width": width,
 					"height": height,
 					"obstacles": obstacles,
@@ -826,6 +898,104 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 				},
 			}
 		20:
+			var delta_phase = cursor.read_arena_match_phase()
+			var delta_phase_seconds = cursor.read_optional_u8()
+			var delta_player_count = cursor.read_u16()
+			if cursor.has_error():
+				return _error(cursor.error_message)
+			var delta_players: Array[Dictionary] = []
+			for _delta_player_index in range(int(delta_player_count)):
+				var delta_player_id = cursor.read_player_id()
+				var delta_player_name = cursor.read_string("player_name", MAX_PLAYER_NAME_LEN)
+				var delta_team = cursor.read_team_label()
+				var delta_x = cursor.read_i16()
+				var delta_y = cursor.read_i16()
+				var delta_aim_x = cursor.read_i16()
+				var delta_aim_y = cursor.read_i16()
+				var delta_hit_points = cursor.read_u16()
+				var delta_max_hit_points = cursor.read_u16()
+				var delta_mana = cursor.read_u16()
+				var delta_max_mana = cursor.read_u16()
+				var delta_alive = cursor.read_bool()
+				var delta_unlocked_skill_slots = cursor.read_u8()
+				var delta_primary_remaining = cursor.read_u16()
+				var delta_primary_total = cursor.read_u16()
+				var delta_slot_remaining: Array[int] = []
+				for _delta_remaining_index in range(5):
+					delta_slot_remaining.append(int(cursor.read_u16()))
+				var delta_slot_total: Array[int] = []
+				for _delta_total_index in range(5):
+					delta_slot_total.append(int(cursor.read_u16()))
+				var delta_status_count = cursor.read_u8()
+				var delta_statuses: Array[Dictionary] = []
+				for _delta_status_index in range(int(delta_status_count)):
+					var delta_status_source = cursor.read_player_id()
+					var delta_status_slot = cursor.read_u8()
+					var delta_status_kind = cursor.read_arena_status_kind()
+					var delta_status_stacks = cursor.read_u8()
+					var delta_status_remaining = cursor.read_u16()
+					if cursor.has_error():
+						return _error(cursor.error_message)
+					delta_statuses.append({
+						"source": delta_status_source,
+						"slot": delta_status_slot,
+						"kind": delta_status_kind,
+						"stacks": delta_status_stacks,
+						"remaining_ms": delta_status_remaining,
+					})
+				if cursor.has_error():
+					return _error(cursor.error_message)
+				delta_players.append({
+					"player_id": delta_player_id,
+					"player_name": delta_player_name,
+					"team": delta_team,
+					"x": delta_x,
+					"y": delta_y,
+					"aim_x": delta_aim_x,
+					"aim_y": delta_aim_y,
+					"hit_points": delta_hit_points,
+					"max_hit_points": delta_max_hit_points,
+					"mana": delta_mana,
+					"max_mana": delta_max_mana,
+					"alive": delta_alive,
+					"unlocked_skill_slots": delta_unlocked_skill_slots,
+					"primary_cooldown_remaining_ms": delta_primary_remaining,
+					"primary_cooldown_total_ms": delta_primary_total,
+					"slot_cooldown_remaining_ms": delta_slot_remaining,
+					"slot_cooldown_total_ms": delta_slot_total,
+					"active_statuses": delta_statuses,
+				})
+			var delta_projectile_count = cursor.read_u16()
+			if cursor.has_error():
+				return _error(cursor.error_message)
+			var delta_projectiles: Array[Dictionary] = []
+			for _delta_projectile_index in range(int(delta_projectile_count)):
+				var delta_owner = cursor.read_player_id()
+				var delta_slot = cursor.read_u8()
+				var delta_projectile_kind = cursor.read_arena_effect_kind()
+				var delta_projectile_x = cursor.read_i16()
+				var delta_projectile_y = cursor.read_i16()
+				var delta_projectile_radius = cursor.read_u16()
+				if cursor.has_error():
+					return _error(cursor.error_message)
+				delta_projectiles.append({
+					"owner": delta_owner,
+					"slot": delta_slot,
+					"kind": delta_projectile_kind,
+					"x": delta_projectile_x,
+					"y": delta_projectile_y,
+					"radius": delta_projectile_radius,
+				})
+			event = {
+				"type": "ArenaDeltaSnapshot",
+				"snapshot": {
+					"phase": delta_phase,
+					"phase_seconds_remaining": delta_phase_seconds,
+					"players": delta_players,
+					"projectiles": delta_projectiles,
+				},
+			}
+		21:
 			var effect_count = cursor.read_u16()
 			if cursor.has_error():
 				return _error(cursor.error_message)

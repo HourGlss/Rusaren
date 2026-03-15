@@ -284,6 +284,7 @@ func apply_server_event(event: Dictionary) -> void:
 			_append_event("Server error: %s" % banner_message)
 		"ArenaStateSnapshot":
 			var snapshot: Dictionary = event.get("snapshot", {})
+			_apply_arena_phase(snapshot)
 			arena_width = int(snapshot.get("width", 0))
 			arena_height = int(snapshot.get("height", 0))
 			arena_obstacles.clear()
@@ -296,6 +297,16 @@ func apply_server_event(event: Dictionary) -> void:
 			arena_projectiles.clear()
 			for projectile_data in snapshot.get("projectiles", []):
 				arena_projectiles.append((projectile_data as Dictionary).duplicate(true))
+		"ArenaDeltaSnapshot":
+			var delta_snapshot: Dictionary = event.get("snapshot", {})
+			_apply_arena_phase(delta_snapshot)
+			arena_players.clear()
+			for player_delta in delta_snapshot.get("players", []):
+				var delta_player_id := int(player_delta.get("player_id", 0))
+				arena_players[delta_player_id] = player_delta.duplicate(true)
+			arena_projectiles.clear()
+			for projectile_delta in delta_snapshot.get("projectiles", []):
+				arena_projectiles.append((projectile_delta as Dictionary).duplicate(true))
 		"ArenaEffectBatch":
 			for effect_data in event.get("effects", []):
 				var effect: Dictionary = (effect_data as Dictionary).duplicate(true)
@@ -530,6 +541,25 @@ func advance_visuals(delta: float) -> void:
 		effect["ttl"] = ttl
 		if ttl <= 0.0:
 			arena_effects.remove_at(index)
+
+
+func _apply_arena_phase(snapshot: Dictionary) -> void:
+	var phase_name := String(snapshot.get("phase", ""))
+	if phase_name.is_empty():
+		return
+	var seconds_remaining := int(snapshot.get("phase_seconds_remaining", 0))
+	match phase_name:
+		"SkillPick":
+			match_phase = "skill_pick"
+			countdown_label = "Skill Pick: %ds" % seconds_remaining
+		"PreCombat":
+			match_phase = "pre_combat"
+			countdown_label = "Pre-Combat: %ds" % seconds_remaining
+		"Combat":
+			match_phase = "combat"
+			countdown_label = "Combat live"
+		"MatchEnd":
+			match_phase = "ended"
 
 
 func _reset_to_central() -> void:

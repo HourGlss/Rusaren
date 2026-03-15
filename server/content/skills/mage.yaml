@@ -19,6 +19,7 @@ skills:
       kind: projectile
       effect: skill_shot
       cooldown_ms: 700
+      mana_cost: 16
       speed: 320
       range: 1600
       radius: 18
@@ -33,6 +34,7 @@ skills:
       kind: dash
       effect: dash_trail
       cooldown_ms: 1700
+      mana_cost: 24
       distance: 190
   - tier: 3
     id: mage_frost_burst
@@ -42,6 +44,7 @@ skills:
       kind: burst
       effect: burst
       cooldown_ms: 1900
+      mana_cost: 28
       range: 260
       radius: 96
       payload:
@@ -61,6 +64,7 @@ skills:
       kind: nova
       effect: nova
       cooldown_ms: 2300
+      mana_cost: 34
       radius: 160
       payload:
         kind: damage
@@ -79,6 +83,7 @@ skills:
       kind: beam
       effect: beam
       cooldown_ms: 2800
+      mana_cost: 46
       range: 760
       radius: 24
       payload:

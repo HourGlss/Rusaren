@@ -19,6 +19,7 @@ skills:
       kind: beam
       effect: beam
       cooldown_ms: 900
+      mana_cost: 16
       range: 280
       radius: 28
       payload:
@@ -32,6 +33,7 @@ skills:
       kind: burst
       effect: burst
       cooldown_ms: 1700
+      mana_cost: 24
       range: 240
       radius: 100
       payload:
@@ -45,6 +47,7 @@ skills:
       kind: nova
       effect: nova
       cooldown_ms: 2200
+      mana_cost: 30
       radius: 150
       payload:
         kind: heal
@@ -63,6 +66,7 @@ skills:
       kind: projectile
       effect: skill_shot
       cooldown_ms: 1800
+      mana_cost: 32
       speed: 280
       range: 1500
       radius: 16
@@ -77,6 +81,7 @@ skills:
       kind: nova
       effect: nova
       cooldown_ms: 3200
+      mana_cost: 45
       radius: 180
       payload:
         kind: heal

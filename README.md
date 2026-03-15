@@ -11,6 +11,7 @@ Buildable now:
 - a scripted backend-only gameplay slice that exercises lobby -> match -> combat -> no-contest flow
 - a real WebRTC gameplay transport on top of websocket signaling, plus the older raw websocket dev adapter at `/ws-dev`
 - a Godot 4 shell under `client/godot` that drives the browser gameplay path through websocket signaling at `/ws` and binary WebRTC data channels
+- authoritative full and delta arena snapshots carrying match phase, hp, mana, cooldowns, active statuses, and projectile state
 - a first playable arena slice with a mostly empty map, four central square pillars, shrub collars, authoritative player circles, WASD movement, mouse aim, left-click melee, authored class melee/spells on `1`-`5`, projectile combat, debuffs, HoTs, health, and cooldown state
 - runtime-loaded authored content under `server/content/skills/*.yaml` and `server/content/maps/prototype_arena.txt`
 - a same-origin Godot Web export path hosted directly by the Rust server at `/`
@@ -20,8 +21,8 @@ Buildable now:
 - GitHub Actions quality workflows plus Godot web export and deploy smoke workflows
 
 Not implemented yet:
-- delta snapshot replication
 - the full 1.0 authored class and spell set with complete backend spell-behavior coverage
+- more aggressive snapshot compression beyond the current full-vs-delta split
 - the full 1.0 Godot gameplay presentation bar: basic HUD polish, spell visuals for every shipped spell, and always-readable health and mana display for all players
 - rustdoc/API guidance that is complete enough for an external client or bot author to play through the game protocol without Godot
 - final vision / fog-of-war logic beyond stubs
@@ -87,6 +88,7 @@ The project metadata version is currently `0.6.0`.
 Known shell limitations:
 - the arena slice is intentionally simple, even though the current skills and map now load from authored content files
 - visibility is still a stubbed/minimal system; movement, health, cooldowns, and spell use are the priority slice
+- the shell now consumes authoritative full and delta arena snapshots plus effect batches, but the current delta format is still a simple dynamic-state packet rather than a heavily compressed baseline-referenced diff
 - native/headless Godot transport testing depends on the `webrtc-native` extension being available to the editor/runtime; if your local Godot install ships that extension under a folder like `Godot/webrtc/`, `export-web-client.ps1` now syncs that bundle into the ignored local project path `client/godot/webrtc/` before export or headless checks
 - browser play remains the primary supported networked path on this machine; the synced native extension is for local editor/headless validation and is not tracked in git
 
@@ -372,7 +374,7 @@ Current manual full-loop slice:
 - aim with the mouse inside the arena
 - left click for melee
 - use `1`-`5` for the currently unlocked authored skill slots loaded from YAML
-- watch the cooldown HUD update from authoritative server snapshots as you fight
+- watch the cooldown HUD, mana bars, and active status labels update from authoritative server snapshots as you fight
 - review the result screen and quit back to the central lobby
 
 Current easiest full-loop slice:

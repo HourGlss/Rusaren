@@ -2,22 +2,23 @@
 
 Current target release line: `1.0.0`
 Current repo version: `0.6.0`
-Current roadmap position: `0.7.0 Final Transport and Replication`
+Current roadmap position: `0.8.0 Content and Gameplay Hardening`
 
 Completed:
 - `0.3.0 Quality Foundation`
 - `0.4.0 Backend MVP`
 - `0.5.0 Godot Web MVP`
 - `0.6.0 Hosting and Ops MVP`
+- `0.7.0 Final Transport and Replication`
 
 ## 0.7.0 Final Transport and Replication
 
 - [x] Add the real WebRTC gameplay transport beside the websocket dev adapter.
-- [ ] Make browser gameplay use the intended WebRTC path reliably in real match flow.
-- [ ] Implement authoritative gameplay snapshot and delta replication.
-- [ ] Add hostile-input fuzzing for snapshot and delta decoders.
-- [ ] Add malformed-packet and transport regression suites for signaling, input, snapshot, and control traffic.
-- [ ] Expose enough authoritative runtime state for clients and API consumers to understand player status, cooldowns, hp, mana, active statuses, and match phase.
+- [x] Make browser gameplay use the intended WebRTC path reliably in real match flow.
+- [x] Implement authoritative gameplay snapshot and delta replication.
+- [x] Add hostile-input fuzzing for snapshot and delta decoders.
+- [x] Add malformed-packet and transport regression suites for signaling, input, snapshot, and control traffic.
+- [x] Expose enough authoritative runtime state for clients and API consumers to understand player status, cooldowns, hp, mana, active statuses, and match phase.
 
 Release gate:
 - browser gameplay uses WebRTC reliably for real match traffic

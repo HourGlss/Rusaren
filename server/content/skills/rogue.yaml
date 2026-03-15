@@ -19,6 +19,7 @@ skills:
       kind: projectile
       effect: skill_shot
       cooldown_ms: 650
+      mana_cost: 14
       speed: 360
       range: 1500
       radius: 14
@@ -39,6 +40,7 @@ skills:
       kind: dash
       effect: dash_trail
       cooldown_ms: 1500
+      mana_cost: 20
       distance: 230
   - tier: 3
     id: rogue_poison_flask
@@ -48,6 +50,7 @@ skills:
       kind: burst
       effect: burst
       cooldown_ms: 1900
+      mana_cost: 26
       range: 240
       radius: 90
       payload:
@@ -67,6 +70,7 @@ skills:
       kind: nova
       effect: nova
       cooldown_ms: 2200
+      mana_cost: 30
       radius: 145
       payload:
         kind: damage
@@ -79,6 +83,7 @@ skills:
       kind: beam
       effect: beam
       cooldown_ms: 3000
+      mana_cost: 44
       range: 180
       radius: 36
       payload:

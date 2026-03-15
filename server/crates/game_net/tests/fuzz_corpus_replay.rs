@@ -108,6 +108,20 @@ fn replay_server_control_event_corpus() {
     }
 }
 
+#[test]
+fn replay_arena_full_snapshot_corpus() {
+    for bytes in corpus_files("arena_full_snapshot_decode") {
+        consume_result(ServerControlEvent::decode_packet(&bytes));
+    }
+}
+
+#[test]
+fn replay_arena_delta_snapshot_corpus() {
+    for bytes in corpus_files("arena_delta_snapshot_decode") {
+        consume_result(ServerControlEvent::decode_packet(&bytes));
+    }
+}
+
 fn consume_result<T, E: std::fmt::Display>(result: Result<T, E>) {
     if let Err(error) = result {
         let _ = error.to_string();

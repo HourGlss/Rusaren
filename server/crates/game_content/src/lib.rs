@@ -98,6 +98,7 @@ pub struct MeleeDefinition {
 pub enum SkillBehavior {
     Projectile {
         cooldown_ms: u16,
+        mana_cost: u16,
         speed: u16,
         range: u16,
         radius: u16,
@@ -106,6 +107,7 @@ pub enum SkillBehavior {
     },
     Beam {
         cooldown_ms: u16,
+        mana_cost: u16,
         range: u16,
         radius: u16,
         effect: SkillEffectKind,
@@ -113,6 +115,7 @@ pub enum SkillBehavior {
     },
     Dash {
         cooldown_ms: u16,
+        mana_cost: u16,
         distance: u16,
         effect: SkillEffectKind,
         impact_radius: Option<u16>,
@@ -120,6 +123,7 @@ pub enum SkillBehavior {
     },
     Burst {
         cooldown_ms: u16,
+        mana_cost: u16,
         range: u16,
         radius: u16,
         effect: SkillEffectKind,
@@ -127,6 +131,7 @@ pub enum SkillBehavior {
     },
     Nova {
         cooldown_ms: u16,
+        mana_cost: u16,
         radius: u16,
         effect: SkillEffectKind,
         payload: EffectPayload,
@@ -142,6 +147,17 @@ impl SkillBehavior {
             | Self::Dash { cooldown_ms, .. }
             | Self::Burst { cooldown_ms, .. }
             | Self::Nova { cooldown_ms, .. } => cooldown_ms,
+        }
+    }
+
+    #[must_use]
+    pub const fn mana_cost(self) -> u16 {
+        match self {
+            Self::Projectile { mana_cost, .. }
+            | Self::Beam { mana_cost, .. }
+            | Self::Dash { mana_cost, .. }
+            | Self::Burst { mana_cost, .. }
+            | Self::Nova { mana_cost, .. } => mana_cost,
         }
     }
 }
@@ -514,9 +530,11 @@ fn parse_skill_behavior(
 ) -> Result<SkillBehavior, ContentError> {
     let effect = parse_effect_kind(source, &yaml.effect)?;
     let cooldown_ms = require_positive_u16(source, "cooldown_ms", yaml.cooldown_ms)?;
+    let mana_cost = yaml.mana_cost.unwrap_or(0);
     match yaml.kind.as_str() {
         "projectile" => Ok(SkillBehavior::Projectile {
             cooldown_ms,
+            mana_cost,
             speed: require_positive_u16(source, "speed", yaml.speed)?,
             range: require_positive_u16(source, "range", yaml.range)?,
             radius: require_positive_u16(source, "radius", yaml.radius)?,
@@ -525,6 +543,7 @@ fn parse_skill_behavior(
         }),
         "beam" => Ok(SkillBehavior::Beam {
             cooldown_ms,
+            mana_cost,
             range: require_positive_u16(source, "range", yaml.range)?,
             radius: require_positive_u16(source, "radius", yaml.radius)?,
             effect,
@@ -532,6 +551,7 @@ fn parse_skill_behavior(
         }),
         "dash" => Ok(SkillBehavior::Dash {
             cooldown_ms,
+            mana_cost,
             distance: require_positive_u16(source, "distance", yaml.distance)?,
             effect,
             impact_radius: yaml
@@ -545,6 +565,7 @@ fn parse_skill_behavior(
         }),
         "burst" => Ok(SkillBehavior::Burst {
             cooldown_ms,
+            mana_cost,
             range: require_positive_u16(source, "range", yaml.range)?,
             radius: require_positive_u16(source, "radius", yaml.radius)?,
             effect,
@@ -552,6 +573,7 @@ fn parse_skill_behavior(
         }),
         "nova" => Ok(SkillBehavior::Nova {
             cooldown_ms,
+            mana_cost,
             radius: require_positive_u16(source, "radius", yaml.radius)?,
             effect,
             payload: parse_payload(source, yaml.payload.clone(), "payload")?,
@@ -990,6 +1012,7 @@ struct SkillBehaviorYaml {
     kind: String,
     effect: String,
     cooldown_ms: Option<u16>,
+    mana_cost: Option<u16>,
     range: Option<u16>,
     radius: Option<u16>,
     distance: Option<u16>,
@@ -1199,6 +1222,7 @@ skills:
         assert!(matches!(
             parsed.skills[2].behavior,
             SkillBehavior::Nova {
+                mana_cost: 0,
                 payload: EffectPayload {
                     kind: CombatValueKind::Heal,
                     status: Some(StatusDefinition {
@@ -1210,6 +1234,7 @@ skills:
                 ..
             }
         ));
+        assert_eq!(parsed.skills[0].behavior.mana_cost(), 0);
     }
 
     #[test]

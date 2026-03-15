@@ -15,6 +15,8 @@ use game_domain::{PlayerId, TeamAssignment, TeamSide};
 pub const PLAYER_RADIUS_UNITS: u16 = 28;
 pub const COMBAT_FRAME_MS: u16 = 100;
 pub const PLAYER_MOVE_SPEED_UNITS_PER_SECOND: u16 = 260;
+pub const PLAYER_MAX_MANA: u16 = 100;
+pub const PLAYER_MANA_REGEN_PER_SECOND: u16 = 12;
 const SPAWN_SPACING_UNITS: i16 = 120;
 const DEFAULT_AIM_X: i16 = 120;
 const DEFAULT_AIM_Y: i16 = 0;
@@ -114,6 +116,8 @@ pub struct SimPlayerState {
     pub aim_y: i16,
     pub hit_points: u16,
     pub max_hit_points: u16,
+    pub mana: u16,
+    pub max_mana: u16,
     pub alive: bool,
     pub moving: bool,
     pub primary_cooldown_remaining_ms: u16,
@@ -240,6 +244,8 @@ struct SimPlayer {
     aim_y: i16,
     hit_points: u16,
     max_hit_points: u16,
+    mana: u16,
+    max_mana: u16,
     alive: bool,
     moving: bool,
     movement_intent: MovementIntent,
@@ -249,6 +255,7 @@ struct SimPlayer {
     skills: [Option<SkillDefinition>; 5],
     primary_cooldown_remaining_ms: u16,
     slot_cooldown_remaining_ms: [u16; 5],
+    mana_regen_progress: u16,
     statuses: Vec<StatusInstance>,
 }
 
@@ -324,6 +331,8 @@ impl SimulationWorld {
                         aim_y: DEFAULT_AIM_Y,
                         hit_points: player.hit_points,
                         max_hit_points: player.hit_points,
+                        mana: PLAYER_MAX_MANA,
+                        max_mana: PLAYER_MAX_MANA,
                         alive: true,
                         moving: false,
                         movement_intent: MovementIntent::zero(),
@@ -333,6 +342,7 @@ impl SimulationWorld {
                         skills: player.skills,
                         primary_cooldown_remaining_ms: 0,
                         slot_cooldown_remaining_ms: [0; 5],
+                        mana_regen_progress: 0,
                         statuses: Vec::new(),
                     },
                 )
@@ -429,6 +439,7 @@ impl SimulationWorld {
     pub fn tick(&mut self, delta_ms: u16) -> Vec<SimulationEvent> {
         let mut events = Vec::new();
         self.advance_cooldowns(delta_ms);
+        self.advance_mana(delta_ms);
         self.apply_status_ticks(delta_ms, &mut events);
         self.move_players(delta_ms, &mut events);
         self.resolve_queued_actions(&mut events);
@@ -455,6 +466,8 @@ impl SimulationWorld {
                 aim_y: player.aim_y,
                 hit_points: player.hit_points,
                 max_hit_points: player.max_hit_points,
+                mana: player.mana,
+                max_mana: player.max_mana,
                 alive: player.alive,
                 moving: player.moving,
                 primary_cooldown_remaining_ms: player.primary_cooldown_remaining_ms,
@@ -537,6 +550,25 @@ impl SimulationWorld {
             for remaining in &mut player.slot_cooldown_remaining_ms {
                 *remaining = remaining.saturating_sub(delta_ms);
             }
+        }
+    }
+
+    fn advance_mana(&mut self, delta_ms: u16) {
+        for player in self.players.values_mut() {
+            if player.mana >= player.max_mana {
+                player.mana_regen_progress = 0;
+                continue;
+            }
+
+            let total_progress = u32::from(player.mana_regen_progress)
+                + (u32::from(delta_ms) * u32::from(PLAYER_MANA_REGEN_PER_SECOND));
+            let gained = u16::try_from(total_progress / 1000).unwrap_or(u16::MAX);
+            player.mana_regen_progress = u16::try_from(total_progress % 1000).unwrap_or(0);
+            if gained == 0 {
+                continue;
+            }
+
+            player.mana = player.mana.saturating_add(gained).min(player.max_mana);
         }
     }
 
@@ -746,12 +778,16 @@ impl SimulationWorld {
         match skill.behavior {
             SkillBehavior::Projectile {
                 cooldown_ms,
+                mana_cost,
                 speed,
                 range,
                 radius,
                 effect,
                 payload,
             } => {
+                if !self.consume_skill_mana(attacker, mana_cost) {
+                    return Vec::new();
+                }
                 if let Some(player) = self.players.get_mut(&attacker) {
                     player.slot_cooldown_remaining_ms[slot_index] = cooldown_ms;
                 }
@@ -768,11 +804,15 @@ impl SimulationWorld {
             }
             SkillBehavior::Beam {
                 cooldown_ms,
+                mana_cost,
                 range,
                 radius,
                 effect,
                 payload,
             } => {
+                if !self.consume_skill_mana(attacker, mana_cost) {
+                    return Vec::new();
+                }
                 if let Some(player) = self.players.get_mut(&attacker) {
                     player.slot_cooldown_remaining_ms[slot_index] = cooldown_ms;
                 }
@@ -788,11 +828,15 @@ impl SimulationWorld {
             }
             SkillBehavior::Dash {
                 cooldown_ms,
+                mana_cost,
                 distance,
                 effect,
                 impact_radius,
                 payload,
             } => {
+                if !self.consume_skill_mana(attacker, mana_cost) {
+                    return Vec::new();
+                }
                 if let Some(player) = self.players.get_mut(&attacker) {
                     player.slot_cooldown_remaining_ms[slot_index] = cooldown_ms;
                 }
@@ -808,11 +852,15 @@ impl SimulationWorld {
             }
             SkillBehavior::Burst {
                 cooldown_ms,
+                mana_cost,
                 range,
                 radius,
                 effect,
                 payload,
             } => {
+                if !self.consume_skill_mana(attacker, mana_cost) {
+                    return Vec::new();
+                }
                 if let Some(player) = self.players.get_mut(&attacker) {
                     player.slot_cooldown_remaining_ms[slot_index] = cooldown_ms;
                 }
@@ -828,10 +876,14 @@ impl SimulationWorld {
             }
             SkillBehavior::Nova {
                 cooldown_ms,
+                mana_cost,
                 radius,
                 effect,
                 payload,
             } => {
+                if !self.consume_skill_mana(attacker, mana_cost) {
+                    return Vec::new();
+                }
                 if let Some(player) = self.players.get_mut(&attacker) {
                     player.slot_cooldown_remaining_ms[slot_index] = cooldown_ms;
                 }
@@ -845,6 +897,22 @@ impl SimulationWorld {
                 )
             }
         }
+    }
+
+    fn consume_skill_mana(&mut self, player_id: PlayerId, mana_cost: u16) -> bool {
+        if mana_cost == 0 {
+            return true;
+        }
+
+        let Some(player) = self.players.get_mut(&player_id) else {
+            return false;
+        };
+        if player.mana < mana_cost {
+            return false;
+        }
+
+        player.mana = player.mana.saturating_sub(mana_cost);
+        true
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1857,6 +1925,94 @@ mod tests {
         }
         let cooled_down = world.player_state(player_id(1)).expect("alice");
         assert_eq!(cooled_down.slot_cooldown_remaining_ms[0], 0);
+    }
+
+    #[test]
+    fn skills_consume_mana_and_regenerate_over_time() {
+        let content = content();
+        let mut world = world(
+            &content,
+            vec![seed(
+                &content,
+                1,
+                "Alice",
+                TeamSide::TeamA,
+                SkillTree::Mage,
+                [Some(choice(SkillTree::Mage, 1)), None, None, None, None],
+            )],
+        );
+        {
+            let alice = world.players.get_mut(&player_id(1)).expect("alice");
+            alice.mana = 20;
+            alice.x = -500;
+            alice.y = 0;
+            alice.aim_x = 100;
+            alice.aim_y = 0;
+        }
+
+        world.queue_cast(player_id(1), 1).expect("cast");
+        let cast_events = world.tick(COMBAT_FRAME_MS);
+        assert!(cast_events.iter().any(|event| matches!(
+            event,
+            SimulationEvent::EffectSpawned { effect }
+                if effect.owner == player_id(1) && effect.slot == 1
+        )));
+        let after_cast = world.player_state(player_id(1)).expect("alice");
+        assert_eq!(after_cast.mana, 5);
+
+        for _ in 0..20 {
+            let _ = world.tick(COMBAT_FRAME_MS);
+        }
+        let regenerated = world.player_state(player_id(1)).expect("alice");
+        assert!(regenerated.mana > after_cast.mana);
+    }
+
+    #[test]
+    fn casts_do_not_fire_when_mana_is_below_cost() {
+        let content = content();
+        let mut world = world(
+            &content,
+            vec![
+                seed(
+                    &content,
+                    1,
+                    "Alice",
+                    TeamSide::TeamA,
+                    SkillTree::Mage,
+                    [Some(choice(SkillTree::Mage, 1)), None, None, None, None],
+                ),
+                seed(
+                    &content,
+                    2,
+                    "Bob",
+                    TeamSide::TeamB,
+                    SkillTree::Warrior,
+                    [Some(choice(SkillTree::Warrior, 1)), None, None, None, None],
+                ),
+            ],
+        );
+        {
+            let alice = world.players.get_mut(&player_id(1)).expect("alice");
+            alice.mana = 10;
+            alice.x = -500;
+            alice.y = 0;
+            alice.aim_x = 100;
+            alice.aim_y = 0;
+            let bob = world.players.get_mut(&player_id(2)).expect("bob");
+            bob.x = -250;
+            bob.y = 0;
+        }
+
+        world.queue_cast(player_id(1), 1).expect("cast");
+        let blocked_events = world.tick(COMBAT_FRAME_MS);
+        assert!(!blocked_events.iter().any(|event| matches!(
+            event,
+            SimulationEvent::EffectSpawned { effect }
+                if effect.owner == player_id(1) && effect.slot == 1
+        )));
+        let alice = world.player_state(player_id(1)).expect("alice");
+        assert_eq!(alice.mana, 11);
+        assert_eq!(alice.slot_cooldown_remaining_ms[0], 0);
     }
 
     #[test]

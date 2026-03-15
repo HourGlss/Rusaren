@@ -13,6 +13,7 @@ func _init() -> void:
 	success = _assert_unexpected_context_rejection() and success
 	success = _assert_aim_range_rejection() and success
 	success = _assert_decode_arena_state_snapshot() and success
+	success = _assert_decode_arena_delta_snapshot() and success
 	success = _assert_decode_arena_effect_batch() and success
 	quit(0 if success else 1)
 
@@ -110,6 +111,8 @@ func _assert_aim_range_rejection() -> bool:
 
 func _assert_decode_arena_state_snapshot() -> bool:
 	var payload := PackedByteArray([19])
+	payload.append(3)
+	payload.append(0)
 	_push_u16(payload, 1800)
 	_push_u16(payload, 1200)
 	_push_u16(payload, 1)
@@ -128,6 +131,8 @@ func _assert_decode_arena_state_snapshot() -> bool:
 	_push_i16(payload, 0)
 	_push_u16(payload, 100)
 	_push_u16(payload, 100)
+	_push_u16(payload, 72)
+	_push_u16(payload, 100)
 	payload.append(1)
 	payload.append(3)
 	_push_u16(payload, 180)
@@ -136,6 +141,12 @@ func _assert_decode_arena_state_snapshot() -> bool:
 		_push_u16(payload, value)
 	for value in [0, 900, 0, 1400, 0]:
 		_push_u16(payload, value)
+	payload.append(1)
+	_push_u32(payload, 12)
+	payload.append(2)
+	payload.append(1)
+	payload.append(2)
+	_push_u16(payload, 1800)
 	_push_u16(payload, 1)
 	_push_u32(payload, 11)
 	payload.append(1)
@@ -154,8 +165,15 @@ func _assert_decode_arena_state_snapshot() -> bool:
 		return _fail("arena state snapshot should use the ArenaStateSnapshot event type")
 	if players.size() != 1:
 		return _fail("arena state snapshot should decode one player")
+	if String(snapshot.get("phase", "")) != "Combat":
+		return _fail("arena state snapshot should decode the arena phase")
 	if int(players[0].get("unlocked_skill_slots", 0)) != 3:
 		return _fail("arena state snapshot should preserve unlocked combat slots")
+	if int(players[0].get("mana", 0)) != 72:
+		return _fail("arena state snapshot should decode mana state")
+	var statuses: Array = players[0].get("active_statuses", [])
+	if statuses.size() != 1 or String(statuses[0].get("kind", "")) != "Poison":
+		return _fail("arena state snapshot should decode active statuses")
 	if int(players[0].get("primary_cooldown_remaining_ms", 0)) != 180:
 		return _fail("arena state snapshot should decode primary cooldown state")
 	if projectiles.size() != 1 or String(projectiles[0].get("kind", "")) != "SkillShot":
@@ -163,8 +181,54 @@ func _assert_decode_arena_state_snapshot() -> bool:
 	return true
 
 
-func _assert_decode_arena_effect_batch() -> bool:
+func _assert_decode_arena_delta_snapshot() -> bool:
 	var payload := PackedByteArray([20])
+	payload.append(3)
+	payload.append(0)
+	_push_u16(payload, 1)
+	_push_u32(payload, 11)
+	_push_string(payload, "Alice")
+	payload.append(Protocol.TEAM_A)
+	_push_i16(payload, -620)
+	_push_i16(payload, 220)
+	_push_i16(payload, 96)
+	_push_i16(payload, -24)
+	_push_u16(payload, 91)
+	_push_u16(payload, 100)
+	_push_u16(payload, 64)
+	_push_u16(payload, 100)
+	payload.append(1)
+	payload.append(3)
+	_push_u16(payload, 0)
+	_push_u16(payload, 600)
+	for value in [100, 0, 700, 0, 0]:
+		_push_u16(payload, value)
+	for value in [700, 1700, 2200, 0, 0]:
+		_push_u16(payload, value)
+	payload.append(1)
+	_push_u32(payload, 18)
+	payload.append(3)
+	payload.append(3)
+	payload.append(1)
+	_push_u16(payload, 1200)
+	_push_u16(payload, 0)
+	var decoded := Protocol.decode_server_event(_encode_server_event_packet(payload, 9, 22))
+	if not bool(decoded.get("ok", false)):
+		return _fail("arena delta snapshot should decode")
+	var event: Dictionary = decoded.get("event", {})
+	if String(event.get("type", "")) != "ArenaDeltaSnapshot":
+		return _fail("arena delta snapshot should use the ArenaDeltaSnapshot event type")
+	var snapshot: Dictionary = event.get("snapshot", {})
+	var players: Array = snapshot.get("players", [])
+	if String(snapshot.get("phase", "")) != "Combat":
+		return _fail("arena delta snapshot should preserve phase")
+	if players.size() != 1 or int(players[0].get("mana", 0)) != 64:
+		return _fail("arena delta snapshot should decode player state")
+	return true
+
+
+func _assert_decode_arena_effect_batch() -> bool:
+	var payload := PackedByteArray([21])
 	_push_u16(payload, 1)
 	payload.append(2)
 	_push_u32(payload, 11)
@@ -208,6 +272,9 @@ func _encode_server_event_packet(payload: PackedByteArray, seq: int, sim_tick: i
 		channel_id = Protocol.CHANNEL_SNAPSHOT
 		packet_kind = Protocol.PACKET_KIND_FULL_SNAPSHOT
 	elif kind == 20:
+		channel_id = Protocol.CHANNEL_SNAPSHOT
+		packet_kind = Protocol.PACKET_KIND_DELTA_SNAPSHOT
+	elif kind == 21:
 		channel_id = Protocol.CHANNEL_SNAPSHOT
 		packet_kind = Protocol.PACKET_KIND_EVENT_BATCH
 	var packet := PackedByteArray()

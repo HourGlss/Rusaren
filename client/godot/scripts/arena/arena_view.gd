@@ -199,13 +199,36 @@ func _draw_players(arena_rect: Rect2) -> void:
 		var hp_origin: Vector2 = canvas_pos + Vector2(-hp_width * 0.5, radius + 10.0)
 		draw_rect(Rect2(hp_origin, Vector2(hp_width, 5.0)), Color8(65, 34, 34))
 		draw_rect(Rect2(hp_origin, Vector2(hp_width * hp_ratio, 5.0)), Color8(86, 198, 125))
+		var max_mana: float = maxf(1.0, float(player.get("max_mana", 1)))
+		var mana_ratio: float = clampf(float(player.get("mana", 0)) / max_mana, 0.0, 1.0)
+		var mana_origin: Vector2 = hp_origin + Vector2(0.0, 8.0)
+		draw_rect(Rect2(mana_origin, Vector2(hp_width, 4.0)), Color8(28, 44, 78))
+		draw_rect(Rect2(mana_origin, Vector2(hp_width * mana_ratio, 4.0)), Color8(89, 163, 255))
 
 		if font != null:
-			var label: String = "%s  [%d]" % [
+			var label: String = "%s  [%d/%d]" % [
 				String(player.get("player_name", "Player")),
 				int(player.get("hit_points", 0)),
+				int(player.get("mana", 0)),
 			]
 			draw_string(font, canvas_pos + Vector2(-radius * 0.7, -radius - 10.0), label, HORIZONTAL_ALIGNMENT_LEFT, -1.0, 14, Color8(26, 28, 34))
+			var status_tokens: Array[String] = []
+			for status in player.get("active_statuses", []):
+				var status_data := status as Dictionary
+				status_tokens.append("%s x%d" % [
+					String(status_data.get("kind", "")),
+					int(status_data.get("stacks", 0)),
+				])
+			if not status_tokens.is_empty():
+				draw_string(
+					font,
+					canvas_pos + Vector2(-radius * 0.7, -radius - 26.0),
+					" ".join(status_tokens),
+					HORIZONTAL_ALIGNMENT_LEFT,
+					-1.0,
+					12,
+					Color8(52, 66, 78)
+				)
 
 
 func _draw_border(arena_rect: Rect2) -> void:

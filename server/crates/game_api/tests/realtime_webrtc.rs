@@ -10,8 +10,8 @@ use game_api::{
     spawn_dev_server_with_options, ClientSignalMessage, DevServerOptions, ServerSignalMessage,
     SignalingIceCandidate, SignalingSessionDescription, WebRtcIceServerConfig, WebRtcRuntimeConfig,
 };
-use game_domain::{PlayerName, ReadyState, TeamSide};
-use game_net::{ClientControlCommand, ServerControlEvent};
+use game_domain::{PlayerName, ReadyState, SkillTree, TeamSide};
+use game_net::{ClientControlCommand, ServerControlEvent, ValidatedInputFrame, BUTTON_CAST};
 use game_sim::COMBAT_FRAME_MS;
 use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -40,7 +40,9 @@ struct WebRtcClient {
     event_rx: mpsc::UnboundedReceiver<ServerControlEvent>,
     peer: Arc<RTCPeerConnection>,
     control: Arc<RTCDataChannel>,
+    input: Arc<RTCDataChannel>,
     next_control_seq: u32,
+    next_input_seq: u32,
 }
 
 impl WebRtcClient {
@@ -147,7 +149,9 @@ impl WebRtcClient {
             event_rx,
             peer,
             control,
+            input,
             next_control_seq: 1,
+            next_input_seq: 1,
         };
         client
             .send_command(ClientControlCommand::Connect {
@@ -196,6 +200,17 @@ impl WebRtcClient {
         panic!("expected predicate to succeed within {max_events} events, got {events:?}");
     }
 
+    async fn send_input(&mut self, frame: ValidatedInputFrame, sim_tick: u32) {
+        let packet = frame
+            .encode_packet(self.next_input_seq, sim_tick)
+            .expect("input frame should encode");
+        self.input
+            .send(&Bytes::from(packet))
+            .await
+            .expect("input packet should send");
+        self.next_input_seq += 1;
+    }
+
     async fn close(self) {
         let _ = self.signal_tx.send(ClientSignalMessage::Bye);
         let _ = self.peer.close().await;
@@ -204,6 +219,11 @@ impl WebRtcClient {
 
 fn player_name(raw: &str) -> PlayerName {
     PlayerName::new(raw).expect("valid player name")
+}
+
+fn slot_one_cast_input(client_input_tick: u32) -> ValidatedInputFrame {
+    ValidatedInputFrame::new(client_input_tick, 0, 0, 0, 0, BUTTON_CAST, 1)
+        .expect("slot one cast frame should be valid")
 }
 
 async fn recv_hello(
@@ -552,6 +572,68 @@ async fn webrtc_transport_connects_and_streams_control_plus_snapshot_events() {
         event,
         ServerControlEvent::ArenaStateSnapshot { snapshot }
             if snapshot.players.len() == 2 && !snapshot.obstacles.is_empty()
+    )));
+
+    alice
+        .send_command(ClientControlCommand::ChooseSkill {
+            tree: SkillTree::Rogue,
+            tier: 1,
+        })
+        .await;
+    bob.send_command(ClientControlCommand::ChooseSkill {
+        tree: SkillTree::Warrior,
+        tier: 1,
+    })
+    .await;
+    let _ = alice
+        .recv_events_until(10, |event| {
+            matches!(event, ServerControlEvent::PreCombatStarted { .. })
+        })
+        .await;
+    let _ = bob
+        .recv_events_until(10, |event| {
+            matches!(event, ServerControlEvent::PreCombatStarted { .. })
+        })
+        .await;
+    let _ = alice
+        .recv_events_until(8, |event| {
+            matches!(event, ServerControlEvent::CombatStarted)
+        })
+        .await;
+    let _ = bob
+        .recv_events_until(8, |event| {
+            matches!(event, ServerControlEvent::CombatStarted)
+        })
+        .await;
+
+    alice.send_input(slot_one_cast_input(101), 101).await;
+    let alice_combat_events = alice
+        .recv_events_until(24, |event| {
+            matches!(
+                event,
+                ServerControlEvent::ArenaDeltaSnapshot { snapshot }
+                    if snapshot.players.iter().any(|player| player.mana < player.max_mana)
+            )
+        })
+        .await;
+    let bob_combat_events = bob
+        .recv_events_until(24, |event| {
+            matches!(
+                event,
+                ServerControlEvent::ArenaDeltaSnapshot { snapshot }
+                    if !snapshot.projectiles.is_empty()
+            )
+        })
+        .await;
+    assert!(alice_combat_events.iter().any(|event| matches!(
+        event,
+        ServerControlEvent::ArenaDeltaSnapshot { snapshot }
+            if snapshot.players.iter().any(|player| player.mana < player.max_mana)
+    )));
+    assert!(bob_combat_events.iter().any(|event| matches!(
+        event,
+        ServerControlEvent::ArenaDeltaSnapshot { snapshot }
+            if !snapshot.projectiles.is_empty()
     )));
 
     alice.close().await;

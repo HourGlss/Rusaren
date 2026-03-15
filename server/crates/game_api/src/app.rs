@@ -18,10 +18,11 @@ use game_domain::{
 use game_lobby::{Lobby, LobbyEvent, LobbyPhase};
 use game_match::{MatchConfig, MatchEvent, MatchPhase, MatchSession};
 use game_net::{
-    ArenaEffectKind, ArenaEffectSnapshot, ArenaObstacleKind, ArenaObstacleSnapshot,
-    ArenaPlayerSnapshot, ArenaProjectileSnapshot, ArenaStateSnapshot, ClientControlCommand,
-    LobbyDirectoryEntry, LobbySnapshotPhase, LobbySnapshotPlayer, SequenceTracker,
-    ServerControlEvent, ValidatedInputFrame, BUTTON_CAST, BUTTON_PRIMARY, BUTTON_QUIT_TO_LOBBY,
+    ArenaDeltaSnapshot, ArenaEffectKind, ArenaEffectSnapshot, ArenaMatchPhase, ArenaObstacleKind,
+    ArenaObstacleSnapshot, ArenaPlayerSnapshot, ArenaProjectileSnapshot, ArenaStateSnapshot,
+    ArenaStatusKind, ArenaStatusSnapshot, ClientControlCommand, LobbyDirectoryEntry,
+    LobbySnapshotPhase, LobbySnapshotPlayer, SequenceTracker, ServerControlEvent,
+    ValidatedInputFrame, BUTTON_CAST, BUTTON_PRIMARY, BUTTON_QUIT_TO_LOBBY,
 };
 use game_sim::{
     ArenaEffect, ArenaObstacle, MovementIntent, SimPlayerSeed, SimulationEvent, SimulationWorld,
@@ -914,7 +915,7 @@ impl ServerApp {
 
         let _ = runtime;
         if aim_changed {
-            self.broadcast_arena_state_snapshot(transport, match_id);
+            self.broadcast_arena_delta_snapshot(transport, match_id);
         }
     }
 
@@ -968,7 +969,7 @@ impl ServerApp {
             if !match_events.is_empty() {
                 self.dispatch_match_events(transport, match_id, &match_events);
             }
-            self.broadcast_arena_state_snapshot(transport, match_id);
+            self.broadcast_arena_delta_snapshot(transport, match_id);
         }
     }
 
@@ -1321,51 +1322,36 @@ impl ServerApp {
 
     fn build_arena_state_snapshot(&self, match_id: MatchId) -> Option<ArenaStateSnapshot> {
         let runtime = self.matches.get(&match_id)?;
-        let unlocked_skill_slots = runtime.session.current_round().get();
         let obstacles = runtime
             .world
             .obstacles()
             .iter()
             .map(Self::arena_obstacle_snapshot)
             .collect();
-        let players = runtime
-            .roster
-            .iter()
-            .filter_map(|assignment| {
-                runtime
-                    .world
-                    .player_state(assignment.player_id)
-                    .map(|state| {
-                        Self::arena_player_snapshot(assignment, state, unlocked_skill_slots)
-                    })
-            })
-            .collect();
-        let projectiles = runtime
-            .world
-            .projectiles()
-            .into_iter()
-            .map(|projectile| ArenaProjectileSnapshot {
-                owner: projectile.owner,
-                slot: projectile.slot,
-                kind: match projectile.kind {
-                    game_sim::ArenaEffectKind::MeleeSwing => ArenaEffectKind::MeleeSwing,
-                    game_sim::ArenaEffectKind::SkillShot => ArenaEffectKind::SkillShot,
-                    game_sim::ArenaEffectKind::DashTrail => ArenaEffectKind::DashTrail,
-                    game_sim::ArenaEffectKind::Burst => ArenaEffectKind::Burst,
-                    game_sim::ArenaEffectKind::Nova => ArenaEffectKind::Nova,
-                    game_sim::ArenaEffectKind::Beam => ArenaEffectKind::Beam,
-                    game_sim::ArenaEffectKind::HitSpark => ArenaEffectKind::HitSpark,
-                },
-                x: projectile.x,
-                y: projectile.y,
-                radius: projectile.radius,
-            })
-            .collect();
+        let players = Self::arena_players_snapshot(runtime);
+        let projectiles = Self::arena_projectiles_snapshot(runtime);
+        let (phase, phase_seconds_remaining) = Self::arena_match_phase_snapshot(&runtime.session);
 
         Some(ArenaStateSnapshot {
+            phase,
+            phase_seconds_remaining,
             width: runtime.world.arena_width_units(),
             height: runtime.world.arena_height_units(),
             obstacles,
+            players,
+            projectiles,
+        })
+    }
+
+    fn build_arena_delta_snapshot(&self, match_id: MatchId) -> Option<ArenaDeltaSnapshot> {
+        let runtime = self.matches.get(&match_id)?;
+        let players = Self::arena_players_snapshot(runtime);
+        let projectiles = Self::arena_projectiles_snapshot(runtime);
+        let (phase, phase_seconds_remaining) = Self::arena_match_phase_snapshot(&runtime.session);
+
+        Some(ArenaDeltaSnapshot {
+            phase,
+            phase_seconds_remaining,
             players,
             projectiles,
         })
@@ -1388,6 +1374,26 @@ impl ServerApp {
             transport,
             &recipients,
             ServerControlEvent::ArenaStateSnapshot { snapshot },
+        );
+    }
+
+    fn broadcast_arena_delta_snapshot<T: AppTransport>(
+        &mut self,
+        transport: &mut T,
+        match_id: MatchId,
+    ) {
+        let recipients = self.match_recipients(match_id);
+        if recipients.is_empty() {
+            return;
+        }
+
+        let Some(snapshot) = self.build_arena_delta_snapshot(match_id) else {
+            return;
+        };
+        self.broadcast_event(
+            transport,
+            &recipients,
+            ServerControlEvent::ArenaDeltaSnapshot { snapshot },
         );
     }
 
@@ -1429,6 +1435,7 @@ impl ServerApp {
     }
 
     fn arena_player_snapshot(
+        world: &SimulationWorld,
         assignment: &TeamAssignment,
         state: game_sim::SimPlayerState,
         unlocked_skill_slots: u8,
@@ -1443,12 +1450,93 @@ impl ServerApp {
             aim_y: state.aim_y,
             hit_points: state.hit_points,
             max_hit_points: state.max_hit_points,
+            mana: state.mana,
+            max_mana: state.max_mana,
             alive: state.alive,
             unlocked_skill_slots,
             primary_cooldown_remaining_ms: state.primary_cooldown_remaining_ms,
             primary_cooldown_total_ms: state.primary_cooldown_total_ms,
             slot_cooldown_remaining_ms: state.slot_cooldown_remaining_ms,
             slot_cooldown_total_ms: state.slot_cooldown_total_ms,
+            active_statuses: world
+                .statuses_for(assignment.player_id)
+                .unwrap_or_default()
+                .into_iter()
+                .map(Self::arena_status_snapshot)
+                .collect(),
+        }
+    }
+
+    fn arena_players_snapshot(runtime: &MatchRuntime) -> Vec<ArenaPlayerSnapshot> {
+        let unlocked_skill_slots = runtime.session.current_round().get();
+        runtime
+            .roster
+            .iter()
+            .filter_map(|assignment| {
+                runtime
+                    .world
+                    .player_state(assignment.player_id)
+                    .map(|state| {
+                        Self::arena_player_snapshot(
+                            &runtime.world,
+                            assignment,
+                            state,
+                            unlocked_skill_slots,
+                        )
+                    })
+            })
+            .collect()
+    }
+
+    fn arena_projectiles_snapshot(runtime: &MatchRuntime) -> Vec<ArenaProjectileSnapshot> {
+        runtime
+            .world
+            .projectiles()
+            .into_iter()
+            .map(|projectile| ArenaProjectileSnapshot {
+                owner: projectile.owner,
+                slot: projectile.slot,
+                kind: match projectile.kind {
+                    game_sim::ArenaEffectKind::MeleeSwing => ArenaEffectKind::MeleeSwing,
+                    game_sim::ArenaEffectKind::SkillShot => ArenaEffectKind::SkillShot,
+                    game_sim::ArenaEffectKind::DashTrail => ArenaEffectKind::DashTrail,
+                    game_sim::ArenaEffectKind::Burst => ArenaEffectKind::Burst,
+                    game_sim::ArenaEffectKind::Nova => ArenaEffectKind::Nova,
+                    game_sim::ArenaEffectKind::Beam => ArenaEffectKind::Beam,
+                    game_sim::ArenaEffectKind::HitSpark => ArenaEffectKind::HitSpark,
+                },
+                x: projectile.x,
+                y: projectile.y,
+                radius: projectile.radius,
+            })
+            .collect()
+    }
+
+    fn arena_status_snapshot(status: game_sim::SimStatusState) -> ArenaStatusSnapshot {
+        ArenaStatusSnapshot {
+            source: status.source,
+            slot: status.slot,
+            kind: match status.kind {
+                game_content::StatusKind::Poison => ArenaStatusKind::Poison,
+                game_content::StatusKind::Hot => ArenaStatusKind::Hot,
+                game_content::StatusKind::Chill => ArenaStatusKind::Chill,
+                game_content::StatusKind::Root => ArenaStatusKind::Root,
+            },
+            stacks: status.stacks,
+            remaining_ms: status.remaining_ms,
+        }
+    }
+
+    fn arena_match_phase_snapshot(session: &MatchSession) -> (ArenaMatchPhase, Option<u8>) {
+        match session.phase() {
+            MatchPhase::SkillPick { seconds_remaining } => {
+                (ArenaMatchPhase::SkillPick, Some(*seconds_remaining))
+            }
+            MatchPhase::PreCombat { seconds_remaining } => {
+                (ArenaMatchPhase::PreCombat, Some(*seconds_remaining))
+            }
+            MatchPhase::Combat => (ArenaMatchPhase::Combat, None),
+            MatchPhase::MatchEnd { .. } => (ArenaMatchPhase::MatchEnd, None),
         }
     }
 
@@ -2247,6 +2335,50 @@ mod tests {
 
         let match_id = launch_match(&mut server, &mut transport, &mut alice, &mut bob);
         assert_eq!(match_id.get(), 1);
+    }
+
+    #[test]
+    fn fake_clients_receive_delta_snapshots_with_runtime_status_and_mana_state() {
+        let mut server = ServerApp::new();
+        let mut transport = InMemoryTransport::new();
+        let (mut alice, mut bob) = connect_pair(&mut server, &mut transport);
+
+        let _ = launch_match(&mut server, &mut transport, &mut alice, &mut bob);
+
+        alice
+            .choose_skill(&mut transport, skill(SkillTree::Rogue, 1))
+            .expect("alice skill");
+        bob.choose_skill(&mut transport, skill(SkillTree::Warrior, 1))
+            .expect("bob skill");
+        server.pump_transport(&mut transport);
+        let _ = alice
+            .drain_events(&mut transport)
+            .expect("alice skill events");
+        let _ = bob.drain_events(&mut transport).expect("bob skill events");
+
+        server.advance_seconds(&mut transport, 5);
+        let _ = alice
+            .drain_events(&mut transport)
+            .expect("alice pre-combat events");
+        let _ = bob
+            .drain_events(&mut transport)
+            .expect("bob pre-combat events");
+
+        let (alice_events, bob_events) =
+            cast_until_round_won(&mut server, &mut transport, &mut alice, &mut bob, 1);
+        assert!(alice_events.iter().any(|event| matches!(
+            event,
+            ServerControlEvent::ArenaDeltaSnapshot { snapshot }
+                if snapshot.players.iter().any(|player| player.mana < player.max_mana)
+        )));
+        assert!(bob_events.iter().any(|event| matches!(
+            event,
+            ServerControlEvent::ArenaDeltaSnapshot { snapshot }
+                if snapshot.players.iter().any(|player| {
+                    player.player_id == bob.player_id().expect("bob id")
+                        && player.active_statuses.iter().any(|status| status.kind == ArenaStatusKind::Poison)
+                })
+        )));
     }
 
     #[test]

@@ -913,6 +913,11 @@ async fn websocket_adapter_finishes_a_full_match_loop_via_live_input_frames() {
                 cast_until_round_won(&mut alice, &mut bob, round).await;
             assert!(alice_round_events.iter().any(|event| matches!(
                 event,
+                ServerControlEvent::ArenaDeltaSnapshot { snapshot }
+                    if snapshot.players.len() == 2
+            )));
+            assert!(alice_round_events.iter().any(|event| matches!(
+                event,
                 ServerControlEvent::ArenaEffectBatch { effects }
                     if effects.iter().any(|effect| effect.slot == 1)
             )));
@@ -937,6 +942,11 @@ async fn websocket_adapter_finishes_a_full_match_loop_via_live_input_frames() {
         } else {
             let (mut alice_match_events, mut bob_match_events) =
                 cast_until_round_won(&mut alice, &mut bob, round).await;
+            assert!(alice_match_events.iter().any(|event| matches!(
+                event,
+                ServerControlEvent::ArenaDeltaSnapshot { snapshot }
+                    if snapshot.players.len() == 2
+            )));
             alice_match_events.extend(
                 recv_events_until(&mut alice, 8, |event| {
                     matches!(event, ServerControlEvent::MatchEnded { .. })

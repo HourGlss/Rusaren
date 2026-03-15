@@ -5,10 +5,10 @@ use game_domain::{
     SkillTree, TeamSide,
 };
 use game_net::{
-    ArenaEffectKind, ArenaEffectSnapshot, ArenaObstacleKind, ArenaObstacleSnapshot,
-    ArenaPlayerSnapshot, ArenaStateSnapshot, ChannelId, ClientControlCommand, LobbyDirectoryEntry,
-    LobbySnapshotPhase, LobbySnapshotPlayer, PacketError, PacketHeader, PacketKind,
-    ServerControlEvent,
+    ArenaDeltaSnapshot, ArenaEffectKind, ArenaEffectSnapshot, ArenaMatchPhase, ArenaObstacleKind,
+    ArenaObstacleSnapshot, ArenaPlayerSnapshot, ArenaStateSnapshot, ArenaStatusKind,
+    ArenaStatusSnapshot, ChannelId, ClientControlCommand, LobbyDirectoryEntry, LobbySnapshotPhase,
+    LobbySnapshotPlayer, PacketError, PacketHeader, PacketKind, ServerControlEvent,
 };
 
 fn player_id(raw: u32) -> PlayerId {
@@ -269,9 +269,46 @@ fn server_control_event_round_trips_lobby_directory_and_snapshot_packets() {
 }
 
 #[test]
-fn server_control_event_round_trips_arena_packets() {
-    let arena_state = ServerControlEvent::ArenaStateSnapshot {
+fn server_control_event_round_trips_full_arena_snapshot() {
+    let arena_state = sample_full_arena_snapshot_event();
+    let arena_packet = arena_state.clone().encode_packet(6, 22).expect("packet");
+    let (arena_header, decoded_arena_state) =
+        ServerControlEvent::decode_packet(&arena_packet).expect("decode");
+
+    assert_eq!(arena_header.channel_id, ChannelId::Snapshot);
+    assert_eq!(arena_header.packet_kind, PacketKind::FullSnapshot);
+    assert_eq!(decoded_arena_state, arena_state);
+}
+
+#[test]
+fn server_control_event_round_trips_delta_arena_snapshot() {
+    let arena_delta = sample_delta_arena_snapshot_event();
+    let delta_packet = arena_delta.clone().encode_packet(7, 22).expect("packet");
+    let (delta_header, decoded_arena_delta) =
+        ServerControlEvent::decode_packet(&delta_packet).expect("decode");
+
+    assert_eq!(delta_header.channel_id, ChannelId::Snapshot);
+    assert_eq!(delta_header.packet_kind, PacketKind::DeltaSnapshot);
+    assert_eq!(decoded_arena_delta, arena_delta);
+}
+
+#[test]
+fn server_control_event_round_trips_arena_effect_batch() {
+    let effect_batch = sample_arena_effect_batch_event();
+    let effects_packet = effect_batch.clone().encode_packet(8, 22).expect("packet");
+    let (effects_header, decoded_effect_batch) =
+        ServerControlEvent::decode_packet(&effects_packet).expect("decode");
+
+    assert_eq!(effects_header.channel_id, ChannelId::Snapshot);
+    assert_eq!(effects_header.packet_kind, PacketKind::EventBatch);
+    assert_eq!(decoded_effect_batch, effect_batch);
+}
+
+fn sample_full_arena_snapshot_event() -> ServerControlEvent {
+    ServerControlEvent::ArenaStateSnapshot {
         snapshot: ArenaStateSnapshot {
+            phase: ArenaMatchPhase::Combat,
+            phase_seconds_remaining: None,
             width: 1800,
             height: 1200,
             obstacles: vec![
@@ -300,17 +337,65 @@ fn server_control_event_round_trips_arena_packets() {
                 aim_y: 0,
                 hit_points: 100,
                 max_hit_points: 100,
+                mana: 72,
+                max_mana: 100,
                 alive: true,
                 unlocked_skill_slots: 3,
                 primary_cooldown_remaining_ms: 250,
                 primary_cooldown_total_ms: 650,
                 slot_cooldown_remaining_ms: [100, 0, 900, 0, 0],
                 slot_cooldown_total_ms: [700, 1700, 2200, 0, 0],
+                active_statuses: vec![ArenaStatusSnapshot {
+                    source: player_id(8),
+                    slot: 2,
+                    kind: ArenaStatusKind::Poison,
+                    stacks: 2,
+                    remaining_ms: 1800,
+                }],
             }],
             projectiles: vec![],
         },
-    };
-    let effect_batch = ServerControlEvent::ArenaEffectBatch {
+    }
+}
+
+fn sample_delta_arena_snapshot_event() -> ServerControlEvent {
+    ServerControlEvent::ArenaDeltaSnapshot {
+        snapshot: ArenaDeltaSnapshot {
+            phase: ArenaMatchPhase::Combat,
+            phase_seconds_remaining: None,
+            players: vec![ArenaPlayerSnapshot {
+                player_id: player_id(7),
+                player_name: player_name("Alice"),
+                team: TeamSide::TeamA,
+                x: -620,
+                y: 220,
+                aim_x: 90,
+                aim_y: -40,
+                hit_points: 92,
+                max_hit_points: 100,
+                mana: 64,
+                max_mana: 100,
+                alive: true,
+                unlocked_skill_slots: 3,
+                primary_cooldown_remaining_ms: 180,
+                primary_cooldown_total_ms: 650,
+                slot_cooldown_remaining_ms: [0, 0, 800, 0, 0],
+                slot_cooldown_total_ms: [700, 1700, 2200, 0, 0],
+                active_statuses: vec![ArenaStatusSnapshot {
+                    source: player_id(8),
+                    slot: 2,
+                    kind: ArenaStatusKind::Poison,
+                    stacks: 3,
+                    remaining_ms: 1400,
+                }],
+            }],
+            projectiles: vec![],
+        },
+    }
+}
+
+fn sample_arena_effect_batch_event() -> ServerControlEvent {
+    ServerControlEvent::ArenaEffectBatch {
         effects: vec![ArenaEffectSnapshot {
             kind: ArenaEffectKind::SkillShot,
             owner: player_id(7),
@@ -321,21 +406,7 @@ fn server_control_event_round_trips_arena_packets() {
             target_y: 220,
             radius: 28,
         }],
-    };
-
-    let arena_packet = arena_state.clone().encode_packet(6, 22).expect("packet");
-    let effects_packet = effect_batch.clone().encode_packet(7, 22).expect("packet");
-    let (arena_header, decoded_arena_state) =
-        ServerControlEvent::decode_packet(&arena_packet).expect("decode");
-    let (effects_header, decoded_effect_batch) =
-        ServerControlEvent::decode_packet(&effects_packet).expect("decode");
-
-    assert_eq!(arena_header.channel_id, ChannelId::Snapshot);
-    assert_eq!(arena_header.packet_kind, PacketKind::FullSnapshot);
-    assert_eq!(effects_header.channel_id, ChannelId::Snapshot);
-    assert_eq!(effects_header.packet_kind, PacketKind::EventBatch);
-    assert_eq!(decoded_arena_state, arena_state);
-    assert_eq!(decoded_effect_batch, effect_batch);
+    }
 }
 
 #[test]
@@ -359,7 +430,7 @@ fn server_control_event_rejects_bad_payloads_and_unknown_variants() {
 
 #[test]
 fn server_control_event_rejects_invalid_arena_kinds() {
-    let mut arena_payload = vec![19];
+    let mut arena_payload = vec![19, 3, 0];
     arena_payload.extend_from_slice(&1800_u16.to_le_bytes());
     arena_payload.extend_from_slice(&1200_u16.to_le_bytes());
     arena_payload.extend_from_slice(&1_u16.to_le_bytes());
@@ -384,7 +455,7 @@ fn server_control_event_rejects_invalid_arena_kinds() {
         Err(PacketError::InvalidEncodedArenaObstacleKind(9))
     );
 
-    let mut effect_payload = vec![20];
+    let mut effect_payload = vec![21];
     effect_payload.extend_from_slice(&1_u16.to_le_bytes());
     effect_payload.push(9);
     effect_payload.extend_from_slice(&7_u32.to_le_bytes());
@@ -407,6 +478,73 @@ fn server_control_event_rejects_invalid_arena_kinds() {
     assert_eq!(
         ServerControlEvent::decode_packet(&packet),
         Err(PacketError::InvalidEncodedArenaEffectKind(9))
+    );
+}
+
+#[test]
+fn server_control_event_rejects_invalid_delta_snapshot_phase_and_status_values() {
+    let mut bad_phase_payload = vec![20, 9, 0];
+    bad_phase_payload.extend_from_slice(&0_u16.to_le_bytes());
+    bad_phase_payload.extend_from_slice(&0_u16.to_le_bytes());
+    let header = PacketHeader::new(
+        ChannelId::Snapshot,
+        PacketKind::DeltaSnapshot,
+        0,
+        u16::try_from(bad_phase_payload.len()).expect("payload length should fit"),
+        5,
+        1,
+    )
+    .expect("header");
+    let packet = header.encode(&bad_phase_payload);
+    assert_eq!(
+        ServerControlEvent::decode_packet(&packet),
+        Err(PacketError::InvalidEncodedArenaMatchPhase(9))
+    );
+
+    let mut bad_status_payload = vec![20, 3, 0];
+    bad_status_payload.extend_from_slice(&1_u16.to_le_bytes());
+    bad_status_payload.extend_from_slice(&7_u32.to_le_bytes());
+    bad_status_payload.push(5);
+    bad_status_payload.extend_from_slice(b"Alice");
+    bad_status_payload.push(1);
+    bad_status_payload.extend_from_slice(&0_i16.to_le_bytes());
+    bad_status_payload.extend_from_slice(&0_i16.to_le_bytes());
+    bad_status_payload.extend_from_slice(&120_i16.to_le_bytes());
+    bad_status_payload.extend_from_slice(&0_i16.to_le_bytes());
+    bad_status_payload.extend_from_slice(&100_u16.to_le_bytes());
+    bad_status_payload.extend_from_slice(&100_u16.to_le_bytes());
+    bad_status_payload.extend_from_slice(&80_u16.to_le_bytes());
+    bad_status_payload.extend_from_slice(&100_u16.to_le_bytes());
+    bad_status_payload.push(1);
+    bad_status_payload.push(3);
+    bad_status_payload.extend_from_slice(&0_u16.to_le_bytes());
+    bad_status_payload.extend_from_slice(&600_u16.to_le_bytes());
+    for _ in 0..5 {
+        bad_status_payload.extend_from_slice(&0_u16.to_le_bytes());
+    }
+    for _ in 0..5 {
+        bad_status_payload.extend_from_slice(&0_u16.to_le_bytes());
+    }
+    bad_status_payload.push(1);
+    bad_status_payload.extend_from_slice(&8_u32.to_le_bytes());
+    bad_status_payload.push(1);
+    bad_status_payload.push(9);
+    bad_status_payload.push(2);
+    bad_status_payload.extend_from_slice(&1400_u16.to_le_bytes());
+    bad_status_payload.extend_from_slice(&0_u16.to_le_bytes());
+    let header = PacketHeader::new(
+        ChannelId::Snapshot,
+        PacketKind::DeltaSnapshot,
+        0,
+        u16::try_from(bad_status_payload.len()).expect("payload length should fit"),
+        6,
+        1,
+    )
+    .expect("header");
+    let packet = header.encode(&bad_status_payload);
+    assert_eq!(
+        ServerControlEvent::decode_packet(&packet),
+        Err(PacketError::InvalidEncodedArenaStatusKind(9))
     );
 }
 

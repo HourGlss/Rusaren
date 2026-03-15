@@ -202,6 +202,9 @@ pub enum ServerControlEvent {
     ArenaStateSnapshot {
         snapshot: ArenaStateSnapshot,
     },
+    ArenaDeltaSnapshot {
+        snapshot: ArenaDeltaSnapshot,
+    },
     ArenaEffectBatch {
         effects: Vec<ArenaEffectSnapshot>,
     },
@@ -242,6 +245,31 @@ pub enum ArenaObstacleKind {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ArenaMatchPhase {
+    SkillPick,
+    PreCombat,
+    Combat,
+    MatchEnd,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ArenaStatusKind {
+    Poison,
+    Hot,
+    Chill,
+    Root,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ArenaStatusSnapshot {
+    pub source: PlayerId,
+    pub slot: u8,
+    pub kind: ArenaStatusKind,
+    pub stacks: u8,
+    pub remaining_ms: u16,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ArenaObstacleSnapshot {
     pub kind: ArenaObstacleKind,
     pub center_x: i16,
@@ -261,12 +289,15 @@ pub struct ArenaPlayerSnapshot {
     pub aim_y: i16,
     pub hit_points: u16,
     pub max_hit_points: u16,
+    pub mana: u16,
+    pub max_mana: u16,
     pub alive: bool,
     pub unlocked_skill_slots: u8,
     pub primary_cooldown_remaining_ms: u16,
     pub primary_cooldown_total_ms: u16,
     pub slot_cooldown_remaining_ms: [u16; 5],
     pub slot_cooldown_total_ms: [u16; 5],
+    pub active_statuses: Vec<ArenaStatusSnapshot>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -304,9 +335,19 @@ pub struct ArenaEffectSnapshot {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ArenaStateSnapshot {
+    pub phase: ArenaMatchPhase,
+    pub phase_seconds_remaining: Option<u8>,
     pub width: u16,
     pub height: u16,
     pub obstacles: Vec<ArenaObstacleSnapshot>,
+    pub players: Vec<ArenaPlayerSnapshot>,
+    pub projectiles: Vec<ArenaProjectileSnapshot>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ArenaDeltaSnapshot {
+    pub phase: ArenaMatchPhase,
+    pub phase_seconds_remaining: Option<u8>,
     pub players: Vec<ArenaPlayerSnapshot>,
     pub projectiles: Vec<ArenaProjectileSnapshot>,
 }
@@ -332,7 +373,10 @@ impl ServerControlEvent {
         let (header, payload) = PacketHeader::decode(packet)?;
         match (header.channel_id, header.packet_kind) {
             (ChannelId::Control, PacketKind::ControlEvent)
-            | (ChannelId::Snapshot, PacketKind::FullSnapshot | PacketKind::EventBatch) => {}
+            | (
+                ChannelId::Snapshot,
+                PacketKind::FullSnapshot | PacketKind::DeltaSnapshot | PacketKind::EventBatch,
+            ) => {}
             _ => {
                 return Err(PacketError::UnexpectedPacketKind {
                     expected_channel: ChannelId::Control,
@@ -358,6 +402,7 @@ impl ServerControlEvent {
     const fn transport_metadata(&self) -> (ChannelId, PacketKind) {
         match self {
             Self::ArenaStateSnapshot { .. } => (ChannelId::Snapshot, PacketKind::FullSnapshot),
+            Self::ArenaDeltaSnapshot { .. } => (ChannelId::Snapshot, PacketKind::DeltaSnapshot),
             Self::ArenaEffectBatch { .. } => (ChannelId::Snapshot, PacketKind::EventBatch),
             _ => (ChannelId::Control, PacketKind::ControlEvent),
         }
@@ -384,7 +429,8 @@ impl ServerControlEvent {
             Self::LobbyDirectorySnapshot { .. } => 17,
             Self::GameLobbySnapshot { .. } => 18,
             Self::ArenaStateSnapshot { .. } => 19,
-            Self::ArenaEffectBatch { .. } => 20,
+            Self::ArenaDeltaSnapshot { .. } => 20,
+            Self::ArenaEffectBatch { .. } => 21,
         }
     }
 
@@ -489,6 +535,9 @@ impl ServerControlEvent {
             Self::ArenaStateSnapshot { snapshot } => {
                 encode_arena_state_snapshot(payload, &snapshot)
             }
+            Self::ArenaDeltaSnapshot { snapshot } => {
+                encode_arena_delta_snapshot(payload, &snapshot)
+            }
             Self::ArenaEffectBatch { effects } => encode_arena_effect_batch(payload, &effects),
             Self::Error { message } => {
                 push_len_prefixed_string(payload, "message", &message, MAX_MESSAGE_BYTES)
@@ -544,7 +593,8 @@ impl ServerControlEvent {
             17 => decode_lobby_directory_snapshot(payload, index),
             18 => decode_game_lobby_snapshot(payload, index),
             19 => decode_arena_state_snapshot(payload, index),
-            20 => decode_arena_effect_batch(payload, index),
+            20 => decode_arena_delta_snapshot(payload, index),
+            21 => decode_arena_effect_batch(payload, index),
             other => Err(PacketError::UnknownServerEvent(other)),
         }
     }
@@ -897,6 +947,8 @@ fn encode_arena_state_snapshot(
     payload: &mut Vec<u8>,
     snapshot: &ArenaStateSnapshot,
 ) -> Result<(), PacketError> {
+    payload.push(encode_arena_match_phase(snapshot.phase));
+    encode_optional_u8(payload, snapshot.phase_seconds_remaining);
     payload.extend_from_slice(&snapshot.width.to_le_bytes());
     payload.extend_from_slice(&snapshot.height.to_le_bytes());
 
@@ -914,53 +966,8 @@ fn encode_arena_state_snapshot(
         payload.extend_from_slice(&obstacle.half_height.to_le_bytes());
     }
 
-    let player_count =
-        u16::try_from(snapshot.players.len()).map_err(|_| PacketError::PayloadTooLarge {
-            actual: snapshot.players.len(),
-            maximum: usize::from(u16::MAX),
-        })?;
-    payload.extend_from_slice(&player_count.to_le_bytes());
-    for player in &snapshot.players {
-        payload.extend_from_slice(&player.player_id.get().to_le_bytes());
-        push_len_prefixed_string(
-            payload,
-            "player_name",
-            player.player_name.as_str(),
-            game_domain::MAX_PLAYER_NAME_LEN,
-        )?;
-        payload.push(encode_team(player.team));
-        payload.extend_from_slice(&player.x.to_le_bytes());
-        payload.extend_from_slice(&player.y.to_le_bytes());
-        payload.extend_from_slice(&player.aim_x.to_le_bytes());
-        payload.extend_from_slice(&player.aim_y.to_le_bytes());
-        payload.extend_from_slice(&player.hit_points.to_le_bytes());
-        payload.extend_from_slice(&player.max_hit_points.to_le_bytes());
-        payload.push(u8::from(player.alive));
-        payload.push(player.unlocked_skill_slots);
-        payload.extend_from_slice(&player.primary_cooldown_remaining_ms.to_le_bytes());
-        payload.extend_from_slice(&player.primary_cooldown_total_ms.to_le_bytes());
-        for remaining in player.slot_cooldown_remaining_ms {
-            payload.extend_from_slice(&remaining.to_le_bytes());
-        }
-        for total in player.slot_cooldown_total_ms {
-            payload.extend_from_slice(&total.to_le_bytes());
-        }
-    }
-
-    let projectile_count =
-        u16::try_from(snapshot.projectiles.len()).map_err(|_| PacketError::PayloadTooLarge {
-            actual: snapshot.projectiles.len(),
-            maximum: usize::from(u16::MAX),
-        })?;
-    payload.extend_from_slice(&projectile_count.to_le_bytes());
-    for projectile in &snapshot.projectiles {
-        payload.extend_from_slice(&projectile.owner.get().to_le_bytes());
-        payload.push(projectile.slot);
-        payload.push(encode_arena_effect_kind(projectile.kind));
-        payload.extend_from_slice(&projectile.x.to_le_bytes());
-        payload.extend_from_slice(&projectile.y.to_le_bytes());
-        payload.extend_from_slice(&projectile.radius.to_le_bytes());
-    }
+    encode_arena_players(payload, &snapshot.players)?;
+    encode_arena_projectiles(payload, &snapshot.projectiles)?;
 
     Ok(())
 }
@@ -969,6 +976,8 @@ fn decode_arena_state_snapshot(
     payload: &[u8],
     index: &mut usize,
 ) -> Result<ServerControlEvent, PacketError> {
+    let phase = read_arena_match_phase(payload, index, "ArenaStateSnapshot")?;
+    let phase_seconds_remaining = read_optional_u8(payload, index, "ArenaStateSnapshot")?;
     let width = read_u16(payload, index, "ArenaStateSnapshot")?;
     let height = read_u16(payload, index, "ArenaStateSnapshot")?;
     let obstacle_count = usize::from(read_u16(payload, index, "ArenaStateSnapshot")?);
@@ -983,29 +992,153 @@ fn decode_arena_state_snapshot(
         });
     }
 
-    let player_count = usize::from(read_u16(payload, index, "ArenaStateSnapshot")?);
+    let players = decode_arena_players(payload, index, "ArenaStateSnapshot")?;
+    let projectiles = decode_arena_projectiles(payload, index, "ArenaStateSnapshot")?;
+
+    Ok(ServerControlEvent::ArenaStateSnapshot {
+        snapshot: ArenaStateSnapshot {
+            phase,
+            phase_seconds_remaining,
+            width,
+            height,
+            obstacles,
+            players,
+            projectiles,
+        },
+    })
+}
+
+fn encode_arena_delta_snapshot(
+    payload: &mut Vec<u8>,
+    snapshot: &ArenaDeltaSnapshot,
+) -> Result<(), PacketError> {
+    payload.push(encode_arena_match_phase(snapshot.phase));
+    encode_optional_u8(payload, snapshot.phase_seconds_remaining);
+    encode_arena_players(payload, &snapshot.players)?;
+    encode_arena_projectiles(payload, &snapshot.projectiles)?;
+    Ok(())
+}
+
+fn decode_arena_delta_snapshot(
+    payload: &[u8],
+    index: &mut usize,
+) -> Result<ServerControlEvent, PacketError> {
+    let phase = read_arena_match_phase(payload, index, "ArenaDeltaSnapshot")?;
+    let phase_seconds_remaining = read_optional_u8(payload, index, "ArenaDeltaSnapshot")?;
+    let players = decode_arena_players(payload, index, "ArenaDeltaSnapshot")?;
+    let projectiles = decode_arena_projectiles(payload, index, "ArenaDeltaSnapshot")?;
+    Ok(ServerControlEvent::ArenaDeltaSnapshot {
+        snapshot: ArenaDeltaSnapshot {
+            phase,
+            phase_seconds_remaining,
+            players,
+            projectiles,
+        },
+    })
+}
+
+fn encode_arena_players(
+    payload: &mut Vec<u8>,
+    players: &[ArenaPlayerSnapshot],
+) -> Result<(), PacketError> {
+    let player_count = u16::try_from(players.len()).map_err(|_| PacketError::PayloadTooLarge {
+        actual: players.len(),
+        maximum: usize::from(u16::MAX),
+    })?;
+    payload.extend_from_slice(&player_count.to_le_bytes());
+    for player in players {
+        encode_arena_player(payload, player)?;
+    }
+    Ok(())
+}
+
+fn encode_arena_player(
+    payload: &mut Vec<u8>,
+    player: &ArenaPlayerSnapshot,
+) -> Result<(), PacketError> {
+    payload.extend_from_slice(&player.player_id.get().to_le_bytes());
+    push_len_prefixed_string(
+        payload,
+        "player_name",
+        player.player_name.as_str(),
+        game_domain::MAX_PLAYER_NAME_LEN,
+    )?;
+    payload.push(encode_team(player.team));
+    payload.extend_from_slice(&player.x.to_le_bytes());
+    payload.extend_from_slice(&player.y.to_le_bytes());
+    payload.extend_from_slice(&player.aim_x.to_le_bytes());
+    payload.extend_from_slice(&player.aim_y.to_le_bytes());
+    payload.extend_from_slice(&player.hit_points.to_le_bytes());
+    payload.extend_from_slice(&player.max_hit_points.to_le_bytes());
+    payload.extend_from_slice(&player.mana.to_le_bytes());
+    payload.extend_from_slice(&player.max_mana.to_le_bytes());
+    payload.push(u8::from(player.alive));
+    payload.push(player.unlocked_skill_slots);
+    payload.extend_from_slice(&player.primary_cooldown_remaining_ms.to_le_bytes());
+    payload.extend_from_slice(&player.primary_cooldown_total_ms.to_le_bytes());
+    for remaining in player.slot_cooldown_remaining_ms {
+        payload.extend_from_slice(&remaining.to_le_bytes());
+    }
+    for total in player.slot_cooldown_total_ms {
+        payload.extend_from_slice(&total.to_le_bytes());
+    }
+    let status_count =
+        u8::try_from(player.active_statuses.len()).map_err(|_| PacketError::PayloadTooLarge {
+            actual: player.active_statuses.len(),
+            maximum: usize::from(u8::MAX),
+        })?;
+    payload.push(status_count);
+    for status in &player.active_statuses {
+        payload.extend_from_slice(&status.source.get().to_le_bytes());
+        payload.push(status.slot);
+        payload.push(encode_arena_status_kind(status.kind));
+        payload.push(status.stacks);
+        payload.extend_from_slice(&status.remaining_ms.to_le_bytes());
+    }
+    Ok(())
+}
+
+fn decode_arena_players(
+    payload: &[u8],
+    index: &mut usize,
+    kind: &'static str,
+) -> Result<Vec<ArenaPlayerSnapshot>, PacketError> {
+    let player_count = usize::from(read_u16(payload, index, kind)?);
     let mut players = Vec::with_capacity(player_count);
     for _ in 0..player_count {
-        let player_id = read_player_id(payload, index, "ArenaStateSnapshot")?;
-        let player_name = read_player_name(payload, index, "ArenaStateSnapshot")?;
-        let team = read_team(payload, index, "ArenaStateSnapshot")?;
-        let x = read_i16(payload, index, "ArenaStateSnapshot")?;
-        let y = read_i16(payload, index, "ArenaStateSnapshot")?;
-        let aim_x = read_i16(payload, index, "ArenaStateSnapshot")?;
-        let aim_y = read_i16(payload, index, "ArenaStateSnapshot")?;
-        let hit_points = read_u16(payload, index, "ArenaStateSnapshot")?;
-        let max_hit_points = read_u16(payload, index, "ArenaStateSnapshot")?;
-        let alive = read_bool(payload, index, "ArenaStateSnapshot")?;
-        let unlocked_skill_slots = read_u8(payload, index, "ArenaStateSnapshot")?;
-        let primary_cooldown_remaining_ms = read_u16(payload, index, "ArenaStateSnapshot")?;
-        let primary_cooldown_total_ms = read_u16(payload, index, "ArenaStateSnapshot")?;
+        let player_id = read_player_id(payload, index, kind)?;
+        let player_name = read_player_name(payload, index, kind)?;
+        let team = read_team(payload, index, kind)?;
+        let x = read_i16(payload, index, kind)?;
+        let y = read_i16(payload, index, kind)?;
+        let aim_x = read_i16(payload, index, kind)?;
+        let aim_y = read_i16(payload, index, kind)?;
+        let hit_points = read_u16(payload, index, kind)?;
+        let max_hit_points = read_u16(payload, index, kind)?;
+        let mana = read_u16(payload, index, kind)?;
+        let max_mana = read_u16(payload, index, kind)?;
+        let alive = read_bool(payload, index, kind)?;
+        let unlocked_skill_slots = read_u8(payload, index, kind)?;
+        let primary_cooldown_remaining_ms = read_u16(payload, index, kind)?;
+        let primary_cooldown_total_ms = read_u16(payload, index, kind)?;
         let mut slot_cooldown_remaining_ms = [0_u16; 5];
         for remaining in &mut slot_cooldown_remaining_ms {
-            *remaining = read_u16(payload, index, "ArenaStateSnapshot")?;
+            *remaining = read_u16(payload, index, kind)?;
         }
         let mut slot_cooldown_total_ms = [0_u16; 5];
         for total in &mut slot_cooldown_total_ms {
-            *total = read_u16(payload, index, "ArenaStateSnapshot")?;
+            *total = read_u16(payload, index, kind)?;
+        }
+        let status_count = usize::from(read_u8(payload, index, kind)?);
+        let mut active_statuses = Vec::with_capacity(status_count);
+        for _ in 0..status_count {
+            active_statuses.push(ArenaStatusSnapshot {
+                source: read_player_id(payload, index, kind)?,
+                slot: read_u8(payload, index, kind)?,
+                kind: read_arena_status_kind(payload, index, kind)?,
+                stacks: read_u8(payload, index, kind)?,
+                remaining_ms: read_u16(payload, index, kind)?,
+            });
         }
         players.push(ArenaPlayerSnapshot {
             player_id,
@@ -1017,37 +1150,59 @@ fn decode_arena_state_snapshot(
             aim_y,
             hit_points,
             max_hit_points,
+            mana,
+            max_mana,
             alive,
             unlocked_skill_slots,
             primary_cooldown_remaining_ms,
             primary_cooldown_total_ms,
             slot_cooldown_remaining_ms,
             slot_cooldown_total_ms,
+            active_statuses,
         });
     }
+    Ok(players)
+}
 
-    let projectile_count = usize::from(read_u16(payload, index, "ArenaStateSnapshot")?);
+fn encode_arena_projectiles(
+    payload: &mut Vec<u8>,
+    projectiles: &[ArenaProjectileSnapshot],
+) -> Result<(), PacketError> {
+    let projectile_count =
+        u16::try_from(projectiles.len()).map_err(|_| PacketError::PayloadTooLarge {
+            actual: projectiles.len(),
+            maximum: usize::from(u16::MAX),
+        })?;
+    payload.extend_from_slice(&projectile_count.to_le_bytes());
+    for projectile in projectiles {
+        payload.extend_from_slice(&projectile.owner.get().to_le_bytes());
+        payload.push(projectile.slot);
+        payload.push(encode_arena_effect_kind(projectile.kind));
+        payload.extend_from_slice(&projectile.x.to_le_bytes());
+        payload.extend_from_slice(&projectile.y.to_le_bytes());
+        payload.extend_from_slice(&projectile.radius.to_le_bytes());
+    }
+    Ok(())
+}
+
+fn decode_arena_projectiles(
+    payload: &[u8],
+    index: &mut usize,
+    kind: &'static str,
+) -> Result<Vec<ArenaProjectileSnapshot>, PacketError> {
+    let projectile_count = usize::from(read_u16(payload, index, kind)?);
     let mut projectiles = Vec::with_capacity(projectile_count);
     for _ in 0..projectile_count {
         projectiles.push(ArenaProjectileSnapshot {
-            owner: read_player_id(payload, index, "ArenaStateSnapshot")?,
-            slot: read_u8(payload, index, "ArenaStateSnapshot")?,
-            kind: read_arena_effect_kind(payload, index, "ArenaStateSnapshot")?,
-            x: read_i16(payload, index, "ArenaStateSnapshot")?,
-            y: read_i16(payload, index, "ArenaStateSnapshot")?,
-            radius: read_u16(payload, index, "ArenaStateSnapshot")?,
+            owner: read_player_id(payload, index, kind)?,
+            slot: read_u8(payload, index, kind)?,
+            kind: read_arena_effect_kind(payload, index, kind)?,
+            x: read_i16(payload, index, kind)?,
+            y: read_i16(payload, index, kind)?,
+            radius: read_u16(payload, index, kind)?,
         });
     }
-
-    Ok(ServerControlEvent::ArenaStateSnapshot {
-        snapshot: ArenaStateSnapshot {
-            width,
-            height,
-            obstacles,
-            players,
-            projectiles,
-        },
-    })
+    Ok(projectiles)
 }
 
 fn encode_arena_effect_batch(
@@ -1132,6 +1287,18 @@ fn read_bool(payload: &[u8], index: &mut usize, kind: &'static str) -> Result<bo
         0 => Ok(false),
         1 => Ok(true),
         other => Err(PacketError::InvalidEncodedBoolean(other)),
+    }
+}
+
+fn read_optional_u8(
+    payload: &[u8],
+    index: &mut usize,
+    kind: &'static str,
+) -> Result<Option<u8>, PacketError> {
+    if read_bool(payload, index, kind)? {
+        Ok(Some(read_u8(payload, index, kind)?))
+    } else {
+        Ok(None)
     }
 }
 
@@ -1299,6 +1466,34 @@ fn read_lobby_snapshot_phase(
     }
 }
 
+fn read_arena_match_phase(
+    payload: &[u8],
+    index: &mut usize,
+    kind: &'static str,
+) -> Result<ArenaMatchPhase, PacketError> {
+    match read_u8(payload, index, kind)? {
+        1 => Ok(ArenaMatchPhase::SkillPick),
+        2 => Ok(ArenaMatchPhase::PreCombat),
+        3 => Ok(ArenaMatchPhase::Combat),
+        4 => Ok(ArenaMatchPhase::MatchEnd),
+        other => Err(PacketError::InvalidEncodedArenaMatchPhase(other)),
+    }
+}
+
+fn read_arena_status_kind(
+    payload: &[u8],
+    index: &mut usize,
+    kind: &'static str,
+) -> Result<ArenaStatusKind, PacketError> {
+    match read_u8(payload, index, kind)? {
+        1 => Ok(ArenaStatusKind::Poison),
+        2 => Ok(ArenaStatusKind::Hot),
+        3 => Ok(ArenaStatusKind::Chill),
+        4 => Ok(ArenaStatusKind::Root),
+        other => Err(PacketError::InvalidEncodedArenaStatusKind(other)),
+    }
+}
+
 fn encode_team(team: TeamSide) -> u8 {
     match team {
         TeamSide::TeamA => 1,
@@ -1342,6 +1537,24 @@ fn encode_arena_obstacle_kind(kind: ArenaObstacleKind) -> u8 {
     match kind {
         ArenaObstacleKind::Pillar => 1,
         ArenaObstacleKind::Shrub => 2,
+    }
+}
+
+fn encode_arena_match_phase(phase: ArenaMatchPhase) -> u8 {
+    match phase {
+        ArenaMatchPhase::SkillPick => 1,
+        ArenaMatchPhase::PreCombat => 2,
+        ArenaMatchPhase::Combat => 3,
+        ArenaMatchPhase::MatchEnd => 4,
+    }
+}
+
+fn encode_arena_status_kind(kind: ArenaStatusKind) -> u8 {
+    match kind {
+        ArenaStatusKind::Poison => 1,
+        ArenaStatusKind::Hot => 2,
+        ArenaStatusKind::Chill => 3,
+        ArenaStatusKind::Root => 4,
     }
 }
 
@@ -1393,6 +1606,16 @@ fn encode_lobby_snapshot_phase(payload: &mut Vec<u8>, phase: LobbySnapshotPhase)
             payload.push(1);
             payload.push(seconds_remaining);
         }
+    }
+}
+
+fn encode_optional_u8(payload: &mut Vec<u8>, value: Option<u8>) {
+    match value {
+        Some(value) => {
+            payload.push(1);
+            payload.push(value);
+        }
+        None => payload.push(0),
     }
 }
 

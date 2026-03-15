@@ -51,9 +51,9 @@ Server -> Client (authoritative):
 - GameLobbySnapshot / GameLobbyDelta
 - LaunchCountdownStarted
 - MatchStarted
-- MatchSnapshot / MatchDelta
+- ArenaStateSnapshot / ArenaDeltaSnapshot / ArenaEffectBatch
 - RoundStateChanged
-- EntitySnapshot (position, velocity, health, statuses)
+- player runtime state including hp, mana, cooldowns, active statuses, team, defeat state, and projectile ownership/state
 - MatchAborted(player_name, reason)
 - MatchStatistics
 - Events (cast started, interrupted, damage numbers, etc.)
@@ -61,13 +61,15 @@ Server -> Client (authoritative):
 Lobby-oriented snapshots should include each visible player's `W-L-NC` record.
 
 ## Snapshot strategy
-Start simple:
-- Send a full snapshot baseline every 250 ms.
-- Send smaller delta snapshots every simulation tick at 60 Hz.
-- Delta snapshots reference a prior baseline sequence.
-- If a baseline is missing or too old, resend a fresh full snapshot.
+Current working implementation:
+- Send a full `ArenaStateSnapshot` when combat starts, when phase transitions happen, and when the client needs a clean authoritative reset of the arena state.
+- Send `ArenaDeltaSnapshot` packets during live combat frames and on aim changes.
+- Keep static arena geometry in the full snapshot and send only dynamic player, projectile, and match-phase state in the delta snapshot.
+- Send short-lived combat visuals separately through `ArenaEffectBatch`.
 
-Client should interpolate between snapshots. No authority.
+Current note:
+- The live delta packet is authoritative and working, but it is still a simple dynamic-state packet, not a final baseline-referenced compression format.
+- The client remains presentation-only and does not own authority.
 
 ## ICE, STUN, and TURN
 Use all three concepts together:
@@ -123,7 +125,7 @@ Use one binary framing format across all live gameplay channels.
 Common packet header, little-endian, fixed 16 bytes:
 ```text
 u16 magic        = 0x5241   // "RA"
-u8  version      = 1
+u8  version      = 2
 u8  channel_id   // 0=control, 1=input, 2=snapshot
 u8  packet_kind
 u8  flags
@@ -159,83 +161,58 @@ Rules:
 - Server keeps only the newest valid input packet per player.
 - Lost input packets are not retransmitted.
 
-## Snapshot packet prefix
-All snapshot packets begin with:
+## Snapshot packet bodies
+Current full snapshot body:
 ```text
-u32 snapshot_seq
-u32 baseline_seq   // 0xFFFFFFFF means full snapshot
-u16 entity_op_count
-u16 event_count
+u8  event_kind = 19
+u8  phase
+opt<u8> phase_seconds_remaining
+u16 arena_width
+u16 arena_height
+u8  obstacle_count
+... obstacle entries ...
+u8  player_count
+... player snapshot entries ...
+u8  projectile_count
+... projectile entries ...
 ```
 
-Interpretation:
-- `full snapshot`: `baseline_seq = 0xFFFFFFFF`
-- `delta snapshot`: `baseline_seq = last baseline snapshot sequence used for encoding`
-- If client does not have that baseline, it discards the delta and waits for the next full snapshot.
-
-## Entity delta layout
-Entity ops are sorted by ascending `net_entity_id`.
-Each entity op begins with:
+Current delta snapshot body:
 ```text
-varuint entity_id_delta   // relative to previous entity id, first entry relative to 0
-u8     entity_op          // 0=spawn_full, 1=patch, 2=despawn
+u8  event_kind = 20
+u8  phase
+opt<u8> phase_seconds_remaining
+u8  player_count
+... player snapshot entries ...
+u8  projectile_count
+... projectile entries ...
 ```
 
-For `spawn_full`:
+Current effect batch body:
 ```text
-u8  entity_type
-u16 owner_entity_id_or_ffff
-u8  team_id
-u16 field_mask
-... absolute field values in field order ...
+u8  event_kind = 21
+u8  effect_count
+... effect entries ...
 ```
 
-For `patch`:
-```text
-u16 field_mask
-... changed field values in field order ...
-```
+Current player snapshot payload includes:
+- `player_id`
+- `player_name`
+- `team`
+- `x`, `y`, `facing_deg`
+- `hp`, `max_hp`
+- `mana`, `max_mana`
+- melee and slot cooldown remaining/total arrays
+- `defeated`
+- `active_statuses`
 
-For `despawn`:
-- no additional payload
-
-Patch `field_mask` bits:
-- bit 0: `pos_x`
-- bit 1: `pos_y`
-- bit 2: `vel_x`
-- bit 3: `vel_y`
-- bit 4: `facing`
-- bit 5: `hp`
-- bit 6: `resource`
-- bit 7: `life_flags`
-- bit 8: `cast_block`
-- bit 9: `status_delta_block`
-- bit 10: `reveal_flags`
-- bit 11: `aux_state`
-- bits 12-15: reserved
-
-Field encoding rules:
-- `pos_*`, `vel_*`, and `facing` are quantized fixed-point values, not floats.
-- In a `spawn_full`, those fields are encoded as absolute values.
-- In a `patch`, those fields are encoded relative to the baseline snapshot where possible; if a value cannot be represented cleanly as a bounded delta, send `spawn_full` for that entity instead of a `patch`.
-
-Status delta block:
-```text
-u8 status_op_count
-repeat status_op_count times:
-  u8  op_kind          // 0=apply, 1=refresh, 2=stack_set, 3=remove
-  u16 status_id
-  u16 source_entity_id
-  u8  stacks
-  u16 remaining_ms
-```
-
-This layout matches the current gameplay rules:
-- status ownership is per source player
-- multiple sources can coexist on the same target
-- stack count and refresh are explicit protocol concepts
+Current active status payload includes:
+- kind (`Poison`, `Hot`, `Chill`, `Root`, `Silence`, `Stun`)
+- `source_player_id`
+- `stacks`
+- `remaining_ms`
 
 ## Design notes
-- This follows the same broad direction as Gaffer-style snapshot replication: full baselines, delta snapshots, sorted changed entities, and relative entity id encoding.
+- The current implementation keeps the packet format simple and inspectable first: explicit full snapshots, explicit dynamic-state deltas, and separate effect batches.
 - It deliberately does NOT copy Gaffer's UDP ack-bit packet header, because WebRTC DataChannel already provides message framing and configurable retransmission behavior underneath.
-- Keep the v1 packet format simple and inspectable first; if bandwidth becomes a real problem later, add bitpacking inside the field blocks instead of redesigning the protocol from scratch.
+- More aggressive snapshot compression can happen later without discarding the current transport split or the exposed authoritative runtime state.
