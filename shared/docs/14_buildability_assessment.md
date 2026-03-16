@@ -33,6 +33,7 @@ Current class-growth note:
 - the client skill picker already builds from backend-authored catalog data instead of local hardcoded button names
 - class names now flow through the protocol and Godot shell from backend-authored catalog data instead of a fixed four-class wire enum
 - implemented and planned mechanic families are now tracked in `server/content/mechanics/registry.yaml`
+- implemented mechanic validation rules now also live in that registry, so most field-shape changes no longer require editing `game_content` parser match arms
 - the main remaining growth bottleneck is only backend runtime execution when a class introduces a genuinely new mechanic family
 
 ## What is specified well enough to start coding

@@ -82,13 +82,13 @@ skill picker renders those backend-authored names on the buttons instead of loca
 The runtime game content now lives under:
 - `server/content/skills/*.yaml` for authored class/skill definitions
 - `server/content/maps/prototype_arena.txt` for the current ASCII arena map
-- `server/content/mechanics/registry.yaml` for implemented and planned mechanic families
+- `server/content/mechanics/registry.yaml` for implemented and planned mechanic families, plus the data-driven validation schema for each implemented mechanic
 
 Those files are the live source of truth for the backend. The Markdown docs under `shared/docs/`
 document the design, but they are no longer treated as runtime content.
 Adding more classes is now mostly centralized around:
 - one new authored YAML file under `server/content/skills/`
-- optional mechanic-family additions in `server/content/mechanics/registry.yaml` when you want to declare a new planned mechanic
+- optional mechanic-family additions in `server/content/mechanics/registry.yaml` when you want to declare a new planned mechanic or extend validation metadata
 - the small backend mechanic-specific execution locations in `server/crates/game_sim` only when a class needs a genuinely new runtime behavior
 
 The UI and network catalog path now follow backend-authored class names and skill IDs instead of a fixed four-class wire enum.

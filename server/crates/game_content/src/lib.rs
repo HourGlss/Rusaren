@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use game_domain::{SkillChoice, SkillTree};
 use serde::Deserialize;
@@ -14,6 +15,22 @@ const DEFAULT_TILE_UNITS: u16 = 50;
 const MAX_MAP_DIMENSION_TILES: usize = 128;
 const MAX_SKILL_TEXT_LEN: usize = 120;
 const REQUIRED_TIERS: [u8; 5] = [1, 2, 3, 4, 5];
+const DEFAULT_MECHANICS_REGISTRY: &str = include_str!("../../../content/mechanics/registry.yaml");
+const BEHAVIOR_NUMERIC_FIELDS: [&str; 7] = [
+    "cooldown_ms",
+    "mana_cost",
+    "range",
+    "radius",
+    "distance",
+    "speed",
+    "impact_radius",
+];
+const STATUS_NUMERIC_FIELDS: [&str; 4] = [
+    "duration_ms",
+    "tick_interval_ms",
+    "magnitude",
+    "trigger_duration_ms",
+];
 
 type AnchorPoint = (i16, i16);
 
@@ -38,6 +55,40 @@ pub enum CombatValueKind {
 pub enum MechanicCategory {
     Behavior,
     Status,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NumericFieldRule {
+    Required,
+    Optional,
+    Zero,
+    Forbidden,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PayloadFieldRule {
+    Required,
+    Optional,
+    Forbidden,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StackRule {
+    Positive,
+    One,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BehaviorSchema {
+    pub numeric_fields: BTreeMap<String, NumericFieldRule>,
+    pub payload: PayloadFieldRule,
+    pub allowed_effects: Vec<SkillEffectKind>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StatusSchema {
+    pub numeric_fields: BTreeMap<String, NumericFieldRule>,
+    pub max_stacks: StackRule,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -224,12 +275,26 @@ pub struct MechanicDefinition {
     pub implemented: bool,
     pub inspiration: String,
     pub notes: String,
+    pub behavior_schema: Option<BehaviorSchema>,
+    pub status_schema: Option<StatusSchema>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MechanicCatalog {
     pub behaviors: Vec<MechanicDefinition>,
     pub statuses: Vec<MechanicDefinition>,
+}
+
+impl MechanicCatalog {
+    #[must_use]
+    pub fn behavior(&self, id: &str) -> Option<&MechanicDefinition> {
+        self.behaviors.iter().find(|mechanic| mechanic.id == id)
+    }
+
+    #[must_use]
+    pub fn status(&self, id: &str) -> Option<&MechanicDefinition> {
+        self.statuses.iter().find(|mechanic| mechanic.id == id)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -246,19 +311,6 @@ impl GameContent {
 
     pub fn load_from_root(root: impl AsRef<Path>) -> Result<Self, ContentError> {
         let root = root.as_ref();
-        let pairs = read_skill_file_pairs(root)?;
-        let owned_pairs = pairs
-            .iter()
-            .map(|(source, yaml)| (source.as_str(), yaml.as_str()))
-            .collect::<Vec<_>>();
-        let skills = load_skill_catalog_from_pairs(&owned_pairs)?;
-
-        let map_path = root.join("maps").join("prototype_arena.txt");
-        let map_text = fs::read_to_string(&map_path).map_err(|error| ContentError::Io {
-            path: map_path.clone(),
-            message: error.to_string(),
-        })?;
-        let map = parse_ascii_map(&map_path.display().to_string(), &map_text)?;
         let mechanics_path = root.join("mechanics").join("registry.yaml");
         let mechanics_yaml =
             fs::read_to_string(&mechanics_path).map_err(|error| ContentError::Io {
@@ -267,6 +319,20 @@ impl GameContent {
             })?;
         let mechanics =
             parse_mechanics_yaml(&mechanics_path.display().to_string(), &mechanics_yaml)?;
+
+        let pairs = read_skill_file_pairs(root)?;
+        let owned_pairs = pairs
+            .iter()
+            .map(|(source, yaml)| (source.as_str(), yaml.as_str()))
+            .collect::<Vec<_>>();
+        let skills = load_skill_catalog_from_pairs_with_mechanics(&owned_pairs, &mechanics)?;
+
+        let map_path = root.join("maps").join("prototype_arena.txt");
+        let map_text = fs::read_to_string(&map_path).map_err(|error| ContentError::Io {
+            path: map_path.clone(),
+            message: error.to_string(),
+        })?;
+        let map = parse_ascii_map(&map_path.display().to_string(), &map_text)?;
 
         Ok(Self {
             skills,
@@ -331,6 +397,19 @@ fn read_skill_file_pairs(root: &Path) -> Result<Vec<(String, String)>, ContentEr
     Ok(pairs)
 }
 
+fn default_mechanics() -> &'static MechanicCatalog {
+    static DEFAULT_MECHANICS: OnceLock<MechanicCatalog> = OnceLock::new();
+    DEFAULT_MECHANICS.get_or_init(|| {
+        match parse_mechanics_yaml(
+            "content/mechanics/registry.yaml",
+            DEFAULT_MECHANICS_REGISTRY,
+        ) {
+            Ok(mechanics) => mechanics,
+            Err(error) => panic!("default mechanics registry should parse: {error}"),
+        }
+    })
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ContentError {
     Io { path: PathBuf, message: String },
@@ -379,12 +458,20 @@ pub fn parse_ascii_map(source: &str, ascii_map: &str) -> Result<ArenaMapDefiniti
 }
 
 pub fn parse_skill_yaml(source: &str, yaml: &str) -> Result<ClassDefinition, ContentError> {
+    parse_skill_yaml_with_mechanics(source, yaml, default_mechanics())
+}
+
+fn parse_skill_yaml_with_mechanics(
+    source: &str,
+    yaml: &str,
+    mechanics: &MechanicCatalog,
+) -> Result<ClassDefinition, ContentError> {
     let document =
         serde_yaml::from_str::<SkillFileYaml>(yaml).map_err(|error| ContentError::Parse {
             source: String::from(source),
             message: error.to_string(),
         })?;
-    validate_skill_file(source, document)
+    validate_skill_file(source, document, mechanics)
 }
 
 pub fn parse_mechanics_yaml(source: &str, yaml: &str) -> Result<MechanicCatalog, ContentError> {
@@ -400,7 +487,15 @@ pub fn parse_mechanics_yaml(source: &str, yaml: &str) -> Result<MechanicCatalog,
     })
 }
 
+#[cfg(test)]
 fn load_skill_catalog_from_pairs(pairs: &[(&str, &str)]) -> Result<SkillCatalog, ContentError> {
+    load_skill_catalog_from_pairs_with_mechanics(pairs, default_mechanics())
+}
+
+fn load_skill_catalog_from_pairs_with_mechanics(
+    pairs: &[(&str, &str)],
+    mechanics: &MechanicCatalog,
+) -> Result<SkillCatalog, ContentError> {
     let mut by_choice = BTreeMap::new();
     let mut melee_by_tree = BTreeMap::new();
     let mut ids_by_owner = BTreeMap::<String, String>::new();
@@ -411,7 +506,7 @@ fn load_skill_catalog_from_pairs(pairs: &[(&str, &str)]) -> Result<SkillCatalog,
         });
     }
     for (source, yaml) in pairs {
-        let definition = parse_skill_yaml(source, yaml)?;
+        let definition = parse_skill_yaml_with_mechanics(source, yaml, mechanics)?;
         if let Some(existing_owner) = ids_by_owner.insert(
             definition.melee.id.clone(),
             format!("{} melee", definition.tree),
@@ -498,14 +593,147 @@ fn validate_mechanics(
             implemented: yaml.implemented,
             inspiration: yaml.inspiration,
             notes: yaml.notes,
+            behavior_schema: match category {
+                MechanicCategory::Behavior => Some(parse_behavior_schema(
+                    source,
+                    yaml.implemented,
+                    yaml.schema.as_ref(),
+                )?),
+                MechanicCategory::Status => None,
+            },
+            status_schema: match category {
+                MechanicCategory::Behavior => None,
+                MechanicCategory::Status => Some(parse_status_schema(
+                    source,
+                    yaml.implemented,
+                    yaml.schema.as_ref(),
+                )?),
+            },
         });
     }
     Ok(mechanics)
 }
 
+fn parse_behavior_schema(
+    source: &str,
+    implemented: bool,
+    yaml: Option<&MechanicSchemaYaml>,
+) -> Result<BehaviorSchema, ContentError> {
+    let Some(yaml) = yaml else {
+        if implemented {
+            return Err(ContentError::Validation {
+                source: String::from(source),
+                message: String::from("implemented behavior mechanics must define a schema"),
+            });
+        }
+        return Ok(BehaviorSchema {
+            numeric_fields: BTreeMap::new(),
+            payload: PayloadFieldRule::Forbidden,
+            allowed_effects: Vec::new(),
+        });
+    };
+
+    validate_schema_field_names(source, yaml.numeric_fields.keys(), &BEHAVIOR_NUMERIC_FIELDS)?;
+
+    let numeric_fields = yaml
+        .numeric_fields
+        .iter()
+        .map(|(field, rule)| (field.clone(), parse_numeric_rule(*rule)))
+        .collect::<BTreeMap<_, _>>();
+    let allowed_effects = yaml
+        .allowed_effects
+        .iter()
+        .map(|effect| parse_effect_kind(source, effect))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    if implemented && allowed_effects.is_empty() {
+        return Err(ContentError::Validation {
+            source: String::from(source),
+            message: String::from("implemented behavior mechanics must declare allowed_effects"),
+        });
+    }
+
+    Ok(BehaviorSchema {
+        numeric_fields,
+        payload: parse_payload_rule(yaml.payload),
+        allowed_effects,
+    })
+}
+
+fn parse_status_schema(
+    source: &str,
+    implemented: bool,
+    yaml: Option<&MechanicSchemaYaml>,
+) -> Result<StatusSchema, ContentError> {
+    let Some(yaml) = yaml else {
+        if implemented {
+            return Err(ContentError::Validation {
+                source: String::from(source),
+                message: String::from("implemented status mechanics must define a schema"),
+            });
+        }
+        return Ok(StatusSchema {
+            numeric_fields: BTreeMap::new(),
+            max_stacks: StackRule::One,
+        });
+    };
+
+    validate_schema_field_names(source, yaml.numeric_fields.keys(), &STATUS_NUMERIC_FIELDS)?;
+
+    Ok(StatusSchema {
+        numeric_fields: yaml
+            .numeric_fields
+            .iter()
+            .map(|(field, rule)| (field.clone(), parse_numeric_rule(*rule)))
+            .collect(),
+        max_stacks: parse_stack_rule(yaml.max_stacks),
+    })
+}
+
+fn validate_schema_field_names<'a>(
+    source: &str,
+    fields: impl Iterator<Item = &'a String>,
+    allowed: &[&str],
+) -> Result<(), ContentError> {
+    for field in fields {
+        if !allowed.contains(&field.as_str()) {
+            return Err(ContentError::Validation {
+                source: String::from(source),
+                message: format!("schema field '{field}' is not supported"),
+            });
+        }
+    }
+    Ok(())
+}
+
+const fn parse_numeric_rule(rule: NumericRuleYaml) -> NumericFieldRule {
+    match rule {
+        NumericRuleYaml::Required => NumericFieldRule::Required,
+        NumericRuleYaml::Optional => NumericFieldRule::Optional,
+        NumericRuleYaml::Zero => NumericFieldRule::Zero,
+        NumericRuleYaml::Forbidden => NumericFieldRule::Forbidden,
+    }
+}
+
+const fn parse_payload_rule(rule: PayloadRuleYaml) -> PayloadFieldRule {
+    match rule {
+        PayloadRuleYaml::Required => PayloadFieldRule::Required,
+        PayloadRuleYaml::Optional => PayloadFieldRule::Optional,
+        PayloadRuleYaml::Forbidden => PayloadFieldRule::Forbidden,
+    }
+}
+
+const fn parse_stack_rule(rule: StackRuleYaml) -> StackRule {
+    match rule {
+        StackRuleYaml::Positive => StackRule::Positive,
+        StackRuleYaml::One => StackRule::One,
+    }
+}
+
 fn validate_skill_file(
     source: &str,
     document: SkillFileYaml,
+    mechanics: &MechanicCatalog,
 ) -> Result<ClassDefinition, ContentError> {
     let tree = parse_skill_tree(source, &document.tree)?;
     let melee = parse_melee_definition(source, tree.clone(), document.melee)?;
@@ -531,7 +759,7 @@ fn validate_skill_file(
         validate_skill_text(source, "id", &yaml_skill.id)?;
         validate_skill_text(source, "name", &yaml_skill.name)?;
         validate_skill_text(source, "description", &yaml_skill.description)?;
-        let behavior = parse_skill_behavior(source, &yaml_skill.behavior)?;
+        let behavior = parse_skill_behavior(source, &yaml_skill.behavior, mechanics)?;
         skills.push(SkillDefinition {
             tree: tree.clone(),
             tier: yaml_skill.tier,
@@ -577,7 +805,12 @@ fn parse_melee_definition(
         range: require_positive_u16(source, "melee.range", Some(yaml.range))?,
         radius: require_positive_u16(source, "melee.radius", Some(yaml.radius))?,
         effect: parse_effect_kind(source, &yaml.effect)?,
-        payload: parse_payload(source, Some(yaml.payload), "melee.payload")?,
+        payload: parse_payload(
+            source,
+            Some(yaml.payload),
+            "melee.payload",
+            default_mechanics(),
+        )?,
     })
 }
 
@@ -610,60 +843,143 @@ fn parse_skill_tree(source: &str, raw: &str) -> Result<SkillTree, ContentError> 
     }
 }
 
+struct BehaviorNumericFields {
+    cooldown_ms: Option<u16>,
+    mana_cost: Option<u16>,
+    range: Option<u16>,
+    radius: Option<u16>,
+    distance: Option<u16>,
+    speed: Option<u16>,
+    impact_radius: Option<u16>,
+}
+
+fn parse_behavior_numeric_fields(
+    source: &str,
+    yaml: &SkillBehaviorYaml,
+    schema: &BehaviorSchema,
+) -> Result<BehaviorNumericFields, ContentError> {
+    Ok(BehaviorNumericFields {
+        cooldown_ms: read_numeric_field(
+            source,
+            "cooldown_ms",
+            yaml.cooldown_ms,
+            schema_numeric_rule(&schema.numeric_fields, "cooldown_ms"),
+        )?,
+        mana_cost: read_numeric_field(
+            source,
+            "mana_cost",
+            yaml.mana_cost,
+            schema_numeric_rule(&schema.numeric_fields, "mana_cost"),
+        )?,
+        range: read_numeric_field(
+            source,
+            "range",
+            yaml.range,
+            schema_numeric_rule(&schema.numeric_fields, "range"),
+        )?,
+        radius: read_numeric_field(
+            source,
+            "radius",
+            yaml.radius,
+            schema_numeric_rule(&schema.numeric_fields, "radius"),
+        )?,
+        distance: read_numeric_field(
+            source,
+            "distance",
+            yaml.distance,
+            schema_numeric_rule(&schema.numeric_fields, "distance"),
+        )?,
+        speed: read_numeric_field(
+            source,
+            "speed",
+            yaml.speed,
+            schema_numeric_rule(&schema.numeric_fields, "speed"),
+        )?,
+        impact_radius: read_numeric_field(
+            source,
+            "impact_radius",
+            yaml.impact_radius,
+            schema_numeric_rule(&schema.numeric_fields, "impact_radius"),
+        )?,
+    })
+}
+
 fn parse_skill_behavior(
     source: &str,
     yaml: &SkillBehaviorYaml,
+    mechanics: &MechanicCatalog,
 ) -> Result<SkillBehavior, ContentError> {
-    validate_behavior_shape(source, yaml)?;
+    let schema = behavior_schema(mechanics, source, &yaml.kind)?;
     let effect = parse_effect_kind(source, &yaml.effect)?;
-    let cooldown_ms = require_positive_u16(source, "cooldown_ms", yaml.cooldown_ms)?;
-    let mana_cost = yaml.mana_cost.unwrap_or(0);
+    validate_allowed_effect(source, &yaml.kind, effect, &schema.allowed_effects)?;
+    let fields = parse_behavior_numeric_fields(source, yaml, schema)?;
+    let cooldown_ms = require_present_u16(source, "cooldown_ms", fields.cooldown_ms)?;
+    let mana_cost = fields.mana_cost.unwrap_or(0);
     match yaml.kind.as_str() {
         "projectile" => Ok(SkillBehavior::Projectile {
             cooldown_ms,
             mana_cost,
-            speed: require_positive_u16(source, "speed", yaml.speed)?,
-            range: require_positive_u16(source, "range", yaml.range)?,
-            radius: require_positive_u16(source, "radius", yaml.radius)?,
+            speed: require_present_u16(source, "speed", fields.speed)?,
+            range: require_present_u16(source, "range", fields.range)?,
+            radius: require_present_u16(source, "radius", fields.radius)?,
             effect,
-            payload: parse_payload(source, yaml.payload.clone(), "payload")?,
+            payload: parse_behavior_payload(
+                source,
+                yaml.payload.clone(),
+                schema.payload,
+                mechanics,
+            )?,
         }),
         "beam" => Ok(SkillBehavior::Beam {
             cooldown_ms,
             mana_cost,
-            range: require_positive_u16(source, "range", yaml.range)?,
-            radius: require_positive_u16(source, "radius", yaml.radius)?,
+            range: require_present_u16(source, "range", fields.range)?,
+            radius: require_present_u16(source, "radius", fields.radius)?,
             effect,
-            payload: parse_payload(source, yaml.payload.clone(), "payload")?,
+            payload: parse_behavior_payload(
+                source,
+                yaml.payload.clone(),
+                schema.payload,
+                mechanics,
+            )?,
         }),
         "dash" => Ok(SkillBehavior::Dash {
             cooldown_ms,
             mana_cost,
-            distance: require_positive_u16(source, "distance", yaml.distance)?,
+            distance: require_present_u16(source, "distance", fields.distance)?,
             effect,
-            impact_radius: yaml
-                .impact_radius
-                .map(|value| require_positive_u16(source, "impact_radius", Some(value)))
-                .transpose()?,
-            payload: match yaml.payload.clone() {
-                Some(payload) => Some(parse_payload(source, Some(payload), "payload")?),
-                None => None,
-            },
+            impact_radius: fields.impact_radius,
+            payload: parse_optional_behavior_payload(
+                source,
+                yaml.payload.clone(),
+                schema.payload,
+                mechanics,
+            )?,
         }),
         "burst" => Ok(SkillBehavior::Burst {
             cooldown_ms,
             mana_cost,
-            range: require_positive_u16(source, "range", yaml.range)?,
-            radius: require_positive_u16(source, "radius", yaml.radius)?,
+            range: require_present_u16(source, "range", fields.range)?,
+            radius: require_present_u16(source, "radius", fields.radius)?,
             effect,
-            payload: parse_payload(source, yaml.payload.clone(), "payload")?,
+            payload: parse_behavior_payload(
+                source,
+                yaml.payload.clone(),
+                schema.payload,
+                mechanics,
+            )?,
         }),
         "nova" => Ok(SkillBehavior::Nova {
             cooldown_ms,
             mana_cost,
-            radius: require_positive_u16(source, "radius", yaml.radius)?,
+            radius: require_present_u16(source, "radius", fields.radius)?,
             effect,
-            payload: parse_payload(source, yaml.payload.clone(), "payload")?,
+            payload: parse_behavior_payload(
+                source,
+                yaml.payload.clone(),
+                schema.payload,
+                mechanics,
+            )?,
         }),
         other => Err(ContentError::Validation {
             source: String::from(source),
@@ -676,6 +992,7 @@ fn parse_payload(
     source: &str,
     yaml: Option<EffectPayloadYaml>,
     field: &str,
+    mechanics: &MechanicCatalog,
 ) -> Result<EffectPayload, ContentError> {
     let yaml = yaml.ok_or_else(|| ContentError::Validation {
         source: String::from(source),
@@ -697,7 +1014,7 @@ fn parse_payload(
         status: yaml
             .status
             .as_ref()
-            .map(|status| parse_status(source, status))
+            .map(|status| parse_status(source, status, mechanics))
             .transpose()?,
     })
 }
@@ -713,86 +1030,69 @@ fn parse_payload_kind(source: &str, raw: &str) -> Result<CombatValueKind, Conten
     }
 }
 
-fn parse_status(source: &str, yaml: &StatusYaml) -> Result<StatusDefinition, ContentError> {
-    let kind = parse_status_kind(source, &yaml.kind)?;
-    let duration_ms = require_positive_u16(source, "status.duration_ms", Some(yaml.duration_ms))?;
-    let max_stacks = yaml.max_stacks.unwrap_or(1);
-    if max_stacks == 0 {
-        return Err(ContentError::Validation {
+fn parse_status(
+    source: &str,
+    yaml: &StatusYaml,
+    mechanics: &MechanicCatalog,
+) -> Result<StatusDefinition, ContentError> {
+    let definition = mechanics
+        .status(&yaml.kind)
+        .ok_or_else(|| ContentError::Validation {
             source: String::from(source),
-            message: String::from("status.max_stacks must be greater than zero"),
-        });
-    }
+            message: format!("unknown status kind '{}'", yaml.kind),
+        })?;
+    let schema = definition
+        .status_schema
+        .as_ref()
+        .ok_or_else(|| ContentError::Validation {
+            source: String::from(source),
+            message: format!("status '{}' is missing a schema definition", yaml.kind),
+        })?;
+    let kind = parse_status_kind(source, &yaml.kind)?;
+    let duration_ms = require_present_u16(
+        source,
+        "status.duration_ms",
+        read_numeric_field(
+            source,
+            "status.duration_ms",
+            Some(yaml.duration_ms),
+            schema_numeric_rule(&schema.numeric_fields, "duration_ms"),
+        )?,
+    )?;
+    let tick_interval_ms = read_numeric_field(
+        source,
+        "status.tick_interval_ms",
+        yaml.tick_interval_ms,
+        schema_numeric_rule(&schema.numeric_fields, "tick_interval_ms"),
+    )?;
+    let magnitude = read_numeric_field(
+        source,
+        "status.magnitude",
+        Some(yaml.magnitude),
+        schema_numeric_rule(&schema.numeric_fields, "magnitude"),
+    )?
+    .unwrap_or(0);
+    let trigger_duration_ms = read_numeric_field(
+        source,
+        "status.trigger_duration_ms",
+        yaml.trigger_duration_ms,
+        schema_numeric_rule(&schema.numeric_fields, "trigger_duration_ms"),
+    )?;
+    let max_stacks = validate_max_stacks(
+        source,
+        kind,
+        yaml.max_stacks.unwrap_or(1),
+        schema.max_stacks,
+    )?;
 
-    match kind {
-        StatusKind::Poison | StatusKind::Hot => {
-            let tick_interval_ms =
-                require_positive_u16(source, "status.tick_interval_ms", yaml.tick_interval_ms)?;
-            Ok(StatusDefinition {
-                kind,
-                duration_ms,
-                tick_interval_ms: Some(tick_interval_ms),
-                magnitude: require_positive_u16(source, "status.magnitude", Some(yaml.magnitude))?,
-                max_stacks,
-                trigger_duration_ms: None,
-            })
-        }
-        StatusKind::Chill | StatusKind::Haste => Ok(StatusDefinition {
-            kind,
-            duration_ms,
-            tick_interval_ms: None,
-            magnitude: require_positive_u16(source, "status.magnitude", Some(yaml.magnitude))?,
-            max_stacks,
-            trigger_duration_ms: if kind == StatusKind::Chill {
-                yaml.trigger_duration_ms
-                    .map(|value| {
-                        require_positive_u16(source, "status.trigger_duration_ms", Some(value))
-                    })
-                    .transpose()?
-            } else {
-                forbid_numeric_status_field(
-                    source,
-                    "status.trigger_duration_ms",
-                    yaml.trigger_duration_ms,
-                )?;
-                None
-            },
-        }),
-        StatusKind::Root | StatusKind::Silence | StatusKind::Stun => {
-            if yaml.tick_interval_ms.is_some() {
-                return Err(ContentError::Validation {
-                    source: String::from(source),
-                    message: format!("status.tick_interval_ms is not valid for {kind:?}"),
-                });
-            }
-            if yaml.trigger_duration_ms.is_some() {
-                return Err(ContentError::Validation {
-                    source: String::from(source),
-                    message: format!("status.trigger_duration_ms is not valid for {kind:?}"),
-                });
-            }
-            if yaml.magnitude != 0 {
-                return Err(ContentError::Validation {
-                    source: String::from(source),
-                    message: format!("status.magnitude must be zero for {kind:?}"),
-                });
-            }
-            if yaml.max_stacks.unwrap_or(1) != 1 {
-                return Err(ContentError::Validation {
-                    source: String::from(source),
-                    message: format!("status.max_stacks must be 1 for {kind:?}"),
-                });
-            }
-            Ok(StatusDefinition {
-                kind,
-                duration_ms,
-                tick_interval_ms: None,
-                magnitude: 0,
-                max_stacks: 1,
-                trigger_duration_ms: None,
-            })
-        }
-    }
+    Ok(StatusDefinition {
+        kind,
+        duration_ms,
+        tick_interval_ms,
+        magnitude,
+        max_stacks,
+        trigger_duration_ms,
+    })
 }
 
 fn parse_status_kind(source: &str, raw: &str) -> Result<StatusKind, ContentError> {
@@ -811,59 +1111,173 @@ fn parse_status_kind(source: &str, raw: &str) -> Result<StatusKind, ContentError
     }
 }
 
-fn validate_behavior_shape(source: &str, yaml: &SkillBehaviorYaml) -> Result<(), ContentError> {
-    match yaml.kind.as_str() {
-        "projectile" => {
-            forbid_behavior_field(source, "distance", yaml.distance)?;
-            forbid_behavior_field(source, "impact_radius", yaml.impact_radius)?;
-        }
-        "beam" | "burst" => {
-            forbid_behavior_field(source, "speed", yaml.speed)?;
-            forbid_behavior_field(source, "distance", yaml.distance)?;
-            forbid_behavior_field(source, "impact_radius", yaml.impact_radius)?;
-        }
-        "dash" => {
-            forbid_behavior_field(source, "speed", yaml.speed)?;
-            forbid_behavior_field(source, "range", yaml.range)?;
-            forbid_behavior_field(source, "radius", yaml.radius)?;
-        }
-        "nova" => {
-            forbid_behavior_field(source, "speed", yaml.speed)?;
-            forbid_behavior_field(source, "distance", yaml.distance)?;
-            forbid_behavior_field(source, "range", yaml.range)?;
-            forbid_behavior_field(source, "impact_radius", yaml.impact_radius)?;
-        }
-        _ => {}
-    }
-    Ok(())
-}
-
-fn forbid_behavior_field(
+fn behavior_schema<'a>(
+    mechanics: &'a MechanicCatalog,
     source: &str,
-    field: &str,
-    value: Option<u16>,
-) -> Result<(), ContentError> {
-    if value.is_some() {
+    kind: &str,
+) -> Result<&'a BehaviorSchema, ContentError> {
+    let definition = mechanics
+        .behavior(kind)
+        .ok_or_else(|| ContentError::Validation {
+            source: String::from(source),
+            message: format!("unknown behavior kind '{kind}'"),
+        })?;
+    if !definition.implemented {
         return Err(ContentError::Validation {
             source: String::from(source),
-            message: format!("{field} is not valid for this behavior kind"),
+            message: format!("behavior kind '{kind}' is not implemented yet"),
+        });
+    }
+    definition
+        .behavior_schema
+        .as_ref()
+        .ok_or_else(|| ContentError::Validation {
+            source: String::from(source),
+            message: format!("behavior kind '{kind}' is missing a schema definition"),
+        })
+}
+
+fn validate_allowed_effect(
+    source: &str,
+    kind: &str,
+    effect: SkillEffectKind,
+    allowed: &[SkillEffectKind],
+) -> Result<(), ContentError> {
+    if !allowed.contains(&effect) {
+        return Err(ContentError::Validation {
+            source: String::from(source),
+            message: format!("effect '{effect:?}' is not valid for behavior kind '{kind}'"),
         });
     }
     Ok(())
 }
 
-fn forbid_numeric_status_field(
+fn schema_numeric_rule(
+    numeric_fields: &BTreeMap<String, NumericFieldRule>,
+    field: &str,
+) -> NumericFieldRule {
+    numeric_fields
+        .get(field)
+        .copied()
+        .unwrap_or(NumericFieldRule::Forbidden)
+}
+
+fn read_numeric_field(
     source: &str,
     field: &str,
     value: Option<u16>,
-) -> Result<(), ContentError> {
-    if value.is_some() {
-        return Err(ContentError::Validation {
+    rule: NumericFieldRule,
+) -> Result<Option<u16>, ContentError> {
+    match (rule, value) {
+        (NumericFieldRule::Required, Some(0)) => Err(ContentError::Validation {
             source: String::from(source),
-            message: format!("{field} is not valid for this status kind"),
-        });
+            message: format!("{field} must be greater than zero"),
+        }),
+        (NumericFieldRule::Required, Some(value)) => Ok(Some(value)),
+        (NumericFieldRule::Required, None) => Err(ContentError::Validation {
+            source: String::from(source),
+            message: format!("{field} is required"),
+        }),
+        (NumericFieldRule::Optional, Some(0)) => Err(ContentError::Validation {
+            source: String::from(source),
+            message: format!("{field} must be greater than zero when provided"),
+        }),
+        (NumericFieldRule::Optional, value) => Ok(value),
+        (NumericFieldRule::Zero, Some(0) | None) => Ok(Some(0)),
+        (NumericFieldRule::Zero, Some(_)) => Err(ContentError::Validation {
+            source: String::from(source),
+            message: format!("{field} must be zero for this mechanic"),
+        }),
+        (NumericFieldRule::Forbidden, Some(_)) => Err(ContentError::Validation {
+            source: String::from(source),
+            message: format!("{field} is not valid for this mechanic"),
+        }),
+        (NumericFieldRule::Forbidden, None) => Ok(None),
     }
-    Ok(())
+}
+
+fn require_present_u16(source: &str, field: &str, value: Option<u16>) -> Result<u16, ContentError> {
+    match value {
+        Some(0) => Err(ContentError::Validation {
+            source: String::from(source),
+            message: format!("{field} must be greater than zero"),
+        }),
+        Some(value) => Ok(value),
+        None => Err(ContentError::Validation {
+            source: String::from(source),
+            message: format!("{field} is required"),
+        }),
+    }
+}
+
+fn parse_behavior_payload(
+    source: &str,
+    payload: Option<EffectPayloadYaml>,
+    rule: PayloadFieldRule,
+    mechanics: &MechanicCatalog,
+) -> Result<EffectPayload, ContentError> {
+    match rule {
+        PayloadFieldRule::Required | PayloadFieldRule::Optional => {
+            parse_payload(source, payload, "behavior.payload", mechanics)
+        }
+        PayloadFieldRule::Forbidden => Err(ContentError::Validation {
+            source: String::from(source),
+            message: String::from("behavior.payload is not valid for this mechanic"),
+        }),
+    }
+}
+
+fn parse_optional_behavior_payload(
+    source: &str,
+    payload: Option<EffectPayloadYaml>,
+    rule: PayloadFieldRule,
+    mechanics: &MechanicCatalog,
+) -> Result<Option<EffectPayload>, ContentError> {
+    match rule {
+        PayloadFieldRule::Required => {
+            parse_payload(source, payload, "behavior.payload", mechanics).map(Some)
+        }
+        PayloadFieldRule::Optional => payload
+            .map(|payload| parse_payload(source, Some(payload), "behavior.payload", mechanics))
+            .transpose(),
+        PayloadFieldRule::Forbidden => {
+            if payload.is_some() {
+                return Err(ContentError::Validation {
+                    source: String::from(source),
+                    message: String::from("behavior.payload is not valid for this mechanic"),
+                });
+            }
+            Ok(None)
+        }
+    }
+}
+
+fn validate_max_stacks(
+    source: &str,
+    kind: StatusKind,
+    max_stacks: u8,
+    rule: StackRule,
+) -> Result<u8, ContentError> {
+    match rule {
+        StackRule::Positive => {
+            if max_stacks == 0 {
+                return Err(ContentError::Validation {
+                    source: String::from(source),
+                    message: format!("status '{kind:?}' max_stacks must be greater than zero"),
+                });
+            }
+            Ok(max_stacks)
+        }
+        StackRule::One => {
+            if max_stacks != 1 {
+                return Err(ContentError::Validation {
+                    source: String::from(source),
+                    message: format!("status '{kind:?}' max_stacks must be exactly one"),
+                });
+            }
+            Ok(1)
+        }
+    }
 }
 
 fn parse_effect_kind(source: &str, raw: &str) -> Result<SkillEffectKind, ContentError> {
@@ -1158,6 +1572,47 @@ struct MechanicYaml {
     implemented: bool,
     inspiration: String,
     notes: String,
+    schema: Option<MechanicSchemaYaml>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MechanicSchemaYaml {
+    #[serde(default)]
+    numeric_fields: BTreeMap<String, NumericRuleYaml>,
+    #[serde(default)]
+    payload: PayloadRuleYaml,
+    #[serde(default)]
+    allowed_effects: Vec<String>,
+    #[serde(default)]
+    max_stacks: StackRuleYaml,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum NumericRuleYaml {
+    Required,
+    Optional,
+    Zero,
+    #[default]
+    Forbidden,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum PayloadRuleYaml {
+    Required,
+    Optional,
+    #[default]
+    Forbidden,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum StackRuleYaml {
+    Positive,
+    #[default]
+    One,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1227,13 +1682,7 @@ mod tests {
     #[test]
     fn bundled_content_loads_all_classes_and_the_ascii_map() {
         let content = GameContent::bundled().expect("bundled content should load");
-        for tree_name in [
-            "Paladin",
-            "Ranger",
-            "Bard",
-            "Druid",
-            "Necromancer",
-        ] {
+        for tree_name in ["Paladin", "Ranger", "Bard", "Druid", "Necromancer"] {
             let tree = SkillTree::new(tree_name).expect("authored tree should parse");
             let tier_one = content
                 .skills()
@@ -1267,9 +1716,9 @@ mod tests {
     #[allow(clippy::too_many_lines)]
     fn parse_skill_yaml_rejects_unknown_trees_duplicate_tiers_and_invalid_field_shapes() {
         let unknown_tree = r"
-tree: Druid
+tree: Chronomancer
 melee:
-  id: druid_claw
+  id: chrono_claw
   name: Claw
   description: nope
   cooldown_ms: 100
@@ -1281,7 +1730,7 @@ melee:
     amount: 10
 skills:
   - tier: 1
-    id: druid_sprout
+    id: chrono_sprout
     name: Sprout
     description: nope
     behavior:

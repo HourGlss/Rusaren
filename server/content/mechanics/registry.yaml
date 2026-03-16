@@ -4,26 +4,81 @@ behaviors:
     implemented: true
     inspiration: "League skillshots and WoW missiles"
     notes: "A moving effect with speed, range, radius, and an impact payload."
+    schema:
+      payload: required
+      allowed_effects: [skill_shot]
+      numeric_fields:
+        cooldown_ms: required
+        mana_cost: optional
+        range: required
+        radius: required
+        distance: forbidden
+        speed: required
+        impact_radius: forbidden
   - id: beam
     label: Beam
     implemented: true
     inspiration: "WoW line spells and League piercing casts"
     notes: "An immediate line effect that resolves against the first valid target or lane."
+    schema:
+      payload: required
+      allowed_effects: [beam, skill_shot]
+      numeric_fields:
+        cooldown_ms: required
+        mana_cost: optional
+        range: required
+        radius: required
+        distance: forbidden
+        speed: forbidden
+        impact_radius: forbidden
   - id: dash
     label: Dash
     implemented: true
     inspiration: "Mage blink and assassin gap-closers"
     notes: "Moves the caster while optionally applying an impact payload at the destination."
+    schema:
+      payload: optional
+      allowed_effects: [dash_trail]
+      numeric_fields:
+        cooldown_ms: required
+        mana_cost: optional
+        range: forbidden
+        radius: forbidden
+        distance: required
+        speed: forbidden
+        impact_radius: optional
   - id: burst
     label: Burst
     implemented: true
     inspiration: "Targeted AoE spells"
     notes: "A targeted area effect centered at an aimed point."
+    schema:
+      payload: required
+      allowed_effects: [burst]
+      numeric_fields:
+        cooldown_ms: required
+        mana_cost: optional
+        range: required
+        radius: required
+        distance: forbidden
+        speed: forbidden
+        impact_radius: forbidden
   - id: nova
     label: Nova
     implemented: true
     inspiration: "Point-blank AoE spells"
     notes: "A caster-centered radial effect."
+    schema:
+      payload: required
+      allowed_effects: [nova]
+      numeric_fields:
+        cooldown_ms: required
+        mana_cost: optional
+        range: forbidden
+        radius: required
+        distance: forbidden
+        speed: forbidden
+        impact_radius: forbidden
   - id: summon
     label: Summon
     implemented: false
@@ -61,36 +116,85 @@ statuses:
     implemented: true
     inspiration: "Rogue and assassin damage-over-time effects"
     notes: "A damaging periodic effect that stacks by source."
+    schema:
+      max_stacks: positive
+      numeric_fields:
+        duration_ms: required
+        tick_interval_ms: required
+        magnitude: required
+        trigger_duration_ms: forbidden
   - id: hot
     label: Heal Over Time
     implemented: true
     inspiration: "Cleric and healer maintenance spells"
     notes: "A healing periodic effect that refreshes by source."
+    schema:
+      max_stacks: one
+      numeric_fields:
+        duration_ms: required
+        tick_interval_ms: required
+        magnitude: required
+        trigger_duration_ms: forbidden
   - id: chill
     label: Chill
     implemented: true
     inspiration: "Mage slows that can escalate into roots"
     notes: "A stacking slow that can trigger a follow-up crowd control state."
+    schema:
+      max_stacks: positive
+      numeric_fields:
+        duration_ms: required
+        tick_interval_ms: forbidden
+        magnitude: required
+        trigger_duration_ms: optional
   - id: root
     label: Root
     implemented: true
     inspiration: "Snare and immobilize effects"
     notes: "Prevents movement while allowing other actions unless another status forbids them."
+    schema:
+      max_stacks: one
+      numeric_fields:
+        duration_ms: required
+        tick_interval_ms: forbidden
+        magnitude: zero
+        trigger_duration_ms: forbidden
   - id: haste
     label: Haste
     implemented: true
     inspiration: "Movement or action speed buffs"
     notes: "Improves movement speed for a limited duration."
+    schema:
+      max_stacks: one
+      numeric_fields:
+        duration_ms: required
+        tick_interval_ms: forbidden
+        magnitude: required
+        trigger_duration_ms: forbidden
   - id: silence
     label: Silence
     implemented: true
     inspiration: "Spell lockout effects"
     notes: "Prevents skill casts while active."
+    schema:
+      max_stacks: one
+      numeric_fields:
+        duration_ms: required
+        tick_interval_ms: forbidden
+        magnitude: zero
+        trigger_duration_ms: forbidden
   - id: stun
     label: Stun
     implemented: true
     inspiration: "Hard crowd control"
     notes: "Prevents movement and actions while active."
+    schema:
+      max_stacks: one
+      numeric_fields:
+        duration_ms: required
+        tick_interval_ms: forbidden
+        magnitude: zero
+        trigger_duration_ms: forbidden
   - id: shield
     label: Shield
     implemented: false
