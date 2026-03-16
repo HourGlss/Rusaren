@@ -1658,6 +1658,7 @@ dependencies = [
  "game_domain",
  "game_net",
  "libfuzzer-sys",
+ "serde_json",
 ]
 
 [[package]]

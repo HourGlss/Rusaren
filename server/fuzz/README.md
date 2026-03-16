@@ -8,6 +8,8 @@ Current targets:
 - `input_frame_decode`
 - `session_ingress`
 - `server_control_event_decode`
+- `arena_full_snapshot_decode`
+- `arena_delta_snapshot_decode`
 - `webrtc_signal_message_parse`
 - `control_command_roundtrip`
 - `input_frame_roundtrip`

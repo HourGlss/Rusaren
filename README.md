@@ -20,10 +20,13 @@ Buildable now:
 - a documented production-style deploy path with Caddy, Prometheus, and `coturn`
 - stricter authored YAML and ASCII content validation with clean boot-time failures on invalid content
 - backend gameplay tests that exercise every shipped melee and authored slot skill directly against the sim, including hit, miss, range, cooldown, mana, and status behavior
+- repeated soak/load regression tests for lobby churn and repeated match completion without state leaks
 - Criterion benchmark targets for hot-path sim ticks and snapshot packet codec work
 - persistent player records under `server/var/player_records.tsv`
 - local quality scripts under `server/scripts`
 - GitHub Actions quality workflows plus Godot web export and deploy smoke workflows
+- scheduled mutation-testing shards over the packet, lobby, match, app, and simulation core
+- a focused packet-ingress mutation smoke path that exercises `game_net::ingress` directly and catches exact-limit packet-boundary regressions
 
 Not implemented yet:
 - the full 1.0 authored class and spell set beyond the current shipped runtime kit
@@ -183,6 +186,13 @@ cd server
 rustup run stable cargo test --workspace
 ```
 
+Run the soak and load regression suite:
+
+```powershell
+cd server
+./scripts/quality.ps1 soak
+```
+
 Run the ingress fuzz smoke checks:
 
 ```powershell
@@ -197,6 +207,16 @@ Run a bounded live ingress fuzz campaign on Linux, Docker, or WSL:
 cd server
 ./scripts/quality.ps1 fuzz-live
 ```
+
+Run a focused packet-boundary mutation smoke against ingress validation:
+
+```powershell
+cd server
+rustup run stable cargo mutants --no-config --package game_net --test-package game_net --file crates/game_net/src/ingress.rs --copy-target false --test-tool nextest --baseline skip --jobs 1 --timeout 60 --build-timeout 60 --output target/reports/mutants-ingress
+```
+
+That command is intentionally narrow and meant for local hardening of packet-boundary logic.
+The broader mutation-testing slice runs in the scheduled GitHub Actions workflow.
 
 Install the configured quality tools:
 
@@ -229,6 +249,8 @@ Run the configured quality checks:
 cd server
 ./scripts/quality.ps1
 ```
+
+`./scripts/quality.ps1 all` now includes the core runtime coverage gate after report generation.
 
 On Linux or inside a container, the checked-in `server/Makefile` provides the same entrypoints through `make lint`, `make test`, `make fuzz`, `make verus`, and `make reports`.
 
@@ -330,6 +352,23 @@ If that URL does not come up after a successful `server-quality` run, the remain
 
 The docs report includes a per-file publication table for every Markdown file under `shared/docs`.
 The fuzz report now shows replay coverage over the checked-in seed corpus plus any discovered corpus already present under `server/target/fuzz-generated-corpus/`. The headline score is intentionally scoped to network-ingress targets such as packet decode, ingress sequencing, server-control-event decode, and WebRTC signaling JSON parsing. On native Windows, `cargo fuzz run` is still not dependable for this repo, so real live fuzz campaigns are expected to run in Linux CI, Docker, or WSL.
+The primary ingress fuzz set now also includes structured round-trip fuzzing for control/input/signaling packets plus decode fuzzing for full and delta arena snapshots.
+
+Run the core runtime coverage gate after reports:
+
+```powershell
+cd server
+./scripts/quality.ps1 coverage-gate
+```
+
+Run the scheduled mutation-testing slice locally:
+
+```powershell
+cd server
+./scripts/quality.ps1 mutants
+```
+
+That task uses `server/.cargo/mutants.toml` and writes its output under `server/target/reports/mutants/`.
 
 Run the local Docker deploy smoke path:
 
@@ -434,6 +473,11 @@ High-level hosted flow:
 2. copy `deploy/.env.example` to `deploy/.env` and fill the real host and secrets
 3. run `docker compose --env-file deploy/.env -f deploy/docker-compose.yml build`
 4. run `docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d`
+
+For the current live-domain target:
+- `https://pvpnowfast.com/` should serve the game shell directly
+- `https://turn.pvpnowfast.com/` should back STUN/TURN
+- Ubuntu `24.04 LTS` is the documented Linode host target
 
 Local container smoke before a real host deploy:
 1. run `./server/scripts/docker-smoke.ps1`

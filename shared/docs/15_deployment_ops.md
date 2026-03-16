@@ -2,12 +2,13 @@
 
 ## Goal
 `0.8.0` keeps the same deployment shape, but the current hosted slice now includes authored YAML/ASCII content loading, a real WebRTC gameplay path, a minimally usable HUD, and backend-tested spell/status behavior.
+For the first real hosted rollout, `https://pvpnowfast.com/` should open the game shell directly with no chooser page.
 
 This is the current hosted topology:
-- `https://domain.com` -> Caddy reverse proxy with automatic TLS
+- `https://pvpnowfast.com` -> Caddy reverse proxy with automatic TLS
 - Caddy -> `rarena-server` container on the internal Docker network
 - Prometheus -> scrapes `rarena-server:3000/metrics` on the internal Docker network
-- `turn.domain.com` -> `coturn` on the same operator-managed host
+- `turn.pvpnowfast.com` -> `coturn` on the same operator-managed host
 
 Current transport note:
 - the public shell now uses `/session/bootstrap` plus websocket signaling at `/ws` and WebRTC data channels for live gameplay traffic
@@ -37,8 +38,8 @@ What each part does:
 ## Prerequisites
 - Docker and Docker Compose plugin on the host
 - DNS records:
-  - `domain.com` -> public server IP
-  - `turn.domain.com` -> public server IP
+  - `pvpnowfast.com` -> public server IP
+  - `turn.pvpnowfast.com` -> public server IP
 - ports open:
   - `80/tcp`
   - `443/tcp`
@@ -62,14 +63,15 @@ What each part does:
    - `docker compose --env-file deploy/.env -f deploy/docker-compose.yml build`
    - `docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d`
 5. Verify:
-   - `https://domain.com/`
-   - `https://domain.com/healthz`
+   - `https://pvpnowfast.com/`
+   - `https://pvpnowfast.com/healthz`
    - Prometheus locally on the bind from `PROMETHEUS_BIND`
+   - the root route serves the Godot shell directly
 
 ## Recommended Linode targets
 
 Live-test / staging target:
-- one shared or dedicated Ubuntu LTS Linode for:
+- one shared or dedicated Ubuntu 24.04 LTS Linode for:
   - Caddy
   - `rarena-server`
   - Prometheus

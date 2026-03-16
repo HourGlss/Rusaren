@@ -13,11 +13,15 @@ On server boot:
 - every currently shipped melee and authored slot skill hits valid targets and misses invalid ones
 - cooldowns and mana costs match authored content
 - poison, hot, chill, root, haste, silence, and stun all apply and remove when they should
+- locked-slot casts are rejected even when the packet shape is otherwise valid
+- repeated movement packets in one frame do not move a player farther than one authoritative frame of travel
+- illegal movement components are rejected before they can reach simulation state
 - Skill progression rule enforced (tier gating)
 - round transition rebuilds a clean combat world
 - Round win condition correct
 - disconnect after countdown causes immediate match abort and `No Contest` result for every player
 - property-test cast/channel/interruption transitions in `game_domain` and `game_sim`
+- soak repeated match loops and lobby churn in `game_api`
 
 ## Determinism-ish regression
 Record:
@@ -40,11 +44,15 @@ Replay:
 ## Abuse resistance
 - input rate limits
 - server-side sanity checks for "still" and casting
+- strictly increasing packet sequence enforcement on inbound control and input channels
+- strictly increasing `client_input_tick` enforcement for live combat input streams
 - disconnect after launch countdown immediately ends the match
 - no reconnect-to-match flow in v1
-- fuzz protocol decode and invalid client command sequences in `game_net`
-- fuzz snapshot and delta decode at the network boundary
-- fuzz the low-cardinality HTTP route classifier that feeds the observability layer
-- fuzz the Prometheus observability renderer and counter/gauge update paths that back `/metrics`
-- fuzz persisted player-record TSV parsing and canonicalization before disk state is trusted
-- initial fuzz targets should stay live for packet headers, control-command decode, server-control-event decode, input-frame decode, ingress/session sequencing, and the observability surface
+- fuzzing priority is network ingress: packet headers, control-command decode, control-command round-trip, server-control-event decode, input-frame decode, input-frame round-trip, ingress/session sequencing, full snapshot decode, delta snapshot decode, and WebRTC signaling parsing/round-trip
+- mutation testing should focus on packet validation, lobby/match/domain rules, and core gameplay logic where a bad mutation could allow malformed lengths, stale ordering, locked-skill casts, or impossible movement
+- a focused local ingress mutation smoke can be run with `rustup run stable cargo mutants --no-config --package game_net --test-package game_net --file crates/game_net/src/ingress.rs --copy-target false --test-tool nextest --baseline skip --jobs 1 --timeout 60 --build-timeout 60 --output target/reports/mutants-ingress`
+- keep non-network fuzzing supplemental rather than release-gating
+
+## Coverage gates
+- `./scripts/quality.ps1 coverage-gate` enforces minimum line/function coverage on the core runtime crates
+- the current gate checks `game_api`, `game_domain`, `game_lobby`, `game_match`, `game_net`, and `game_sim`

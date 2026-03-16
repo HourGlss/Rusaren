@@ -705,6 +705,20 @@ function Get-FuzzTargetCatalog {
             Primary = $true
         },
         [pscustomobject]@{
+            Target = "arena_full_snapshot_decode"
+            Scope = "crates/game_net/src/control.rs via full arena snapshot decode."
+            Description = "Full authoritative arena snapshot decode and validation."
+            Paths = @("crates/game_net/src/control.rs")
+            Primary = $true
+        },
+        [pscustomobject]@{
+            Target = "arena_delta_snapshot_decode"
+            Scope = "crates/game_net/src/control.rs via delta arena snapshot decode."
+            Description = "Delta authoritative arena snapshot decode and validation."
+            Paths = @("crates/game_net/src/control.rs")
+            Primary = $true
+        },
+        [pscustomobject]@{
             Target = "webrtc_signal_message_parse"
             Scope = "crates/game_api/src/webrtc.rs via websocket signaling JSON validation."
             Description = "WebRTC signaling message decode and validation."

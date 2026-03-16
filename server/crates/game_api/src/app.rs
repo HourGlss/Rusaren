@@ -73,6 +73,7 @@ struct ConnectedPlayer {
     location: PlayerLocation,
     inbound_control: SequenceTracker,
     inbound_input: SequenceTracker,
+    newest_client_input_tick: Option<u32>,
     next_outbound_seq: u32,
 }
 
@@ -80,6 +81,24 @@ impl ConnectedPlayer {
     fn next_outbound_seq(&mut self) -> u32 {
         self.next_outbound_seq = self.next_outbound_seq.saturating_add(1);
         self.next_outbound_seq
+    }
+
+    fn observe_client_input_tick(&mut self, client_input_tick: u32) -> Result<(), String> {
+        if let Some(newest_client_input_tick) = self.newest_client_input_tick {
+            if client_input_tick <= newest_client_input_tick {
+                return Err(format!(
+                    "client_input_tick {client_input_tick} is not newer than {newest_client_input_tick}"
+                ));
+            }
+        }
+
+        self.newest_client_input_tick = Some(client_input_tick);
+        Ok(())
+    }
+
+    fn reset_combat_input_state(&mut self) {
+        self.inbound_input = SequenceTracker::new();
+        self.newest_client_input_tick = None;
     }
 }
 
@@ -388,6 +407,12 @@ impl ServerApp {
                             self.send_error(transport, player_id, &error.to_string());
                             return;
                         }
+                        if let Err(error) =
+                            player.observe_client_input_tick(frame.client_input_tick)
+                        {
+                            self.send_error(transport, player_id, &error);
+                            return;
+                        }
                     }
 
                     self.handle_input_frame(transport, player_id, frame);
@@ -484,6 +509,7 @@ impl ServerApp {
                 location: PlayerLocation::CentralLobby,
                 inbound_control,
                 inbound_input: SequenceTracker::new(),
+                newest_client_input_tick: None,
                 next_outbound_seq: 0,
             },
         );
@@ -1916,6 +1942,7 @@ impl ServerApp {
         for player_id in &participants {
             if let Some(player) = self.players.get_mut(player_id) {
                 player.location = PlayerLocation::Match(match_id);
+                player.reset_combat_input_state();
             }
         }
 
@@ -2379,7 +2406,9 @@ mod tests {
     use game_domain::{PlayerName, SkillTree};
     use game_net::{
         ArenaStateSnapshot, LobbyDirectoryEntry, LobbySnapshotPlayer, ServerControlEvent,
+        ValidatedInputFrame, BUTTON_CAST,
     };
+    use game_sim::PLAYER_MOVE_SPEED_UNITS_PER_SECOND;
 
     fn connection_id(raw: u64) -> ConnectionId {
         ConnectionId::new(raw).expect("valid connection id")
@@ -2447,6 +2476,28 @@ mod tests {
     fn slot_one_cast_input(client_input_tick: u32) -> ValidatedInputFrame {
         ValidatedInputFrame::new(client_input_tick, 0, 0, 0, 0, BUTTON_CAST, 1)
             .expect("slot one cast input should be valid")
+    }
+
+    fn movement_input_frame(
+        client_input_tick: u32,
+        move_x: i16,
+        move_y: i16,
+    ) -> ValidatedInputFrame {
+        ValidatedInputFrame::new(client_input_tick, move_x, move_y, 0, 0, 0, 0)
+            .expect("movement input should be valid")
+    }
+
+    fn slot_cast_input(client_input_tick: u32, slot: u16) -> ValidatedInputFrame {
+        ValidatedInputFrame::new(client_input_tick, 0, 0, 0, 0, BUTTON_CAST, slot)
+            .expect("cast input should be valid")
+    }
+
+    fn player_x(server: &ServerApp, match_id: MatchId, player_id: PlayerId) -> i16 {
+        server.matches[&match_id]
+            .world
+            .player_state(player_id)
+            .expect("player state should exist")
+            .x
     }
 
     fn cast_until_round_won(
@@ -3079,6 +3130,190 @@ mod tests {
         assert!(alice_events.iter().any(|event| matches!(
             event,
             ServerControlEvent::Error { message } if message.contains("incoming sequence")
+        )));
+    }
+
+    #[test]
+    fn end_to_end_rejects_stale_client_input_ticks_even_with_new_packet_sequences() {
+        let mut server = ServerApp::new();
+        let mut transport = InMemoryTransport::new();
+        let (mut alice, mut bob) = connect_pair(&mut server, &mut transport);
+
+        let _ = launch_match(&mut server, &mut transport, &mut alice, &mut bob);
+
+        alice
+            .choose_skill(&mut transport, skill(SkillTree::Mage, 1))
+            .expect("alice skill");
+        bob.choose_skill(&mut transport, skill(SkillTree::Rogue, 1))
+            .expect("bob skill");
+        server.pump_transport(&mut transport);
+        let _ = alice
+            .drain_events(&mut transport)
+            .expect("alice skill events");
+        let _ = bob.drain_events(&mut transport).expect("bob skill events");
+
+        server.advance_seconds(&mut transport, 5);
+        let _ = alice
+            .drain_events(&mut transport)
+            .expect("alice pre-combat events");
+        let _ = bob
+            .drain_events(&mut transport)
+            .expect("bob pre-combat events");
+
+        alice
+            .send_input(&mut transport, movement_input_frame(7, 1, 0), 1)
+            .expect("first movement input");
+        server.pump_transport(&mut transport);
+        let _ = alice
+            .drain_events(&mut transport)
+            .expect("alice first input events");
+
+        alice
+            .send_input(&mut transport, movement_input_frame(7, 1, 0), 2)
+            .expect("duplicate tick input");
+        server.pump_transport(&mut transport);
+        let alice_events = alice
+            .drain_events(&mut transport)
+            .expect("alice duplicate tick events");
+        assert!(alice_events.iter().any(|event| matches!(
+            event,
+            ServerControlEvent::Error { message }
+                if message == "client_input_tick 7 is not newer than 7"
+        )));
+    }
+
+    #[test]
+    fn end_to_end_rejects_locked_skill_slot_cast_inputs_even_when_the_packet_is_valid() {
+        let mut server = ServerApp::new();
+        let mut transport = InMemoryTransport::new();
+        let (mut alice, mut bob) = connect_pair(&mut server, &mut transport);
+
+        let _ = launch_match(&mut server, &mut transport, &mut alice, &mut bob);
+
+        alice
+            .choose_skill(&mut transport, skill(SkillTree::Mage, 1))
+            .expect("alice skill");
+        bob.choose_skill(&mut transport, skill(SkillTree::Rogue, 1))
+            .expect("bob skill");
+        server.pump_transport(&mut transport);
+        let _ = alice
+            .drain_events(&mut transport)
+            .expect("alice skill events");
+        let _ = bob.drain_events(&mut transport).expect("bob skill events");
+
+        server.advance_seconds(&mut transport, 5);
+        let _ = alice
+            .drain_events(&mut transport)
+            .expect("alice pre-combat events");
+        let _ = bob
+            .drain_events(&mut transport)
+            .expect("bob pre-combat events");
+
+        alice
+            .send_input(&mut transport, slot_cast_input(1, 5), 1)
+            .expect("locked-slot cast packet");
+        server.pump_transport(&mut transport);
+        let alice_events = alice
+            .drain_events(&mut transport)
+            .expect("alice locked-slot events");
+        assert!(alice_events.iter().any(|event| matches!(
+            event,
+            ServerControlEvent::Error { message }
+                if message == "skill slot 5 is not unlocked for round 1"
+        )));
+    }
+
+    #[test]
+    fn movement_spam_cannot_move_farther_than_one_simulated_frame() {
+        let mut server = ServerApp::new();
+        let mut transport = InMemoryTransport::new();
+        let (mut alice, mut bob) = connect_pair(&mut server, &mut transport);
+
+        let match_id = launch_match(&mut server, &mut transport, &mut alice, &mut bob);
+
+        alice
+            .choose_skill(&mut transport, skill(SkillTree::Mage, 1))
+            .expect("alice skill");
+        bob.choose_skill(&mut transport, skill(SkillTree::Rogue, 1))
+            .expect("bob skill");
+        server.pump_transport(&mut transport);
+        let _ = alice
+            .drain_events(&mut transport)
+            .expect("alice skill events");
+        let _ = bob.drain_events(&mut transport).expect("bob skill events");
+
+        server.advance_seconds(&mut transport, 5);
+        let _ = alice
+            .drain_events(&mut transport)
+            .expect("alice pre-combat events");
+        let _ = bob
+            .drain_events(&mut transport)
+            .expect("bob pre-combat events");
+
+        let alice_id = alice.player_id().expect("alice id");
+        let starting_x = player_x(&server, match_id, alice_id);
+        for tick in 1..=10 {
+            alice
+                .send_input(&mut transport, movement_input_frame(tick, 1, 0), tick)
+                .expect("movement spam packet");
+        }
+        server.pump_transport(&mut transport);
+        let _ = alice
+            .drain_events(&mut transport)
+            .expect("alice input events");
+
+        server.advance_millis(&mut transport, COMBAT_FRAME_MS);
+        let ending_x = player_x(&server, match_id, alice_id);
+        let actual_distance = ending_x - starting_x;
+        let expected_distance = i16::try_from(
+            u32::from(PLAYER_MOVE_SPEED_UNITS_PER_SECOND) * u32::from(COMBAT_FRAME_MS) / 1000,
+        )
+        .unwrap_or(i16::MAX);
+
+        assert_eq!(
+            actual_distance, expected_distance,
+            "one combat frame of movement input should only move one frame's worth of distance"
+        );
+    }
+
+    #[test]
+    fn end_to_end_rejects_out_of_range_movement_components() {
+        let mut server = ServerApp::new();
+        let mut transport = InMemoryTransport::new();
+        let (mut alice, mut bob) = connect_pair(&mut server, &mut transport);
+
+        let _ = launch_match(&mut server, &mut transport, &mut alice, &mut bob);
+
+        alice
+            .choose_skill(&mut transport, skill(SkillTree::Mage, 1))
+            .expect("alice skill");
+        bob.choose_skill(&mut transport, skill(SkillTree::Rogue, 1))
+            .expect("bob skill");
+        server.pump_transport(&mut transport);
+        let _ = alice
+            .drain_events(&mut transport)
+            .expect("alice skill events");
+        let _ = bob.drain_events(&mut transport).expect("bob skill events");
+
+        server.advance_seconds(&mut transport, 5);
+        let _ = alice
+            .drain_events(&mut transport)
+            .expect("alice pre-combat events");
+        let _ = bob
+            .drain_events(&mut transport)
+            .expect("bob pre-combat events");
+
+        alice
+            .send_input(&mut transport, movement_input_frame(1, 2, 0), 1)
+            .expect("invalid movement packet");
+        server.pump_transport(&mut transport);
+        let alice_events = alice
+            .drain_events(&mut transport)
+            .expect("alice invalid movement events");
+        assert!(alice_events.iter().any(|event| matches!(
+            event,
+            ServerControlEvent::Error { message }
+                if message == "move_horizontal_q=2 is outside the allowed range -1..=1"
         )));
     }
 

@@ -31,6 +31,7 @@ Concrete v1 channel options in Godot/WebRTC:
 Note:
 - WebRTC does not provide a native "sequenced but not reliable" mode.
 - V1 implements "sequenced" behavior at the application layer by attaching a monotonically increasing sequence number and dropping any packet older than the newest one already processed on that channel.
+- For live input frames, the backend also requires `client_input_tick` to increase monotonically per player per match, so replayed or stale-but-newly-sequenced input packets are rejected.
 
 ## Encoding
 - Use JSON for HTTP and signaling payloads.
@@ -161,6 +162,8 @@ u16 ability_or_context
 Rules:
 - Server keeps only the newest valid input packet per player.
 - Lost input packets are not retransmitted.
+- `seq` must be strictly newer than the last accepted input packet on that connection.
+- `client_input_tick` must be strictly newer than the last accepted client input tick for that player in the current match.
 
 ## Snapshot packet bodies
 Current full snapshot body:

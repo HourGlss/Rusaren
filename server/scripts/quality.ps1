@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("all", "fmt", "lint", "hack", "test", "doc", "docs-artifacts", "coverage", "fuzz-coverage", "reports", "deny", "audit", "udeps", "miri", "complexity", "callgraph", "bench", "fuzz", "fuzz-build", "fuzz-live", "typos", "taplo", "zizmor", "verus")]
+    [ValidateSet("all", "fmt", "lint", "hack", "test", "soak", "doc", "docs-artifacts", "coverage", "coverage-gate", "fuzz-coverage", "reports", "deny", "audit", "udeps", "miri", "complexity", "callgraph", "bench", "fuzz", "fuzz-build", "fuzz-live", "mutants", "typos", "taplo", "zizmor", "verus")]
     [string]$Task = "all"
 )
 
@@ -43,10 +43,15 @@ function Get-NetworkFuzzTargets {
     return @(
         "packet_header_decode",
         "control_command_decode",
+        "control_command_roundtrip",
         "input_frame_decode",
+        "input_frame_roundtrip",
         "session_ingress",
         "server_control_event_decode",
-        "webrtc_signal_message_parse"
+        "arena_full_snapshot_decode",
+        "arena_delta_snapshot_decode",
+        "webrtc_signal_message_parse",
+        "webrtc_signal_message_roundtrip"
     )
 }
 
@@ -117,6 +122,104 @@ function Invoke-LiveFuzz {
     }
 }
 
+function Invoke-SoakTests {
+    param([bool]$HasNextest)
+
+    if ($HasNextest) {
+        rustup run stable cargo nextest run -p game_api --test soak_match_flow --all-features
+        return
+    }
+
+    Write-Host "cargo-nextest is not installed; falling back to cargo test for soak coverage."
+    rustup run stable cargo test -p game_api --test soak_match_flow --all-features
+}
+
+function Invoke-MutationTesting {
+    param([bool]$HasNextest)
+
+    $outputRoot = Join-Path $serverRoot "target\reports\mutants"
+    New-Item -ItemType Directory -Force -Path $outputRoot | Out-Null
+    $logPath = Join-Path $outputRoot "mutants.log"
+    $status = "passed"
+    $errorMessage = $null
+
+    $args = @(
+        "mutants",
+        "--workspace",
+        "--output", $outputRoot,
+        "--copy-target", "false",
+        "--jobs", $(if ([string]::IsNullOrWhiteSpace($env:RARENA_MUTANTS_JOBS)) { "2" } else { $env:RARENA_MUTANTS_JOBS }),
+        "--timeout", $(if ([string]::IsNullOrWhiteSpace($env:RARENA_MUTANTS_TIMEOUT)) { "240" } else { $env:RARENA_MUTANTS_TIMEOUT }),
+        "--build-timeout", $(if ([string]::IsNullOrWhiteSpace($env:RARENA_MUTANTS_BUILD_TIMEOUT)) { "180" } else { $env:RARENA_MUTANTS_BUILD_TIMEOUT })
+    )
+
+    if ($HasNextest) {
+        $args += @("--test-tool", "nextest")
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:RARENA_MUTANTS_FILE)) {
+        $args += @("--file", $env:RARENA_MUTANTS_FILE)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:RARENA_MUTANTS_SHARD)) {
+        $args += @("--shard", $env:RARENA_MUTANTS_SHARD)
+    }
+
+    try {
+        $previousIncrementalValue = $env:CARGO_INCREMENTAL
+        try {
+            $env:CARGO_INCREMENTAL = "0"
+            & rustup run stable cargo @args 2>&1 | Tee-Object -FilePath $logPath
+        }
+        finally {
+            if ($null -eq $previousIncrementalValue) {
+                Remove-Item Env:CARGO_INCREMENTAL -ErrorAction SilentlyContinue
+            }
+            else {
+                $env:CARGO_INCREMENTAL = $previousIncrementalValue
+            }
+        }
+    }
+    catch {
+        $status = "failed"
+        $errorMessage = $_.Exception.Message
+    }
+
+    $shardLabel = if (-not [string]::IsNullOrWhiteSpace($env:RARENA_MUTANTS_SHARD)) {
+        $env:RARENA_MUTANTS_SHARD
+    }
+    else {
+        "1/1"
+    }
+    $html = @"
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Rusaren Mutation Testing</title>
+  <style>
+    body { font-family: Segoe UI, Arial, sans-serif; margin: 2rem; background: #14181f; color: #f4f6fb; }
+    a { color: #7ec8ff; }
+    code, pre { background: #1f2630; padding: 0.2rem 0.4rem; border-radius: 0.35rem; }
+    .badge { display: inline-block; padding: 0.2rem 0.55rem; border-radius: 999px; background: #20456b; }
+    .failed { background: #6b2d2d; }
+    .muted { color: #b9c3d4; }
+  </style>
+</head>
+<body>
+  <h1>Mutation Testing</h1>
+  <p><span class="badge $(if ($status -eq "failed") { "failed" } else { "" })">$status</span></p>
+  <p class="muted">Shard <code>$shardLabel</code>. Config: <code>server/.cargo/mutants.toml</code>.</p>
+  <p>Primary log: <a href="./mutants.log">mutants.log</a></p>
+  $(if ($errorMessage) { "<p><strong>Exit detail:</strong> <code>$errorMessage</code></p>" } else { "" })
+</body>
+</html>
+"@
+    Set-Content -Path (Join-Path $outputRoot "index.html") -Value $html -Encoding utf8
+
+    if ($status -eq "failed") {
+        throw $errorMessage
+    }
+}
+
 function Invoke-QualityTask {
     param([string]$Name)
 
@@ -161,9 +264,11 @@ function Invoke-QualityTask {
                 rustup run stable cargo test --workspace --all-features
             }
         }
+        "soak" { Invoke-SoakTests -HasNextest $hasNextest }
         "doc" { rustup run stable cargo xdoc }
         "docs-artifacts" { & (Join-Path $PSScriptRoot "build-docs.ps1") }
         "coverage" { & (Join-Path $PSScriptRoot "generate-reports.ps1") -Report coverage -FailOnCommandFailure }
+        "coverage-gate" { & (Join-Path $PSScriptRoot "check-core-coverage.ps1") }
         "fuzz-coverage" { & (Join-Path $PSScriptRoot "generate-reports.ps1") -Report fuzz -FailOnCommandFailure }
         "reports" { & (Join-Path $PSScriptRoot "generate-reports.ps1") -Report all -FailOnCommandFailure }
         "deny" { rustup run stable cargo xdeny }
@@ -196,6 +301,7 @@ function Invoke-QualityTask {
         }
         "fuzz-build" { Invoke-FuzzBuild -Targets (Get-AllFuzzTargets) }
         "fuzz-live" { Invoke-LiveFuzz -Targets (Get-NetworkFuzzTargets) }
+        "mutants" { Invoke-MutationTesting -HasNextest $hasNextest }
         "typos" {
             Push-Location $repoRoot
             try {
@@ -228,7 +334,7 @@ function Invoke-QualityTask {
 }
 
 $tasks = if ($Task -eq "all") {
-    @("fmt", "lint", "verus", "hack", "test", "doc", "fuzz", "reports", "deny", "audit", "typos", "taplo", "zizmor")
+    @("fmt", "lint", "verus", "hack", "test", "doc", "fuzz", "reports", "coverage-gate", "deny", "audit", "typos", "taplo", "zizmor")
 }
 else {
     @($Task)

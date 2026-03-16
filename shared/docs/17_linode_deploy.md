@@ -6,6 +6,7 @@ It assumes the repo's current architecture honestly:
 - optional separate TURN host
 - Docker Compose deploy
 - exported Godot web bundle already built
+- `pvpnowfast.com` should serve the game shell directly at `/`, not a chooser page
 
 Official Linode references:
 - Getting started: https://techdocs.akamai.com/cloud-computing/docs/getting-started
@@ -18,13 +19,13 @@ Official Linode references:
 ## Recommended targets
 
 First real live test:
-- App host: 1 x Ubuntu LTS Linode, `Linode 4 GB` or better
+- App host: 1 x Ubuntu 24.04 LTS Linode, `Linode 4 GB` or better
 - TURN host: reuse the app host first, or use a separate `Linode 2 GB` if you want cleaner isolation
 - Region: pick the region closest to the first expected playtesters
 - Enable backups
 
 Current 1.0 production-quality target:
-- App host: 1 x Ubuntu LTS Linode, `Linode 8 GB` or better
+- App host: 1 x Ubuntu 24.04 LTS Linode, `Linode 8 GB` or better
 - TURN host: separate small Linode
 - Domain and DNS managed in the same operator account
 - Cloud Firewall on every public Linode
@@ -53,7 +54,7 @@ Do not jump to multi-app-host gameplay yet:
 
 In Cloud Manager:
 1. Create the app Linode.
-2. Choose Ubuntu LTS.
+2. Choose `Ubuntu 24.04 LTS`.
 3. Pick `Linode 4 GB` or better for the first live test.
 4. Add your SSH key during creation.
 5. Enable backups.
@@ -64,8 +65,8 @@ In Cloud Manager:
 In Cloud Manager Domains:
 1. Create or import the domain zone.
 2. Add:
-   - `A` record for `domain.com` -> app host public IP
-   - `A` record for `turn.domain.com` -> TURN host public IP
+   - `A` record for `pvpnowfast.com` -> app host public IP
+   - `A` record for `turn.pvpnowfast.com` -> TURN host public IP
 3. If TURN is co-hosted on the app machine, both records can point to the same IP.
 
 ### 3. Apply Cloud Firewall rules
@@ -149,10 +150,10 @@ cp deploy/.env.example deploy/.env
 ```
 
 Edit `deploy/.env` and set real values:
-- `PUBLIC_HOST=domain.com`
+- `PUBLIC_HOST=pvpnowfast.com`
 - `ACME_EMAIL=<your real email>`
-- `TURN_PUBLIC_HOST=turn.domain.com`
-- `TURN_REALM=domain.com`
+- `TURN_PUBLIC_HOST=turn.pvpnowfast.com`
+- `TURN_REALM=pvpnowfast.com`
 - `TURN_SHARED_SECRET=<long random secret>`
 - `TURN_EXTERNAL_IP=<public IP of TURN host or app host>`
 - `RARENA_RUST_LOG=info,axum=info,tower_http=info`
@@ -180,19 +181,20 @@ docker compose --env-file deploy/.env -f deploy/docker-compose.yml logs coturn -
 ```
 
 Then test:
-- `https://domain.com/`
-- `https://domain.com/healthz`
+- `https://pvpnowfast.com/`
+- `https://pvpnowfast.com/healthz`
 - browser connect flow through `/session/bootstrap` and `/ws`
 - real match traffic over WebRTC
+- confirm the root page is the game shell directly and there is no landing-page chooser
 
 ### 10. If WebRTC fails on the live host
 
 Check in order:
-1. `turn.domain.com` resolves publicly
+1. `turn.pvpnowfast.com` resolves publicly
 2. firewall rules include `3478/tcp`, `3478/udp`, and the relay UDP range
 3. `TURN_EXTERNAL_IP` is the true public IP of the TURN host
 4. `TURN_SHARED_SECRET` matches between the Rust app and `coturn`
-5. TLS and DNS for `domain.com` are working
+5. TLS and DNS for `pvpnowfast.com` are working
 6. browser dev tools show ICE candidates and no obvious signaling errors
 
 ## What you do not need yet

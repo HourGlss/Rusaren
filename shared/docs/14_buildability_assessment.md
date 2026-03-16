@@ -15,6 +15,8 @@ Buildable today:
 - runtime content loading from `server/content/skills/*.yaml`, `server/content/maps/prototype_arena.txt`, and `server/content/mechanics/registry.yaml`
 - runtime validation that rejects malformed YAML skill shapes, duplicate authored ids, and malformed ASCII maps before boot
 - backend gameplay tests that directly exercise every currently shipped melee and authored slot skill for hit/miss/range/cooldown/status behavior
+- explicit abuse regressions for stale input ticks, locked-slot cast cheating, illegal movement components, and movement-spam distance caps
+- soak/load regression coverage for repeated match sessions and parallel lobby churn
 - hot-path Criterion benchmark targets for simulation ticks and snapshot packet codec work
 - a Godot Web export pipeline plus CI smoke checks
 - same-origin static hosting of the exported web shell from `dedicated_server`
@@ -27,6 +29,7 @@ Not buildable yet:
 - a broader final class/spell content set beyond the current shipped 20-skill runtime slice
 - rustdoc/API guidance that is sufficient for an external client or bot to play through the protocol without Godot
 - a proven hosted-domain live deployment on operator infrastructure such as Linode
+- a completed 0.9 mutation-testing review cycle over the core runtime files
 
 Current class-growth note:
 - authored skills are already sourced from runtime YAML files
@@ -59,6 +62,6 @@ The next implementation steps should be:
 1. keep the Godot shell and backend packet surface synced while the current WebRTC path gets more real-world playtime
 2. expand authored content and backend gameplay correctness coverage now that the runtime transport surface is in place
 3. continue gameplay presentation and HUD work on top of the working snapshot/delta path, especially readability under fog-of-war
-4. use the checked-in hosting stack plus the Linode deployment guide to perform the first real hosted-domain rollout once operator secrets and DNS are available
+4. use the checked-in hosting stack plus the Linode deployment guide to perform the first real hosted-domain rollout for `pvpnowfast.com` once operator secrets and DNS are available
 
 The next decisions should come from implementation feedback, not more speculative architecture drafting.

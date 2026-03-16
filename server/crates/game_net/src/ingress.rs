@@ -147,4 +147,13 @@ mod tests {
             })
         );
     }
+
+    #[test]
+    fn ingress_guard_accepts_packets_at_the_exact_size_limit() {
+        let mut guard = NetworkSessionGuard::new();
+        guard.mark_bound();
+        let packet = vec![0_u8; MAX_INGRESS_PACKET_BYTES];
+
+        assert_eq!(guard.accept_packet(&packet), Ok(()));
+    }
 }

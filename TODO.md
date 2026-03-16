@@ -47,10 +47,10 @@ Release gate:
 ## 0.9.0 Beta Hardening
 
 - [ ] Freeze the 1.0 protocol surface.
-- [ ] Raise coverage expectations in core crates.
-- [ ] Run scheduled live fuzzing in CI and retain discovered corpus and artifacts.
-- [ ] Add mutation testing on lobby, match, domain, and core gameplay rule logic.
-- [ ] Add load and soak testing.
+- [x] Raise coverage expectations in core crates.
+- [x] Run scheduled live fuzzing in CI and retain discovered corpus and artifacts.
+- [x] Add mutation testing on lobby, match, domain, and core gameplay rule logic.
+- [x] Add load and soak testing.
 - [ ] Close remaining "cannot test this yet" items in the report.
 - [ ] Make GitHub Actions, GitHub Pages, docs, rustdoc, and report publishing stable and routine.
 - [ ] Verify the hosted stack against the real domain path with TLS, TURN/STUN, and the web client.

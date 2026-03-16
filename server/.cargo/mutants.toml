@@ -1,0 +1,20 @@
+test_tool = "nextest"
+test_workspace = true
+copy_target = false
+cap_lints = true
+minimum_test_timeout = 20.0
+timeout_multiplier = 1.5
+build_timeout_multiplier = 2.0
+output = "target/reports/mutants"
+skip_calls_defaults = true
+
+examine_globs = [
+  "crates/game_domain/src/lib.rs",
+  "crates/game_lobby/src/lib.rs",
+  "crates/game_match/src/lib.rs",
+  "crates/game_net/src/lib.rs",
+  "crates/game_net/src/control.rs",
+  "crates/game_net/src/ingress.rs",
+  "crates/game_api/src/app.rs",
+  "crates/game_sim/src/lib.rs",
+]

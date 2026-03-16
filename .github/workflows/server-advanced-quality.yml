@@ -39,6 +39,9 @@ jobs:
       - name: Feature matrix
         run: ./scripts/quality.ps1 hack
 
+      - name: Soak and load regression
+        run: ./scripts/quality.ps1 soak
+
       - name: Complexity report
         run: ./scripts/quality.ps1 complexity
 
@@ -56,3 +59,50 @@ jobs:
             server/target/reports
             server/target/fuzz-generated-corpus
             server/fuzz/artifacts
+
+  mutants:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard:
+          - 1/4
+          - 2/4
+          - 3/4
+          - 4/4
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: server
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Install stable toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup component add clippy rustfmt llvm-tools-preview --toolchain stable
+
+      - name: Install mutation tools
+        run: ./scripts/install-tools.ps1
+
+      - name: Mutation testing shard
+        continue-on-error: true
+        env:
+          CARGO_INCREMENTAL: 0
+          RARENA_MUTANTS_SHARD: ${{ matrix.shard }}
+          RARENA_MUTANTS_JOBS: 2
+          RARENA_MUTANTS_TIMEOUT: 180
+          RARENA_MUTANTS_BUILD_TIMEOUT: 180
+        run: ./scripts/quality.ps1 mutants
+
+      - name: Upload mutation reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: server-mutation-reports-${{ github.sha }}-${{ matrix.shard }}
+          path: |
+            server/target/reports/mutants

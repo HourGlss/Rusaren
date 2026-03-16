@@ -71,6 +71,9 @@ jobs:
       - name: HTML reports
         run: ./scripts/quality.ps1 reports
 
+      - name: Core runtime coverage gate
+        run: ./scripts/quality.ps1 coverage-gate
+
       - name: Configure GitHub Pages
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
