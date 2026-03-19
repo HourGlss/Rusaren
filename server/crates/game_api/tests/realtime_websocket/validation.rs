@@ -411,6 +411,8 @@ async fn websocket_adapter_rejects_live_input_axis_and_locked_skill_slot_cheats(
         matches!(event, ServerControlEvent::CombatStarted)
     })
     .await;
+    let _ = drain_pending_events(&mut alice, Duration::from_millis(30), 16).await;
+    let _ = drain_pending_events(&mut bob, Duration::from_millis(30), 16).await;
 
     send_input(
         &mut alice,
@@ -420,15 +422,18 @@ async fn websocket_adapter_rejects_live_input_axis_and_locked_skill_slot_cheats(
         1,
     )
     .await;
-    let locked_slot_events = recv_events_until(&mut alice, 4, |event| {
-        matches!(event, ServerControlEvent::Error { .. })
-    })
-    .await;
+    let locked_slot_events =
+        recv_events_until_within(&mut alice, Duration::from_millis(500), 16, |event| {
+            matches!(event, ServerControlEvent::Error { .. })
+        })
+        .await;
     assert!(locked_slot_events.iter().any(|event| matches!(
         event,
         ServerControlEvent::Error { message }
             if message == "skill slot 5 is not unlocked for round 1"
     )));
+
+    let _ = drain_pending_events(&mut alice, Duration::from_millis(30), 16).await;
 
     send_input(
         &mut alice,
@@ -437,10 +442,11 @@ async fn websocket_adapter_rejects_live_input_axis_and_locked_skill_slot_cheats(
         2,
     )
     .await;
-    let axis_cheat_events = recv_events_until(&mut alice, 4, |event| {
-        matches!(event, ServerControlEvent::Error { .. })
-    })
-    .await;
+    let axis_cheat_events =
+        recv_events_until_within(&mut alice, Duration::from_millis(500), 16, |event| {
+            matches!(event, ServerControlEvent::Error { .. })
+        })
+        .await;
     assert!(axis_cheat_events.iter().any(|event| matches!(
         event,
         ServerControlEvent::Error { message }

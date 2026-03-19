@@ -2,7 +2,7 @@
 
 use std::fs;
 use std::path::PathBuf;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use futures_util::{SinkExt, StreamExt};
 use game_api::{
@@ -46,6 +46,13 @@ async fn recv_event(stream: &mut ClientStream) -> ServerControlEvent {
     panic!("websocket ended before any event arrived");
 }
 
+async fn recv_event_with_timeout(
+    stream: &mut ClientStream,
+    timeout: Duration,
+) -> Option<ServerControlEvent> {
+    tokio::time::timeout(timeout, recv_event(stream)).await.ok()
+}
+
 async fn recv_events_until<F>(
     stream: &mut ClientStream,
     max_events: usize,
@@ -68,6 +75,38 @@ where
     panic!("expected predicate to succeed within {max_events} events, got {events:?}");
 }
 
+async fn recv_events_until_within<F>(
+    stream: &mut ClientStream,
+    timeout: Duration,
+    max_events: usize,
+    mut predicate: F,
+) -> Vec<ServerControlEvent>
+where
+    F: FnMut(&ServerControlEvent) -> bool,
+{
+    let mut events = Vec::new();
+    let start = Instant::now();
+
+    for _ in 0..max_events {
+        let Some(remaining) = timeout.checked_sub(start.elapsed()) else {
+            break;
+        };
+        let Some(event) = recv_event_with_timeout(stream, remaining).await else {
+            break;
+        };
+        let satisfied = predicate(&event);
+        events.push(event);
+        if satisfied {
+            return events;
+        }
+    }
+
+    panic!(
+        "expected predicate to succeed within {:?} and {max_events} events, got {events:?}",
+        timeout
+    );
+}
+
 async fn recv_events_up_to<F>(
     stream: &mut ClientStream,
     max_events: usize,
@@ -88,6 +127,23 @@ where
     }
 
     (events, false)
+}
+
+async fn drain_pending_events(
+    stream: &mut ClientStream,
+    quiet_period: Duration,
+    max_events: usize,
+) -> Vec<ServerControlEvent> {
+    let mut events = Vec::new();
+
+    for _ in 0..max_events {
+        let Some(event) = recv_event_with_timeout(stream, quiet_period).await else {
+            break;
+        };
+        events.push(event);
+    }
+
+    events
 }
 
 async fn start_server() -> (game_api::DevServerHandle, String) {
