@@ -48,6 +48,36 @@ Do not jump to multi-app-host gameplay yet:
    - `TURN_SHARED_SECRET`
    - `TURN_EXTERNAL_IP`
 
+## Fast path
+
+From the repo root on the host:
+
+```bash
+sudo PUBLIC_HOST=pvpnowfast.com \
+  ACME_EMAIL=ops@pvpnowfast.com \
+  bash deploy/linode-setup.sh
+```
+
+That script now handles:
+- Ubuntu package updates
+- timezone and hostname
+- limited admin user creation
+- SSH hardening when key-based access is present
+- unattended security upgrades
+- `fail2ban`
+- `ufw`
+- Docker Engine install from Docker's apt repository
+- Docker daemon settings for `buildkit`, `live-restore`, and rotating `local` logs
+- `deploy/.env` creation
+- a `rusaren-compose.service` systemd unit
+- first stack bring-up through `deploy/linode-deploy.sh`
+
+For later code updates on the same host:
+
+```bash
+sudo bash deploy/linode-deploy.sh
+```
+
 ## Step-by-step
 
 ### 1. Create the Linode hosts
@@ -89,33 +119,19 @@ The checked-in stack binds Prometheus locally by default.
 
 ### 4. Secure the host
 
-After SSH login:
-1. update packages
-2. create or confirm a non-root admin user if needed
-3. confirm SSH key login works
-4. follow Linode's secure-hosting guidance before opening the service broadly
+`deploy/linode-setup.sh` now handles the host-side baseline:
+- updates packages
+- configures a limited admin user
+- hardens SSH when key access is present
+- enables unattended upgrades and `fail2ban`
+- configures `ufw`
 
-Typical commands:
-
-```bash
-sudo apt-get update
-sudo apt-get upgrade -y
-sudo apt-get install -y ca-certificates curl git
-```
+Keep Linode Cloud Firewall enabled as the edge control plane.
+Docker's published container ports intentionally remain reachable, and Docker documents that published ports can bypass `ufw` filtering.
 
 ### 5. Install Docker and Compose plugin
 
-On the app host:
-
-```bash
-curl -fsSL https://get.docker.com | sudo sh
-sudo usermod -aG docker "$USER"
-newgrp docker
-docker version
-docker compose version
-```
-
-Repeat on the TURN host only if you are deploying TURN there with Docker Compose too.
+`deploy/linode-setup.sh` installs Docker Engine from Docker's official apt repository, not the convenience script.
 
 ### 6. Copy the repo and the exported web bundle
 
@@ -142,14 +158,8 @@ rsync -avz --delete ./ user@app-host:/opt/rusaren/
 
 ### 7. Configure environment values
 
-On the app host:
-
-```bash
-cd /opt/rusaren
-cp deploy/.env.example deploy/.env
-```
-
-Edit `deploy/.env` and set real values:
+`deploy/linode-setup.sh` writes `deploy/.env`.
+Set these variables before running it if you want to override the defaults:
 - `PUBLIC_HOST=pvpnowfast.com`
 - `ACME_EMAIL=<your real email>`
 - `TURN_PUBLIC_HOST=turn.pvpnowfast.com`
@@ -162,12 +172,7 @@ If TURN is on a separate Linode, keep the same shared secret and public host ali
 
 ### 8. Build and start the stack
 
-From the repo root on the app host:
-
-```bash
-docker compose --env-file deploy/.env -f deploy/docker-compose.yml build
-docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d
-```
+`deploy/linode-deploy.sh` validates the compose file, builds the image, starts the stack, and waits for `/healthz`.
 
 ### 9. Verify the live test
 

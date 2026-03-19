@@ -1,7 +1,9 @@
 #![no_main]
 
 use arbitrary::Arbitrary;
-use game_domain::{LobbyId, MAX_PLAYER_NAME_LEN, MAX_SKILL_TIER, PlayerName, ReadyState, SkillTree, TeamSide};
+use game_domain::{
+    LobbyId, PlayerName, ReadyState, SkillTree, TeamSide, MAX_PLAYER_NAME_LEN, MAX_SKILL_TIER,
+};
 use game_net::ClientControlCommand;
 use libfuzzer_sys::fuzz_target;
 
@@ -70,7 +72,11 @@ impl FuzzClientControlCommand {
 }
 
 fn sanitized_player_name(raw: &[u8]) -> Option<PlayerName> {
-    let bytes = if raw.is_empty() { b"Player".as_slice() } else { raw };
+    let bytes = if raw.is_empty() {
+        b"Player".as_slice()
+    } else {
+        raw
+    };
     let mut normalized = String::with_capacity(bytes.len().min(MAX_PLAYER_NAME_LEN));
     for byte in bytes.iter().copied().take(MAX_PLAYER_NAME_LEN) {
         let mapped = match byte % 64 {

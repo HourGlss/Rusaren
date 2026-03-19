@@ -1,9 +1,9 @@
 use std::{fs, path::PathBuf};
 
-use game_net::{
-    ClientControlCommand, NetworkSessionGuard, PacketHeader, ServerControlEvent,
-    ValidatedInputFrame,
-};
+use game_net::{ClientControlCommand, PacketHeader, ServerControlEvent, ValidatedInputFrame};
+
+#[path = "../../../fuzz/support/game_net/mod.rs"]
+mod game_net_support;
 
 fn server_roots() -> Vec<PathBuf> {
     let mut roots = vec![PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -104,22 +104,14 @@ fn replay_input_frame_corpus() {
 #[test]
 fn replay_session_ingress_corpus() {
     for bytes in corpus_files("session_ingress") {
-        let guard = NetworkSessionGuard::new();
-        let mut index = 0_usize;
-        let mut packets_seen = 0_u8;
+        game_net_support::ingress::run_prefixed_session_ingress_stream(&bytes);
+    }
+}
 
-        while index < bytes.len() && packets_seen < 32 {
-            let declared_len = usize::from(bytes[index]);
-            index += 1;
-
-            let remaining = bytes.len().saturating_sub(index);
-            let packet_len = declared_len.min(remaining);
-            let packet = &bytes[index..index + packet_len];
-            consume_result(guard.accept_packet(packet));
-
-            index += packet_len;
-            packets_seen = packets_seen.saturating_add(1);
-        }
+#[test]
+fn replay_session_ingress_sequence_corpus() {
+    for bytes in corpus_files("session_ingress_sequence") {
+        game_net_support::ingress::run_session_ingress_sequence(&bytes);
     }
 }
 
@@ -131,6 +123,13 @@ fn replay_server_control_event_corpus() {
 }
 
 #[test]
+fn replay_server_control_event_roundtrip_corpus() {
+    for bytes in corpus_files("server_control_event_roundtrip") {
+        game_net_support::events::run_server_control_event_roundtrip(&bytes);
+    }
+}
+
+#[test]
 fn replay_arena_full_snapshot_corpus() {
     for bytes in corpus_files("arena_full_snapshot_decode") {
         consume_result(ServerControlEvent::decode_packet(&bytes));
@@ -138,9 +137,23 @@ fn replay_arena_full_snapshot_corpus() {
 }
 
 #[test]
+fn replay_arena_full_snapshot_roundtrip_corpus() {
+    for bytes in corpus_files("arena_full_snapshot_roundtrip") {
+        game_net_support::events::run_arena_full_snapshot_roundtrip(&bytes);
+    }
+}
+
+#[test]
 fn replay_arena_delta_snapshot_corpus() {
     for bytes in corpus_files("arena_delta_snapshot_decode") {
         consume_result(ServerControlEvent::decode_packet(&bytes));
+    }
+}
+
+#[test]
+fn replay_arena_delta_snapshot_roundtrip_corpus() {
+    for bytes in corpus_files("arena_delta_snapshot_roundtrip") {
+        game_net_support::events::run_arena_delta_snapshot_roundtrip(&bytes);
     }
 }
 

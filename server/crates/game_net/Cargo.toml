@@ -9,6 +9,7 @@ publish.workspace = true
 game_domain = { path = "../game_domain" }
 
 [dev-dependencies]
+arbitrary = { version = "1", features = ["derive"] }
 criterion.workspace = true
 proptest = "1"
 

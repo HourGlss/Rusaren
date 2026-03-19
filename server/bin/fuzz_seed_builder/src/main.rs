@@ -300,9 +300,17 @@ fn main() -> Result<(), Box<dyn Error>> {
     write_control_command_corpus(&corpus_root.join("control_command_decode"))?;
     write_input_frame_corpus(&corpus_root.join("input_frame_decode"))?;
     write_session_ingress_corpus(&corpus_root.join("session_ingress"))?;
+    write_session_ingress_sequence_corpus(&corpus_root.join("session_ingress_sequence"))?;
     write_server_control_event_corpus(&corpus_root.join("server_control_event_decode"))?;
+    write_server_control_event_roundtrip_corpus(
+        &corpus_root.join("server_control_event_roundtrip"),
+    )?;
     write_arena_full_snapshot_decode_corpus(&corpus_root.join("arena_full_snapshot_decode"))?;
+    write_arena_full_snapshot_roundtrip_corpus(&corpus_root.join("arena_full_snapshot_roundtrip"))?;
     write_arena_delta_snapshot_decode_corpus(&corpus_root.join("arena_delta_snapshot_decode"))?;
+    write_arena_delta_snapshot_roundtrip_corpus(
+        &corpus_root.join("arena_delta_snapshot_roundtrip"),
+    )?;
     write_http_route_classification_corpus(&corpus_root.join("http_route_classification"))?;
     write_observability_metrics_render_corpus(&corpus_root.join("observability_metrics_render"))?;
     write_player_record_store_parse_corpus(&corpus_root.join("player_record_store_parse"))?;
@@ -537,6 +545,117 @@ fn write_session_ingress_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
     write_seed(dir, "invalid_first_packet.bin", &invalid_first)?;
     write_seed(dir, "rebinding_attempt.bin", &rebinding)?;
     write_seed(dir, "stale_sequence.bin", &stale_sequence)?;
+    Ok(())
+}
+
+fn write_session_ingress_sequence_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
+    recreate_dir(dir)?;
+
+    let connect = ClientControlCommand::Connect {
+        player_name: player_name("Mallory")?,
+    }
+    .encode_packet(1, 0)?;
+    let create = ClientControlCommand::CreateGameLobby.encode_packet(2, 0)?;
+    let select_team = ClientControlCommand::SelectTeam {
+        team: TeamSide::TeamA,
+    }
+    .encode_packet(3, 0)?;
+    let reconnect = ClientControlCommand::Connect {
+        player_name: player_name("Eve")?,
+    }
+    .encode_packet(4, 0)?;
+
+    let mut wrong_kind = connect.clone();
+    wrong_kind[4] = 7;
+    let truncated_connect = connect[..connect.len() - 1].to_vec();
+    let oversized_create = {
+        let mut bytes = create.clone();
+        bytes.resize(game_net::MAX_INGRESS_PACKET_BYTES + 8, 0xAB);
+        bytes
+    };
+
+    write_seed(dir, "connect_valid.bin", &connect)?;
+    write_seed(dir, "create_valid.bin", &create)?;
+    write_seed(dir, "select_team_valid.bin", &select_team)?;
+    write_seed(dir, "reconnect_valid.bin", &reconnect)?;
+    write_seed(dir, "wrong_packet_kind.bin", &wrong_kind)?;
+    write_seed(dir, "truncated_connect.bin", &truncated_connect)?;
+    write_seed(dir, "oversized_create.bin", &oversized_create)?;
+    write_seed(
+        dir,
+        "prefixed_bind_then_ready.bin",
+        &prefix_packets(&[
+            connect_valid_ingress_bind()?,
+            ClientControlCommand::SetReady {
+                ready: ReadyState::Ready,
+            }
+            .encode_packet(2, 0)?,
+        ]),
+    )?;
+    Ok(())
+}
+
+fn write_server_control_event_roundtrip_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
+    recreate_dir(dir)?;
+
+    let connected = ServerControlEvent::Connected {
+        player_id: player_id(7)?,
+        player_name: player_name("Alice")?,
+        record: game_domain::PlayerRecord {
+            wins: 1,
+            losses: 2,
+            no_contests: 3,
+        },
+        skill_catalog: sample_skill_catalog(),
+    }
+    .encode_packet(1, 0)?;
+    let lobby_snapshot = ServerControlEvent::GameLobbySnapshot {
+        lobby_id: lobby_id(3)?,
+        phase: LobbySnapshotPhase::LaunchCountdown {
+            seconds_remaining: 8,
+        },
+        players: vec![LobbySnapshotPlayer {
+            player_id: player_id(7)?,
+            player_name: player_name("Alice")?,
+            record: game_domain::PlayerRecord::new(),
+            team: Some(TeamSide::TeamA),
+            ready: ReadyState::Ready,
+        }],
+    }
+    .encode_packet(2, 12)?;
+    let arena_effects = ServerControlEvent::ArenaEffectBatch {
+        effects: vec![ArenaEffectSnapshot {
+            kind: ArenaEffectKind::Burst,
+            owner: player_id(7)?,
+            slot: 1,
+            x: -120,
+            y: 90,
+            target_x: 40,
+            target_y: 90,
+            radius: 36,
+        }],
+    }
+    .encode_packet(3, 12)?;
+
+    write_seed(dir, "connected_packet.bin", &connected)?;
+    write_seed(dir, "lobby_snapshot_packet.bin", &lobby_snapshot)?;
+    write_seed(dir, "arena_effect_batch_packet.bin", &arena_effects)?;
+    write_seed(
+        dir,
+        "arena_state_packet.bin",
+        &ServerControlEvent::ArenaStateSnapshot {
+            snapshot: sample_arena_state_snapshot()?,
+        }
+        .encode_packet(4, 12)?,
+    )?;
+    write_seed(
+        dir,
+        "arena_delta_packet.bin",
+        &ServerControlEvent::ArenaDeltaSnapshot {
+            snapshot: sample_arena_delta_snapshot()?,
+        }
+        .encode_packet(5, 12)?,
+    )?;
     Ok(())
 }
 
@@ -929,6 +1048,77 @@ fn write_arena_delta_snapshot_decode_corpus(dir: &Path) -> Result<(), Box<dyn Er
     Ok(())
 }
 
+fn write_arena_full_snapshot_roundtrip_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
+    recreate_dir(dir)?;
+
+    let packet = ServerControlEvent::ArenaStateSnapshot {
+        snapshot: sample_arena_state_snapshot()?,
+    }
+    .encode_packet(1, 12)?;
+    let variant_packet = ServerControlEvent::ArenaStateSnapshot {
+        snapshot: sample_arena_state_snapshot_variant()?,
+    }
+    .encode_packet(2, 12)?;
+
+    write_seed(dir, "arena_state_packet.bin", &packet)?;
+    write_seed(dir, "arena_state_variant_packet.bin", &variant_packet)?;
+    write_seed(
+        dir,
+        "arena_state_effect_batch.bin",
+        &ServerControlEvent::ArenaEffectBatch {
+            effects: vec![ArenaEffectSnapshot {
+                kind: ArenaEffectKind::Beam,
+                owner: player_id(8)?,
+                slot: 2,
+                x: 180,
+                y: 205,
+                target_x: -220,
+                target_y: 210,
+                radius: 16,
+            }],
+        }
+        .encode_packet(3, 12)?,
+    )?;
+    Ok(())
+}
+
+fn write_arena_delta_snapshot_roundtrip_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
+    recreate_dir(dir)?;
+
+    let packet = ServerControlEvent::ArenaDeltaSnapshot {
+        snapshot: sample_arena_delta_snapshot()?,
+    }
+    .encode_packet(2, 13)?;
+    let variant_packet = ServerControlEvent::ArenaDeltaSnapshot {
+        snapshot: sample_arena_delta_snapshot_variant()?,
+    }
+    .encode_packet(3, 13)?;
+
+    write_seed(dir, "arena_delta_packet.bin", &packet)?;
+    write_seed(dir, "arena_delta_variant_packet.bin", &variant_packet)?;
+    write_seed(
+        dir,
+        "lobby_snapshot_packet.bin",
+        &ServerControlEvent::GameLobbySnapshot {
+            lobby_id: lobby_id(9)?,
+            phase: LobbySnapshotPhase::Open,
+            players: vec![LobbySnapshotPlayer {
+                player_id: player_id(8)?,
+                player_name: player_name("Bob")?,
+                record: game_domain::PlayerRecord {
+                    wins: 3,
+                    losses: 1,
+                    no_contests: 0,
+                },
+                team: Some(TeamSide::TeamB),
+                ready: ReadyState::NotReady,
+            }],
+        }
+        .encode_packet(4, 13)?,
+    )?;
+    Ok(())
+}
+
 fn write_http_route_classification_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
     recreate_dir(dir)?;
 
@@ -1255,10 +1445,7 @@ fn write_webrtc_signal_message_parse_corpus(dir: &Path) -> Result<(), Box<dyn Er
 }
 
 fn recreate_dir(path: &Path) -> Result<(), Box<dyn Error>> {
-    if path.exists() {
-        fs::remove_dir_all(path)?;
-    }
-
+    // Preserve previously merged discoveries so report generation does not wipe them.
     fs::create_dir_all(path)?;
     Ok(())
 }

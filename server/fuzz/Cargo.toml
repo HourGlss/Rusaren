@@ -55,6 +55,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "server_control_event_roundtrip"
+path = "fuzz_targets/server_control_event_roundtrip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "arena_full_snapshot_decode"
 path = "fuzz_targets/arena_full_snapshot_decode.rs"
 test = false
@@ -62,8 +69,22 @@ doc = false
 bench = false
 
 [[bin]]
+name = "arena_full_snapshot_roundtrip"
+path = "fuzz_targets/arena_full_snapshot_roundtrip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "arena_delta_snapshot_decode"
 path = "fuzz_targets/arena_delta_snapshot_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "arena_delta_snapshot_roundtrip"
+path = "fuzz_targets/arena_delta_snapshot_roundtrip.rs"
 test = false
 doc = false
 bench = false
@@ -127,6 +148,13 @@ bench = false
 [[bin]]
 name = "input_frame_roundtrip"
 path = "fuzz_targets/input_frame_roundtrip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "session_ingress_sequence"
+path = "fuzz_targets/session_ingress_sequence.rs"
 test = false
 doc = false
 bench = false

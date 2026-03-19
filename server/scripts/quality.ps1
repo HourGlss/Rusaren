@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("all", "fmt", "lint", "hack", "test", "soak", "doc", "docs-artifacts", "coverage", "coverage-gate", "fuzz-coverage", "reports", "deny", "audit", "udeps", "miri", "complexity", "clean-code", "callgraph", "bench", "fuzz", "fuzz-build", "fuzz-live", "mutants", "typos", "taplo", "zizmor", "verus")]
+    [ValidateSet("all", "fmt", "lint", "hack", "test", "soak", "doc", "docs-artifacts", "coverage", "coverage-gate", "fuzz-coverage", "reports", "deny", "audit", "udeps", "miri", "complexity", "clean-code", "callgraph", "bench", "fuzz", "fuzz-build", "fuzz-live", "fuzz-merge", "mutants", "typos", "taplo", "zizmor", "verus")]
     [string]$Task = "all"
 )
 
@@ -47,9 +47,13 @@ function Get-NetworkFuzzTargets {
         "input_frame_decode",
         "input_frame_roundtrip",
         "session_ingress",
+        "session_ingress_sequence",
         "server_control_event_decode",
+        "server_control_event_roundtrip",
         "arena_full_snapshot_decode",
+        "arena_full_snapshot_roundtrip",
         "arena_delta_snapshot_decode",
+        "arena_delta_snapshot_roundtrip",
         "webrtc_signal_message_parse",
         "webrtc_signal_message_roundtrip"
     )
@@ -87,18 +91,7 @@ function Copy-FuzzSeedCorpus {
     }
 }
 
-function Invoke-LiveFuzz {
-    param([string[]]$Targets)
-
-    if ($isWindowsHost) {
-        throw "Live cargo-fuzz execution is not supported on this native Windows/MSVC setup. Use Linux CI, Docker, or WSL for cargo fuzz run."
-    }
-
-    if ($Targets.Count -eq 0) {
-        Write-Host "The fuzz workspace exists, but no fuzz targets are defined yet."
-        return
-    }
-
+function Get-FuzzMaxTotalTime {
     $maxTotalTime = 10
     if (-not [string]::IsNullOrWhiteSpace($env:RARENA_FUZZ_MAX_TOTAL_TIME)) {
         $maxTotalTime = [int]$env:RARENA_FUZZ_MAX_TOTAL_TIME
@@ -107,6 +100,98 @@ function Invoke-LiveFuzz {
         throw "RARENA_FUZZ_MAX_TOTAL_TIME must be greater than zero."
     }
 
+    return $maxTotalTime
+}
+
+function Test-WslAvailable {
+    if (-not $isWindowsHost) {
+        return $false
+    }
+
+    $wslCommand = Get-Command wsl.exe -ErrorAction SilentlyContinue
+    if ($null -eq $wslCommand) {
+        return $false
+    }
+
+    try {
+        $distros = @(
+            & $wslCommand.Source -l -q 2>$null |
+                Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+                ForEach-Object { $_.ToString().Replace([string][char]0, '').Trim() } |
+                Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+        )
+        return $distros.Count -gt 0
+    }
+    catch {
+        return $false
+    }
+}
+
+function Get-WslDistribution {
+    if (-not (Test-WslAvailable)) {
+        return $null
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($env:RARENA_WSL_DISTRO)) {
+        return $env:RARENA_WSL_DISTRO
+    }
+
+    $wslCommand = (Get-Command wsl.exe -ErrorAction SilentlyContinue).Source
+    $distros = @(
+        & $wslCommand -l -q 2>$null |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            ForEach-Object { $_.ToString().Replace([string][char]0, '').Trim() } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    )
+    if ($distros.Count -eq 0) {
+        return $null
+    }
+
+    return $distros[0]
+}
+
+function Convert-WindowsPathToWsl {
+    param([string]$Path)
+
+    $resolved = (Resolve-Path -Path $Path).Path
+    $normalized = $resolved -replace '\\', '/'
+    if ($normalized -match '^([A-Za-z]):/(.*)$') {
+        return "/mnt/$($matches[1].ToLower())/$($matches[2])"
+    }
+
+    throw "Unable to convert Windows path to WSL path: $Path"
+}
+
+function Convert-ToBashDoubleQuotedLiteral {
+    param([string]$Value)
+
+    $escaped = $Value.Replace('\', '\\')
+    $escaped = $escaped.Replace('"', '\"')
+    $escaped = $escaped.Replace('$', '\$')
+    $escaped = $escaped.Replace('`', '\`')
+    return '"' + $escaped + '"'
+}
+
+function Invoke-WslBashCommand {
+    param([string]$Script)
+
+    $distribution = Get-WslDistribution
+    if ([string]::IsNullOrWhiteSpace($distribution)) {
+        throw "WSL is not available. Install a Linux distribution or set RARENA_WSL_DISTRO."
+    }
+
+    & (Get-Command wsl.exe -ErrorAction SilentlyContinue).Source -d $distribution -- bash -lc $Script
+}
+
+function Invoke-LiveFuzzNative {
+    param([string[]]$Targets)
+
+    if ($Targets.Count -eq 0) {
+        Write-Host "The fuzz workspace exists, but no fuzz targets are defined yet."
+        return
+    }
+
+    $maxTotalTime = Get-FuzzMaxTotalTime
     $artifactRoot = Join-Path $serverRoot "fuzz\artifacts"
     $generatedCorpusRoot = Join-Path $serverRoot "target\fuzz-generated-corpus"
     New-Item -ItemType Directory -Force -Path $artifactRoot | Out-Null
@@ -120,6 +205,143 @@ function Invoke-LiveFuzz {
 
         rustup run $nightlyToolchain cargo fuzz run $target $corpusDir -- "-artifact_prefix=$artifactDir/" "-max_total_time=$maxTotalTime"
     }
+}
+
+function Invoke-LiveFuzzViaWsl {
+    param([string[]]$Targets)
+
+    if ($Targets.Count -eq 0) {
+        Write-Host "The fuzz workspace exists, but no fuzz targets are defined yet."
+        return
+    }
+
+    $maxTotalTime = Get-FuzzMaxTotalTime
+    $artifactRoot = Join-Path $serverRoot "fuzz\artifacts"
+    $generatedCorpusRoot = Join-Path $serverRoot "target\fuzz-generated-corpus"
+    New-Item -ItemType Directory -Force -Path $artifactRoot | Out-Null
+    New-Item -ItemType Directory -Force -Path $generatedCorpusRoot | Out-Null
+
+    $serverRootWsl = Convert-WindowsPathToWsl -Path $serverRoot
+
+    foreach ($target in $Targets) {
+        Copy-FuzzSeedCorpus -Target $target -DestinationRoot $generatedCorpusRoot
+        $corpusDir = Join-Path $generatedCorpusRoot $target
+        $artifactDir = Join-Path $artifactRoot $target
+        New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
+
+        $serverRootQuoted = Convert-ToBashDoubleQuotedLiteral -Value $serverRootWsl
+        $toolchainQuoted = Convert-ToBashDoubleQuotedLiteral -Value $nightlyToolchain
+        $targetQuoted = Convert-ToBashDoubleQuotedLiteral -Value $target
+        $corpusQuoted = Convert-ToBashDoubleQuotedLiteral -Value (Convert-WindowsPathToWsl -Path $corpusDir)
+        $artifactPrefixQuoted = Convert-ToBashDoubleQuotedLiteral -Value ("-artifact_prefix={0}/" -f (Convert-WindowsPathToWsl -Path $artifactDir))
+        $maxTotalQuoted = Convert-ToBashDoubleQuotedLiteral -Value ("-max_total_time={0}" -f $maxTotalTime)
+
+        $bashCommand = @"
+set -euo pipefail
+if [ -f "\$HOME/.cargo/env" ]; then . "\$HOME/.cargo/env"; fi
+cd $serverRootQuoted
+rustup run $toolchainQuoted cargo fuzz run $targetQuoted $corpusQuoted -- $artifactPrefixQuoted $maxTotalQuoted
+"@
+        Invoke-WslBashCommand -Script $bashCommand
+    }
+}
+
+function Invoke-LiveFuzz {
+    param([string[]]$Targets)
+
+    if ($isWindowsHost) {
+        if (Test-WslAvailable) {
+            Invoke-LiveFuzzViaWsl -Targets $Targets
+            return
+        }
+
+        throw "Live cargo-fuzz execution is not supported on this native Windows/MSVC setup without WSL. Install WSL, run in Linux CI/Docker, or use fuzz-build."
+    }
+
+    Invoke-LiveFuzzNative -Targets $Targets
+}
+
+function Invoke-FuzzMergeNative {
+    param([string[]]$Targets)
+
+    $generatedCorpusRoot = Join-Path $serverRoot "target\fuzz-generated-corpus"
+
+    foreach ($target in $Targets) {
+        $seedDir = Join-Path $serverRoot ("fuzz\corpus\" + $target)
+        $generatedDir = Join-Path $generatedCorpusRoot $target
+        if (-not (Test-Path $generatedDir)) {
+            continue
+        }
+
+        $generatedFiles = @(
+            Get-ChildItem -Path $generatedDir -File -Recurse -ErrorAction SilentlyContinue
+        )
+        if ($generatedFiles.Count -eq 0) {
+            continue
+        }
+
+        if (-not (Test-Path $seedDir)) {
+            New-Item -ItemType Directory -Force -Path $seedDir | Out-Null
+        }
+
+        rustup run $nightlyToolchain cargo fuzz run $target -- "-merge=1" $seedDir $generatedDir
+    }
+}
+
+function Invoke-FuzzMergeViaWsl {
+    param([string[]]$Targets)
+
+    $generatedCorpusRoot = Join-Path $serverRoot "target\fuzz-generated-corpus"
+
+    $serverRootWsl = Convert-WindowsPathToWsl -Path $serverRoot
+
+    foreach ($target in $Targets) {
+        $seedDir = Join-Path $serverRoot ("fuzz\corpus\" + $target)
+        $generatedDir = Join-Path $generatedCorpusRoot $target
+        if (-not (Test-Path $generatedDir)) {
+            continue
+        }
+
+        $generatedFiles = @(
+            Get-ChildItem -Path $generatedDir -File -Recurse -ErrorAction SilentlyContinue
+        )
+        if ($generatedFiles.Count -eq 0) {
+            continue
+        }
+
+        if (-not (Test-Path $seedDir)) {
+            New-Item -ItemType Directory -Force -Path $seedDir | Out-Null
+        }
+
+        $serverRootQuoted = Convert-ToBashDoubleQuotedLiteral -Value $serverRootWsl
+        $toolchainQuoted = Convert-ToBashDoubleQuotedLiteral -Value $nightlyToolchain
+        $targetQuoted = Convert-ToBashDoubleQuotedLiteral -Value $target
+        $seedQuoted = Convert-ToBashDoubleQuotedLiteral -Value (Convert-WindowsPathToWsl -Path $seedDir)
+        $generatedQuoted = Convert-ToBashDoubleQuotedLiteral -Value (Convert-WindowsPathToWsl -Path $generatedDir)
+
+        $bashCommand = @"
+set -euo pipefail
+if [ -f "\$HOME/.cargo/env" ]; then . "\$HOME/.cargo/env"; fi
+cd $serverRootQuoted
+rustup run $toolchainQuoted cargo fuzz run $targetQuoted -- "-merge=1" $seedQuoted $generatedQuoted
+"@
+        Invoke-WslBashCommand -Script $bashCommand
+    }
+}
+
+function Invoke-FuzzMerge {
+    param([string[]]$Targets)
+
+    if ($isWindowsHost) {
+        if (Test-WslAvailable) {
+            Invoke-FuzzMergeViaWsl -Targets $Targets
+            return
+        }
+
+        throw "Fuzz corpus merge needs Linux cargo-fuzz or WSL on this Windows host."
+    }
+
+    Invoke-FuzzMergeNative -Targets $Targets
 }
 
 function Invoke-SoakTests {
@@ -936,8 +1158,8 @@ function Invoke-QualityTask {
         }
         "fuzz" {
             $targets = Get-NetworkFuzzTargets
-            if ($isWindowsHost) {
-                Write-Host "Live cargo-fuzz execution is not available on native Windows/MSVC in this repo; building ingress fuzz targets instead."
+            if ($isWindowsHost -and -not (Test-WslAvailable)) {
+                Write-Host "Live cargo-fuzz execution is not available on native Windows/MSVC in this repo without WSL; building ingress fuzz targets instead."
                 Invoke-FuzzBuild -Targets $targets
             }
             else {
@@ -946,6 +1168,7 @@ function Invoke-QualityTask {
         }
         "fuzz-build" { Invoke-FuzzBuild -Targets (Get-AllFuzzTargets) }
         "fuzz-live" { Invoke-LiveFuzz -Targets (Get-NetworkFuzzTargets) }
+        "fuzz-merge" { Invoke-FuzzMerge -Targets (Get-NetworkFuzzTargets) }
         "mutants" { Invoke-MutationTesting -HasNextest $hasNextest }
         "typos" {
             Push-Location $repoRoot

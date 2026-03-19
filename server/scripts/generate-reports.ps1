@@ -1228,37 +1228,87 @@ function Get-FuzzTargetCatalog {
             Primary = $true
         },
         [pscustomobject]@{
+            Target = "session_ingress_sequence"
+            Scope = "crates/game_net/src/ingress.rs plus structured control command ingress sequencing through crates/game_net/src/control/client.rs and crates/game_net/src/control/codec.rs."
+            Description = "Structure-aware ingress packet sequencing over valid, truncated, oversized, and wrong-kind control packets."
+            Paths = @(
+                "crates/game_net/src/ingress.rs",
+                "crates/game_net/src/control/client.rs",
+                "crates/game_net/src/control/codec.rs"
+            )
+            Primary = $false
+        },
+        [pscustomobject]@{
             Target = "server_control_event_decode"
-            Scope = "crates/game_net/src/control/server.rs and crates/game_net/src/control/snapshots.rs plus codec helpers."
+            Scope = "crates/game_net/src/control/server_decode.rs and crates/game_net/src/control/snapshots_decode.rs plus codec helpers."
             Description = "Server control event decode for lobby directory and full lobby snapshot payloads."
             Paths = @(
-                "crates/game_net/src/control/server.rs",
-                "crates/game_net/src/control/snapshots.rs",
+                "crates/game_net/src/control/server_decode.rs",
+                "crates/game_net/src/control/snapshots_decode.rs",
                 "crates/game_net/src/control/codec.rs"
             )
             Primary = $true
+        },
+        [pscustomobject]@{
+            Target = "server_control_event_roundtrip"
+            Scope = "crates/game_net/src/control/server_encode.rs, server_decode.rs, snapshots_encode.rs, snapshots_decode.rs, and codec.rs via structure-aware event round trips."
+            Description = "Structure-aware round-trip fuzzing for valid server control events and snapshot payloads."
+            Paths = @(
+                "crates/game_net/src/control/server_encode.rs",
+                "crates/game_net/src/control/server_decode.rs",
+                "crates/game_net/src/control/snapshots_encode.rs",
+                "crates/game_net/src/control/snapshots_decode.rs",
+                "crates/game_net/src/control/codec.rs"
+            )
+            Primary = $false
         },
         [pscustomobject]@{
             Target = "arena_full_snapshot_decode"
-            Scope = "crates/game_net/src/control/server.rs and crates/game_net/src/control/snapshots.rs via full arena snapshot decode."
+            Scope = "crates/game_net/src/control/server_decode.rs and crates/game_net/src/control/snapshots_decode.rs via full arena snapshot decode."
             Description = "Full authoritative arena snapshot decode and validation."
             Paths = @(
-                "crates/game_net/src/control/server.rs",
-                "crates/game_net/src/control/snapshots.rs",
+                "crates/game_net/src/control/server_decode.rs",
+                "crates/game_net/src/control/snapshots_decode.rs",
                 "crates/game_net/src/control/codec.rs"
             )
             Primary = $true
         },
         [pscustomobject]@{
+            Target = "arena_full_snapshot_roundtrip"
+            Scope = "crates/game_net/src/control/server_encode.rs, server_decode.rs, snapshots_encode.rs, snapshots_decode.rs, and codec.rs via structured full snapshot round trips."
+            Description = "Structure-aware round-trip fuzzing for valid full arena snapshots."
+            Paths = @(
+                "crates/game_net/src/control/server_encode.rs",
+                "crates/game_net/src/control/server_decode.rs",
+                "crates/game_net/src/control/snapshots_encode.rs",
+                "crates/game_net/src/control/snapshots_decode.rs",
+                "crates/game_net/src/control/codec.rs"
+            )
+            Primary = $false
+        },
+        [pscustomobject]@{
             Target = "arena_delta_snapshot_decode"
-            Scope = "crates/game_net/src/control/server.rs and crates/game_net/src/control/snapshots.rs via delta arena snapshot decode."
+            Scope = "crates/game_net/src/control/server_decode.rs and crates/game_net/src/control/snapshots_decode.rs via delta arena snapshot decode."
             Description = "Delta authoritative arena snapshot decode and validation."
             Paths = @(
-                "crates/game_net/src/control/server.rs",
-                "crates/game_net/src/control/snapshots.rs",
+                "crates/game_net/src/control/server_decode.rs",
+                "crates/game_net/src/control/snapshots_decode.rs",
                 "crates/game_net/src/control/codec.rs"
             )
             Primary = $true
+        },
+        [pscustomobject]@{
+            Target = "arena_delta_snapshot_roundtrip"
+            Scope = "crates/game_net/src/control/server_encode.rs, server_decode.rs, snapshots_encode.rs, snapshots_decode.rs, and codec.rs via structured delta snapshot round trips."
+            Description = "Structure-aware round-trip fuzzing for valid delta arena snapshots."
+            Paths = @(
+                "crates/game_net/src/control/server_encode.rs",
+                "crates/game_net/src/control/server_decode.rs",
+                "crates/game_net/src/control/snapshots_encode.rs",
+                "crates/game_net/src/control/snapshots_decode.rs",
+                "crates/game_net/src/control/codec.rs"
+            )
+            Primary = $false
         },
         [pscustomobject]@{
             Target = "webrtc_signal_message_parse"

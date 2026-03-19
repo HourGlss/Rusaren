@@ -2,9 +2,11 @@ use game_domain::MAX_SKILL_TREE_NAME_LEN;
 
 mod client;
 mod codec;
-mod server;
+mod server_decode;
+mod server_encode;
 mod server_types;
-mod snapshots;
+mod snapshots_decode;
+mod snapshots_encode;
 
 pub use client::ClientControlCommand;
 pub use server_types::*;

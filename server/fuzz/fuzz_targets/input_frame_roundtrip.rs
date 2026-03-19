@@ -31,7 +31,8 @@ impl FuzzInputFrame {
             BUTTON_QUIT_TO_LOBBY,
         ];
         if buttons == 0 {
-            buttons = allowed_ordered_bits[usize::from(self.buttons % (allowed_ordered_bits.len() as u16))];
+            buttons = allowed_ordered_bits
+                [usize::from(self.buttons % (allowed_ordered_bits.len() as u16))];
         }
 
         let ability_or_context = if buttons & BUTTON_CAST != 0 {

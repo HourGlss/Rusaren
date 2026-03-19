@@ -13,7 +13,9 @@ const MAX_MID_BYTES: usize = 64;
 
 #[derive(Arbitrary, Debug)]
 enum FuzzSignalMessage {
-    Offer { sdp: Vec<u8> },
+    Offer {
+        sdp: Vec<u8>,
+    },
     IceCandidate {
         candidate: Vec<u8>,
         sdp_mid: Option<Vec<u8>>,

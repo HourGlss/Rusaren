@@ -20,7 +20,7 @@ fuzz_target!(|data: &[u8]| {
         let tier = chunk[1];
 
         if let Ok(choice) = SkillChoice::new(tree, tier) {
-            let _ = progress.apply(choice);
+            let _ = progress.apply(&choice);
         }
     }
 });

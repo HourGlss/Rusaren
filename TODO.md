@@ -51,6 +51,13 @@ Release gate:
 - [x] Run scheduled live fuzzing in CI and retain discovered corpus and artifacts.
 - [x] Add mutation testing on lobby, match, domain, and core gameplay rule logic.
 - [x] Add load and soak testing.
+- [ ] Define backend performance budgets for tick latency, command latency, CPU, memory, SQLite log write latency, and connection capacity.
+- [ ] Add repeatable load scenarios and quality gates that enforce those performance budgets on a fixed reference environment.
+- [ ] Add append-only SQLite-backed match and combat logs for all non-movement player actions, picks, casts, hits, misses, healing, status changes, deaths, and match lifecycle events.
+- [ ] Add replay-style regression checks that validate selected end-to-end match flows from server-authored match and combat logs.
+- [ ] Add a private authenticated admin dashboard for health, tick timing, sessions, lobbies, matches, recent errors, and recent match/combat log views.
+- [ ] Add post-deploy smoke checks and synthetic probes for the hosted backend path.
+- [ ] Add ADRs for protocol freeze, event logging, admin surface, and persistence, plus explicit crate-boundary rules and a human PR review checklist.
 - [ ] Close remaining "cannot test this yet" items in the report.
 - [ ] Make GitHub Actions, GitHub Pages, docs, rustdoc, and report publishing stable and routine.
 - [ ] Verify the hosted stack against the real domain path with TLS, TURN/STUN, and the web client.
@@ -58,6 +65,9 @@ Release gate:
 Release gate:
 - no major architecture gaps remain
 - all network ingress paths are fuzzed
+- performance budgets are defined and passing on the reference environment
+- non-movement gameplay actions are durably logged with server-authored match and combat events
+- a private admin dashboard and hosted smoke probes exist for the backend
 - CI and Pages are stable on main
 - hosted staging or production path has been exercised end to end
 
