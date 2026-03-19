@@ -103,6 +103,20 @@ fn header_rejects_unknown_channels_unknown_kinds_and_bad_lengths() {
 
 #[test]
 fn input_frame_validates_button_masks_and_context_consistency() {
+    assert_eq!(BUTTON_PRIMARY, 1);
+    assert_eq!(game_net::BUTTON_SECONDARY, 2);
+    assert_eq!(BUTTON_CAST, 4);
+    assert_eq!(game_net::BUTTON_CANCEL, 8);
+    assert_eq!(game_net::BUTTON_QUIT_TO_LOBBY, 16);
+    assert_eq!(ALLOWED_BUTTONS_MASK, 31);
+    assert_eq!(
+        ALLOWED_BUTTONS_MASK & !BUTTON_PRIMARY,
+        game_net::BUTTON_SECONDARY
+            | BUTTON_CAST
+            | game_net::BUTTON_CANCEL
+            | game_net::BUTTON_QUIT_TO_LOBBY
+    );
+
     assert_eq!(
         ValidatedInputFrame::new(1, 0, 0, 0, 0, ALLOWED_BUTTONS_MASK + 1, 0),
         Err(PacketError::UnknownButtonBits {
@@ -190,6 +204,7 @@ fn input_frame_decode_rejects_bad_input_payload_lengths() {
 #[test]
 fn sequence_tracker_accepts_increasing_sequences_and_rejects_stale_values() {
     let mut tracker = SequenceTracker::new();
+    assert_eq!(tracker.newest(), None);
 
     assert_eq!(tracker.observe(0), Ok(()));
     assert_eq!(tracker.observe(1), Ok(()));
@@ -232,8 +247,60 @@ fn packet_error_display_covers_all_formatter_groups() {
             "ClientControlCommand payload contained 2 unexpected trailing bytes",
         ),
         (
+            PacketError::PayloadTooLarge {
+                actual: u16::MAX as usize + 1,
+                maximum: u16::MAX as usize,
+            },
+            "payload length 65536 exceeds maximum encodable 65535",
+        ),
+        (
+            PacketError::ControlPayloadTooShort {
+                kind: "ServerControlEvent",
+                expected: 4,
+                actual: 2,
+            },
+            "ServerControlEvent payload expected at least 4 bytes but received 2",
+        ),
+        (
+            PacketError::UnknownServerEvent(99),
+            "unknown server event 99",
+        ),
+        (
+            PacketError::InvalidUtf8String {
+                field: "player_name",
+            },
+            "player_name contained invalid utf-8",
+        ),
+        (
+            PacketError::InvalidEncodedPlayerId(0),
+            "encoded player id 0 is invalid",
+        ),
+        (
             PacketError::InvalidEncodedTeam(9),
             "encoded team 9 is invalid",
+        ),
+        (
+            PacketError::InvalidEncodedMatchId(8),
+            "encoded match id 8 is invalid",
+        ),
+        (
+            PacketError::InvalidEncodedRound(0),
+            "encoded round 0 is invalid",
+        ),
+        (
+            PacketError::InvalidEncodedArenaObstacleKind(9),
+            "encoded arena obstacle kind 9 is invalid",
+        ),
+        (
+            PacketError::InvalidEncodedArenaStatusKind(9),
+            "encoded arena status kind 9 is invalid",
+        ),
+        (
+            PacketError::IngressPacketTooLarge {
+                actual: 4097,
+                maximum: 4096,
+            },
+            "ingress packet length 4097 exceeds maximum 4096",
         ),
         (
             PacketError::FirstPacketMustBeConnect,

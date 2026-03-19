@@ -5,19 +5,41 @@ use game_net::{
     ValidatedInputFrame,
 };
 
-fn corpus_dirs(target: &str) -> Vec<PathBuf> {
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+fn server_roots() -> Vec<PathBuf> {
+    let mut roots = vec![PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
-        .join("..");
-    let dirs = [
-        repo_root.join("fuzz").join("corpus").join(target),
-        repo_root
-            .join("target")
-            .join("fuzz-generated-corpus")
-            .join(target),
-    ];
+        .join("..")];
+    if let Ok(path) = std::env::var("RARENA_SERVER_ROOT") {
+        if !path.trim().is_empty() {
+            roots.push(PathBuf::from(path));
+        }
+    }
 
-    dirs.into_iter()
+    let mut unique = Vec::new();
+    for root in roots {
+        let canonical = fs::canonicalize(&root).unwrap_or(root);
+        if !unique
+            .iter()
+            .any(|existing: &PathBuf| existing == &canonical)
+        {
+            unique.push(canonical);
+        }
+    }
+
+    unique
+}
+
+fn corpus_dirs(target: &str) -> Vec<PathBuf> {
+    server_roots()
+        .into_iter()
+        .flat_map(|root| {
+            [
+                root.join("fuzz").join("corpus").join(target),
+                root.join("target")
+                    .join("fuzz-generated-corpus")
+                    .join(target),
+            ]
+        })
         .filter(|dir| dir.exists())
         .map(|dir| fs::canonicalize(&dir).unwrap_or(dir))
         .collect()

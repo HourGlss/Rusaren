@@ -1,0 +1,434 @@
+use super::*;
+
+use super::signaling::{handle_signaling_socket, handle_websocket_dev_socket};
+
+impl DevServerHandle {
+    /// Returns the socket address the server bound to.
+    #[must_use]
+    pub const fn local_addr(&self) -> SocketAddr {
+        self.local_addr
+    }
+
+    /// Shuts the server down and waits for its owned tasks to exit.
+    pub async fn shutdown(mut self) {
+        if let Some(shutdown_tx) = self.shutdown_tx.take() {
+            let _ = shutdown_tx.send(());
+        }
+
+        let _ = self.server_task.await;
+        self.ingress_task.abort();
+        self.tick_task.abort();
+    }
+}
+
+/// Spawns the realtime dev server with default options.
+pub async fn spawn_dev_server(listener: TcpListener) -> io::Result<DevServerHandle> {
+    spawn_dev_server_with_options(listener, DevServerOptions::default()).await
+}
+
+/// Spawns the realtime dev server with explicit runtime options.
+pub async fn spawn_dev_server_with_options(
+    listener: TcpListener,
+    options: DevServerOptions,
+) -> io::Result<DevServerHandle> {
+    if options.tick_interval.is_zero() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "tick interval must be greater than zero",
+        ));
+    }
+    if options.simulation_step_ms == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "simulation step must be greater than zero",
+        ));
+    }
+    options
+        .webrtc
+        .validate()
+        .map_err(|message| io::Error::new(io::ErrorKind::InvalidInput, message))?;
+
+    let local_addr = listener.local_addr()?;
+    let content = GameContent::load_from_root(&options.content_root).map_err(io::Error::other)?;
+    let (ingress_tx, ingress_rx) = mpsc::unbounded_channel();
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let next_connection_id = Arc::new(AtomicU64::new(1));
+    let runtime = Arc::new(Mutex::new(RuntimeState {
+        app: ServerApp::new_persistent_with_content(content, options.record_store_path)
+            .map_err(io::Error::other)?,
+        transport: RealtimeTransport::new(),
+        observability: options.observability.clone(),
+    }));
+    let state = DevServerState {
+        ingress_tx: ingress_tx.clone(),
+        web_client_root: options.web_client_root.clone(),
+        observability: options.observability,
+        next_connection_id,
+        bootstrap_tokens: Arc::new(Mutex::new(SessionBootstrapTokenRegistry::new(
+            SESSION_BOOTSTRAP_TOKEN_TTL,
+        ))),
+        webrtc: options.webrtc,
+    };
+
+    let ingress_task = tokio::spawn(run_ingress_loop(runtime.clone(), ingress_rx));
+    let tick_task = tokio::spawn(run_tick_loop(
+        runtime.clone(),
+        options.tick_interval,
+        options.simulation_step_ms,
+    ));
+
+    let app = build_router(state);
+
+    let server_task = tokio::spawn(async move {
+        let server = axum::serve(listener, app).with_graceful_shutdown(async {
+            let _ = shutdown_rx.await;
+        });
+        let _ = server.await;
+    });
+
+    Ok(DevServerHandle {
+        local_addr,
+        shutdown_tx: Some(shutdown_tx),
+        server_task,
+        ingress_task,
+        tick_task,
+    })
+}
+
+/// Returns the default persistent record-store path used for local runs.
+pub(super) fn default_record_store_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("var")
+        .join("player_records.tsv")
+}
+
+/// Returns the default runtime content root used for local runs.
+pub(super) fn default_content_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("content")
+}
+
+/// Returns the default exported web-client root served at `/`.
+pub(super) fn default_web_client_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("static")
+        .join("webclient")
+}
+
+/// Builds the HTTP router for health, metrics, static assets, and realtime transports.
+fn build_router(state: DevServerState) -> Router {
+    let static_assets = get_service(ServeDir::new(state.web_client_root.clone()));
+
+    Router::new()
+        .route("/", get(web_client_index))
+        .route("/healthz", get(healthcheck))
+        .route("/metrics", get(metrics_export))
+        .route("/session/bootstrap", get(session_bootstrap))
+        .route("/ws", get(signaling_upgrade))
+        .route("/ws-dev", get(websocket_dev_upgrade))
+        .fallback_service(static_assets)
+        .layer(
+            TraceLayer::new_for_http().make_span_with(|request: &Request<_>| {
+                let route = classify_http_path(request.uri().path());
+                info_span!(
+                    "http_request",
+                    method = %request.method(),
+                    route = route.as_str(),
+                    path = %request.uri().path()
+                )
+            }),
+        )
+        .with_state(state)
+}
+
+/// Pumps transport ingress events into the application core.
+async fn run_ingress_loop(
+    runtime: Arc<Mutex<RuntimeState>>,
+    mut ingress_rx: mpsc::UnboundedReceiver<IngressEvent>,
+) {
+    while let Some(event) = ingress_rx.recv().await {
+        let mut runtime = runtime.lock().await;
+        match event {
+            IngressEvent::Connect {
+                connection_id,
+                outbound,
+                packet,
+                ack,
+            } => {
+                if let Err(message) = runtime
+                    .transport
+                    .register_client(connection_id, outbound.clone())
+                {
+                    if let Some(observability) = &runtime.observability {
+                        observability.record_ingress_packet(false);
+                    }
+                    warn!(
+                        connection_id = connection_id.get(),
+                        %message,
+                        "realtime ingress rejected duplicate connect"
+                    );
+                    outbound.send_error(message);
+                    let _ = ack.send(Err(message.to_string()));
+                    continue;
+                }
+
+                if let Some(observability) = &runtime.observability {
+                    observability.record_ingress_packet(true);
+                }
+                debug!(
+                    connection_id = connection_id.get(),
+                    "realtime ingress accepted connect packet"
+                );
+                runtime.transport.enqueue(connection_id, packet);
+                runtime.pump_transport();
+                if let Some(player_id) = runtime.app.player_id_for_connection(connection_id) {
+                    let _ = ack.send(Ok(player_id));
+                } else {
+                    runtime.transport.unregister_client(connection_id);
+                    let _ = ack.send(Err(String::from(
+                        "server did not bind the connection after connect",
+                    )));
+                }
+            }
+            IngressEvent::Packet {
+                connection_id,
+                packet,
+            } => {
+                if let Some(observability) = &runtime.observability {
+                    observability.record_ingress_packet(true);
+                }
+                debug!(
+                    connection_id = connection_id.get(),
+                    "realtime ingress accepted packet"
+                );
+                runtime.transport.enqueue(connection_id, packet);
+                runtime.pump_transport();
+            }
+            IngressEvent::Disconnect { connection_id } => {
+                info!(
+                    connection_id = connection_id.get(),
+                    "realtime ingress disconnected bound session"
+                );
+                runtime.disconnect_connection(connection_id);
+                runtime.transport.unregister_client(connection_id);
+            }
+        }
+    }
+}
+
+/// Advances the simulation clock on a fixed real-time interval.
+async fn run_tick_loop(
+    runtime: Arc<Mutex<RuntimeState>>,
+    tick_interval: Duration,
+    simulation_step_ms: u16,
+) {
+    let mut interval = tokio::time::interval(tick_interval);
+    loop {
+        interval.tick().await;
+        let mut runtime = runtime.lock().await;
+        let started_at = Instant::now();
+        runtime.advance_millis(simulation_step_ms);
+        let elapsed = started_at.elapsed();
+        if let Some(observability) = &runtime.observability {
+            observability.record_tick(elapsed);
+        }
+        if elapsed > tick_interval {
+            warn!(
+                tick_duration_ms = elapsed.as_secs_f64() * 1000.0,
+                configured_tick_ms = tick_interval.as_secs_f64() * 1000.0,
+                "simulation tick exceeded the configured interval"
+            );
+        }
+    }
+}
+
+/// Responds to the liveness probe.
+async fn healthcheck(State(state): State<DevServerState>) -> &'static str {
+    if let Some(observability) = &state.observability {
+        observability.record_http_request(crate::HttpRouteLabel::Healthz);
+    }
+    "ok"
+}
+
+/// Serves the exported Godot web client root page.
+async fn web_client_index(State(state): State<DevServerState>) -> Response {
+    if let Some(observability) = &state.observability {
+        observability.record_http_request(crate::HttpRouteLabel::Root);
+    }
+    let index_path = state.web_client_root.join("index.html");
+    match tokio::fs::read_to_string(&index_path).await {
+        Ok(contents) => Html(contents).into_response(),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Html(render_missing_web_client_page(&state.web_client_root)),
+        )
+            .into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Html(format!(
+                "<!doctype html><html><body><h1>Rusaren web client load failed</h1><p>{error}</p></body></html>"
+            )),
+        )
+            .into_response(),
+    }
+}
+
+/// Serves Prometheus metrics when observability is enabled.
+async fn metrics_export(State(state): State<DevServerState>) -> Response {
+    if let Some(observability) = &state.observability {
+        observability.record_http_request(crate::HttpRouteLabel::Metrics);
+        return (
+            StatusCode::OK,
+            [(
+                header::CONTENT_TYPE,
+                "text/plain; version=0.0.4; charset=utf-8",
+            )],
+            observability.render_prometheus(),
+        )
+            .into_response();
+    }
+
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Html(String::from(
+            "<!doctype html><html><body><h1>Rusaren metrics are disabled</h1><p>Start the server with observability enabled to expose Prometheus metrics.</p></body></html>",
+        )),
+    )
+        .into_response()
+}
+
+/// Issues a short-lived one-time token required by websocket signaling upgrades.
+async fn session_bootstrap(
+    State(state): State<DevServerState>,
+) -> Result<Json<SessionBootstrapResponse>, Response> {
+    if let Some(observability) = &state.observability {
+        observability.record_http_request(crate::HttpRouteLabel::SessionBootstrap);
+    }
+
+    let token = {
+        let mut tokens = state.bootstrap_tokens.lock().await;
+        match tokens.mint(Instant::now()) {
+            Ok(token) => token,
+            Err(message) => {
+                return Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": message })),
+                )
+                    .into_response());
+            }
+        }
+    };
+
+    Ok(Json(SessionBootstrapResponse {
+        token,
+        expires_in_ms: u64::try_from(SESSION_BOOTSTRAP_TOKEN_TTL.as_millis()).unwrap_or(u64::MAX),
+    }))
+}
+
+/// Renders a small HTML page that explains how to build the missing web client.
+fn render_missing_web_client_page(web_client_root: &Path) -> String {
+    format!(
+        concat!(
+            "<!doctype html><html><head><meta charset=\"utf-8\">",
+            "<title>Rusaren web client not built</title></head><body>",
+            "<h1>Rusaren web client is not built yet.</h1>",
+            "<p>Build the Godot Web export into the server static root, then reload this page.</p>",
+            "<p>Expected export root: <code>{}</code></p>",
+            "<p>Suggested command: <code>powershell -NoProfile -ExecutionPolicy Bypass -File server/scripts/export-web-client.ps1</code></p>",
+            "</body></html>"
+        ),
+        web_client_root.display()
+    )
+}
+
+/// Upgrades `/ws` into the websocket signaling channel used for `WebRTC` setup.
+async fn signaling_upgrade(
+    ws: WebSocketUpgrade,
+    Query(query): Query<SessionBootstrapQuery>,
+    State(state): State<DevServerState>,
+) -> Response {
+    if let Some(observability) = &state.observability {
+        observability.record_http_request(crate::HttpRouteLabel::WebSocket);
+    }
+
+    if let Err(response) = authorize_websocket_upgrade(&state, query.token.as_deref()).await {
+        return response;
+    }
+
+    if let Some(observability) = &state.observability {
+        observability.record_websocket_upgrade_attempt();
+    }
+    ws.max_message_size(MAX_SIGNAL_MESSAGE_BYTES)
+        .max_frame_size(MAX_SIGNAL_MESSAGE_BYTES)
+        .on_upgrade(move |socket| handle_signaling_socket(state, socket))
+        .into_response()
+}
+
+/// Upgrades `/ws-dev` into the legacy raw websocket gameplay adapter.
+async fn websocket_dev_upgrade(
+    ws: WebSocketUpgrade,
+    Query(query): Query<SessionBootstrapQuery>,
+    State(state): State<DevServerState>,
+) -> Response {
+    if let Some(observability) = &state.observability {
+        observability.record_http_request(crate::HttpRouteLabel::WebSocket);
+    }
+
+    if let Err(response) = authorize_websocket_upgrade(&state, query.token.as_deref()).await {
+        return response;
+    }
+
+    if let Some(observability) = &state.observability {
+        observability.record_websocket_upgrade_attempt();
+    }
+    ws.max_message_size(MAX_INGRESS_PACKET_BYTES)
+        .max_frame_size(MAX_INGRESS_PACKET_BYTES)
+        .on_upgrade(move |socket| handle_websocket_dev_socket(state, socket))
+        .into_response()
+}
+
+/// Validates and consumes the short-lived bootstrap token required for websocket upgrades.
+///
+/// VERIFIED MODEL: `server/verus/session_bootstrap_model.rs` mirrors the one-time-use
+/// token invariant enforced here. The production registry still relies on runtime tests
+/// for actual timing, storage, and HTTP upgrade behavior.
+async fn authorize_websocket_upgrade(
+    state: &DevServerState,
+    token: Option<&str>,
+) -> Result<(), Response> {
+    let Some(token) = token else {
+        if let Some(observability) = &state.observability {
+            observability.record_websocket_rejection();
+        }
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({
+                "error": "missing required session bootstrap token"
+            })),
+        )
+            .into_response());
+    };
+
+    let consume_result = {
+        let mut tokens = state.bootstrap_tokens.lock().await;
+        tokens.consume(token, Instant::now())
+    };
+    if let Err(message) = consume_result {
+        if let Some(observability) = &state.observability {
+            observability.record_websocket_rejection();
+        }
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({ "error": message })),
+        )
+            .into_response());
+    }
+
+    Ok(())
+}

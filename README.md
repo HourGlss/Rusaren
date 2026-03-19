@@ -212,11 +212,18 @@ Run a focused packet-boundary mutation smoke against ingress validation:
 
 ```powershell
 cd server
-rustup run stable cargo mutants --no-config --package game_net --test-package game_net --file crates/game_net/src/ingress.rs --copy-target false --test-tool nextest --baseline skip --jobs 1 --timeout 60 --build-timeout 60 --output target/reports/mutants-ingress
+$env:RARENA_MUTANTS_PACKAGE='game_net'
+$env:RARENA_MUTANTS_TEST_PACKAGE='game_net'
+$env:RARENA_MUTANTS_FILE='crates/game_net/src/ingress.rs'
+$env:RARENA_MUTANTS_JOBS='1'
+$env:RARENA_MUTANTS_TIMEOUT='60'
+$env:RARENA_MUTANTS_BUILD_TIMEOUT='60'
+./scripts/quality.ps1 mutants
 ```
 
 That command is intentionally narrow and meant for local hardening of packet-boundary logic.
 The broader mutation-testing slice runs in the scheduled GitHub Actions workflow.
+If `F:\game_tests` exists on this machine, `./scripts/quality.ps1 mutants` now automatically uses it for mutation scratch space and Cargo build output to avoid exhausting the system drive.
 
 Install the configured quality tools:
 

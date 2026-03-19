@@ -4,6 +4,7 @@
 
 # Rust
 server/target/
+server/mutants.out/
 server/tools/
 server/var/
 server/fuzz/artifacts/

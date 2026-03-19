@@ -2,34 +2,65 @@ use std::{fs, path::PathBuf};
 
 use game_domain::{LoadoutProgress, SkillChoice, SkillTree};
 
-fn corpus_dir(target: &str) -> PathBuf {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+fn server_roots() -> Vec<PathBuf> {
+    let mut roots = vec![PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
-        .join("..")
-        .join("fuzz")
-        .join("corpus")
-        .join(target);
+        .join("..")];
+    if let Ok(path) = std::env::var("RARENA_SERVER_ROOT") {
+        if !path.trim().is_empty() {
+            roots.push(PathBuf::from(path));
+        }
+    }
 
-    fs::canonicalize(&dir).unwrap_or(dir)
+    let mut unique = Vec::new();
+    for root in roots {
+        let canonical = fs::canonicalize(&root).unwrap_or(root);
+        if !unique
+            .iter()
+            .any(|existing: &PathBuf| existing == &canonical)
+        {
+            unique.push(canonical);
+        }
+    }
+
+    unique
+}
+
+fn corpus_dirs(target: &str) -> Vec<PathBuf> {
+    server_roots()
+        .into_iter()
+        .map(|root| root.join("fuzz").join("corpus").join(target))
+        .filter(|dir| dir.exists())
+        .map(|dir| fs::canonicalize(&dir).unwrap_or(dir))
+        .collect()
 }
 
 fn corpus_files(target: &str) -> Vec<Vec<u8>> {
-    let dir = corpus_dir(target);
-    let mut entries = fs::read_dir(&dir)
-        .unwrap_or_else(|error| {
-            panic!("failed to read corpus directory {}: {error}", dir.display())
-        })
-        .map(|entry| {
-            entry.unwrap_or_else(|error| {
-                panic!("failed to read corpus entry in {}: {error}", dir.display())
-            })
+    let dirs = corpus_dirs(target);
+    assert!(
+        !dirs.is_empty(),
+        "at least one corpus directory should exist for target {target}"
+    );
+
+    let mut entries = dirs
+        .iter()
+        .flat_map(|dir| {
+            fs::read_dir(dir)
+                .unwrap_or_else(|error| {
+                    panic!("failed to read corpus directory {}: {error}", dir.display())
+                })
+                .map(|entry| {
+                    entry.unwrap_or_else(|error| {
+                        panic!("failed to read corpus entry in {}: {error}", dir.display())
+                    })
+                })
+                .collect::<Vec<_>>()
         })
         .collect::<Vec<_>>();
     entries.sort_by_key(std::fs::DirEntry::file_name);
     assert!(
         !entries.is_empty(),
-        "corpus directory {} should contain at least one seed",
-        dir.display()
+        "at least one corpus seed should exist for target {target}"
     );
 
     entries

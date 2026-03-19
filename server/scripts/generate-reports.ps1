@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("all", "coverage", "complexity", "callgraph", "docs", "fuzz", "hardening")]
+    [ValidateSet("all", "coverage", "complexity", "clean-code", "callgraph", "docs", "fuzz", "hardening")]
     [string]$Report = "all",
     [switch]$FailOnCommandFailure
 )
@@ -24,6 +24,7 @@ $reportsRoot = Join-Path $serverRoot "target\reports"
 $coverageRoot = Join-Path $reportsRoot "coverage"
 $fuzzRoot = Join-Path $reportsRoot "fuzz"
 $complexityRoot = Join-Path $reportsRoot "complexity"
+$cleanCodeRoot = Join-Path $reportsRoot "clean-code"
 $callgraphRoot = Join-Path $reportsRoot "callgraph"
 $docsArtifactRoot = Join-Path $reportsRoot "docs"
 $rustdocArtifactRoot = Join-Path $reportsRoot "rustdoc"
@@ -491,14 +492,18 @@ function Test-IsRuntimeSourcePath {
     param([string]$Path)
 
     $normalizedPath = Get-NormalizedDisplayPath -Path $Path
-    return $normalizedPath -like "crates/*/src/*.rs"
+    return ($normalizedPath -like "crates/*/src/*.rs") -and -not (Test-IsTestSourcePath -Path $Path)
 }
 
 function Test-IsTestSourcePath {
     param([string]$Path)
 
     $normalizedPath = Get-NormalizedDisplayPath -Path $Path
-    return $normalizedPath -like "crates/*/tests/*.rs"
+    return (
+        ($normalizedPath -like "crates/*/tests/*.rs") -or
+        ($normalizedPath -match '^crates/[^/]+/src/(tests\.rs|tests/.+\.rs|.+/tests\.rs|.+/tests/.+\.rs)$') -or
+        ($normalizedPath -match '^bin/[^/]+/src/(tests\.rs|tests/.+\.rs|.+/tests\.rs|.+/tests/.+\.rs)$')
+    )
 }
 
 function Test-IsEntryPointSourcePath {
@@ -567,14 +572,16 @@ function Get-SourceInventory {
             $isPlaceholder = (-not $hasExecutableSurface) -and ($meaningfulLines.Count -le 2)
             $displayPath = Convert-ToDisplayPath -Path $file.FullName
             $normalizedPath = $displayPath -replace '\\', '/'
-            $isRuntimeSource = Test-IsRuntimeSourcePath -Path $displayPath
             $isTestSource = Test-IsTestSourcePath -Path $displayPath
+            $isRuntimeSource = (-not $isTestSource) -and ($normalizedPath -like "crates/*/src/*.rs")
             $isEntryPointSource = Test-IsEntryPointSourcePath -Path $displayPath
-            $isToolingSource = Test-IsToolingSourcePath -Path $displayPath
+            $isToolingSource = (-not $isRuntimeSource) -and (-not $isTestSource) -and (-not $isEntryPointSource)
 
             $inventory[$displayPath] = [pscustomobject]@{
                 DisplayPath = $displayPath
                 NormalizedPath = $normalizedPath
+                LineCount = @($lines).Count
+                MeaningfulLineCount = $meaningfulLines.Count
                 IsRuntimeSource = $isRuntimeSource
                 IsTestSource = $isTestSource
                 IsEntryPointSource = $isEntryPointSource
@@ -595,6 +602,515 @@ function Get-SourceInventory {
     }
 
     return $inventory
+}
+
+function Get-CleanCodeLineScore {
+    param($SourceInfo)
+
+    $lineCount = [double]$SourceInfo.LineCount
+
+    if ($SourceInfo.IsRuntimeSource) {
+        if ($lineCount -le 250) { return 100.0 }
+        elseif ($lineCount -le 400) { return 90.0 }
+        elseif ($lineCount -le 600) { return 75.0 }
+        elseif ($lineCount -le 800) { return 60.0 }
+        elseif ($lineCount -le 1000) { return 45.0 }
+        elseif ($lineCount -le 1400) { return 30.0 }
+        return 15.0
+    }
+
+    if ($SourceInfo.IsEntryPointSource) {
+        if ($lineCount -le 150) { return 100.0 }
+        elseif ($lineCount -le 250) { return 85.0 }
+        elseif ($lineCount -le 400) { return 70.0 }
+        elseif ($lineCount -le 600) { return 50.0 }
+        return 25.0
+    }
+
+    if ($SourceInfo.IsTestSource) {
+        if ($lineCount -le 250) { return 100.0 }
+        elseif ($lineCount -le 400) { return 92.0 }
+        elseif ($lineCount -le 600) { return 82.0 }
+        elseif ($lineCount -le 900) { return 68.0 }
+        elseif ($lineCount -le 1200) { return 52.0 }
+        elseif ($lineCount -le 1800) { return 35.0 }
+        return 20.0
+    }
+
+    if ($lineCount -le 250) { return 100.0 }
+    elseif ($lineCount -le 500) { return 85.0 }
+    elseif ($lineCount -le 900) { return 65.0 }
+    return 40.0
+}
+
+function Get-CleanCodeSizeBand {
+    param($SourceInfo)
+
+    $lineCount = [int]$SourceInfo.LineCount
+
+    if ($SourceInfo.IsRuntimeSource) {
+        if ($lineCount -le 400) { return "compact" }
+        elseif ($lineCount -le 800) { return "large" }
+        return "oversized"
+    }
+
+    if ($SourceInfo.IsEntryPointSource) {
+        if ($lineCount -le 250) { return "compact" }
+        elseif ($lineCount -le 500) { return "large" }
+        return "oversized"
+    }
+
+    if ($SourceInfo.IsTestSource) {
+        if ($lineCount -le 400) { return "compact" }
+        elseif ($lineCount -le 1200) { return "large" }
+        return "oversized"
+    }
+
+    if ($lineCount -le 500) { return "compact" }
+    elseif ($lineCount -le 900) { return "large" }
+    return "oversized"
+}
+
+function Invoke-ClippyAnalysisSummary {
+    $warnings = [System.Collections.Generic.List[string]]::new()
+    $notes = [System.Collections.Generic.List[string]]::new()
+    $commandText = "rustup run stable cargo clippy --workspace --all-targets --message-format json"
+    $stdoutPath = [System.IO.Path]::GetTempFileName()
+    $stderrPath = [System.IO.Path]::GetTempFileName()
+    $output = @()
+    $stderrOutput = @()
+
+    try {
+        $process = Start-Process `
+            -FilePath "rustup" `
+            -ArgumentList @(
+                "run", "stable",
+                "cargo", "clippy",
+                "--workspace",
+                "--all-targets",
+                "--message-format", "json"
+            ) `
+            -WorkingDirectory $serverRoot `
+            -NoNewWindow `
+            -Wait `
+            -PassThru `
+            -RedirectStandardOutput $stdoutPath `
+            -RedirectStandardError $stderrPath
+        $exitCode = $process.ExitCode
+
+        if (Test-Path $stdoutPath) {
+            $output = @(Get-Content -Path $stdoutPath)
+        }
+        if (Test-Path $stderrPath) {
+            $stderrOutput = @(Get-Content -Path $stderrPath)
+        }
+    }
+    finally {
+        foreach ($path in @($stdoutPath, $stderrPath)) {
+            if (Test-Path $path) {
+                Remove-Item -Force -Path $path
+            }
+        }
+    }
+
+    foreach ($line in $output) {
+        if ($line -isnot [string]) {
+            continue
+        }
+        $trimmed = $line.Trim()
+        if (-not $trimmed.StartsWith("{")) {
+            continue
+        }
+
+        try {
+            $message = $trimmed | ConvertFrom-Json -ErrorAction Stop
+        }
+        catch {
+            continue
+        }
+
+        if ($message.reason -ne "compiler-message") {
+            continue
+        }
+
+        $level = [string]$message.message.level
+        if ($level -ne "warning") {
+            continue
+        }
+
+        $rendered = [string]$message.message.rendered
+        if ([string]::IsNullOrWhiteSpace($rendered)) {
+            $rendered = [string]$message.message.message
+        }
+        if (-not [string]::IsNullOrWhiteSpace($rendered)) {
+            $warnings.Add(($rendered -replace '\s+$', ''))
+        }
+    }
+
+    if ($warnings.Count -eq 0) {
+        $notes.Add("cargo clippy reported zero warnings across the workspace and all targets.")
+    }
+    else {
+        $notes.Add("cargo clippy reported $($warnings.Count) warning(s) across the workspace and all targets.")
+    }
+
+    if ($exitCode -ne 0) {
+        $notes.Add("cargo clippy exited non-zero; the static-analysis score is penalized until the workspace is lint-clean again.")
+        $diagnosticTail = @($stderrOutput | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Last 3)
+        foreach ($line in $diagnosticTail) {
+            $notes.Add($line.Trim())
+        }
+    }
+
+    $warningPenalty = [math]::Min(60.0, [double]$warnings.Count * 4.0)
+    $score = if ($exitCode -eq 0) {
+        Clamp-Score -Value (100.0 - $warningPenalty)
+    }
+    else {
+        Clamp-Score -Value (70.0 - $warningPenalty)
+    }
+
+    return [pscustomobject]@{
+        Status = if ($exitCode -eq 0) { "ok" } else { "failed" }
+        ExitCode = $exitCode
+        WarningCount = $warnings.Count
+        Score = $score
+        Grade = Get-PercentGrade -Score $score
+        Command = $commandText
+        Notes = @($notes)
+        SampleWarnings = @($warnings | Select-Object -First 5)
+    }
+}
+
+function Invoke-CleanCodeReport {
+    param(
+        [hashtable]$SourceInventory
+    )
+
+    $notes = [System.Collections.Generic.List[string]]::new()
+    $reportPath = Join-Path $cleanCodeRoot "index.html"
+    $outputPath = Join-Path $cleanCodeRoot "output.html"
+    $summaryPath = Join-Path $cleanCodeRoot "summary.json"
+
+    try {
+        if (Test-Path $cleanCodeRoot) {
+            Remove-Item -Recurse -Force -Path $cleanCodeRoot
+        }
+
+        $allFiles = @(
+            $SourceInventory.Values |
+                Where-Object { -not $_.IsPlaceholder } |
+                Sort-Object @{ Expression = "LineCount"; Descending = $true }, DisplayPath
+        )
+
+        $scoredFiles = foreach ($source in $allFiles) {
+            $lineScore = Get-CleanCodeLineScore -SourceInfo $source
+            $penalty = 0.0
+            $reasons = [System.Collections.Generic.List[string]]::new()
+            $category = Get-SourceCategoryLabel -SourceInfo $source
+            $sizeBand = Get-CleanCodeSizeBand -SourceInfo $source
+
+            if (($source.IsRuntimeSource -or $source.IsEntryPointSource) -and $source.HasInlineTests) {
+                $penalty += 35.0
+                $reasons.Add("Inline #[test] functions are still mixed into production code.")
+            }
+
+            if ($sizeBand -eq "oversized") {
+                $reasons.Add("This file is still beyond the repo's target reviewable size for its category.")
+            }
+            elseif ($sizeBand -eq "large") {
+                $reasons.Add("This file is larger than ideal and should keep trending downward.")
+            }
+
+            if ($source.IsRuntimeSource -and $source.LineCount -gt 1000) {
+                $penalty += 10.0
+            }
+            if ($source.IsEntryPointSource -and $source.LineCount -gt 500) {
+                $penalty += 10.0
+            }
+            if ($source.IsTestSource -and $source.LineCount -gt 1800) {
+                $penalty += 10.0
+            }
+
+            [pscustomobject]@{
+                DisplayPath = $source.DisplayPath
+                Category = $category
+                LineCount = [int]$source.LineCount
+                MeaningfulLineCount = [int]$source.MeaningfulLineCount
+                HasInlineTests = [bool]$source.HasInlineTests
+                SizeBand = $sizeBand
+                Score = Clamp-Score -Value ($lineScore - $penalty)
+                Grade = Get-PercentGrade -Score (Clamp-Score -Value ($lineScore - $penalty))
+                Reasons = @($reasons)
+            }
+        }
+
+        $runtimeFiles = @($scoredFiles | Where-Object { $_.Category -in @("Runtime", "Entrypoint") })
+        $testFiles = @($scoredFiles | Where-Object { $_.Category -eq "Test" })
+        $supplementalFiles = @($scoredFiles | Where-Object { $_.Category -in @("Tooling", "Other") })
+
+        $runtimeAverage = if ($runtimeFiles.Count -gt 0) {
+            [double](($runtimeFiles | Measure-Object -Property Score -Average).Average)
+        }
+        else {
+            100.0
+        }
+        $testAverage = if ($testFiles.Count -gt 0) {
+            [double](($testFiles | Measure-Object -Property Score -Average).Average)
+        }
+        else {
+            100.0
+        }
+        $compactRuntimePercent = if ($runtimeFiles.Count -gt 0) {
+            ((@($runtimeFiles | Where-Object { $_.LineCount -le 600 -and -not $_.HasInlineTests }).Count) / $runtimeFiles.Count) * 100.0
+        }
+        else {
+            100.0
+        }
+
+        $structureScoreSummary = New-ScoreSummary `
+            -Score (($runtimeAverage * 0.7) + ($testAverage * 0.2) + ($compactRuntimePercent * 0.1)) `
+            -Formula "70% average runtime/entrypoint structure score + 20% average test structure score + 10% runtime/entrypoint files at <=600 lines without inline tests" `
+            -Breakdown @(
+                "Average runtime/entrypoint structure score: $("{0:N2}" -f $runtimeAverage)",
+                "Average test structure score: $("{0:N2}" -f $testAverage)",
+                "Runtime/entrypoint files at <=600 lines without inline tests: $(Format-Percent -Value $compactRuntimePercent)"
+            )
+        $clippySummary = Invoke-ClippyAnalysisSummary
+        $scoreSummary = New-ScoreSummary `
+            -Score (($structureScoreSummary.Score * 0.8) + ($clippySummary.Score * 0.2)) `
+            -Formula "80% structural clean-code score + 20% cargo clippy static-analysis score" `
+            -Breakdown @(
+                "Structural clean-code score: $("{0:N2}" -f $structureScoreSummary.Score)",
+                "cargo clippy static-analysis score: $("{0:N2}" -f $clippySummary.Score) (warnings: $($clippySummary.WarningCount), exit code: $($clippySummary.ExitCode))"
+            )
+
+        $oversizedRuntimeFiles = @($runtimeFiles | Where-Object { $_.SizeBand -eq "oversized" })
+        $oversizedTestFiles = @($testFiles | Where-Object { $_.SizeBand -eq "oversized" })
+        $runtimeInlineTests = @($runtimeFiles | Where-Object { $_.HasInlineTests })
+        $largestFile = $scoredFiles | Select-Object -First 1
+
+        $notes.Add("This report is heuristic. It scores structural cleanliness signals: file size, production/test separation, and whether the largest files are still trending toward smaller modules.")
+        $notes.Add("Clippy and the complexity report remain the primary logic-level signals. This report complements them by grading file-level structure.")
+        $notes.Add("Runtime and entrypoint files are held to tighter size thresholds than tests and tooling.")
+        $notes.Add("Inline #[test] functions inside runtime or entrypoint files incur a direct penalty because they mix production and test concerns.")
+        $notes.Add("A file can still be perfectly valid Rust and pass tests while scoring poorly here if it is too large or blends multiple responsibilities.")
+        foreach ($note in $clippySummary.Notes) {
+            $notes.Add($note)
+        }
+
+        $runtimeRows = foreach ($file in ($runtimeFiles | Sort-Object @{ Expression = "Score"; Ascending = $true }, @{ Expression = "LineCount"; Descending = $true }, DisplayPath | Select-Object -First 20)) {
+            $reasons = if ($file.Reasons.Count -gt 0) { Escape-Html ($file.Reasons -join " | ") } else { "Healthy for its category." }
+            @"
+<tr>
+  <td><code>$(Escape-Html $file.DisplayPath)</code></td>
+  <td>$(Escape-Html $file.Category)</td>
+  <td>$($file.LineCount)</td>
+  <td>$($file.MeaningfulLineCount)</td>
+  <td>$(Escape-Html $file.SizeBand)</td>
+  <td>$(if ($file.HasInlineTests) { '<span class="badge badge-bad">yes</span>' } else { '<span class="badge badge-ok">no</span>' })</td>
+  <td>$(Format-Score -Score $file.Score) $(Format-GradeBadge -Grade $file.Grade)</td>
+  <td>$reasons</td>
+</tr>
+"@
+        }
+
+        $testRows = foreach ($file in ($testFiles | Sort-Object @{ Expression = "Score"; Ascending = $true }, @{ Expression = "LineCount"; Descending = $true }, DisplayPath | Select-Object -First 20)) {
+            $reasons = if ($file.Reasons.Count -gt 0) { Escape-Html ($file.Reasons -join " | ") } else { "Healthy for its category." }
+            @"
+<tr>
+  <td><code>$(Escape-Html $file.DisplayPath)</code></td>
+  <td>$($file.LineCount)</td>
+  <td>$($file.MeaningfulLineCount)</td>
+  <td>$(Escape-Html $file.SizeBand)</td>
+  <td>$(Format-Score -Score $file.Score) $(Format-GradeBadge -Grade $file.Grade)</td>
+  <td>$reasons</td>
+</tr>
+"@
+        }
+
+        $supplementalRows = foreach ($file in ($supplementalFiles | Sort-Object @{ Expression = "LineCount"; Descending = $true }, DisplayPath | Select-Object -First 15)) {
+            @"
+<tr>
+  <td><code>$(Escape-Html $file.DisplayPath)</code></td>
+  <td>$(Escape-Html $file.Category)</td>
+  <td>$($file.LineCount)</td>
+  <td>$($file.MeaningfulLineCount)</td>
+  <td>$(Escape-Html $file.SizeBand)</td>
+  <td>$(Format-Score -Score $file.Score) $(Format-GradeBadge -Grade $file.Grade)</td>
+</tr>
+"@
+        }
+
+        $noteItems = foreach ($note in ($notes | Sort-Object -Unique)) {
+            "<li>$(Escape-Html $note)</li>"
+        }
+
+        $body = @"
+<h1>Clean Code Report</h1>
+<p class="muted">This report grades structural cleanliness heuristics for the Rust codebase. It is intentionally stricter on runtime and entrypoint files than on tests and tooling.</p>
+<div class="grid">
+  <div class="metric"><span class="muted">Clean-code score</span><strong>$(Format-Score -Score $scoreSummary.Score) $(Format-GradeBadge -Grade $scoreSummary.Grade)</strong><div class="detail">$(Escape-Html $scoreSummary.Formula)</div></div>
+  <div class="metric"><span class="muted">Runtime + entrypoint files</span><strong>$($runtimeFiles.Count)</strong><div class="detail">$($oversizedRuntimeFiles.Count) oversized</div></div>
+  <div class="metric"><span class="muted">Test files</span><strong>$($testFiles.Count)</strong><div class="detail">$($oversizedTestFiles.Count) oversized</div></div>
+  <div class="metric"><span class="muted">Runtime files with inline tests</span><strong>$($runtimeInlineTests.Count)</strong></div>
+  <div class="metric"><span class="muted">Largest tracked file</span><strong>$(if ($null -ne $largestFile) { Escape-Html $largestFile.DisplayPath } else { 'n/a' })</strong><div class="detail">$(if ($null -ne $largestFile) { "$($largestFile.LineCount) lines" } else { "" })</div></div>
+  <div class="metric"><span class="muted">Compact runtime coverage</span><strong>$(Format-Percent -Value $compactRuntimePercent)</strong><div class="detail"><=600 lines with no inline tests</div></div>
+  <div class="metric"><span class="muted">cargo clippy</span><strong>$(Format-Score -Score $clippySummary.Score) $(Format-GradeBadge -Grade $clippySummary.Grade)</strong><div class="detail">$($clippySummary.WarningCount) warnings, exit code $($clippySummary.ExitCode)</div></div>
+</div>
+<div class="panel">
+  <h2>Rust Static Analysis</h2>
+  <p><code>$(Escape-Html $clippySummary.Command)</code></p>
+  <p class="muted">cargo clippy is the Rust-native static-analysis signal in this report. It complements the structural score instead of replacing it.</p>
+  $(if ($clippySummary.SampleWarnings.Count -gt 0) {
+@"
+  <pre><code>$(Escape-Html ($clippySummary.SampleWarnings -join "`n`n"))</code></pre>
+"@
+} else {
+@"
+  <p>No clippy warnings were reported.</p>
+"@
+})
+</div>
+<div class="panel">
+  <h2>Scored runtime and entrypoint files</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>File</th>
+        <th>Category</th>
+        <th>Lines</th>
+        <th>Meaningful lines</th>
+        <th>Size band</th>
+        <th>Inline tests</th>
+        <th>Score</th>
+        <th>Why it is here</th>
+      </tr>
+    </thead>
+    <tbody>
+$(($runtimeRows -join "`n"))
+    </tbody>
+  </table>
+</div>
+<div class="panel">
+  <h2>Largest test files</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>File</th>
+        <th>Lines</th>
+        <th>Meaningful lines</th>
+        <th>Size band</th>
+        <th>Score</th>
+        <th>Why it is here</th>
+      </tr>
+    </thead>
+    <tbody>
+$(($testRows -join "`n"))
+    </tbody>
+  </table>
+</div>
+<div class="panel">
+  <h2>Supplemental tooling and other files</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>File</th>
+        <th>Category</th>
+        <th>Lines</th>
+        <th>Meaningful lines</th>
+        <th>Size band</th>
+        <th>Score</th>
+      </tr>
+    </thead>
+    <tbody>
+$(($supplementalRows -join "`n"))
+    </tbody>
+  </table>
+</div>
+<div class="panel">
+  <h2>How to read this score</h2>
+  <ul>
+$(($noteItems -join "`n"))
+  </ul>
+</div>
+<p class="footer"><a href="../index.html">Back to report index</a></p>
+"@
+
+        Write-ReportHtml -Path $reportPath -Title "Clean Code Report" -Body $body
+        Write-ReportHtml -Path $outputPath -Title "Clean Code Report" -Body $body
+
+        $summaryPayload = [pscustomobject]@{
+            commit = Get-GitValue -CommandArgs @("rev-parse", "--short", "HEAD") -Fallback "unknown"
+            score = [pscustomobject]@{
+                value = [math]::Round([double]$scoreSummary.Score, 2)
+                grade = $scoreSummary.Grade
+                formula = $scoreSummary.Formula
+                breakdown = @($scoreSummary.Breakdown)
+            }
+            static_analysis = [pscustomobject]@{
+                tool = "cargo clippy"
+                status = $clippySummary.Status
+                exit_code = $clippySummary.ExitCode
+                score = [math]::Round([double]$clippySummary.Score, 2)
+                grade = $clippySummary.Grade
+                warning_count = $clippySummary.WarningCount
+                command = $clippySummary.Command
+                sample_warnings = @($clippySummary.SampleWarnings)
+            }
+            files = [pscustomobject]@{
+                runtime = $runtimeFiles.Count
+                tests = $testFiles.Count
+                supplemental = $supplementalFiles.Count
+                oversized_runtime = $oversizedRuntimeFiles.Count
+                oversized_tests = $oversizedTestFiles.Count
+                runtime_inline_tests = $runtimeInlineTests.Count
+            }
+            largest = if ($null -ne $largestFile) {
+                [pscustomobject]@{
+                    path = $largestFile.DisplayPath
+                    category = $largestFile.Category
+                    line_count = $largestFile.LineCount
+                    meaningful_line_count = $largestFile.MeaningfulLineCount
+                    score = $largestFile.Score
+                    grade = $largestFile.Grade
+                }
+            } else { $null }
+            notes = @($notes | Sort-Object -Unique)
+        }
+        $summaryPayload | ConvertTo-Json -Depth 6 | Set-Content -Path $summaryPath -Encoding UTF8
+
+        return [pscustomobject]@{
+            Name = "Clean Code"
+            Status = "ok"
+            Notes = @($notes | Sort-Object -Unique)
+            IndexPath = "clean-code/index.html"
+            ErrorMessage = $null
+            ScoreSummary = $scoreSummary
+        }
+    }
+    catch {
+        $errorMessage = $_.Exception.Message
+        $notes.Add("Clean-code report generation failed: $errorMessage")
+        $body = @"
+<h1>Clean Code Report Failed</h1>
+<div class="panel">
+  <p>The clean-code report could not be generated.</p>
+  <p><code>$(Escape-Html $errorMessage)</code></p>
+</div>
+<p class="footer"><a href="../index.html">Back to report index</a></p>
+"@
+        Write-ReportHtml -Path $reportPath -Title "Clean Code Report Failed" -Body $body
+        Write-ReportHtml -Path $outputPath -Title "Clean Code Report Failed" -Body $body
+
+        return [pscustomobject]@{
+            Name = "Clean Code"
+            Status = "failed"
+            Notes = @($notes)
+            IndexPath = "clean-code/index.html"
+            ErrorMessage = $errorMessage
+        }
+    }
 }
 
 function Get-ComplexityFunctions {
@@ -3052,11 +3568,15 @@ function Invoke-ReportGeneration {
         "callgraph" {
             $results += Invoke-CallgraphReport -SourceInventory $sourceInventory
         }
+        "clean-code" {
+            $results += Invoke-CleanCodeReport -SourceInventory $sourceInventory
+        }
         "complexity" {
             $results += Invoke-ComplexityReport -SourceInventory $sourceInventory
         }
         "hardening" {
             $results += Invoke-FuzzCoverageReport -SourceInventory $sourceInventory
+            $results += Invoke-CleanCodeReport -SourceInventory $sourceInventory
             $results += Invoke-ComplexityReport -SourceInventory $sourceInventory
             $results += Invoke-HardeningQueueReport -SourceInventory $sourceInventory
         }
@@ -3065,6 +3585,7 @@ function Invoke-ReportGeneration {
             $results += Invoke-FuzzCoverageReport -SourceInventory $sourceInventory
             $results += Invoke-DocsReport
             $results += Invoke-CallgraphReport -SourceInventory $sourceInventory
+            $results += Invoke-CleanCodeReport -SourceInventory $sourceInventory
             $results += Invoke-ComplexityReport -SourceInventory $sourceInventory
             $results += Invoke-HardeningQueueReport -SourceInventory $sourceInventory
         }
@@ -3082,7 +3603,7 @@ function Invoke-ReportGeneration {
     )
     $overallScoreSummary = if ($scoredResults.Count -gt 0) {
         $averageScore = [double](($scoredResults | ForEach-Object { $_.ScoreSummary.Score } | Measure-Object -Average).Average)
-        New-ScoreSummary -Score $averageScore -Formula "Average of Coverage, Fuzzing, Docs, and Complexity scores" -Breakdown @()
+        New-ScoreSummary -Score $averageScore -Formula "Average of Coverage, Fuzzing, Docs, Clean Code, and Complexity scores" -Breakdown @()
     }
     else {
         $null

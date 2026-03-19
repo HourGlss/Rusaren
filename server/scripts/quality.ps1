@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("all", "fmt", "lint", "hack", "test", "soak", "doc", "docs-artifacts", "coverage", "coverage-gate", "fuzz-coverage", "reports", "deny", "audit", "udeps", "miri", "complexity", "callgraph", "bench", "fuzz", "fuzz-build", "fuzz-live", "mutants", "typos", "taplo", "zizmor", "verus")]
+    [ValidateSet("all", "fmt", "lint", "hack", "test", "soak", "doc", "docs-artifacts", "coverage", "coverage-gate", "fuzz-coverage", "reports", "deny", "audit", "udeps", "miri", "complexity", "clean-code", "callgraph", "bench", "fuzz", "fuzz-build", "fuzz-live", "mutants", "typos", "taplo", "zizmor", "verus")]
     [string]$Task = "all"
 )
 
@@ -134,27 +134,47 @@ function Invoke-SoakTests {
     rustup run stable cargo test -p game_api --test soak_match_flow --all-features
 }
 
+function Get-PreferredMutationScratchRoot {
+    $preferredRoot = "F:\game_tests"
+    if (Test-Path $preferredRoot) {
+        return $preferredRoot
+    }
+
+    return $null
+}
+
 function Invoke-MutationTesting {
     param([bool]$HasNextest)
 
     $outputRoot = Join-Path $serverRoot "target\reports\mutants"
-    New-Item -ItemType Directory -Force -Path $outputRoot | Out-Null
     $logPath = Join-Path $outputRoot "mutants.log"
     $status = "passed"
     $errorMessage = $null
+    $historicalEstimate = $null
 
     $args = @(
         "mutants",
-        "--workspace",
+        "--dir", "server",
+        "--config", "server/.cargo/mutants.toml",
+        "--gitignore", "true",
         "--output", $outputRoot,
-        "--copy-target", "false",
         "--jobs", $(if ([string]::IsNullOrWhiteSpace($env:RARENA_MUTANTS_JOBS)) { "2" } else { $env:RARENA_MUTANTS_JOBS }),
         "--timeout", $(if ([string]::IsNullOrWhiteSpace($env:RARENA_MUTANTS_TIMEOUT)) { "240" } else { $env:RARENA_MUTANTS_TIMEOUT }),
         "--build-timeout", $(if ([string]::IsNullOrWhiteSpace($env:RARENA_MUTANTS_BUILD_TIMEOUT)) { "180" } else { $env:RARENA_MUTANTS_BUILD_TIMEOUT })
     )
 
+    if (-not [string]::IsNullOrWhiteSpace($env:RARENA_MUTANTS_PACKAGE)) {
+        $args += @("--package", $env:RARENA_MUTANTS_PACKAGE)
+    }
+    else {
+        $args += "--workspace"
+    }
+
     if ($HasNextest) {
         $args += @("--test-tool", "nextest")
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:RARENA_MUTANTS_TEST_PACKAGE)) {
+        $args += @("--test-package", $env:RARENA_MUTANTS_TEST_PACKAGE)
     }
     if (-not [string]::IsNullOrWhiteSpace($env:RARENA_MUTANTS_FILE)) {
         $args += @("--file", $env:RARENA_MUTANTS_FILE)
@@ -163,18 +183,642 @@ function Invoke-MutationTesting {
         $args += @("--shard", $env:RARENA_MUTANTS_SHARD)
     }
 
+    function Format-MutationDuration {
+        param([double]$Seconds)
+
+        if ($Seconds -lt 60) {
+            return ("{0:N0}s" -f [Math]::Round($Seconds))
+        }
+
+        $duration = [TimeSpan]::FromSeconds([Math]::Max(0, $Seconds))
+        if ($duration.TotalHours -ge 1) {
+            return ("{0}h {1}m" -f [int]$duration.TotalHours, $duration.Minutes)
+        }
+
+        return ("{0}m {1}s" -f $duration.Minutes, $duration.Seconds)
+    }
+
+    function Write-MutationStatus {
+        param(
+            [string]$Path,
+            [hashtable]$Status
+        )
+
+        $counts = @{
+            caught = [int]$Status.counts.CAUGHT
+            missed = [int]$Status.counts.MISSED
+            timeout = [int]$Status.counts.TIMEOUT
+            unviable = [int]$Status.counts.UNVIABLE
+        }
+        $payload = [ordered]@{
+            start_utc                    = $Status.start_utc
+            mutation_start_utc           = $Status.mutation_start_utc
+            phase                        = $Status.phase
+            total_mutants                = $Status.total_mutants
+            completed_mutants            = $Status.completed_mutants
+            reported_mutant_seconds_sum  = $Status.reported_mutant_seconds_sum
+            baseline_seconds             = $Status.baseline_seconds
+            estimated_baseline_seconds   = $Status.estimated_baseline_seconds
+            estimated_total_seconds      = $Status.estimated_total_seconds
+            counts                       = $counts
+        }
+        $payload | ConvertTo-Json -Depth 4 | Set-Content -Path $Path -Encoding utf8
+    }
+
+    function Write-MutationDiagnostic {
+        param([string]$Message)
+
+        Write-Host ("[MD] {0}" -f $Message)
+    }
+
+    function Get-MutationRelatedProcesses {
+        $repoMarker = ($repoRoot -replace '\\', '\\')
+        return @(
+            Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+                Where-Object {
+                    $_.ProcessId -ne $PID -and (
+                        ([string]$_.CommandLine -like '*cargo mutants*') -or
+                        ([string]$_.CommandLine -like '*quality.ps1*mutants*') -or
+                        (
+                            $_.Name -match '^(cargo|rustc)\.exe$' -and
+                            [string]$_.CommandLine -match $repoMarker
+                        )
+                    )
+                } |
+                Select-Object ProcessId, Name, CommandLine
+        )
+    }
+
+    function Show-MutationPreflightDiagnostics {
+        param([string]$Path)
+
+        Write-MutationDiagnostic "preflight: checking for stale mutation artifacts and related processes"
+
+        if (Test-Path $Path) {
+            $heartbeatArtifacts = @(
+                Get-ChildItem -Path $Path -Force -ErrorAction SilentlyContinue |
+                    Where-Object { $_.Name -like 'heartbeat*' }
+            )
+            if ($heartbeatArtifacts.Count -gt 0) {
+                Write-MutationDiagnostic ("found {0} stale heartbeat artifact(s): {1}" -f $heartbeatArtifacts.Count, (($heartbeatArtifacts | Select-Object -ExpandProperty Name) -join ', '))
+            }
+            else {
+                Write-MutationDiagnostic "found no stale heartbeat artifacts in previous mutants output"
+            }
+
+            $previousLogPath = Join-Path $Path "mutants.log"
+            if (Test-Path $previousLogPath) {
+                $tailLines = @(
+                    Get-Content -Path $previousLogPath -Tail 3 -ErrorAction SilentlyContinue |
+                        Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+                )
+                if ($tailLines.Count -gt 0) {
+                    Write-MutationDiagnostic ("previous mutants.log tail: {0}" -f ($tailLines -join ' | '))
+                }
+                else {
+                    Write-MutationDiagnostic "previous mutants.log exists but is empty"
+                }
+            }
+            else {
+                Write-MutationDiagnostic "no previous mutants.log found"
+            }
+
+            $heartbeatPidFiles = @(
+                Get-ChildItem -Path $Path -Filter 'heartbeat.*.pid' -File -Force -ErrorAction SilentlyContinue
+            )
+            foreach ($pidFile in $heartbeatPidFiles) {
+                $pidText = (Get-Content -Path $pidFile.FullName -Raw -ErrorAction SilentlyContinue).Trim()
+                $heartbeatPid = 0
+                if ([int]::TryParse($pidText, [ref]$heartbeatPid)) {
+                    $staleHeartbeatProcess = Get-Process -Id $heartbeatPid -ErrorAction SilentlyContinue
+                    if ($null -ne $staleHeartbeatProcess) {
+                        Write-MutationDiagnostic ("stopping stale heartbeat watcher PID {0} from {1}" -f $heartbeatPid, $pidFile.Name)
+                        Stop-Process -Id $heartbeatPid -Force -ErrorAction SilentlyContinue
+                    }
+                }
+            }
+        }
+        else {
+            Write-MutationDiagnostic "no previous mutants output directory found"
+        }
+
+        $relatedProcesses = @(Get-MutationRelatedProcesses)
+        if ($relatedProcesses.Count -gt 0) {
+            Write-MutationDiagnostic ("found {0} mutation-related process(es) already running:" -f $relatedProcesses.Count)
+            foreach ($process in $relatedProcesses) {
+                $commandLine = [string]$process.CommandLine
+                if ($commandLine.Length -gt 180) {
+                    $commandLine = $commandLine.Substring(0, 177) + "..."
+                }
+                Write-MutationDiagnostic ("  PID {0} {1} :: {2}" -f $process.ProcessId, $process.Name, $commandLine)
+            }
+        }
+        else {
+            Write-MutationDiagnostic "found no other mutation-related cargo/powershell/rustc processes"
+        }
+    }
+
+    function Get-HistoricalMutationEstimate {
+        param([string]$Path)
+
+        if (-not (Test-Path $Path)) {
+            return $null
+        }
+
+        $text = Get-Content $Path -Raw -ErrorAction SilentlyContinue
+        if ([string]::IsNullOrWhiteSpace($text)) {
+            return $null
+        }
+
+        $baselineMatches = [regex]::Matches($text, 'Unmutated baseline in\s+([\d.]+)s build \+\s+([\d.]+)s test')
+        $baselineSeconds = $null
+        if ($baselineMatches.Count -gt 0) {
+            $baselineMatch = $baselineMatches[$baselineMatches.Count - 1]
+            $baselineSeconds = [double]$baselineMatch.Groups[1].Value + [double]$baselineMatch.Groups[2].Value
+        }
+
+        $outcomeMatches = [regex]::Matches($text, '(?m)^\s*(CAUGHT|MISSED|TIMEOUT|UNVIABLE)\b.*?in\s+([\d.]+)s build \+\s+([\d.]+)s test')
+        $completed = 0
+        $sumSeconds = 0.0
+        foreach ($match in $outcomeMatches) {
+            $completed += 1
+            $sumSeconds += [double]$match.Groups[2].Value + [double]$match.Groups[3].Value
+        }
+
+        $averageMutantSeconds = $null
+        if ($completed -gt 0) {
+            $averageMutantSeconds = $sumSeconds / $completed
+        }
+
+        if ($null -eq $baselineSeconds -and $null -eq $averageMutantSeconds) {
+            return $null
+        }
+
+        return @{
+            baseline_seconds       = $baselineSeconds
+            average_mutant_seconds = $averageMutantSeconds
+        }
+    }
+
+    $historicalEstimate = Get-HistoricalMutationEstimate -Path $logPath
+    Show-MutationPreflightDiagnostics -Path $outputRoot
+
+    if (Test-Path $outputRoot) {
+        Get-ChildItem -Path $outputRoot -Force -ErrorAction SilentlyContinue |
+            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    New-Item -ItemType Directory -Force -Path $outputRoot | Out-Null
+
     try {
         $previousIncrementalValue = $env:CARGO_INCREMENTAL
+        $previousRepoRootValue = $env:RARENA_REPO_ROOT
+        $previousServerRootValue = $env:RARENA_SERVER_ROOT
+        $previousTempValue = $env:TEMP
+        $previousTmpValue = $env:TMP
+        $previousCargoTargetDir = $env:CARGO_TARGET_DIR
+        $heartbeatRunId = [Guid]::NewGuid().ToString("N")
+        $heartbeatSentinelPath = Join-Path $outputRoot ("heartbeat.{0}.active" -f $heartbeatRunId)
+        $heartbeatStatusPath = Join-Path $outputRoot ("heartbeat.{0}.status.json" -f $heartbeatRunId)
+        $heartbeatPidPath = Join-Path $outputRoot ("heartbeat.{0}.pid" -f $heartbeatRunId)
+        $heartbeatScriptPath = Join-Path $outputRoot ("heartbeat.{0}.ps1" -f $heartbeatRunId)
+        $heartbeatProcess = $null
+        $statusInfo = @{
+            start_utc                   = (Get-Date).ToUniversalTime().ToString("o")
+            mutation_start_utc          = $null
+            phase                       = "setup"
+            total_mutants               = $null
+            completed_mutants           = 0
+            reported_mutant_seconds_sum = 0.0
+            baseline_seconds            = $null
+            estimated_baseline_seconds  = $(if ($null -ne $historicalEstimate) { $historicalEstimate.baseline_seconds } else { $null })
+            estimated_total_seconds     = $null
+            counts                      = @{
+                CAUGHT   = 0
+                MISSED   = 0
+                TIMEOUT  = 0
+                UNVIABLE = 0
+            }
+        }
         try {
             $env:CARGO_INCREMENTAL = "0"
-            & rustup run stable cargo @args 2>&1 | Tee-Object -FilePath $logPath
+            $env:RARENA_REPO_ROOT = $repoRoot
+            $env:RARENA_SERVER_ROOT = $serverRoot
+            $scratchRoot = Get-PreferredMutationScratchRoot
+            if ($null -ne $scratchRoot) {
+                $mutantsScratchRoot = Join-Path $scratchRoot "mutants"
+                $mutantsTempRoot = Join-Path $mutantsScratchRoot "tmp"
+                $mutantsTargetRoot = Join-Path $mutantsScratchRoot "cargo-target"
+                if (Test-Path $mutantsTempRoot) {
+                    Get-ChildItem -Path $mutantsTempRoot -Force -ErrorAction SilentlyContinue |
+                        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+                }
+                New-Item -ItemType Directory -Force -Path $mutantsTempRoot | Out-Null
+                New-Item -ItemType Directory -Force -Path $mutantsTargetRoot | Out-Null
+                $env:TEMP = $mutantsTempRoot
+                $env:TMP = $mutantsTempRoot
+                $env:CARGO_TARGET_DIR = $mutantsTargetRoot
+                Write-Host "Using mutation scratch space under $mutantsScratchRoot"
+            }
+            Write-Host "Mutation testing is running. Progress lines will appear as mutants finish."
+            Write-Host "Live counts track completed mutants: CAUGHT / MISSED / TIMEOUT / UNVIABLE."
+            Set-Content -Path $heartbeatSentinelPath -Value "running" -Encoding ascii
+            Write-MutationStatus -Path $heartbeatStatusPath -Status $statusInfo
+            $escapedSentinelPath = $heartbeatSentinelPath.Replace("'", "''")
+            $escapedStatusPath = $heartbeatStatusPath.Replace("'", "''")
+            $heartbeatScript = @"
+function Get-OutcomeLineCount {
+    param([string]`$Path)
+
+    if (-not (Test-Path `$Path)) {
+        return 0
+    }
+
+    return @(
+        Get-Content `$Path -ErrorAction SilentlyContinue |
+            Where-Object { -not [string]::IsNullOrWhiteSpace(`$_) }
+    ).Count
+}
+
+function Get-LatestScenarioLog {
+    param([string]`$LogDirectory)
+
+    if (-not (Test-Path `$LogDirectory)) {
+        return `$null
+    }
+
+    return Get-ChildItem `$LogDirectory -File -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -First 1
+}
+
+function Get-OutcomeProgress {
+    param([string]`$MutantsOutDirectory)
+
+    `$result = [ordered]@{
+        caught = 0
+        missed = 0
+        timeout = 0
+        unviable = 0
+        completed = 0
+        total = `$null
+        elapsed_seconds_sum = 0.0
+    }
+
+    if (-not (Test-Path `$MutantsOutDirectory)) {
+        return `$result
+    }
+
+    `$result.caught = Get-OutcomeLineCount (Join-Path `$MutantsOutDirectory 'caught.txt')
+    `$result.missed = Get-OutcomeLineCount (Join-Path `$MutantsOutDirectory 'missed.txt')
+    `$result.timeout = Get-OutcomeLineCount (Join-Path `$MutantsOutDirectory 'timeout.txt')
+    `$result.unviable = Get-OutcomeLineCount (Join-Path `$MutantsOutDirectory 'unviable.txt')
+    `$result.completed = [int]`$result.caught + [int]`$result.missed + [int]`$result.timeout + [int]`$result.unviable
+
+    `$outcomesPath = Join-Path `$MutantsOutDirectory 'outcomes.json'
+    if (Test-Path `$outcomesPath) {
+        try {
+            `$outcomesDoc = Get-Content `$outcomesPath -Raw -ErrorAction SilentlyContinue | ConvertFrom-Json
+            if (`$null -ne `$outcomesDoc) {
+                if (`$null -ne `$outcomesDoc.total_mutants) {
+                    `$result.total = [int]`$outcomesDoc.total_mutants
+                }
+                if (`$null -ne `$outcomesDoc.outcomes) {
+                    foreach (`$outcome in @(`$outcomesDoc.outcomes)) {
+                        foreach (`$phaseResult in @(`$outcome.phase_results)) {
+                            if (`$null -ne `$phaseResult.duration) {
+                                `$result.elapsed_seconds_sum += [double]`$phaseResult.duration
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        catch {
+        }
+    }
+
+    if (`$null -eq `$result.total) {
+        `$mutantsJsonPath = Join-Path `$MutantsOutDirectory 'mutants.json'
+        if (Test-Path `$mutantsJsonPath) {
+            try {
+                `$mutantsDoc = Get-Content `$mutantsJsonPath -Raw -ErrorAction SilentlyContinue | ConvertFrom-Json
+                if (`$null -ne `$mutantsDoc) {
+                    `$result.total = @(`$mutantsDoc).Count
+                }
+            }
+            catch {
+            }
+        }
+    }
+
+    return `$result
+}
+
+`$statusDirectory = Split-Path '$escapedStatusPath' -Parent
+`$mutantsOutDirectory = Join-Path `$statusDirectory 'mutants.out'
+`$mutantsLogDirectory = Join-Path `$mutantsOutDirectory 'log'
+`$lastObservedCompleted = -1
+while (Test-Path '$escapedSentinelPath') {
+    if (Test-Path '$escapedStatusPath') {
+        try {
+            `$status = Get-Content '$escapedStatusPath' -Raw | ConvertFrom-Json
+            `$startUtc = [DateTime]::Parse(`$status.start_utc).ToUniversalTime()
+            `$elapsed = [int]([DateTime]::UtcNow - `$startUtc).TotalSeconds
+            `$clock = ('{0:00}:{1:00}:{2:00}' -f [int][Math]::Floor(`$elapsed / 3600), [int][Math]::Floor((`$elapsed % 3600) / 60), [int](`$elapsed % 60))
+            `$phase = [string]`$status.phase
+            `$total = [int](`$status.total_mutants | ForEach-Object { if (`$_ -eq `$null) { 0 } else { `$_ } })
+            `$completed = [int]`$status.completed_mutants
+            `$caught = [int]`$status.counts.caught
+            `$missed = [int]`$status.counts.missed
+            `$timeout = [int]`$status.counts.timeout
+            `$unviable = [int]`$status.counts.unviable
+            `$estimatedBaselineSeconds = if (`$status.estimated_baseline_seconds -eq `$null) { 0.0 } else { [double]`$status.estimated_baseline_seconds }
+            `$estimatedTotalSeconds = if (`$status.estimated_total_seconds -eq `$null) { 0.0 } else { [double]`$status.estimated_total_seconds }
+            `$reportedSeconds = 0.0
+            `$outcomeProgress = Get-OutcomeProgress -MutantsOutDirectory `$mutantsOutDirectory
+            if (`$outcomeProgress.completed -gt 0) {
+                `$caught = [int]`$outcomeProgress.caught
+                `$missed = [int]`$outcomeProgress.missed
+                `$timeout = [int]`$outcomeProgress.timeout
+                `$unviable = [int]`$outcomeProgress.unviable
+                `$completed = [int]`$outcomeProgress.completed
+                `$phase = 'mutating'
+                if (`$total -le 0 -and `$null -ne `$outcomeProgress.total -and [int]`$outcomeProgress.total -gt 0) {
+                    `$total = [int]`$outcomeProgress.total
+                }
+                if (`$outcomeProgress.elapsed_seconds_sum -gt 0.0) {
+                    `$reportedSeconds = [double]`$outcomeProgress.elapsed_seconds_sum
+                }
+                else {
+                    `$reportedSeconds = 0.0
+                }
+                if (`$lastObservedCompleted -ne `$completed) {
+                    `$lastObservedCompleted = `$completed
+                    if (`$total -gt 0 -and `$completed -gt 0 -and `$reportedSeconds -gt 0.0) {
+                        `$avgSeconds = `$reportedSeconds / [double]`$completed
+                        `$remainingSeconds = [Math]::Max(0.0, (`$total - `$completed) * `$avgSeconds)
+                        `$remainingSpan = [TimeSpan]::FromSeconds(`$remainingSeconds)
+                        if (`$remainingSpan.TotalHours -ge 1) {
+                            `$etaText = ('ETA {0}h {1}m' -f [int]`$remainingSpan.TotalHours, `$remainingSpan.Minutes)
+                        }
+                        elseif (`$remainingSpan.TotalMinutes -ge 1) {
+                            `$etaText = ('ETA {0}m {1}s' -f `$remainingSpan.Minutes, `$remainingSpan.Seconds)
+                        }
+                        else {
+                            `$etaText = ('ETA {0}s' -f [int][Math]::Round(`$remainingSeconds))
+                        }
+                        `$percent = [Math]::Round((100.0 * `$completed) / `$total, 1)
+                        Write-Host ('[MP {0}] {1}/{2} ({3}%%) MISSED={4} TIMEOUT={5} UNVIABLE={6} {7}' -f `$clock, `$completed, `$total, `$percent, `$missed, `$timeout, `$unviable, `$etaText)
+                    }
+                    else {
+                        Write-Host ('[MP {0}] completed={1} MISSED={2} TIMEOUT={3} UNVIABLE={4}' -f `$clock, `$completed, `$missed, `$timeout, `$unviable)
+                    }
+                }
+            }
+            `$latestScenarioLog = Get-LatestScenarioLog -LogDirectory `$mutantsLogDirectory
+            `$latestScenarioText = ''
+            if (`$null -ne `$latestScenarioLog) {
+                `$latestScenarioName = [System.IO.Path]::GetFileNameWithoutExtension(`$latestScenarioLog.Name)
+                `$ageSeconds = [Math]::Max(0, [int]([DateTime]::Now - `$latestScenarioLog.LastWriteTime).TotalSeconds)
+                `$latestScenarioText = ('; latest={0}; log age={1}s' -f `$latestScenarioName, `$ageSeconds)
+            }
+            if (`$phase -eq 'setup') {
+                if (`$total -gt 0) {
+                    if (`$estimatedBaselineSeconds -gt 0.0) {
+                        `$setupRemaining = [Math]::Max(0.0, `$estimatedBaselineSeconds - `$elapsed)
+                        `$setupSpan = [TimeSpan]::FromSeconds(`$setupRemaining)
+                        `$roughTotal = ''
+                        if (`$estimatedTotalSeconds -gt 0.0) {
+                            `$roughTotalSpan = [TimeSpan]::FromSeconds(`$estimatedTotalSeconds)
+                            if (`$roughTotalSpan.TotalHours -ge 1) {
+                                `$roughTotal = ('; rough full run ~ {0}h {1}m' -f [int]`$roughTotalSpan.TotalHours, `$roughTotalSpan.Minutes)
+                            }
+                            elseif (`$roughTotalSpan.TotalMinutes -ge 1) {
+                                `$roughTotal = ('; rough full run ~ {0}m {1}s' -f `$roughTotalSpan.Minutes, `$roughTotalSpan.Seconds)
+                            }
+                            else {
+                                `$roughTotal = ('; rough full run ~ {0}s' -f [int][Math]::Round(`$estimatedTotalSeconds))
+                            }
+                        }
+                        if (`$setupSpan.TotalMinutes -ge 1) {
+                            Write-Host ('[MH {0}] setup: found {1} mutants; baseline ETA ~ {2}m {3}s{4}' -f `$clock, `$total, `$setupSpan.Minutes, `$setupSpan.Seconds, `$roughTotal)
+                        }
+                        else {
+                            Write-Host ('[MH {0}] setup: found {1} mutants; baseline ETA ~ {2}s{3}' -f `$clock, `$total, [int][Math]::Round(`$setupRemaining), `$roughTotal)
+                        }
+                    }
+                    else {
+                        Write-Host ('[MH {0}] setup: found {1} mutants; waiting for baseline to finish...' -f `$clock, `$total)
+                    }
+                }
+                else {
+                    Write-Host ('[MH {0}] setup: discovering mutants and building baseline...' -f `$clock)
+                }
+            }
+            elseif (`$phase -eq 'warming_up') {
+                `$etaText = ''
+                if (`$estimatedTotalSeconds -gt 0.0 -and `$estimatedBaselineSeconds -gt 0.0) {
+                    `$estimatedFirstMutantSeconds = [Math]::Max(0.0, `$estimatedTotalSeconds - `$estimatedBaselineSeconds)
+                    if (`$total -gt 0) {
+                        `$estimatedFirstMutantSeconds = `$estimatedFirstMutantSeconds / `$total
+                    }
+                    if (`$estimatedFirstMutantSeconds -gt 0.0) {
+                        `$warmupStartUtc = if ([string]::IsNullOrWhiteSpace([string]`$status.mutation_start_utc)) { `$startUtc } else { [DateTime]::Parse([string]`$status.mutation_start_utc).ToUniversalTime() }
+                        `$warmupElapsed = [Math]::Max(0.0, ([DateTime]::UtcNow - `$warmupStartUtc).TotalSeconds)
+                        `$remainingWarmup = [Math]::Max(0.0, `$estimatedFirstMutantSeconds - `$warmupElapsed)
+                        `$warmupSpan = [TimeSpan]::FromSeconds(`$remainingWarmup)
+                        if (`$warmupSpan.TotalMinutes -ge 1) {
+                            `$etaText = ('; first result ETA ~ {0}m {1}s' -f `$warmupSpan.Minutes, `$warmupSpan.Seconds)
+                        }
+                        else {
+                            `$etaText = ('; first result ETA ~ {0}s' -f [int][Math]::Round(`$remainingWarmup))
+                        }
+                    }
+                }
+                `$warmupElapsedSeconds = if ([string]::IsNullOrWhiteSpace([string]`$status.mutation_start_utc)) { `$elapsed } else { [int]([DateTime]::UtcNow - [DateTime]::Parse([string]`$status.mutation_start_utc).ToUniversalTime()).TotalSeconds }
+                Write-Host ('[MH {0}] warming up: baseline is done; cargo-mutants is building/testing the first mutant; elapsed since baseline={1}s{2}' -f `$clock, `$warmupElapsedSeconds, `$etaText)
+                if (-not [string]::IsNullOrWhiteSpace(`$latestScenarioText)) {
+                    Write-Host ('[MH {0}] warming up detail{1}' -f `$clock, `$latestScenarioText)
+                }
+            }
+            else {
+                `$etaText = 'ETA unavailable'
+                if (`$total -gt 0 -and `$completed -gt 0) {
+                    `$durationSource = if (`$reportedSeconds -gt 0.0) { `$reportedSeconds } else { [double]`$status.reported_mutant_seconds_sum }
+                    `$avgSeconds = `$durationSource / [double]`$completed
+                    `$remaining = [Math]::Max(0.0, (`$total - `$completed) * `$avgSeconds)
+                    `$remainingSpan = [TimeSpan]::FromSeconds(`$remaining)
+                    if (`$remainingSpan.TotalHours -ge 1) {
+                        `$etaText = ('ETA {0}h {1}m' -f [int]`$remainingSpan.TotalHours, `$remainingSpan.Minutes)
+                    }
+                    elseif (`$remainingSpan.TotalMinutes -ge 1) {
+                        `$etaText = ('ETA {0}m {1}s' -f `$remainingSpan.Minutes, `$remainingSpan.Seconds)
+                    }
+                    else {
+                        `$etaText = ('ETA {0}s' -f [int][Math]::Round(`$remaining))
+                    }
+                    `$percent = [Math]::Round((100.0 * `$completed) / `$total, 1)
+                    Write-Host ('[MH {0}] progress: {1}/{2} ({3}%%) CAUGHT={4} MISSED={5} TIMEOUT={6} UNVIABLE={7} {8}{9}' -f `$clock, `$completed, `$total, `$percent, `$caught, `$missed, `$timeout, `$unviable, `$etaText, `$latestScenarioText)
+                }
+                else {
+                    Write-Host ('[MH {0}] progress: completed={1} CAUGHT={2} MISSED={3} TIMEOUT={4} UNVIABLE={5}; waiting for enough data for ETA...{6}' -f `$clock, `$completed, `$caught, `$missed, `$timeout, `$unviable, `$latestScenarioText)
+                }
+            }
+        }
+        catch {
+            Write-Host ('[MH {0}] still running...' -f `$clock)
+        }
+    }
+    else {
+        Write-Host ('[MH {0}] still running...' -f `$clock)
+    }
+    Start-Sleep -Seconds 30
+}
+"@
+            Set-Content -Path $heartbeatScriptPath -Value $heartbeatScript -Encoding utf8
+            $heartbeatProcess = Start-Process powershell `
+                -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $heartbeatScriptPath) `
+                -NoNewWindow `
+                -PassThru
+            Set-Content -Path $heartbeatPidPath -Value $heartbeatProcess.Id -Encoding ascii
+            $mutationOutcomeCounts = @{
+                CAUGHT   = 0
+                MISSED   = 0
+                TIMEOUT  = 0
+                UNVIABLE = 0
+            }
+            Push-Location $repoRoot
+            try {
+                & rustup run stable cargo @args 2>&1 |
+                    Tee-Object -FilePath $logPath |
+                    ForEach-Object {
+                        $_
+                        $line = $_.ToString()
+                        if ($line -match 'Found\s+(\d+)\s+mutants to test') {
+                            $statusInfo.total_mutants = [int]$matches[1]
+                            if ($null -ne $historicalEstimate -and $null -ne $historicalEstimate.average_mutant_seconds) {
+                                $estimatedTotal = [double]$statusInfo.total_mutants * [double]$historicalEstimate.average_mutant_seconds
+                                if ($null -ne $statusInfo.estimated_baseline_seconds) {
+                                    $estimatedTotal += [double]$statusInfo.estimated_baseline_seconds
+                                }
+                                $statusInfo.estimated_total_seconds = $estimatedTotal
+                            }
+                            Write-MutationStatus -Path $heartbeatStatusPath -Status $statusInfo
+                        }
+                        elseif ($line -match 'Unmutated baseline in\s+([\d.]+)s build \+\s+([\d.]+)s test') {
+                            $statusInfo.phase = "warming_up"
+                            $statusInfo.mutation_start_utc = (Get-Date).ToUniversalTime().ToString("o")
+                            $statusInfo.baseline_seconds = [double]$matches[1] + [double]$matches[2]
+                            Write-MutationStatus -Path $heartbeatStatusPath -Status $statusInfo
+                            $setupElapsed = [int]((Get-Date).ToUniversalTime() - [DateTime]::Parse($statusInfo.start_utc).ToUniversalTime()).TotalSeconds
+                            $setupClock = ('{0:00}:{1:00}:{2:00}' -f [int][Math]::Floor($setupElapsed / 3600), [int][Math]::Floor(($setupElapsed % 3600) / 60), [int]($setupElapsed % 60))
+                            Write-Host ("[MP {0}] setup finished in {1}; baseline={2}; mutating {3} mutants" -f `
+                                $setupClock,
+                                (Format-MutationDuration $setupElapsed),
+                                (Format-MutationDuration $statusInfo.baseline_seconds),
+                                $(if ($null -eq $statusInfo.total_mutants) { "?" } else { $statusInfo.total_mutants }))
+                        }
+                        if ($line -match '^\s*(CAUGHT|MISSED|TIMEOUT|UNVIABLE)\b') {
+                            $outcome = $matches[1]
+                            if ($statusInfo.phase -ne "mutating") {
+                                $statusInfo.phase = "mutating"
+                            }
+                            $mutationOutcomeCounts[$outcome] = [int]$mutationOutcomeCounts[$outcome] + 1
+                            $statusInfo.counts[$outcome] = $mutationOutcomeCounts[$outcome]
+                            $statusInfo.completed_mutants = [int]$mutationOutcomeCounts.CAUGHT + [int]$mutationOutcomeCounts.MISSED + [int]$mutationOutcomeCounts.TIMEOUT + [int]$mutationOutcomeCounts.UNVIABLE
+                            if ($line -match 'in\s+([\d.]+)s build \+\s+([\d.]+)s test') {
+                                $statusInfo.reported_mutant_seconds_sum = [double]$statusInfo.reported_mutant_seconds_sum + [double]$matches[1] + [double]$matches[2]
+                            }
+                            Write-MutationStatus -Path $heartbeatStatusPath -Status $statusInfo
+
+                            $progressBits = @(
+                                "MISSED=$($mutationOutcomeCounts.MISSED)"
+                                "TIMEOUT=$($mutationOutcomeCounts.TIMEOUT)"
+                                "UNVIABLE=$($mutationOutcomeCounts.UNVIABLE)"
+                            )
+                            $runElapsedSeconds = [int]((Get-Date).ToUniversalTime() - [DateTime]::Parse($statusInfo.start_utc).ToUniversalTime()).TotalSeconds
+                            $runClock = ('{0:00}:{1:00}:{2:00}' -f [int][Math]::Floor($runElapsedSeconds / 3600), [int][Math]::Floor(($runElapsedSeconds % 3600) / 60), [int]($runElapsedSeconds % 60))
+                            if ($statusInfo.total_mutants -and $statusInfo.completed_mutants -gt 0) {
+                                $averageSeconds = [double]$statusInfo.reported_mutant_seconds_sum / [double]$statusInfo.completed_mutants
+                                $remainingSeconds = [Math]::Max(0.0, ([int]$statusInfo.total_mutants - [int]$statusInfo.completed_mutants) * $averageSeconds)
+                                $percent = [Math]::Round((100.0 * [int]$statusInfo.completed_mutants) / [int]$statusInfo.total_mutants, 1)
+                                Write-Host ("[MP {0}] {1}/{2} ({3}%) {4} ETA {5}" -f `
+                                    $runClock,
+                                    $statusInfo.completed_mutants,
+                                    $statusInfo.total_mutants,
+                                    $percent,
+                                    ($progressBits -join " "),
+                                    (Format-MutationDuration $remainingSeconds))
+                            }
+                            else {
+                                Write-Host ("[MP {0}] completed={1} {2}" -f `
+                                    $runClock,
+                                    $statusInfo.completed_mutants,
+                                    ($progressBits -join " "))
+                            }
+                        }
+                    }
+            }
+            finally {
+                Pop-Location
+            }
         }
         finally {
+            Remove-Item -Force $heartbeatSentinelPath -ErrorAction SilentlyContinue
+            Remove-Item -Force $heartbeatStatusPath -ErrorAction SilentlyContinue
+            Remove-Item -Force $heartbeatPidPath -ErrorAction SilentlyContinue
+            Remove-Item -Force $heartbeatScriptPath -ErrorAction SilentlyContinue
+            if ($null -ne $heartbeatProcess) {
+                try {
+                    Wait-Process -Id $heartbeatProcess.Id -Timeout 5 -ErrorAction SilentlyContinue
+                }
+                catch {
+                }
+                if (-not $heartbeatProcess.HasExited) {
+                    Stop-Process -Id $heartbeatProcess.Id -Force -ErrorAction SilentlyContinue
+                }
+            }
+
             if ($null -eq $previousIncrementalValue) {
                 Remove-Item Env:CARGO_INCREMENTAL -ErrorAction SilentlyContinue
             }
             else {
                 $env:CARGO_INCREMENTAL = $previousIncrementalValue
+            }
+
+            if ($null -eq $previousRepoRootValue) {
+                Remove-Item Env:RARENA_REPO_ROOT -ErrorAction SilentlyContinue
+            }
+            else {
+                $env:RARENA_REPO_ROOT = $previousRepoRootValue
+            }
+
+            if ($null -eq $previousServerRootValue) {
+                Remove-Item Env:RARENA_SERVER_ROOT -ErrorAction SilentlyContinue
+            }
+            else {
+                $env:RARENA_SERVER_ROOT = $previousServerRootValue
+            }
+
+            if ($null -eq $previousTempValue) {
+                Remove-Item Env:TEMP -ErrorAction SilentlyContinue
+            }
+            else {
+                $env:TEMP = $previousTempValue
+            }
+
+            if ($null -eq $previousTmpValue) {
+                Remove-Item Env:TMP -ErrorAction SilentlyContinue
+            }
+            else {
+                $env:TMP = $previousTmpValue
+            }
+
+            if ($null -eq $previousCargoTargetDir) {
+                Remove-Item Env:CARGO_TARGET_DIR -ErrorAction SilentlyContinue
+            }
+            else {
+                $env:CARGO_TARGET_DIR = $previousCargoTargetDir
             }
         }
     }
@@ -276,6 +920,7 @@ function Invoke-QualityTask {
         "udeps" { rustup run $nightlyToolchain cargo udeps --workspace --all-targets }
         "miri" { rustup run $nightlyToolchain cargo miri test --workspace }
         "complexity" { & (Join-Path $PSScriptRoot "generate-reports.ps1") -Report complexity -FailOnCommandFailure }
+        "clean-code" { & (Join-Path $PSScriptRoot "generate-reports.ps1") -Report clean-code -FailOnCommandFailure }
         "callgraph" { & (Join-Path $PSScriptRoot "generate-reports.ps1") -Report callgraph -FailOnCommandFailure }
         "verus" { & (Join-Path $PSScriptRoot "verus.ps1") }
         "bench" {

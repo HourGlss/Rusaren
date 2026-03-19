@@ -3,21 +3,41 @@ use std::path::PathBuf;
 
 use game_content::{parse_ascii_map, parse_skill_yaml};
 
-fn corpus_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+fn server_roots() -> Vec<PathBuf> {
+    let mut roots = vec![PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
-        .join("..")
+        .join("..")];
+    if let Ok(path) = std::env::var("RARENA_SERVER_ROOT") {
+        if !path.trim().is_empty() {
+            roots.push(PathBuf::from(path));
+        }
+    }
+
+    let mut unique = Vec::new();
+    for root in roots {
+        let canonical = fs::canonicalize(&root).unwrap_or(root);
+        if !unique
+            .iter()
+            .any(|existing: &PathBuf| existing == &canonical)
+        {
+            unique.push(canonical);
+        }
+    }
+
+    unique
 }
 
 fn corpus_roots() -> Vec<PathBuf> {
-    let repo_root = corpus_root();
-    [
-        repo_root.join("fuzz").join("corpus"),
-        repo_root.join("target").join("fuzz-generated-corpus"),
-    ]
-    .into_iter()
-    .filter(|root| root.exists())
-    .collect()
+    server_roots()
+        .into_iter()
+        .flat_map(|root| {
+            [
+                root.join("fuzz").join("corpus"),
+                root.join("target").join("fuzz-generated-corpus"),
+            ]
+        })
+        .filter(|root| root.exists())
+        .collect()
 }
 
 #[test]

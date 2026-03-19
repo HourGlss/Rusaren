@@ -2,7 +2,7 @@
 
 use game_domain::{
     LobbyId, MatchId, MatchOutcome, PlayerId, PlayerName, PlayerRecord, ReadyState, RoundNumber,
-    SkillTree, TeamSide,
+    SkillTree, TeamSide, MAX_PLAYER_NAME_LEN,
 };
 use game_net::{
     ArenaDeltaSnapshot, ArenaEffectKind, ArenaEffectSnapshot, ArenaMatchPhase, ArenaObstacleKind,
@@ -177,6 +177,45 @@ fn client_control_command_rejects_wrong_packet_kinds_and_bad_names() {
 }
 
 #[test]
+fn client_control_command_accepts_exactly_maximum_player_name_length() {
+    let exact_name = "A".repeat(MAX_PLAYER_NAME_LEN);
+    let command = ClientControlCommand::Connect {
+        player_name: player_name(&exact_name),
+    };
+    let encoded_packet = command
+        .clone()
+        .encode_packet(7, 0)
+        .expect("max-length names should encode cleanly");
+    let (_, encoded_decoded) =
+        ClientControlCommand::decode_packet(&encoded_packet).expect("encoded packet should decode");
+    assert_eq!(encoded_decoded, command);
+
+    let payload = {
+        let mut payload = vec![1];
+        payload.push(u8::try_from(exact_name.len()).expect("name length should fit"));
+        payload.extend_from_slice(exact_name.as_bytes());
+        payload
+    };
+    let header = PacketHeader::new(
+        ChannelId::Control,
+        PacketKind::ControlCommand,
+        0,
+        u16::try_from(payload.len()).expect("payload length should fit in u16"),
+        1,
+        1,
+    )
+    .expect("header");
+    let packet = header.encode(&payload);
+    let (_, decoded) = ClientControlCommand::decode_packet(&packet).expect("decode");
+    assert_eq!(
+        decoded,
+        ClientControlCommand::Connect {
+            player_name: player_name(&exact_name),
+        }
+    );
+}
+
+#[test]
 fn server_control_event_round_trips_valid_packets() {
     let event = ServerControlEvent::MatchEnded {
         outcome: MatchOutcome::NoContest,
@@ -306,6 +345,33 @@ fn server_control_event_round_trips_lobby_directory_and_snapshot_packets() {
 
     assert_eq!(decoded_directory, directory_event);
     assert_eq!(decoded_snapshot, snapshot_event);
+}
+
+#[test]
+fn game_lobby_snapshot_round_trips_none_team_team_b_and_not_ready_variants() {
+    let snapshot = ServerControlEvent::GameLobbySnapshot {
+        lobby_id: lobby_id(12),
+        phase: LobbySnapshotPhase::Open,
+        players: vec![
+            LobbySnapshotPlayer {
+                player_id: player_id(1),
+                player_name: player_name("Alice"),
+                record: PlayerRecord::new(),
+                team: None,
+                ready: ReadyState::NotReady,
+            },
+            LobbySnapshotPlayer {
+                player_id: player_id(2),
+                player_name: player_name("Bob"),
+                record: PlayerRecord::new(),
+                team: Some(TeamSide::TeamB),
+                ready: ReadyState::Ready,
+            },
+        ],
+    };
+    let packet = snapshot.clone().encode_packet(11, 0).expect("packet");
+    let (_, decoded) = ServerControlEvent::decode_packet(&packet).expect("decode");
+    assert_eq!(decoded, snapshot);
 }
 
 #[test]
@@ -553,6 +619,18 @@ fn server_control_event_rejects_bad_payloads_and_unknown_variants() {
     assert_eq!(
         ServerControlEvent::decode_packet(&packet),
         Err(PacketError::UnknownServerEvent(99))
+    );
+
+    let truncated = PacketHeader::new(ChannelId::Control, PacketKind::ControlEvent, 0, 2, 1, 1)
+        .expect("header")
+        .encode(&[1, 0]);
+    assert_eq!(
+        ServerControlEvent::decode_packet(&truncated),
+        Err(PacketError::ControlPayloadTooShort {
+            kind: "Connected",
+            expected: 5,
+            actual: 2,
+        })
     );
 
     let header = PacketHeader::new(ChannelId::Control, PacketKind::ControlEvent, 0, 4, 1, 1)
