@@ -14,10 +14,10 @@ use game_domain::{
 };
 use game_net::{
     ArenaDeltaSnapshot, ArenaEffectKind, ArenaEffectSnapshot, ArenaMatchPhase, ArenaObstacleKind,
-    ArenaObstacleSnapshot, ArenaPlayerSnapshot, ArenaStateSnapshot, ArenaStatusKind,
-    ArenaStatusSnapshot, ChannelId, ClientControlCommand, LobbyDirectoryEntry, LobbySnapshotPhase,
-    LobbySnapshotPlayer, PacketHeader, PacketKind, ServerControlEvent, SkillCatalogEntry,
-    ValidatedInputFrame, BUTTON_CAST, BUTTON_PRIMARY,
+    ArenaObstacleSnapshot, ArenaPlayerSnapshot, ArenaProjectileSnapshot, ArenaStateSnapshot,
+    ArenaStatusKind, ArenaStatusSnapshot, ChannelId, ClientControlCommand, LobbyDirectoryEntry,
+    LobbySnapshotPhase, LobbySnapshotPlayer, PacketHeader, PacketKind, ServerControlEvent,
+    SkillCatalogEntry, ValidatedInputFrame, BUTTON_CAST, BUTTON_PRIMARY,
 };
 
 const PROTOTYPE_ARENA_ASCII: &str = include_str!("../../../content/maps/prototype_arena.txt");
@@ -53,6 +53,240 @@ fn sample_skill_catalog() -> Vec<SkillCatalogEntry> {
             skill_name: String::from("Stab"),
         },
     ]
+}
+
+fn sample_arena_obstacles() -> Vec<ArenaObstacleSnapshot> {
+    vec![
+        ArenaObstacleSnapshot {
+            kind: ArenaObstacleKind::Shrub,
+            center_x: -220,
+            center_y: -150,
+            half_width: 92,
+            half_height: 92,
+        },
+        ArenaObstacleSnapshot {
+            kind: ArenaObstacleKind::Pillar,
+            center_x: -220,
+            center_y: -150,
+            half_width: 70,
+            half_height: 70,
+        },
+        ArenaObstacleSnapshot {
+            kind: ArenaObstacleKind::Shrub,
+            center_x: 220,
+            center_y: 150,
+            half_width: 92,
+            half_height: 92,
+        },
+        ArenaObstacleSnapshot {
+            kind: ArenaObstacleKind::Pillar,
+            center_x: 220,
+            center_y: 150,
+            half_width: 70,
+            half_height: 70,
+        },
+    ]
+}
+
+fn sample_arena_players() -> Result<Vec<ArenaPlayerSnapshot>, Box<dyn Error>> {
+    Ok(vec![
+        ArenaPlayerSnapshot {
+            player_id: player_id(7)?,
+            player_name: player_name("Alice")?,
+            team: TeamSide::TeamA,
+            x: -640,
+            y: 220,
+            aim_x: 120,
+            aim_y: 0,
+            hit_points: 100,
+            max_hit_points: 100,
+            mana: 84,
+            max_mana: 100,
+            alive: true,
+            unlocked_skill_slots: 3,
+            primary_cooldown_remaining_ms: 250,
+            primary_cooldown_total_ms: 650,
+            slot_cooldown_remaining_ms: [100, 0, 900, 0, 0],
+            slot_cooldown_total_ms: [700, 1700, 2200, 0, 0],
+            active_statuses: vec![ArenaStatusSnapshot {
+                source: player_id(8)?,
+                slot: 1,
+                kind: ArenaStatusKind::Hot,
+                stacks: 1,
+                remaining_ms: 2000,
+            }],
+        },
+        ArenaPlayerSnapshot {
+            player_id: player_id(8)?,
+            player_name: player_name("Bob")?,
+            team: TeamSide::TeamB,
+            x: 640,
+            y: 220,
+            aim_x: -120,
+            aim_y: 0,
+            hit_points: 100,
+            max_hit_points: 100,
+            mana: 68,
+            max_mana: 100,
+            alive: true,
+            unlocked_skill_slots: 3,
+            primary_cooldown_remaining_ms: 0,
+            primary_cooldown_total_ms: 450,
+            slot_cooldown_remaining_ms: [0, 0, 0, 0, 0],
+            slot_cooldown_total_ms: [650, 1500, 1900, 0, 0],
+            active_statuses: vec![ArenaStatusSnapshot {
+                source: player_id(7)?,
+                slot: 2,
+                kind: ArenaStatusKind::Poison,
+                stacks: 2,
+                remaining_ms: 1600,
+            }],
+        },
+    ])
+}
+
+fn sample_arena_projectiles() -> Result<Vec<ArenaProjectileSnapshot>, Box<dyn Error>> {
+    Ok(vec![
+        ArenaProjectileSnapshot {
+            owner: player_id(7)?,
+            slot: 1,
+            kind: ArenaEffectKind::SkillShot,
+            x: -220,
+            y: 210,
+            radius: 28,
+        },
+        ArenaProjectileSnapshot {
+            owner: player_id(8)?,
+            slot: 2,
+            kind: ArenaEffectKind::Beam,
+            x: 180,
+            y: 205,
+            radius: 16,
+        },
+    ])
+}
+
+fn sample_arena_state_snapshot() -> Result<ArenaStateSnapshot, Box<dyn Error>> {
+    Ok(ArenaStateSnapshot {
+        phase: ArenaMatchPhase::Combat,
+        phase_seconds_remaining: None,
+        width: 1800,
+        height: 1200,
+        tile_units: 50,
+        visible_tiles: vec![0b0011_1111, 0b0000_0011],
+        explored_tiles: vec![0b1111_1111, 0b0000_1111],
+        obstacles: sample_arena_obstacles(),
+        players: sample_arena_players()?,
+        projectiles: sample_arena_projectiles()?,
+    })
+}
+
+fn sample_arena_state_snapshot_variant() -> Result<ArenaStateSnapshot, Box<dyn Error>> {
+    let mut snapshot = sample_arena_state_snapshot()?;
+    snapshot.phase = ArenaMatchPhase::PreCombat;
+    snapshot.phase_seconds_remaining = Some(6);
+    snapshot.visible_tiles = vec![0b1111_0000, 0b0000_1111];
+    snapshot.explored_tiles = vec![0b1111_1111, 0b1111_1111];
+    snapshot.players[0].hit_points = 0;
+    snapshot.players[0].alive = false;
+    snapshot.players[0].active_statuses.clear();
+    snapshot.players[1]
+        .active_statuses
+        .push(ArenaStatusSnapshot {
+            source: player_id(7)?,
+            slot: 3,
+            kind: ArenaStatusKind::Silence,
+            stacks: 1,
+            remaining_ms: 900,
+        });
+    snapshot.projectiles.push(ArenaProjectileSnapshot {
+        owner: player_id(7)?,
+        slot: 4,
+        kind: ArenaEffectKind::DashTrail,
+        x: -120,
+        y: 180,
+        radius: 22,
+    });
+    Ok(snapshot)
+}
+
+fn sample_arena_delta_snapshot() -> Result<ArenaDeltaSnapshot, Box<dyn Error>> {
+    Ok(ArenaDeltaSnapshot {
+        phase: ArenaMatchPhase::Combat,
+        phase_seconds_remaining: None,
+        tile_units: 50,
+        visible_tiles: vec![0b0011_1111, 0b0000_0011],
+        explored_tiles: vec![0b1111_1111, 0b0000_1111],
+        obstacles: vec![ArenaObstacleSnapshot {
+            kind: ArenaObstacleKind::Shrub,
+            center_x: -220,
+            center_y: -150,
+            half_width: 92,
+            half_height: 92,
+        }],
+        players: vec![ArenaPlayerSnapshot {
+            player_id: player_id(7)?,
+            player_name: player_name("Alice")?,
+            team: TeamSide::TeamA,
+            x: -600,
+            y: 210,
+            aim_x: 110,
+            aim_y: 12,
+            hit_points: 94,
+            max_hit_points: 100,
+            mana: 70,
+            max_mana: 100,
+            alive: true,
+            unlocked_skill_slots: 3,
+            primary_cooldown_remaining_ms: 180,
+            primary_cooldown_total_ms: 650,
+            slot_cooldown_remaining_ms: [0, 0, 700, 0, 0],
+            slot_cooldown_total_ms: [700, 1700, 2200, 0, 0],
+            active_statuses: vec![ArenaStatusSnapshot {
+                source: player_id(8)?,
+                slot: 1,
+                kind: ArenaStatusKind::Poison,
+                stacks: 3,
+                remaining_ms: 1200,
+            }],
+        }],
+        projectiles: vec![ArenaProjectileSnapshot {
+            owner: player_id(7)?,
+            slot: 1,
+            kind: ArenaEffectKind::SkillShot,
+            x: -150,
+            y: 180,
+            radius: 24,
+        }],
+    })
+}
+
+fn sample_arena_delta_snapshot_variant() -> Result<ArenaDeltaSnapshot, Box<dyn Error>> {
+    let mut snapshot = sample_arena_delta_snapshot()?;
+    snapshot.phase = ArenaMatchPhase::SkillPick;
+    snapshot.phase_seconds_remaining = Some(9);
+    snapshot.visible_tiles = vec![0b0000_1111, 0b1111_0000];
+    snapshot.players[0].mana = 22;
+    snapshot.players[0].slot_cooldown_remaining_ms = [150, 300, 450, 600, 0];
+    snapshot.players[0].slot_cooldown_total_ms = [700, 900, 1100, 1300, 0];
+    snapshot.players[0]
+        .active_statuses
+        .push(ArenaStatusSnapshot {
+            source: player_id(9)?,
+            slot: 4,
+            kind: ArenaStatusKind::Chill,
+            stacks: 1,
+            remaining_ms: 700,
+        });
+    snapshot.projectiles.push(ArenaProjectileSnapshot {
+        owner: player_id(8)?,
+        slot: 0,
+        kind: ArenaEffectKind::Burst,
+        x: 40,
+        y: 90,
+        radius: 36,
+    });
+    Ok(snapshot)
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -439,146 +673,21 @@ fn write_server_control_event_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
     }
     .encode_packet(3, 11)?;
     let arena_state = ServerControlEvent::ArenaStateSnapshot {
-        snapshot: ArenaStateSnapshot {
-            phase: ArenaMatchPhase::Combat,
-            phase_seconds_remaining: None,
-            width: 1800,
-            height: 1200,
-            tile_units: 50,
-            visible_tiles: vec![0b0011_1111, 0b0000_0011],
-            explored_tiles: vec![0b1111_1111, 0b0000_1111],
-            obstacles: vec![
-                ArenaObstacleSnapshot {
-                    kind: ArenaObstacleKind::Shrub,
-                    center_x: -220,
-                    center_y: -150,
-                    half_width: 92,
-                    half_height: 92,
-                },
-                ArenaObstacleSnapshot {
-                    kind: ArenaObstacleKind::Pillar,
-                    center_x: -220,
-                    center_y: -150,
-                    half_width: 70,
-                    half_height: 70,
-                },
-                ArenaObstacleSnapshot {
-                    kind: ArenaObstacleKind::Shrub,
-                    center_x: 220,
-                    center_y: 150,
-                    half_width: 92,
-                    half_height: 92,
-                },
-                ArenaObstacleSnapshot {
-                    kind: ArenaObstacleKind::Pillar,
-                    center_x: 220,
-                    center_y: 150,
-                    half_width: 70,
-                    half_height: 70,
-                },
-            ],
-            players: vec![
-                ArenaPlayerSnapshot {
-                    player_id: player_id(7)?,
-                    player_name: player_name("Alice")?,
-                    team: TeamSide::TeamA,
-                    x: -640,
-                    y: 220,
-                    aim_x: 120,
-                    aim_y: 0,
-                    hit_points: 100,
-                    max_hit_points: 100,
-                    mana: 84,
-                    max_mana: 100,
-                    alive: true,
-                    unlocked_skill_slots: 3,
-                    primary_cooldown_remaining_ms: 250,
-                    primary_cooldown_total_ms: 650,
-                    slot_cooldown_remaining_ms: [100, 0, 900, 0, 0],
-                    slot_cooldown_total_ms: [700, 1700, 2200, 0, 0],
-                    active_statuses: vec![ArenaStatusSnapshot {
-                        source: player_id(8)?,
-                        slot: 1,
-                        kind: ArenaStatusKind::Hot,
-                        stacks: 1,
-                        remaining_ms: 2000,
-                    }],
-                },
-                ArenaPlayerSnapshot {
-                    player_id: player_id(8)?,
-                    player_name: player_name("Bob")?,
-                    team: TeamSide::TeamB,
-                    x: 640,
-                    y: 220,
-                    aim_x: -120,
-                    aim_y: 0,
-                    hit_points: 100,
-                    max_hit_points: 100,
-                    mana: 68,
-                    max_mana: 100,
-                    alive: true,
-                    unlocked_skill_slots: 3,
-                    primary_cooldown_remaining_ms: 0,
-                    primary_cooldown_total_ms: 450,
-                    slot_cooldown_remaining_ms: [0, 0, 0, 0, 0],
-                    slot_cooldown_total_ms: [650, 1500, 1900, 0, 0],
-                    active_statuses: vec![ArenaStatusSnapshot {
-                        source: player_id(7)?,
-                        slot: 2,
-                        kind: ArenaStatusKind::Poison,
-                        stacks: 2,
-                        remaining_ms: 1600,
-                    }],
-                },
-            ],
-            projectiles: vec![],
-        },
+        snapshot: sample_arena_state_snapshot()?,
     }
     .encode_packet(4, 12)?;
-    let arena_delta = ServerControlEvent::ArenaDeltaSnapshot {
-        snapshot: ArenaDeltaSnapshot {
-            phase: ArenaMatchPhase::Combat,
-            phase_seconds_remaining: None,
-            tile_units: 50,
-            visible_tiles: vec![0b0011_1111, 0b0000_0011],
-            explored_tiles: vec![0b1111_1111, 0b0000_1111],
-            obstacles: vec![ArenaObstacleSnapshot {
-                kind: ArenaObstacleKind::Shrub,
-                center_x: -220,
-                center_y: -150,
-                half_width: 92,
-                half_height: 92,
-            }],
-            players: vec![ArenaPlayerSnapshot {
-                player_id: player_id(7)?,
-                player_name: player_name("Alice")?,
-                team: TeamSide::TeamA,
-                x: -600,
-                y: 210,
-                aim_x: 110,
-                aim_y: 12,
-                hit_points: 94,
-                max_hit_points: 100,
-                mana: 70,
-                max_mana: 100,
-                alive: true,
-                unlocked_skill_slots: 3,
-                primary_cooldown_remaining_ms: 180,
-                primary_cooldown_total_ms: 650,
-                slot_cooldown_remaining_ms: [0, 0, 700, 0, 0],
-                slot_cooldown_total_ms: [700, 1700, 2200, 0, 0],
-                active_statuses: vec![ArenaStatusSnapshot {
-                    source: player_id(8)?,
-                    slot: 1,
-                    kind: ArenaStatusKind::Poison,
-                    stacks: 3,
-                    remaining_ms: 1200,
-                }],
-            }],
-            projectiles: vec![],
-        },
+    let arena_state_variant = ServerControlEvent::ArenaStateSnapshot {
+        snapshot: sample_arena_state_snapshot_variant()?,
     }
-    .encode_packet(5, 13)?;
+    .encode_packet(5, 12)?;
+    let arena_delta = ServerControlEvent::ArenaDeltaSnapshot {
+        snapshot: sample_arena_delta_snapshot()?,
+    }
+    .encode_packet(6, 13)?;
+    let arena_delta_variant = ServerControlEvent::ArenaDeltaSnapshot {
+        snapshot: sample_arena_delta_snapshot_variant()?,
+    }
+    .encode_packet(7, 13)?;
     let arena_effects = ServerControlEvent::ArenaEffectBatch {
         effects: vec![
             ArenaEffectSnapshot {
@@ -724,7 +833,9 @@ fn write_server_control_event_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
     write_seed(dir, "directory_valid.bin", &directory)?;
     write_seed(dir, "snapshot_valid.bin", &snapshot)?;
     write_seed(dir, "arena_state_valid.bin", &arena_state)?;
+    write_seed(dir, "arena_state_variant_valid.bin", &arena_state_variant)?;
     write_seed(dir, "arena_delta_valid.bin", &arena_delta)?;
+    write_seed(dir, "arena_delta_variant_valid.bin", &arena_delta_variant)?;
     write_seed(dir, "arena_effects_valid.bin", &arena_effects)?;
     write_seed(dir, "truncated_snapshot.bin", &truncated)?;
     write_seed(dir, "wrong_packet_kind.bin", &wrong_packet_kind)?;
@@ -751,53 +862,25 @@ fn write_arena_full_snapshot_decode_corpus(dir: &Path) -> Result<(), Box<dyn Err
     recreate_dir(dir)?;
 
     let packet = ServerControlEvent::ArenaStateSnapshot {
-        snapshot: ArenaStateSnapshot {
-            phase: ArenaMatchPhase::Combat,
-            phase_seconds_remaining: None,
-            width: 1800,
-            height: 1200,
-            tile_units: 50,
-            visible_tiles: vec![0b0011_1111, 0b0000_0011],
-            explored_tiles: vec![0b1111_1111, 0b0000_1111],
-            obstacles: vec![ArenaObstacleSnapshot {
-                kind: ArenaObstacleKind::Pillar,
-                center_x: 0,
-                center_y: 0,
-                half_width: 70,
-                half_height: 70,
-            }],
-            players: vec![ArenaPlayerSnapshot {
-                player_id: player_id(7)?,
-                player_name: player_name("Alice")?,
-                team: TeamSide::TeamA,
-                x: -640,
-                y: 220,
-                aim_x: 120,
-                aim_y: 0,
-                hit_points: 100,
-                max_hit_points: 100,
-                mana: 72,
-                max_mana: 100,
-                alive: true,
-                unlocked_skill_slots: 3,
-                primary_cooldown_remaining_ms: 120,
-                primary_cooldown_total_ms: 650,
-                slot_cooldown_remaining_ms: [100, 0, 900, 0, 0],
-                slot_cooldown_total_ms: [700, 1700, 2200, 0, 0],
-                active_statuses: vec![ArenaStatusSnapshot {
-                    source: player_id(8)?,
-                    slot: 1,
-                    kind: ArenaStatusKind::Poison,
-                    stacks: 2,
-                    remaining_ms: 1800,
-                }],
-            }],
-            projectiles: vec![],
-        },
+        snapshot: sample_arena_state_snapshot()?,
     }
     .encode_packet(1, 12)?;
+    let variant_packet = ServerControlEvent::ArenaStateSnapshot {
+        snapshot: sample_arena_state_snapshot_variant()?,
+    }
+    .encode_packet(2, 12)?;
+    let truncated_packet = packet[..packet.len() - 1].to_vec();
+    let mut invalid_optional_flag = variant_packet.clone();
+    invalid_optional_flag[18] = 9;
 
     write_seed(dir, "full_snapshot_valid.bin", &packet)?;
+    write_seed(dir, "full_snapshot_variant_valid.bin", &variant_packet)?;
+    write_seed(
+        dir,
+        "full_snapshot_invalid_optional_flag.bin",
+        &invalid_optional_flag,
+    )?;
+    write_seed(dir, "full_snapshot_truncated.bin", &truncated_packet)?;
     Ok(())
 }
 
@@ -805,49 +888,13 @@ fn write_arena_delta_snapshot_decode_corpus(dir: &Path) -> Result<(), Box<dyn Er
     recreate_dir(dir)?;
 
     let packet = ServerControlEvent::ArenaDeltaSnapshot {
-        snapshot: ArenaDeltaSnapshot {
-            phase: ArenaMatchPhase::Combat,
-            phase_seconds_remaining: None,
-            tile_units: 50,
-            visible_tiles: vec![0b0011_1111, 0b0000_0011],
-            explored_tiles: vec![0b1111_1111, 0b0000_1111],
-            obstacles: vec![ArenaObstacleSnapshot {
-                kind: ArenaObstacleKind::Pillar,
-                center_x: 0,
-                center_y: 0,
-                half_width: 70,
-                half_height: 70,
-            }],
-            players: vec![ArenaPlayerSnapshot {
-                player_id: player_id(7)?,
-                player_name: player_name("Alice")?,
-                team: TeamSide::TeamA,
-                x: -620,
-                y: 200,
-                aim_x: 98,
-                aim_y: 12,
-                hit_points: 91,
-                max_hit_points: 100,
-                mana: 64,
-                max_mana: 100,
-                alive: true,
-                unlocked_skill_slots: 3,
-                primary_cooldown_remaining_ms: 0,
-                primary_cooldown_total_ms: 650,
-                slot_cooldown_remaining_ms: [0, 0, 700, 0, 0],
-                slot_cooldown_total_ms: [700, 1700, 2200, 0, 0],
-                active_statuses: vec![ArenaStatusSnapshot {
-                    source: player_id(8)?,
-                    slot: 1,
-                    kind: ArenaStatusKind::Poison,
-                    stacks: 3,
-                    remaining_ms: 1200,
-                }],
-            }],
-            projectiles: vec![],
-        },
+        snapshot: sample_arena_delta_snapshot()?,
     }
     .encode_packet(2, 13)?;
+    let variant_packet = ServerControlEvent::ArenaDeltaSnapshot {
+        snapshot: sample_arena_delta_snapshot_variant()?,
+    }
+    .encode_packet(3, 13)?;
 
     let invalid_phase = {
         let mut payload = vec![20, 9, 0];
@@ -866,9 +913,19 @@ fn write_arena_delta_snapshot_decode_corpus(dir: &Path) -> Result<(), Box<dyn Er
         )?
         .encode(&payload)
     };
+    let truncated_packet = packet[..packet.len() - 1].to_vec();
+    let mut invalid_optional_flag = variant_packet.clone();
+    invalid_optional_flag[18] = 9;
 
     write_seed(dir, "delta_snapshot_valid.bin", &packet)?;
+    write_seed(dir, "delta_snapshot_variant_valid.bin", &variant_packet)?;
     write_seed(dir, "delta_snapshot_invalid_phase.bin", &invalid_phase)?;
+    write_seed(
+        dir,
+        "delta_snapshot_invalid_optional_flag.bin",
+        &invalid_optional_flag,
+    )?;
+    write_seed(dir, "delta_snapshot_truncated.bin", &truncated_packet)?;
     Ok(())
 }
 
@@ -1163,6 +1220,16 @@ fn write_webrtc_signal_message_parse_corpus(dir: &Path) -> Result<(), Box<dyn Er
         r#"{"type":"session_description","description":{"type":"answer","sdp":"v=0\r\n"}}"#;
     let invalid_unknown_field = r#"{"type":"bye","extra":true}"#;
     let empty_candidate = r#"{"type":"ice_candidate","candidate":{"candidate":"","sdp_mid":"0","sdp_mline_index":0}}"#;
+    let missing_type =
+        r#"{"candidate":{"candidate":"candidate:0 1 UDP 2122252543 127.0.0.1 5000 typ host"}}"#;
+    let scalar_root = r#""bye""#;
+    let invalid_json = r#"{"type":"bye""#;
+    let empty_sdp = r#"{"type":"session_description","description":{"type":"offer","sdp":""}}"#;
+    let oversized_mid = format!(
+        r#"{{"type":"ice_candidate","candidate":{{"candidate":"candidate:0 1 UDP 2122252543 127.0.0.1 5000 typ host","sdp_mid":"{}","sdp_mline_index":0}}}}"#,
+        "m".repeat(65)
+    );
+    let unknown_type = r#"{"type":"server_hello","description":{"type":"offer","sdp":"v=0\r\n"}}"#;
 
     let _ = decode_client_signal_message(valid_offer)?;
     let _ = decode_client_signal_message(valid_candidate)?;
@@ -1177,6 +1244,12 @@ fn write_webrtc_signal_message_parse_corpus(dir: &Path) -> Result<(), Box<dyn Er
         invalid_unknown_field.as_bytes(),
     )?;
     write_seed(dir, "empty_candidate.json", empty_candidate.as_bytes())?;
+    write_seed(dir, "missing_type.json", missing_type.as_bytes())?;
+    write_seed(dir, "scalar_root.json", scalar_root.as_bytes())?;
+    write_seed(dir, "invalid_json.json", invalid_json.as_bytes())?;
+    write_seed(dir, "empty_sdp.json", empty_sdp.as_bytes())?;
+    write_seed(dir, "oversized_mid.json", oversized_mid.as_bytes())?;
+    write_seed(dir, "unknown_type.json", unknown_type.as_bytes())?;
     write_seed(dir, "empty.bin", &[])?;
     Ok(())
 }

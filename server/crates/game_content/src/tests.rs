@@ -1,4 +1,5 @@
 use super::*;
+use game_domain::{SkillChoice, SkillTree};
 use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};

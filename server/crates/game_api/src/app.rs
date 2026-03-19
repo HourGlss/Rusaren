@@ -11,24 +11,11 @@ use std::fmt;
 use std::path::PathBuf;
 
 use game_content::{ArenaMapDefinition, GameContent};
-use game_domain::{
-    LobbyId, MatchId, MatchOutcome, PlayerId, PlayerName, PlayerRecord, ReadyState, SkillChoice,
-    TeamAssignment, TeamSide,
-};
+use game_domain::{LobbyId, MatchId, PlayerId, PlayerName, PlayerRecord, TeamAssignment, TeamSide};
 use game_lobby::{Lobby, LobbyEvent, LobbyPhase};
-use game_match::{MatchConfig, MatchEvent, MatchPhase, MatchSession};
-use game_net::{
-    ArenaDeltaSnapshot, ArenaEffectKind, ArenaEffectSnapshot, ArenaMatchPhase, ArenaObstacleKind,
-    ArenaObstacleSnapshot, ArenaPlayerSnapshot, ArenaProjectileSnapshot, ArenaStateSnapshot,
-    ArenaStatusKind, ArenaStatusSnapshot, ClientControlCommand, LobbyDirectoryEntry,
-    LobbySnapshotPhase, LobbySnapshotPlayer, SequenceTracker, ServerControlEvent,
-    SkillCatalogEntry, ValidatedInputFrame, BUTTON_CAST, BUTTON_PRIMARY, BUTTON_QUIT_TO_LOBBY,
-};
-use game_sim::{
-    obstacle_blocks_vision, obstacle_contains_point, segment_hits_obstacle, ArenaEffect,
-    ArenaObstacle, ArenaObstacleKind as SimArenaObstacleKind, MovementIntent, SimPlayerSeed,
-    SimulationEvent, SimulationWorld, COMBAT_FRAME_MS, VISION_RADIUS_UNITS,
-};
+use game_match::MatchSession;
+use game_net::{SequenceTracker, ServerControlEvent};
+use game_sim::{SimPlayerSeed, SimulationWorld, COMBAT_FRAME_MS};
 use getrandom::fill as fill_random;
 
 mod ingress;

@@ -1,4 +1,11 @@
-use super::*;
+use game_content::ArenaMapDefinition;
+use game_domain::PlayerId;
+use game_sim::{
+    obstacle_blocks_vision, obstacle_contains_point, segment_hits_obstacle, ArenaObstacle,
+    ArenaObstacleKind as SimArenaObstacleKind, VISION_RADIUS_UNITS,
+};
+
+use super::super::{MatchRuntime, ServerApp};
 
 impl ServerApp {
     pub(in super::super) fn build_visibility_masks(

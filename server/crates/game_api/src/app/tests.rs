@@ -5,12 +5,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::transport::{ConnectionId, HeadlessClient, InMemoryTransport};
 use game_content::GameContent;
-use game_domain::{PlayerName, SkillTree};
+use game_domain::{MatchOutcome, PlayerName, ReadyState, SkillChoice, SkillTree};
 use game_net::{
-    ArenaStateSnapshot, LobbyDirectoryEntry, LobbySnapshotPlayer, ServerControlEvent,
-    ValidatedInputFrame, BUTTON_CAST,
+    ArenaStateSnapshot, ArenaStatusKind, ClientControlCommand, LobbyDirectoryEntry,
+    LobbySnapshotPhase, LobbySnapshotPlayer, ServerControlEvent, ValidatedInputFrame, BUTTON_CAST,
+    BUTTON_PRIMARY,
 };
-use game_sim::PLAYER_MOVE_SPEED_UNITS_PER_SECOND;
+use game_sim::{PLAYER_MOVE_SPEED_UNITS_PER_SECOND, VISION_RADIUS_UNITS};
 
 fn connection_id(raw: u64) -> ConnectionId {
     ConnectionId::new(raw).expect("valid connection id")

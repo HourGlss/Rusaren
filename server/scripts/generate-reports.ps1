@@ -1187,79 +1187,112 @@ function Get-FuzzTargetCatalog {
     return @(
         [pscustomobject]@{
             Target = "packet_header_decode"
-            Scope = "crates/game_net/src/lib.rs"
+            Scope = "crates/game_net/src/header.rs plus packet kind/channel decoding in crates/game_net/src/packet_types.rs."
             Description = "Packet framing and header validation."
-            Paths = @("crates/game_net/src/lib.rs")
+            Paths = @(
+                "crates/game_net/src/header.rs",
+                "crates/game_net/src/packet_types.rs"
+            )
             Primary = $true
         },
         [pscustomobject]@{
             Target = "control_command_decode"
-            Scope = "crates/game_net/src/control.rs plus game_domain validation via decoded identifiers and names."
+            Scope = "crates/game_net/src/control/client.rs and crates/game_net/src/control/codec.rs plus domain validation via decoded identifiers and names."
             Description = "Control command decode and validation."
-            Paths = @("crates/game_net/src/control.rs")
+            Paths = @(
+                "crates/game_net/src/control/client.rs",
+                "crates/game_net/src/control/codec.rs"
+            )
             Primary = $true
         },
         [pscustomobject]@{
             Target = "input_frame_decode"
-            Scope = "crates/game_net/src/lib.rs"
+            Scope = "crates/game_net/src/input.rs plus header framing in crates/game_net/src/header.rs and crates/game_net/src/packet_types.rs."
             Description = "Input packet decode and button/context validation."
-            Paths = @("crates/game_net/src/lib.rs")
+            Paths = @(
+                "crates/game_net/src/input.rs",
+                "crates/game_net/src/header.rs",
+                "crates/game_net/src/packet_types.rs"
+            )
             Primary = $true
         },
         [pscustomobject]@{
             Target = "session_ingress"
-            Scope = "crates/game_net/src/ingress.rs plus control decode and domain validation."
+            Scope = "crates/game_net/src/ingress.rs plus control command decode in crates/game_net/src/control/client.rs and crates/game_net/src/control/codec.rs."
             Description = "Session binding and hostile ingress sequencing."
-            Paths = @("crates/game_net/src/ingress.rs", "crates/game_net/src/control.rs")
+            Paths = @(
+                "crates/game_net/src/ingress.rs",
+                "crates/game_net/src/control/client.rs",
+                "crates/game_net/src/control/codec.rs"
+            )
             Primary = $true
         },
         [pscustomobject]@{
             Target = "server_control_event_decode"
-            Scope = "crates/game_net/src/control.rs plus game_domain validation via decoded lobby snapshots and records."
+            Scope = "crates/game_net/src/control/server.rs and crates/game_net/src/control/snapshots.rs plus codec helpers."
             Description = "Server control event decode for lobby directory and full lobby snapshot payloads."
-            Paths = @("crates/game_net/src/control.rs")
+            Paths = @(
+                "crates/game_net/src/control/server.rs",
+                "crates/game_net/src/control/snapshots.rs",
+                "crates/game_net/src/control/codec.rs"
+            )
             Primary = $true
         },
         [pscustomobject]@{
             Target = "arena_full_snapshot_decode"
-            Scope = "crates/game_net/src/control.rs via full arena snapshot decode."
+            Scope = "crates/game_net/src/control/server.rs and crates/game_net/src/control/snapshots.rs via full arena snapshot decode."
             Description = "Full authoritative arena snapshot decode and validation."
-            Paths = @("crates/game_net/src/control.rs")
+            Paths = @(
+                "crates/game_net/src/control/server.rs",
+                "crates/game_net/src/control/snapshots.rs",
+                "crates/game_net/src/control/codec.rs"
+            )
             Primary = $true
         },
         [pscustomobject]@{
             Target = "arena_delta_snapshot_decode"
-            Scope = "crates/game_net/src/control.rs via delta arena snapshot decode."
+            Scope = "crates/game_net/src/control/server.rs and crates/game_net/src/control/snapshots.rs via delta arena snapshot decode."
             Description = "Delta authoritative arena snapshot decode and validation."
-            Paths = @("crates/game_net/src/control.rs")
+            Paths = @(
+                "crates/game_net/src/control/server.rs",
+                "crates/game_net/src/control/snapshots.rs",
+                "crates/game_net/src/control/codec.rs"
+            )
             Primary = $true
         },
         [pscustomobject]@{
             Target = "webrtc_signal_message_parse"
-            Scope = "crates/game_api/src/webrtc.rs via websocket signaling JSON validation."
+            Scope = "crates/game_api/src/webrtc/signaling.rs via websocket signaling JSON validation."
             Description = "WebRTC signaling message decode and validation."
-            Paths = @("crates/game_api/src/webrtc.rs")
+            Paths = @("crates/game_api/src/webrtc/signaling.rs")
             Primary = $true
         },
         [pscustomobject]@{
             Target = "control_command_roundtrip"
-            Scope = "crates/game_net/src/control.rs via structured encode/decode differential fuzzing."
+            Scope = "crates/game_net/src/control/client.rs and crates/game_net/src/control/codec.rs via structured encode/decode differential fuzzing."
             Description = "Structured round-trip fuzzing for valid control command packets."
-            Paths = @("crates/game_net/src/control.rs")
+            Paths = @(
+                "crates/game_net/src/control/client.rs",
+                "crates/game_net/src/control/codec.rs"
+            )
             Primary = $false
         },
         [pscustomobject]@{
             Target = "input_frame_roundtrip"
-            Scope = "crates/game_net/src/lib.rs via structured encode/decode differential fuzzing."
+            Scope = "crates/game_net/src/input.rs via structured encode/decode differential fuzzing."
             Description = "Structured round-trip fuzzing for valid player input packets."
-            Paths = @("crates/game_net/src/lib.rs")
+            Paths = @(
+                "crates/game_net/src/input.rs",
+                "crates/game_net/src/header.rs",
+                "crates/game_net/src/packet_types.rs"
+            )
             Primary = $false
         },
         [pscustomobject]@{
             Target = "webrtc_signal_message_roundtrip"
-            Scope = "crates/game_api/src/webrtc.rs via structured JSON round-trip fuzzing."
+            Scope = "crates/game_api/src/webrtc/signaling.rs via structured JSON round-trip fuzzing."
             Description = "Structured round-trip fuzzing for valid signaling messages."
-            Paths = @("crates/game_api/src/webrtc.rs")
+            Paths = @("crates/game_api/src/webrtc/signaling.rs")
             Primary = $false
         },
         [pscustomobject]@{
@@ -2713,6 +2746,7 @@ function Invoke-FuzzCoverageReport {
         }
         else {
             $notes.Add("No discovered corpus is currently present under server/target/fuzz-generated-corpus. Local Windows runs will usually show seed-only replay until Linux CI or Docker runs a live cargo fuzz campaign.")
+            $notes.Add("Because discovered-corpus target coverage contributes 10% of the fuzzing score, any run with zero discovered corpus is capped at 90/100 even if every replay metric is perfect.")
         }
         if ($findings.Count -eq 0) {
             $notes.Add("No saved crash artifacts are present under server/fuzz/artifacts.")

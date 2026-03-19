@@ -2,7 +2,10 @@ use game_domain::{LobbyId, PlayerName, ReadyState, SkillTree, TeamSide};
 
 use crate::{ChannelId, PacketError, PacketHeader, PacketKind};
 
-use super::codec::*;
+use super::codec::{
+    encode_ready_state, encode_team, ensure_consumed, push_len_prefixed_string, read_lobby_id,
+    read_player_name, read_ready_state, read_skill_tree, read_team, read_u8,
+};
 use super::MAX_SKILL_TREE_NAME_BYTES;
 
 #[derive(Clone, Debug, PartialEq, Eq)]

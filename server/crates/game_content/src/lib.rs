@@ -2,20 +2,20 @@
 #![forbid(unsafe_code)]
 #![cfg_attr(test, allow(clippy::expect_used))]
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-use game_domain::{SkillChoice, SkillTree};
 mod error;
 mod model;
 mod yaml;
 
 pub use error::ContentError;
 pub use model::*;
-use yaml::*;
+use yaml::{
+    MechanicSchemaYaml, MechanicYaml, MeleeYaml, NumericRuleYaml, PayloadRuleYaml, SkillFileYaml,
+    StackRuleYaml,
+};
 
 const DEFAULT_TILE_UNITS: u16 = 50;
 const MAX_MAP_DIMENSION_TILES: usize = 128;

@@ -4,12 +4,8 @@
 #![cfg_attr(test, allow(clippy::expect_used))]
 
 use std::collections::BTreeMap;
-use std::fmt;
 
-use game_domain::{
-    DomainError, LoadoutProgress, MatchId, MatchOutcome, PlayerId, RoundNumber, SkillChoice,
-    TeamAssignment, TeamSide,
-};
+use game_domain::{MatchId, PlayerId, RoundNumber};
 
 pub const SKILL_PICK_SECONDS: u8 = 25;
 pub const PRE_COMBAT_SECONDS: u8 = 5;

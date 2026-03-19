@@ -1,4 +1,9 @@
-use super::*;
+use std::path::Path;
+
+use super::{
+    AnchorPoint, ArenaMapDefinition, ArenaMapObstacle, ArenaMapObstacleKind, ContentError,
+    DEFAULT_TILE_UNITS, MAX_MAP_DIMENSION_TILES,
+};
 
 pub fn parse_ascii_map(source: &str, ascii_map: &str) -> Result<ArenaMapDefinition, ContentError> {
     let rows = collect_map_rows(source, ascii_map)?;

@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    adjusted_move_speed, movement_delta, resolve_movement, total_move_modifier_bps, MovementIntent,
+    SimulationEvent, SimulationWorld, StatusKind, PLAYER_MANA_REGEN_PER_SECOND,
+};
 
 impl SimulationWorld {
     pub(super) fn advance_cooldowns(&mut self, delta_ms: u16) {

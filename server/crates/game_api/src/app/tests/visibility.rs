@@ -189,6 +189,7 @@ fn visibility_masks_tiles_players_projectiles_and_effects_are_precise() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn visibility_helper_boundaries_and_shared_shrubs_are_precise() {
     let map = game_content::ArenaMapDefinition {
         map_id: String::from("mutation-mini"),
@@ -304,6 +305,7 @@ fn visibility_helper_boundaries_and_shared_shrubs_are_precise() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn snapshot_filters_include_visible_non_owned_entities_and_repair_explored_masks() {
     let mut server = ServerApp::new();
     let mut transport = InMemoryTransport::new();

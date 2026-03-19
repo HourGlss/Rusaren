@@ -1,5 +1,8 @@
 use super::*;
-use game_domain::{PlayerName, PlayerRecord, SkillTree};
+use game_domain::{
+    DomainError, MatchOutcome, PlayerName, PlayerRecord, SkillChoice, SkillTree, TeamAssignment,
+    TeamSide,
+};
 
 fn player_id(raw: u32) -> PlayerId {
     PlayerId::new(raw).expect("valid player id")
