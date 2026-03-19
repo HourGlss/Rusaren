@@ -361,6 +361,39 @@ function Get-OptionalPropertyValue {
     return $property.Value
 }
 
+function Get-OptionalArrayPropertyValue {
+    param(
+        [Parameter(Mandatory)]
+        [object]$InputObject,
+        [Parameter(Mandatory)]
+        [string]$PropertyName
+    )
+
+    $value = Get-OptionalPropertyValue -InputObject $InputObject -PropertyName $PropertyName
+    if ($null -eq $value) {
+        return ,@()
+    }
+
+    return ,@($value)
+}
+
+function Get-BackendCoreRuntimeFiles {
+    param(
+        [Parameter(Mandatory)]
+        [hashtable]$SourceInventory
+    )
+
+    return @(
+        $SourceInventory.Values |
+            Where-Object {
+                $_.IsRuntimeSource -and
+                $_.NormalizedPath -match '^crates/(game_api|game_domain|game_lobby|game_match|game_net|game_sim)/src/.+\.rs$'
+            } |
+            ForEach-Object { $_.NormalizedPath } |
+            Sort-Object -Unique
+    )
+}
+
 function Get-StatusBadgeClass {
     param([string]$Status)
 
@@ -2212,18 +2245,7 @@ function Invoke-CallgraphReport {
     $coreFallbackSvgPath = Join-Path $callgraphRoot "backend_core.simple.svg"
     $overviewFallbackSvgPath = Join-Path $callgraphRoot "backend_core.overview.simple.svg"
     $summaryJsonPath = Join-Path $callgraphRoot "backend_core.summary.json"
-    $backendCoreFiles = @(
-        "crates/game_api/src/app.rs",
-        "crates/game_api/src/realtime.rs",
-        "crates/game_api/src/transport.rs",
-        "crates/game_domain/src/lib.rs",
-        "crates/game_net/src/lib.rs",
-        "crates/game_net/src/control.rs",
-        "crates/game_net/src/ingress.rs",
-        "crates/game_lobby/src/lib.rs",
-        "crates/game_match/src/lib.rs",
-        "crates/game_sim/src/lib.rs"
-    )
+    $backendCoreFiles = @(Get-BackendCoreRuntimeFiles -SourceInventory $SourceInventory)
     $entryFiles = @(
         "crates/game_api/src/realtime.rs"
     )
@@ -3019,19 +3041,7 @@ function Invoke-HardeningQueueReport {
             throw "Complexity analyzer output is missing under $complexityDataRoot. Generate the complexity report first."
         }
 
-        $backendCoreFiles = @(
-            "crates/game_api/src/app.rs",
-            "crates/game_api/src/realtime.rs",
-            "crates/game_api/src/records.rs",
-            "crates/game_api/src/transport.rs",
-            "crates/game_domain/src/lib.rs",
-            "crates/game_lobby/src/lib.rs",
-            "crates/game_match/src/lib.rs",
-            "crates/game_net/src/control.rs",
-            "crates/game_net/src/ingress.rs",
-            "crates/game_net/src/lib.rs",
-            "crates/game_sim/src/lib.rs"
-        )
+        $backendCoreFiles = @(Get-BackendCoreRuntimeFiles -SourceInventory $SourceInventory)
         $backendCoreFileSet = @{}
         foreach ($path in $backendCoreFiles) {
             $backendCoreFileSet[$path] = $true
@@ -3182,6 +3192,13 @@ function Invoke-HardeningQueueReport {
             }
             $actions.Add("Add or extend focused positive and negative tests for every touched branch.")
 
+            $hotFunctions = if ($null -ne $functionSummary) {
+                Get-OptionalArrayPropertyValue -InputObject $functionSummary -PropertyName "HotFunctions"
+            }
+            else {
+                @()
+            }
+
             [pscustomobject]@{
                 Kind = "file_cleanup"
                 Title = $displayPath
@@ -3197,10 +3214,10 @@ function Invoke-HardeningQueueReport {
                 FuzzLinePercent = $fuzzLinePercent
                 FuzzFunctionPercent = $fuzzFunctionPercent
                 FuzzRegionPercent = if ($null -ne $fuzzMetric) { [double]$fuzzMetric.RegionPercent } else { 0.0 }
-                HotFunctions = if ($null -ne $functionSummary) { @($functionSummary.HotFunctions) } else { @() }
+                HotFunctions = @($hotFunctions)
                 Reasons = @($reasons)
                 Actions = @($actions)
-                Prompt = Get-BackendCorePrompt -FilePath $displayPath -HotFunctions @($functionSummary.HotFunctions) -FuzzLinePercent $fuzzLinePercent -FuzzFunctionPercent $fuzzFunctionPercent
+                Prompt = Get-BackendCorePrompt -FilePath $displayPath -HotFunctions @($hotFunctions) -FuzzLinePercent $fuzzLinePercent -FuzzFunctionPercent $fuzzFunctionPercent
             }
         }
 
@@ -3259,11 +3276,12 @@ function Invoke-HardeningQueueReport {
 
         $queueRows = foreach ($task in $queueItems) {
             $kindLabel = if ($task.Kind -eq "crash_finding") { "Crash finding" } else { "Code cleanup" }
+            $taskHotFunctions = Get-OptionalArrayPropertyValue -InputObject $task -PropertyName "HotFunctions"
             $hotspotLabel = if ($task.Kind -eq "crash_finding") {
                 "Target: $(Escape-Html $task.Finding.Target)<br />Scope: $(Escape-Html $task.Finding.Scope)<br />SHA-256: <code>$(Escape-Html $task.Finding.Sha256)</code><br />Preview: <code>$(Escape-Html $task.Finding.HexPreview)</code>"
             }
-            elseif ($task.HotFunctions.Count -gt 0) {
-                ($task.HotFunctions | ForEach-Object { "$($_.Name) (CC $([int]$_.Cyclomatic))" }) -join "<br />"
+            elseif ($taskHotFunctions.Count -gt 0) {
+                ($taskHotFunctions | ForEach-Object { "$($_.Name) (CC $([int]$_.Cyclomatic))" }) -join "<br />"
             }
             else {
                 '<span class="muted">No function hotspot extracted.</span>'
@@ -3330,6 +3348,7 @@ function Invoke-HardeningQueueReport {
         $markdownLines.Add("## Prioritized file queue")
         $markdownLines.Add("")
         foreach ($task in $queueItems) {
+            $taskHotFunctions = Get-OptionalArrayPropertyValue -InputObject $task -PropertyName "HotFunctions"
             $markdownLines.Add("### $($task.Rank). $($task.DisplayPath)")
             $markdownLines.Add("")
             $markdownLines.Add("- Kind: $($task.Kind)")
@@ -3342,8 +3361,8 @@ function Invoke-HardeningQueueReport {
                 $markdownLines.Add('- Debug: hex preview `' + $task.Finding.HexPreview + '`')
                 $markdownLines.Add('- Debug: reproduce with `' + $task.Finding.ReproCommand + '`')
             }
-            elseif ($task.HotFunctions.Count -gt 0) {
-                foreach ($function in $task.HotFunctions) {
+            elseif ($taskHotFunctions.Count -gt 0) {
+                foreach ($function in $taskHotFunctions) {
                     $markdownLines.Add('- Hot function: `' + $function.Name + '` | CC ' + ([int]$function.Cyclomatic) + ' (' + $function.CyclomaticGrade + ') | MI ' + ('{0:N2}' -f $function.Mi) + ' (' + $function.MiGrade + ') | lines ' + $function.StartLine + '-' + $function.EndLine)
                 }
             }
@@ -3365,6 +3384,7 @@ function Invoke-HardeningQueueReport {
             findings = @($findings)
             queue = @(
                 $queueItems | ForEach-Object {
+                    $taskHotFunctions = Get-OptionalArrayPropertyValue -InputObject $_ -PropertyName "HotFunctions"
                     [pscustomobject]@{
                         rank = $_.Rank
                         kind = $_.Kind
@@ -3388,7 +3408,7 @@ function Invoke-HardeningQueueReport {
                             region_percent = $_.FuzzRegionPercent
                         }
                         hot_functions = @(
-                            $_.HotFunctions | ForEach-Object {
+                            $taskHotFunctions | ForEach-Object {
                                 [pscustomobject]@{
                                     name = $_.Name
                                     cyclomatic = $_.Cyclomatic
