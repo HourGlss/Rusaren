@@ -22,21 +22,6 @@ on:
     branches:
       - main
       - master
-    paths:
-      - ".github/workflows/deploy-stack-smoke.yml"
-      - ".dockerignore"
-      - "deploy/**"
-      - "server/Dockerfile"
-      - "server/scripts/docker-smoke.ps1"
-      - "server/bin/dedicated_server/**"
-      - "server/crates/game_api/**"
-      - "README.md"
-      - "TODO.md"
-      - "shared/docs/00_index.md"
-      - "shared/docs/09_testing_ops.md"
-      - "shared/docs/14_buildability_assessment.md"
-      - "shared/docs/15_deployment_ops.md"
-      - "shared/docs/16_runbooks.md"
 
 permissions:
   contents: read

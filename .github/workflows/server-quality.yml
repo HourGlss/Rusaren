@@ -12,11 +12,6 @@ on:
     branches:
       - main
       - master
-    paths:
-      - ".github/workflows/server-quality.yml"
-      - ".vscode/**"
-      - "server/**"
-      - "shared/docs/**"
 
 permissions:
   contents: read
@@ -69,22 +64,53 @@ jobs:
         run: ./scripts/quality.ps1 fuzz-live
 
       - name: HTML reports
+        if: always()
         run: ./scripts/quality.ps1 reports
 
       - name: Core runtime coverage gate
         run: ./scripts/quality.ps1 coverage-gate
 
       - name: Configure GitHub Pages
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
 
+      - name: Ensure Pages report root
+        if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          New-Item -ItemType Directory -Force -Path target/reports | Out-Null
+          $fallbackPath = "target/reports/index.html"
+          $fallbackOutputPath = "target/reports/output.html"
+          if (-not (Test-Path $fallbackPath) -or -not (Test-Path $fallbackOutputPath)) {
+            $body = @(
+              '<!DOCTYPE html>'
+              '<html lang="en">'
+              '<head>'
+              '  <meta charset="utf-8" />'
+              '  <title>Rarena Quality Reports</title>'
+              '  <meta name="viewport" content="width=device-width, initial-scale=1" />'
+              '  <style>'
+              '    body { font-family: sans-serif; margin: 2rem; line-height: 1.5; }'
+              '    code { background: #f3f3f3; padding: 0.15rem 0.3rem; border-radius: 0.2rem; }'
+              '  </style>'
+              '</head>'
+              '<body>'
+              '  <h1>Rarena Quality Reports</h1>'
+              '  <p>The quality workflow for commit <code>${{ github.sha }}</code> did not complete cleanly enough to generate the full report set.</p>'
+              '  <p>Check the GitHub Actions run logs for the failing step, then push a fix to refresh this page.</p>'
+              '</body>'
+              '</html>'
+            ) -join "`n"
+            Set-Content -Path $fallbackPath -Value $body -Encoding utf8
+            Set-Content -Path $fallbackOutputPath -Value $body -Encoding utf8
+          }
+
       - name: Prepare Pages artifact
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
           New-Item -ItemType File -Force -Path target/reports/.nojekyll | Out-Null
 
       - name: Upload Pages artifact
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
         with:
           path: server/target/reports
@@ -200,7 +226,7 @@ jobs:
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value $summaryLines -Encoding utf8
 
   deploy-pages:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: quality
     runs-on: ubuntu-latest
     permissions:
