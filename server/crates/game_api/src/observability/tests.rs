@@ -62,7 +62,10 @@ fn prometheus_render_includes_http_websocket_ingress_and_tick_metrics() {
     assert_eq!(observability.ingress_packets_accepted_total(), 1);
     assert_eq!(observability.ingress_packets_rejected_total(), 1);
     assert_eq!(observability.tick_iterations(), 1);
-    assert_eq!(observability.tick_duration_last(), Duration::from_millis(12));
+    assert_eq!(
+        observability.tick_duration_last(),
+        Duration::from_millis(12)
+    );
     assert_eq!(observability.tick_duration_max(), Duration::from_millis(12));
     assert!(observability.uptime() <= Duration::from_secs(1));
 }

@@ -378,8 +378,7 @@ async fn http_get_with_headers(
         Ok(stream) => stream,
         Err(error) => panic!("http connection should succeed: {error}"),
     };
-    let mut request =
-        format!("GET {path} HTTP/1.1\r\nHost: {authority}\r\nConnection: close\r\n");
+    let mut request = format!("GET {path} HTTP/1.1\r\nHost: {authority}\r\nConnection: close\r\n");
     for (name, value) in headers {
         request.push_str(name);
         request.push_str(": ");

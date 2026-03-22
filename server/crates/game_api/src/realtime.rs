@@ -229,10 +229,7 @@ pub struct AdminAuthConfig {
 
 impl AdminAuthConfig {
     /// Creates validated basic-auth credentials for the read-only admin surface.
-    pub fn new(
-        username: impl Into<String>,
-        password: impl Into<String>,
-    ) -> Result<Self, String> {
+    pub fn new(username: impl Into<String>, password: impl Into<String>) -> Result<Self, String> {
         let username = username.into().trim().to_string();
         let password = password.into();
         if username.is_empty() {

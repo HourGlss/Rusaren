@@ -136,7 +136,10 @@ async fn admin_dashboard_requires_basic_auth_and_renders_runtime_state() {
         web_client_root,
         observability: Some(observability),
         webrtc: WebRtcRuntimeConfig::default(),
-        admin_auth: Some(game_api::AdminAuthConfig::new("admin", "secret-password").expect("admin auth should parse")),
+        admin_auth: Some(
+            game_api::AdminAuthConfig::new("admin", "secret-password")
+                .expect("admin auth should parse"),
+        ),
     })
     .await;
 

@@ -17,12 +17,17 @@ $files = @($coverageJson.data[0].files)
 $thresholds = @(
     @{ Path = "crates/game_api/src/app.rs"; MinLines = 80.0; MinFunctions = 80.0 },
     @{ Path = "crates/game_api/src/realtime.rs"; MinLines = 75.0; MinFunctions = 70.0 },
-    @{ Path = "crates/game_api/src/webrtc.rs"; MinLines = 75.0; MinFunctions = 65.0 },
-    @{ Path = "crates/game_domain/src/lib.rs"; MinLines = 85.0; MinFunctions = 85.0 },
+    @{ Path = "crates/game_api/src/webrtc/config.rs"; MinLines = 75.0; MinFunctions = 65.0 },
+    @{ Path = "crates/game_api/src/webrtc/signaling.rs"; MinLines = 75.0; MinFunctions = 75.0 },
+    @{ Path = "crates/game_domain/src/player.rs"; MinLines = 85.0; MinFunctions = 85.0 },
+    @{ Path = "crates/game_domain/src/skill.rs"; MinLines = 85.0; MinFunctions = 85.0 },
     @{ Path = "crates/game_lobby/src/lib.rs"; MinLines = 85.0; MinFunctions = 85.0 },
-    @{ Path = "crates/game_match/src/lib.rs"; MinLines = 85.0; MinFunctions = 85.0 },
-    @{ Path = "crates/game_net/src/lib.rs"; MinLines = 85.0; MinFunctions = 85.0 },
-    @{ Path = "crates/game_net/src/control.rs"; MinLines = 85.0; MinFunctions = 75.0 },
+    @{ Path = "crates/game_match/src/flow.rs"; MinLines = 85.0; MinFunctions = 85.0 },
+    @{ Path = "crates/game_net/src/header.rs"; MinLines = 85.0; MinFunctions = 85.0 },
+    @{ Path = "crates/game_net/src/input.rs"; MinLines = 85.0; MinFunctions = 85.0 },
+    @{ Path = "crates/game_net/src/control/client.rs"; MinLines = 85.0; MinFunctions = 85.0 },
+    @{ Path = "crates/game_net/src/control/server_decode.rs"; MinLines = 85.0; MinFunctions = 85.0 },
+    @{ Path = "crates/game_net/src/control/snapshots_decode.rs"; MinLines = 85.0; MinFunctions = 85.0 },
     @{ Path = "crates/game_net/src/ingress.rs"; MinLines = 85.0; MinFunctions = 85.0 },
     @{ Path = "crates/game_sim/src/lib.rs"; MinLines = 85.0; MinFunctions = 80.0 }
 )

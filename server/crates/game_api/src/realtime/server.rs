@@ -406,8 +406,7 @@ fn render_admin_dashboard(
     let uptime = observability
         .map(crate::ServerObservability::uptime)
         .unwrap_or_default();
-    let tick_iterations = observability
-        .map_or(0, crate::ServerObservability::tick_iterations);
+    let tick_iterations = observability.map_or(0, crate::ServerObservability::tick_iterations);
     let tick_last_ms = observability
         .map(crate::ServerObservability::tick_duration_last)
         .unwrap_or_default()
@@ -418,18 +417,24 @@ fn render_admin_dashboard(
         .unwrap_or_default()
         .as_secs_f64()
         * 1000.0;
-    let ingress_accepted = observability
-        .map_or(0, crate::ServerObservability::ingress_packets_accepted_total);
-    let ingress_rejected = observability
-        .map_or(0, crate::ServerObservability::ingress_packets_rejected_total);
-    let websocket_bound = observability
-        .map_or(0, crate::ServerObservability::websocket_sessions_bound_total);
-    let websocket_disconnects = observability
-        .map_or(0, crate::ServerObservability::websocket_disconnects_total);
-    let websocket_rejections = observability
-        .map_or(0, crate::ServerObservability::websocket_rejections_total);
-    let websocket_active = observability
-        .map_or(0, crate::ServerObservability::websocket_sessions_active);
+    let ingress_accepted = observability.map_or(
+        0,
+        crate::ServerObservability::ingress_packets_accepted_total,
+    );
+    let ingress_rejected = observability.map_or(
+        0,
+        crate::ServerObservability::ingress_packets_rejected_total,
+    );
+    let websocket_bound = observability.map_or(
+        0,
+        crate::ServerObservability::websocket_sessions_bound_total,
+    );
+    let websocket_disconnects =
+        observability.map_or(0, crate::ServerObservability::websocket_disconnects_total);
+    let websocket_rejections =
+        observability.map_or(0, crate::ServerObservability::websocket_rejections_total);
+    let websocket_active =
+        observability.map_or(0, crate::ServerObservability::websocket_sessions_active);
 
     let metrics_block = metrics.map_or_else(
         || String::from("<p>Observability is disabled.</p>"),
