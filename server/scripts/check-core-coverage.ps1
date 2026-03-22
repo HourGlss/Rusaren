@@ -14,6 +14,10 @@ if (-not (Test-Path $summaryPath)) {
 $coverageJson = Get-Content -Path $summaryPath -Raw | ConvertFrom-Json
 $files = @($coverageJson.data[0].files)
 
+function Normalize-CoveragePath([string]$Path) {
+    return $Path.Replace('\', '/').ToLowerInvariant()
+}
+
 $thresholds = @(
     @{ Path = "crates/game_api/src/app.rs"; MinLines = 80.0; MinFunctions = 80.0 },
     @{ Path = "crates/game_api/src/realtime.rs"; MinLines = 75.0; MinFunctions = 70.0 },
@@ -33,8 +37,10 @@ $thresholds = @(
 )
 
 $results = foreach ($threshold in $thresholds) {
-    $normalizedPath = $threshold.Path.Replace('/', '\')
-    $file = $files | Where-Object { $_.filename -like "*$normalizedPath" } | Select-Object -First 1
+    $normalizedPath = Normalize-CoveragePath $threshold.Path
+    $file = $files |
+        Where-Object { (Normalize-CoveragePath $_.filename).EndsWith($normalizedPath) } |
+        Select-Object -First 1
     if ($null -eq $file) {
         throw "Coverage summary is missing an entry for $($threshold.Path)."
     }
