@@ -34,6 +34,59 @@ fn skill(tree: SkillTree, tier: u8) -> SkillChoice {
 }
 
 #[test]
+fn match_config_scoreboard_and_error_display_are_stable() {
+    let config = MatchConfig::v1();
+    assert_eq!(config.total_rounds.get(), 5);
+    assert_eq!(config.skill_pick_seconds, SKILL_PICK_SECONDS);
+    assert_eq!(config.pre_combat_seconds, PRE_COMBAT_SECONDS);
+
+    let mut score = ScoreBoard::new();
+    score.award_round(TeamSide::TeamA);
+    score.award_round(TeamSide::TeamB);
+    score.award_round(TeamSide::TeamB);
+    assert_eq!(score.team_a, 1);
+    assert_eq!(score.team_b, 2);
+
+    assert_eq!(
+        MatchError::DuplicatePlayer(player_id(3)).to_string(),
+        "player 3 appears more than once in the match roster"
+    );
+    assert_eq!(
+        MatchError::MissingTeam(TeamSide::TeamA).to_string(),
+        "Team A must contain at least one player"
+    );
+    assert_eq!(
+        MatchError::PlayerMissing(player_id(9)).to_string(),
+        "player 9 is not part of the match"
+    );
+    assert_eq!(
+        MatchError::WrongPhase {
+            expected: "Combat",
+            actual: "SkillPick",
+        }
+        .to_string(),
+        "match expected phase Combat but is currently SkillPick"
+    );
+    assert_eq!(
+        MatchError::SkillAlreadySelected(player_id(1)).to_string(),
+        "player 1 already selected a skill this round"
+    );
+    assert_eq!(
+        MatchError::InvalidSkillChoice(DomainError::SkillTierGap {
+            tree: SkillTree::Mage,
+            expected: 1,
+            actual: 3,
+        })
+        .to_string(),
+        "skill progression for Mage expected tier 1 but received tier 3"
+    );
+    assert_eq!(
+        MatchError::PlayerAlreadyDefeated(player_id(2)).to_string(),
+        "player 2 is already defeated"
+    );
+}
+
+#[test]
 fn match_new_requires_players_on_both_teams_and_unique_ids() {
     let config = MatchConfig::v1();
     let match_id = MatchId::new(1).expect("valid match id");

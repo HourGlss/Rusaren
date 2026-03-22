@@ -102,8 +102,7 @@ where
     }
 
     panic!(
-        "expected predicate to succeed within {:?} and {max_events} events, got {events:?}",
-        timeout
+        "expected predicate to succeed within {timeout:?} and {max_events} events, got {events:?}"
     );
 }
 
@@ -183,6 +182,7 @@ async fn start_server_fast() -> (game_api::DevServerHandle, String) {
         web_client_root: temp_web_client_root("fast-default", None),
         observability: Some(ServerObservability::new("test-fast")),
         webrtc: WebRtcRuntimeConfig::default(),
+        admin_auth: None,
     })
     .await
 }
@@ -198,6 +198,7 @@ async fn start_server_with_web_root(
         web_client_root,
         observability: Some(ServerObservability::new("test-web-root")),
         webrtc: WebRtcRuntimeConfig::default(),
+        admin_auth: None,
     })
     .await
 }
@@ -321,6 +322,10 @@ fn temp_record_store_path() -> PathBuf {
 }
 
 fn repo_content_root() -> PathBuf {
+    if let Ok(server_root) = std::env::var("RARENA_SERVER_ROOT") {
+        return PathBuf::from(server_root).join("content");
+    }
+
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("..")
@@ -360,12 +365,28 @@ fn http_authority_from_ws(base_url: &str) -> String {
 }
 
 async fn http_get(base_url: &str, path: &str) -> (u16, String) {
+    http_get_with_headers(base_url, path, &[]).await
+}
+
+async fn http_get_with_headers(
+    base_url: &str,
+    path: &str,
+    headers: &[(&str, &str)],
+) -> (u16, String) {
     let authority = http_authority_from_ws(base_url);
     let mut stream = match tokio::net::TcpStream::connect(&authority).await {
         Ok(stream) => stream,
         Err(error) => panic!("http connection should succeed: {error}"),
     };
-    let request = format!("GET {path} HTTP/1.1\r\nHost: {authority}\r\nConnection: close\r\n\r\n");
+    let mut request =
+        format!("GET {path} HTTP/1.1\r\nHost: {authority}\r\nConnection: close\r\n");
+    for (name, value) in headers {
+        request.push_str(name);
+        request.push_str(": ");
+        request.push_str(value);
+        request.push_str("\r\n");
+    }
+    request.push_str("\r\n");
     if let Err(error) = stream.write_all(request.as_bytes()).await {
         panic!("http request should be written: {error}");
     }

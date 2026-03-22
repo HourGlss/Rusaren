@@ -278,6 +278,7 @@ async fn websocket_adapter_rejects_zero_tick_intervals() {
             web_client_root: temp_web_client_root("zero-tick", None),
             observability: Some(ServerObservability::new("test-zero-tick")),
             webrtc: WebRtcRuntimeConfig::default(),
+            admin_auth: None,
         },
     )
     .await;

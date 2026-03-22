@@ -7,6 +7,7 @@ use crate::{
     StatusDefinition, StatusKind,
 };
 
+#[derive(Clone, Copy)]
 struct BehaviorNumericFields {
     cooldown_ms: Option<u16>,
     mana_cost: Option<u16>,
@@ -80,76 +81,166 @@ pub(super) fn parse_skill_behavior(
     let cooldown_ms = require_present_u16(source, "cooldown_ms", fields.cooldown_ms)?;
     let mana_cost = fields.mana_cost.unwrap_or(0);
     match yaml.kind.as_str() {
-        "projectile" => Ok(SkillBehavior::Projectile {
+        "projectile" => parse_projectile_behavior(
+            source,
+            yaml,
+            mechanics,
+            schema,
+            fields,
+            effect,
             cooldown_ms,
             mana_cost,
-            speed: require_present_u16(source, "speed", fields.speed)?,
-            range: require_present_u16(source, "range", fields.range)?,
-            radius: require_present_u16(source, "radius", fields.radius)?,
+        ),
+        "beam" => parse_beam_behavior(
+            source,
+            yaml,
+            mechanics,
+            schema,
+            fields,
             effect,
-            payload: parse_behavior_payload(
-                source,
-                yaml.payload.clone(),
-                schema.payload,
-                mechanics,
-            )?,
-        }),
-        "beam" => Ok(SkillBehavior::Beam {
             cooldown_ms,
             mana_cost,
-            range: require_present_u16(source, "range", fields.range)?,
-            radius: require_present_u16(source, "radius", fields.radius)?,
+        ),
+        "dash" => parse_dash_behavior(
+            source,
+            yaml,
+            mechanics,
+            schema,
+            fields,
             effect,
-            payload: parse_behavior_payload(
-                source,
-                yaml.payload.clone(),
-                schema.payload,
-                mechanics,
-            )?,
-        }),
-        "dash" => Ok(SkillBehavior::Dash {
             cooldown_ms,
             mana_cost,
-            distance: require_present_u16(source, "distance", fields.distance)?,
+        ),
+        "burst" => parse_burst_behavior(
+            source,
+            yaml,
+            mechanics,
+            schema,
+            fields,
             effect,
-            impact_radius: fields.impact_radius,
-            payload: parse_optional_behavior_payload(
-                source,
-                yaml.payload.clone(),
-                schema.payload,
-                mechanics,
-            )?,
-        }),
-        "burst" => Ok(SkillBehavior::Burst {
             cooldown_ms,
             mana_cost,
-            range: require_present_u16(source, "range", fields.range)?,
-            radius: require_present_u16(source, "radius", fields.radius)?,
+        ),
+        "nova" => parse_nova_behavior(
+            source,
+            yaml,
+            mechanics,
+            schema,
+            fields,
             effect,
-            payload: parse_behavior_payload(
-                source,
-                yaml.payload.clone(),
-                schema.payload,
-                mechanics,
-            )?,
-        }),
-        "nova" => Ok(SkillBehavior::Nova {
             cooldown_ms,
             mana_cost,
-            radius: require_present_u16(source, "radius", fields.radius)?,
-            effect,
-            payload: parse_behavior_payload(
-                source,
-                yaml.payload.clone(),
-                schema.payload,
-                mechanics,
-            )?,
-        }),
+        ),
         other => Err(ContentError::Validation {
             source: String::from(source),
             message: format!("unknown behavior kind '{other}'"),
         }),
     }
+}
+
+fn parse_projectile_behavior(
+    source: &str,
+    yaml: &SkillBehaviorYaml,
+    mechanics: &MechanicCatalog,
+    schema: &BehaviorSchema,
+    fields: BehaviorNumericFields,
+    effect: SkillEffectKind,
+    cooldown_ms: u16,
+    mana_cost: u16,
+) -> Result<SkillBehavior, ContentError> {
+    Ok(SkillBehavior::Projectile {
+        cooldown_ms,
+        mana_cost,
+        speed: require_present_u16(source, "speed", fields.speed)?,
+        range: require_present_u16(source, "range", fields.range)?,
+        radius: require_present_u16(source, "radius", fields.radius)?,
+        effect,
+        payload: parse_behavior_payload(source, yaml.payload.clone(), schema.payload, mechanics)?,
+    })
+}
+
+fn parse_beam_behavior(
+    source: &str,
+    yaml: &SkillBehaviorYaml,
+    mechanics: &MechanicCatalog,
+    schema: &BehaviorSchema,
+    fields: BehaviorNumericFields,
+    effect: SkillEffectKind,
+    cooldown_ms: u16,
+    mana_cost: u16,
+) -> Result<SkillBehavior, ContentError> {
+    Ok(SkillBehavior::Beam {
+        cooldown_ms,
+        mana_cost,
+        range: require_present_u16(source, "range", fields.range)?,
+        radius: require_present_u16(source, "radius", fields.radius)?,
+        effect,
+        payload: parse_behavior_payload(source, yaml.payload.clone(), schema.payload, mechanics)?,
+    })
+}
+
+fn parse_dash_behavior(
+    source: &str,
+    yaml: &SkillBehaviorYaml,
+    mechanics: &MechanicCatalog,
+    schema: &BehaviorSchema,
+    fields: BehaviorNumericFields,
+    effect: SkillEffectKind,
+    cooldown_ms: u16,
+    mana_cost: u16,
+) -> Result<SkillBehavior, ContentError> {
+    Ok(SkillBehavior::Dash {
+        cooldown_ms,
+        mana_cost,
+        distance: require_present_u16(source, "distance", fields.distance)?,
+        effect,
+        impact_radius: fields.impact_radius,
+        payload: parse_optional_behavior_payload(
+            source,
+            yaml.payload.clone(),
+            schema.payload,
+            mechanics,
+        )?,
+    })
+}
+
+fn parse_burst_behavior(
+    source: &str,
+    yaml: &SkillBehaviorYaml,
+    mechanics: &MechanicCatalog,
+    schema: &BehaviorSchema,
+    fields: BehaviorNumericFields,
+    effect: SkillEffectKind,
+    cooldown_ms: u16,
+    mana_cost: u16,
+) -> Result<SkillBehavior, ContentError> {
+    Ok(SkillBehavior::Burst {
+        cooldown_ms,
+        mana_cost,
+        range: require_present_u16(source, "range", fields.range)?,
+        radius: require_present_u16(source, "radius", fields.radius)?,
+        effect,
+        payload: parse_behavior_payload(source, yaml.payload.clone(), schema.payload, mechanics)?,
+    })
+}
+
+fn parse_nova_behavior(
+    source: &str,
+    yaml: &SkillBehaviorYaml,
+    mechanics: &MechanicCatalog,
+    schema: &BehaviorSchema,
+    fields: BehaviorNumericFields,
+    effect: SkillEffectKind,
+    cooldown_ms: u16,
+    mana_cost: u16,
+) -> Result<SkillBehavior, ContentError> {
+    Ok(SkillBehavior::Nova {
+        cooldown_ms,
+        mana_cost,
+        radius: require_present_u16(source, "radius", fields.radius)?,
+        effect,
+        payload: parse_behavior_payload(source, yaml.payload.clone(), schema.payload, mechanics)?,
+    })
 }
 
 pub(super) fn parse_payload(

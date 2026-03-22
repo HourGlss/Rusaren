@@ -9,7 +9,7 @@ use game_domain::{MatchOutcome, PlayerName, ReadyState, SkillChoice, SkillTree};
 use game_net::{
     ArenaStateSnapshot, ArenaStatusKind, ClientControlCommand, LobbyDirectoryEntry,
     LobbySnapshotPhase, LobbySnapshotPlayer, ServerControlEvent, ValidatedInputFrame, BUTTON_CAST,
-    BUTTON_PRIMARY,
+    BUTTON_PRIMARY, BUTTON_QUIT_TO_LOBBY,
 };
 use game_sim::{PLAYER_MOVE_SPEED_UNITS_PER_SECOND, VISION_RADIUS_UNITS};
 
@@ -78,8 +78,17 @@ fn copy_dir_all(source: &Path, destination: &Path) {
 }
 
 fn workspace_content_root() -> PathBuf {
+    if let Ok(server_root) = std::env::var("RARENA_SERVER_ROOT") {
+        return PathBuf::from(server_root)
+            .join("content")
+            .canonicalize()
+            .expect("workspace content root should exist");
+    }
+
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../content")
+        .join("..")
+        .join("..")
+        .join("content")
         .canonicalize()
         .expect("workspace content root should exist")
 }
@@ -223,6 +232,11 @@ fn movement_input_frame(client_input_tick: u32, move_x: i16, move_y: i16) -> Val
 fn slot_cast_input(client_input_tick: u32, slot: u16) -> ValidatedInputFrame {
     ValidatedInputFrame::new(client_input_tick, 0, 0, 0, 0, BUTTON_CAST, slot)
         .expect("cast input should be valid")
+}
+
+fn quit_input_frame(client_input_tick: u32) -> ValidatedInputFrame {
+    ValidatedInputFrame::new(client_input_tick, 0, 0, 0, 0, BUTTON_QUIT_TO_LOBBY, 0)
+        .expect("quit input should be valid")
 }
 
 fn player_x(server: &ServerApp, match_id: MatchId, player_id: PlayerId) -> i16 {

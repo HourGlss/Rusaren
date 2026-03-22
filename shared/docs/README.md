@@ -4,6 +4,7 @@ This directory contains long-form project documentation covering architecture, g
 Use the structure notes below to find the right file or subfolder quickly.
 
 ## Structure
+- `adr/`: short architecture decision records for protocol, admin, logging, and persistence choices.
 - `classes/`: class-specific design notes that complement the live authored YAML data.
 - `maps/`: map-specific documentation and templates.
 - `00_index.md`: Top-level documentation index that links the rest of the design and ops notes together.
@@ -24,4 +25,6 @@ Use the structure notes below to find the right file or subfolder quickly.
 - `15_deployment_ops.md`: Deployment and operations guide for the hosted backend stack.
 - `16_runbooks.md`: Operational runbooks for routine backend tasks.
 - `17_linode_deploy.md`: Linode-specific deployment guide for bringing up the hosted stack.
+- `18_performance_budgets.md`: The current backend budget targets, reference environments, and performance-gating intent for `0.9`.
+- `19_architecture_governance.md`: Crate-boundary rules, module discipline, ADR expectations, and the human PR review checklist.
 - `README.md`: This guide documents the folder structure and explains what the checked-in files and subfolders are for.

@@ -9,11 +9,12 @@ use std::time::{Duration, Instant, SystemTime};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::Query;
 use axum::extract::State;
-use axum::http::{header, Request, StatusCode};
+use axum::http::{header, HeaderMap, Request, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, get_service};
 use axum::Json;
 use axum::Router;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64_URL_SAFE_NO_PAD;
 use base64::Engine as _;
 use bytes::Bytes;
@@ -58,12 +59,14 @@ const MAX_SESSION_BOOTSTRAP_TOKEN_BYTES: usize = 96;
 
 #[derive(Clone)]
 struct DevServerState {
+    runtime: Arc<Mutex<RuntimeState>>,
     ingress_tx: mpsc::UnboundedSender<IngressEvent>,
     web_client_root: PathBuf,
     observability: Option<ServerObservability>,
     next_connection_id: Arc<AtomicU64>,
     bootstrap_tokens: Arc<Mutex<SessionBootstrapTokenRegistry>>,
     webrtc: WebRtcRuntimeConfig,
+    admin_auth: Option<AdminAuthConfig>,
 }
 
 struct RuntimeState {
@@ -217,6 +220,58 @@ pub struct DevServerHandle {
     tick_task: JoinHandle<()>,
 }
 
+/// Password-protected admin surface configuration for the hosted backend.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AdminAuthConfig {
+    username: String,
+    password: String,
+}
+
+impl AdminAuthConfig {
+    /// Creates validated basic-auth credentials for the read-only admin surface.
+    pub fn new(
+        username: impl Into<String>,
+        password: impl Into<String>,
+    ) -> Result<Self, String> {
+        let username = username.into().trim().to_string();
+        let password = password.into();
+        if username.is_empty() {
+            return Err(String::from("admin username must not be blank"));
+        }
+        if password.trim().is_empty() {
+            return Err(String::from("admin password must not be blank"));
+        }
+
+        Ok(Self { username, password })
+    }
+
+    /// Returns the configured admin username.
+    #[must_use]
+    pub fn username(&self) -> &str {
+        &self.username
+    }
+
+    fn is_authorized(&self, headers: &HeaderMap) -> bool {
+        let Some(raw_header) = headers.get(header::AUTHORIZATION) else {
+            return false;
+        };
+        let Ok(raw_header) = raw_header.to_str() else {
+            return false;
+        };
+        let Some(encoded) = raw_header.strip_prefix("Basic ") else {
+            return false;
+        };
+        let Ok(decoded) = BASE64_STANDARD.decode(encoded) else {
+            return false;
+        };
+        let Ok(decoded) = String::from_utf8(decoded) else {
+            return false;
+        };
+
+        decoded == format!("{}:{}", self.username, self.password)
+    }
+}
+
 /// Runtime options for the websocket/WebRTC dev server.
 #[derive(Clone, Debug)]
 pub struct DevServerOptions {
@@ -234,6 +289,8 @@ pub struct DevServerOptions {
     pub observability: Option<ServerObservability>,
     /// STUN/TURN runtime configuration for `WebRTC` clients.
     pub webrtc: WebRtcRuntimeConfig,
+    /// Optional basic-auth protection for the private read-only admin surface.
+    pub admin_auth: Option<AdminAuthConfig>,
 }
 
 impl Default for DevServerOptions {
@@ -246,6 +303,7 @@ impl Default for DevServerOptions {
             web_client_root: server::default_web_client_root(),
             observability: Some(ServerObservability::new(env!("CARGO_PKG_VERSION"))),
             webrtc: WebRtcRuntimeConfig::default(),
+            admin_auth: None,
         }
     }
 }

@@ -188,6 +188,29 @@ impl PacketError {
 
     fn fmt_encoded_value_error(&self, f: &mut fmt::Formatter<'_>) -> Option<fmt::Result> {
         match self {
+            Self::InvalidEncodedPlayerId(_)
+            | Self::InvalidEncodedLobbyId(_)
+            | Self::InvalidEncodedMatchId(_)
+            | Self::InvalidEncodedRound(_) => self.fmt_encoded_identifier_error(f),
+            Self::InvalidEncodedTeam(_)
+            | Self::InvalidEncodedOptionalTeam(_)
+            | Self::InvalidEncodedReadyState(_)
+            | Self::InvalidEncodedMatchOutcome(_)
+            | Self::InvalidEncodedLobbyPhase(_)
+            | Self::InvalidEncodedArenaMatchPhase(_)
+            | Self::InvalidEncodedArenaObstacleKind(_)
+            | Self::InvalidEncodedArenaEffectKind(_)
+            | Self::InvalidEncodedArenaStatusKind(_)
+            | Self::InvalidEncodedBoolean(_) => self.fmt_encoded_variant_error(f),
+            Self::InvalidEncodedSkillTree(error) | Self::InvalidEncodedPlayerName(error) => {
+                Some(fmt::Display::fmt(error, f))
+            }
+            _ => None,
+        }
+    }
+
+    fn fmt_encoded_identifier_error(&self, f: &mut fmt::Formatter<'_>) -> Option<fmt::Result> {
+        match self {
             Self::InvalidEncodedPlayerId(raw) => {
                 Some(write!(f, "encoded player id {raw} is invalid"))
             }
@@ -198,15 +221,18 @@ impl PacketError {
                 Some(write!(f, "encoded match id {raw} is invalid"))
             }
             Self::InvalidEncodedRound(raw) => Some(write!(f, "encoded round {raw} is invalid")),
+            _ => None,
+        }
+    }
+
+    fn fmt_encoded_variant_error(&self, f: &mut fmt::Formatter<'_>) -> Option<fmt::Result> {
+        match self {
             Self::InvalidEncodedTeam(raw) => Some(write!(f, "encoded team {raw} is invalid")),
             Self::InvalidEncodedOptionalTeam(raw) => {
                 Some(write!(f, "encoded optional team {raw} is invalid"))
             }
             Self::InvalidEncodedReadyState(raw) => {
                 Some(write!(f, "encoded ready state {raw} is invalid"))
-            }
-            Self::InvalidEncodedSkillTree(error) | Self::InvalidEncodedPlayerName(error) => {
-                Some(fmt::Display::fmt(error, f))
             }
             Self::InvalidEncodedMatchOutcome(raw) => {
                 Some(write!(f, "encoded match outcome {raw} is invalid"))

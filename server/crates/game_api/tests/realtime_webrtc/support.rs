@@ -9,6 +9,10 @@ fn temp_record_store_path() -> PathBuf {
 }
 
 fn repo_content_root() -> PathBuf {
+    if let Ok(server_root) = std::env::var("RARENA_SERVER_ROOT") {
+        return PathBuf::from(server_root).join("content");
+    }
+
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("..")
@@ -90,6 +94,7 @@ pub(super) async fn start_server_fast() -> (game_api::DevServerHandle, String) {
             web_client_root: temp_web_client_root("fast"),
             observability: None,
             webrtc: WebRtcRuntimeConfig::default(),
+            admin_auth: None,
         },
     )
     .await

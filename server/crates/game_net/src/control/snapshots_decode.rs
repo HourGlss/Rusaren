@@ -1,3 +1,5 @@
+use game_domain::{PlayerId, PlayerName, TeamSide};
+
 use crate::PacketError;
 
 use super::codec::{
@@ -142,62 +144,124 @@ pub(super) fn decode_arena_players(
     let player_count = usize::from(read_u16(payload, index, kind)?);
     let mut players = Vec::with_capacity(player_count);
     for _ in 0..player_count {
-        let player_id = read_player_id(payload, index, kind)?;
-        let player_name = read_player_name(payload, index, kind)?;
-        let team = read_team(payload, index, kind)?;
-        let x = read_i16(payload, index, kind)?;
-        let y = read_i16(payload, index, kind)?;
-        let aim_x = read_i16(payload, index, kind)?;
-        let aim_y = read_i16(payload, index, kind)?;
-        let hit_points = read_u16(payload, index, kind)?;
-        let max_hit_points = read_u16(payload, index, kind)?;
-        let mana = read_u16(payload, index, kind)?;
-        let max_mana = read_u16(payload, index, kind)?;
-        let alive = read_bool(payload, index, kind)?;
-        let unlocked_skill_slots = read_u8(payload, index, kind)?;
-        let primary_cooldown_remaining_ms = read_u16(payload, index, kind)?;
-        let primary_cooldown_total_ms = read_u16(payload, index, kind)?;
-        let mut slot_cooldown_remaining_ms = [0_u16; 5];
-        for remaining in &mut slot_cooldown_remaining_ms {
-            *remaining = read_u16(payload, index, kind)?;
-        }
-        let mut slot_cooldown_total_ms = [0_u16; 5];
-        for total in &mut slot_cooldown_total_ms {
-            *total = read_u16(payload, index, kind)?;
-        }
-        let status_count = usize::from(read_u8(payload, index, kind)?);
-        let mut active_statuses = Vec::with_capacity(status_count);
-        for _ in 0..status_count {
-            active_statuses.push(ArenaStatusSnapshot {
-                source: read_player_id(payload, index, kind)?,
-                slot: read_u8(payload, index, kind)?,
-                kind: read_arena_status_kind(payload, index, kind)?,
-                stacks: read_u8(payload, index, kind)?,
-                remaining_ms: read_u16(payload, index, kind)?,
-            });
-        }
-        players.push(ArenaPlayerSnapshot {
-            player_id,
-            player_name,
-            team,
-            x,
-            y,
-            aim_x,
-            aim_y,
-            hit_points,
-            max_hit_points,
-            mana,
-            max_mana,
-            alive,
-            unlocked_skill_slots,
-            primary_cooldown_remaining_ms,
-            primary_cooldown_total_ms,
-            slot_cooldown_remaining_ms,
-            slot_cooldown_total_ms,
-            active_statuses,
-        });
+        players.push(decode_arena_player(payload, index, kind)?);
     }
     Ok(players)
+}
+
+fn decode_arena_player(
+    payload: &[u8],
+    index: &mut usize,
+    kind: &'static str,
+) -> Result<ArenaPlayerSnapshot, PacketError> {
+    let (player_id, player_name, team) = decode_arena_player_identity(payload, index, kind)?;
+    let (x, y, aim_x, aim_y) = decode_arena_player_position(payload, index, kind)?;
+    let resources = decode_arena_player_resources(payload, index, kind)?;
+
+    Ok(ArenaPlayerSnapshot {
+        player_id,
+        player_name,
+        team,
+        x,
+        y,
+        aim_x,
+        aim_y,
+        hit_points: resources.hit_points,
+        max_hit_points: resources.max_hit_points,
+        mana: resources.mana,
+        max_mana: resources.max_mana,
+        alive: resources.alive,
+        unlocked_skill_slots: resources.unlocked_skill_slots,
+        primary_cooldown_remaining_ms: resources.primary_cooldown_remaining_ms,
+        primary_cooldown_total_ms: resources.primary_cooldown_total_ms,
+        slot_cooldown_remaining_ms: decode_cooldown_array(payload, index, kind)?,
+        slot_cooldown_total_ms: decode_cooldown_array(payload, index, kind)?,
+        active_statuses: decode_active_statuses(payload, index, kind)?,
+    })
+}
+
+fn decode_arena_player_identity(
+    payload: &[u8],
+    index: &mut usize,
+    kind: &'static str,
+) -> Result<(PlayerId, PlayerName, TeamSide), PacketError> {
+    Ok((
+        read_player_id(payload, index, kind)?,
+        read_player_name(payload, index, kind)?,
+        read_team(payload, index, kind)?,
+    ))
+}
+
+fn decode_arena_player_position(
+    payload: &[u8],
+    index: &mut usize,
+    kind: &'static str,
+) -> Result<(i16, i16, i16, i16), PacketError> {
+    Ok((
+        read_i16(payload, index, kind)?,
+        read_i16(payload, index, kind)?,
+        read_i16(payload, index, kind)?,
+        read_i16(payload, index, kind)?,
+    ))
+}
+
+struct ArenaPlayerResources {
+    hit_points: u16,
+    max_hit_points: u16,
+    mana: u16,
+    max_mana: u16,
+    alive: bool,
+    unlocked_skill_slots: u8,
+    primary_cooldown_remaining_ms: u16,
+    primary_cooldown_total_ms: u16,
+}
+
+fn decode_arena_player_resources(
+    payload: &[u8],
+    index: &mut usize,
+    kind: &'static str,
+) -> Result<ArenaPlayerResources, PacketError> {
+    Ok(ArenaPlayerResources {
+        hit_points: read_u16(payload, index, kind)?,
+        max_hit_points: read_u16(payload, index, kind)?,
+        mana: read_u16(payload, index, kind)?,
+        max_mana: read_u16(payload, index, kind)?,
+        alive: read_bool(payload, index, kind)?,
+        unlocked_skill_slots: read_u8(payload, index, kind)?,
+        primary_cooldown_remaining_ms: read_u16(payload, index, kind)?,
+        primary_cooldown_total_ms: read_u16(payload, index, kind)?,
+    })
+}
+
+fn decode_cooldown_array(
+    payload: &[u8],
+    index: &mut usize,
+    kind: &'static str,
+) -> Result<[u16; 5], PacketError> {
+    let mut values = [0_u16; 5];
+    for value in &mut values {
+        *value = read_u16(payload, index, kind)?;
+    }
+    Ok(values)
+}
+
+fn decode_active_statuses(
+    payload: &[u8],
+    index: &mut usize,
+    kind: &'static str,
+) -> Result<Vec<ArenaStatusSnapshot>, PacketError> {
+    let status_count = usize::from(read_u8(payload, index, kind)?);
+    let mut active_statuses = Vec::with_capacity(status_count);
+    for _ in 0..status_count {
+        active_statuses.push(ArenaStatusSnapshot {
+            source: read_player_id(payload, index, kind)?,
+            slot: read_u8(payload, index, kind)?,
+            kind: read_arena_status_kind(payload, index, kind)?,
+            stacks: read_u8(payload, index, kind)?,
+            remaining_ms: read_u16(payload, index, kind)?,
+        });
+    }
+    Ok(active_statuses)
 }
 
 pub(super) fn decode_arena_projectiles(

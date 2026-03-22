@@ -118,7 +118,7 @@ impl FuzzIngressPacket {
                 extra,
             } => {
                 let mut bytes = encode_command(command, seq, sim_tick);
-                let extra_len = extra.len().min(64).max(1);
+                let extra_len = extra.len().clamp(1, 64);
                 bytes.resize(MAX_INGRESS_PACKET_BYTES + extra_len, 0xAB);
                 bytes
             }
@@ -180,8 +180,8 @@ where
 }
 
 fn encode_command(command: FuzzClientCommand, seq: u32, sim_tick: u32) -> Vec<u8> {
-    match command.into_real().encode_packet(seq, sim_tick) {
-        Ok(packet) => packet,
-        Err(_) => Vec::new(),
-    }
+    command
+        .into_real()
+        .encode_packet(seq, sim_tick)
+        .unwrap_or_default()
 }

@@ -44,23 +44,45 @@ pub enum PacketKind {
 
 impl PacketKind {
     pub(crate) fn from_byte(channel: ChannelId, raw: u8) -> Result<Self, PacketError> {
-        match (channel, raw) {
-            (ChannelId::Control, 0) => Ok(Self::ControlSnapshot),
-            (ChannelId::Control, 1) => Ok(Self::ControlDelta),
-            (ChannelId::Control, 2) => Ok(Self::LaunchCountdownStarted),
-            (ChannelId::Control, 3) => Ok(Self::MatchStarted),
-            (ChannelId::Control, 4) => Ok(Self::MatchAborted),
-            (ChannelId::Control, 5) => Ok(Self::MatchStatistics),
-            (ChannelId::Control, 6) => Ok(Self::ControlCommand),
-            (ChannelId::Control, 7) => Ok(Self::ControlEvent),
-            (ChannelId::Input, 16) => Ok(Self::InputFrame),
-            (ChannelId::Snapshot, 32) => Ok(Self::FullSnapshot),
-            (ChannelId::Snapshot, 33) => Ok(Self::DeltaSnapshot),
-            (ChannelId::Snapshot, 34) => Ok(Self::EventBatch),
-            _ => Err(PacketError::UnknownPacketKind {
-                channel,
-                raw_kind: raw,
-            }),
+        let kind = match channel {
+            ChannelId::Control => Self::control_from_byte(raw),
+            ChannelId::Input => Self::input_from_byte(raw),
+            ChannelId::Snapshot => Self::snapshot_from_byte(raw),
+        };
+
+        kind.ok_or(PacketError::UnknownPacketKind {
+            channel,
+            raw_kind: raw,
+        })
+    }
+
+    const fn control_from_byte(raw: u8) -> Option<Self> {
+        match raw {
+            0 => Some(Self::ControlSnapshot),
+            1 => Some(Self::ControlDelta),
+            2 => Some(Self::LaunchCountdownStarted),
+            3 => Some(Self::MatchStarted),
+            4 => Some(Self::MatchAborted),
+            5 => Some(Self::MatchStatistics),
+            6 => Some(Self::ControlCommand),
+            7 => Some(Self::ControlEvent),
+            _ => None,
+        }
+    }
+
+    const fn input_from_byte(raw: u8) -> Option<Self> {
+        match raw {
+            16 => Some(Self::InputFrame),
+            _ => None,
+        }
+    }
+
+    const fn snapshot_from_byte(raw: u8) -> Option<Self> {
+        match raw {
+            32 => Some(Self::FullSnapshot),
+            33 => Some(Self::DeltaSnapshot),
+            34 => Some(Self::EventBatch),
+            _ => None,
         }
     }
 

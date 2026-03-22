@@ -47,6 +47,8 @@ Do not jump to multi-app-host gameplay yet:
    - `TURN_REALM`
    - `TURN_SHARED_SECRET`
    - `TURN_EXTERNAL_IP`
+   - optional `RARENA_ADMIN_USERNAME`
+   - optional `RARENA_ADMIN_PASSWORD`
 
 ## Fast path
 
@@ -70,6 +72,7 @@ That script now handles:
 - Docker daemon settings for `buildkit`, `live-restore`, and rotating `local` logs
 - `deploy/.env` creation
 - a `rusaren-compose.service` systemd unit
+- a `rusaren-smoke.timer` systemd timer
 - first stack bring-up through `deploy/linode-deploy.sh`
 
 For later code updates on the same host:
@@ -167,8 +170,11 @@ Set these variables before running it if you want to override the defaults:
 - `TURN_SHARED_SECRET=<long random secret>`
 - `TURN_EXTERNAL_IP=<public IP of TURN host or app host>`
 - `RARENA_RUST_LOG=info,axum=info,tower_http=info`
+- `RARENA_ADMIN_USERNAME=<admin username>`
+- `RARENA_ADMIN_PASSWORD=<admin password>`
 
 If TURN is on a separate Linode, keep the same shared secret and public host aligned with that machine.
+If the admin password is omitted, the setup script generates one and writes it to `deploy/.env`.
 
 ### 8. Build and start the stack
 
@@ -188,9 +194,17 @@ docker compose --env-file deploy/.env -f deploy/docker-compose.yml logs coturn -
 Then test:
 - `https://pvpnowfast.com/`
 - `https://pvpnowfast.com/healthz`
+- `https://pvpnowfast.com/adminz`
 - browser connect flow through `/session/bootstrap` and `/ws`
 - real match traffic over WebRTC
 - confirm the root page is the game shell directly and there is no landing-page chooser
+
+Also run:
+
+```bash
+bash deploy/host-smoke.sh --env-file deploy/.env
+systemctl status rusaren-smoke.timer
+```
 
 ### 10. If WebRTC fails on the live host
 

@@ -1,4 +1,5 @@
 use super::*;
+use base64::Engine as _;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn hosted_root_serves_the_exported_web_shell_and_keeps_websocket_routes_alive() {
@@ -60,6 +61,7 @@ async fn healthcheck_and_metrics_routes_report_expected_status_and_prometheus_te
         web_client_root,
         observability: Some(observability.clone()),
         webrtc: WebRtcRuntimeConfig::default(),
+        admin_auth: None,
     })
     .await;
 
@@ -108,12 +110,50 @@ async fn metrics_route_returns_service_unavailable_when_observability_is_disable
         web_client_root,
         observability: None,
         webrtc: WebRtcRuntimeConfig::default(),
+        admin_auth: None,
     })
     .await;
 
     let (status_code, body) = http_get(&base_url, "/metrics").await;
     assert_eq!(status_code, 503);
     assert!(body.contains("Rusaren metrics are disabled"));
+
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn admin_dashboard_requires_basic_auth_and_renders_runtime_state() {
+    let observability = ServerObservability::new("test-admin");
+    let web_client_root = temp_web_client_root(
+        "admin-dashboard",
+        Some("<!doctype html><html><body>admin shell</body></html>"),
+    );
+    let (server, base_url) = start_server_with_options(DevServerOptions {
+        tick_interval: Duration::from_millis(10),
+        simulation_step_ms: COMBAT_FRAME_MS,
+        record_store_path: temp_record_store_path(),
+        content_root: repo_content_root(),
+        web_client_root,
+        observability: Some(observability),
+        webrtc: WebRtcRuntimeConfig::default(),
+        admin_auth: Some(game_api::AdminAuthConfig::new("admin", "secret-password").expect("admin auth should parse")),
+    })
+    .await;
+
+    let (unauthorized_status, unauthorized_body) = http_get(&base_url, "/adminz").await;
+    assert_eq!(unauthorized_status, 401);
+    assert!(unauthorized_body.contains("Rusaren admin authentication required"));
+
+    let auth_header = format!(
+        "Basic {}",
+        base64::engine::general_purpose::STANDARD.encode("admin:secret-password")
+    );
+    let (authorized_status, authorized_body) =
+        http_get_with_headers(&base_url, "/adminz", &[("Authorization", &auth_header)]).await;
+    assert_eq!(authorized_status, 200);
+    assert!(authorized_body.contains("Rusaren Admin Dashboard"));
+    assert!(authorized_body.contains("Connected players"));
+    assert!(authorized_body.contains("Prometheus Snapshot"));
 
     server.shutdown().await;
 }

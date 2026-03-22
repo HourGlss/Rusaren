@@ -38,6 +38,50 @@ fn bundled_content_loads_all_classes_and_the_ascii_map() {
 }
 
 #[test]
+fn content_error_display_variants_are_precise() {
+    assert_eq!(
+        ContentError::Io {
+            path: PathBuf::from("content/skills/mage.yaml"),
+            message: String::from("permission denied"),
+        }
+        .to_string(),
+        "failed to read content file content/skills/mage.yaml: permission denied"
+    );
+    assert_eq!(
+        ContentError::Parse {
+            source: String::from("skills/mage.yaml"),
+            message: String::from("invalid yaml"),
+        }
+        .to_string(),
+        "failed to parse skills/mage.yaml: invalid yaml"
+    );
+    assert_eq!(
+        ContentError::Validation {
+            source: String::from("skills/mage.yaml"),
+            message: String::from("tier 1 is duplicated"),
+        }
+        .to_string(),
+        "invalid content in skills/mage.yaml: tier 1 is duplicated"
+    );
+}
+
+#[test]
+fn read_skill_file_pairs_requires_existing_skill_yaml_files() {
+    let root = temp_content_root("skill-file-pairs");
+    let missing = read_skill_file_pairs(&root).expect_err("missing skills dir should fail");
+    assert!(matches!(missing, ContentError::Io { .. }));
+
+    let skills_dir = root.join("skills");
+    fs::create_dir_all(&skills_dir).expect("skills dir");
+    let empty = read_skill_file_pairs(&root).expect_err("empty skills dir should fail");
+    assert!(matches!(
+        empty,
+        ContentError::Validation { message, .. }
+            if message == "no skill YAML files were found"
+    ));
+}
+
+#[test]
 #[allow(clippy::too_many_lines)]
 fn parse_skill_yaml_rejects_unknown_trees_duplicate_tiers_and_invalid_field_shapes() {
     let unknown_tree = r"
@@ -201,6 +245,282 @@ skills:
     assert!(matches!(
         parse_skill_yaml("skills/rogue.yaml", invalid_dash_shape),
         Err(ContentError::Validation { .. })
+    ));
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn parse_skill_yaml_rejects_unimplemented_behaviors_unknown_effects_and_invalid_status_rules() {
+    let unimplemented = r"
+tree: Mage
+melee:
+  id: mage_staff
+  name: Staff
+  description: bonk
+  cooldown_ms: 100
+  range: 50
+  radius: 20
+  effect: melee_swing
+  payload:
+    kind: damage
+    amount: 10
+skills:
+  - tier: 1
+    id: mage_summon
+    name: Summon
+    description: nope
+    behavior:
+      kind: summon
+      effect: skill_shot
+      cooldown_ms: 100
+  - tier: 2
+    id: mage_two
+    name: Two
+    description: Two
+    behavior:
+      kind: beam
+      effect: beam
+      cooldown_ms: 100
+      range: 20
+      radius: 10
+      payload:
+        kind: damage
+        amount: 2
+  - tier: 3
+    id: mage_three
+    name: Three
+    description: Three
+    behavior:
+      kind: beam
+      effect: beam
+      cooldown_ms: 100
+      range: 20
+      radius: 10
+      payload:
+        kind: damage
+        amount: 2
+  - tier: 4
+    id: mage_four
+    name: Four
+    description: Four
+    behavior:
+      kind: beam
+      effect: beam
+      cooldown_ms: 100
+      range: 20
+      radius: 10
+      payload:
+        kind: damage
+        amount: 2
+  - tier: 5
+    id: mage_five
+    name: Five
+    description: Five
+    behavior:
+      kind: beam
+      effect: beam
+      cooldown_ms: 100
+      range: 20
+      radius: 10
+      payload:
+        kind: damage
+        amount: 2
+";
+    assert!(matches!(
+        parse_skill_yaml("skills/mage.yaml", unimplemented),
+        Err(ContentError::Validation { message, .. })
+            if message == "behavior kind 'summon' is not implemented yet"
+    ));
+
+    let unknown_effect = unimplemented.replace("kind: summon", "kind: projectile");
+    let unknown_effect = unknown_effect.replace("effect: skill_shot", "effect: mystery");
+    assert!(matches!(
+        parse_skill_yaml("skills/mage.yaml", unknown_effect.as_str()),
+        Err(ContentError::Validation { message, .. })
+            if message == "unknown effect kind 'mystery'"
+    ));
+
+    let invalid_hot = r"
+tree: Cleric
+melee:
+  id: cleric_mace
+  name: Mace
+  description: bonk
+  cooldown_ms: 100
+  range: 50
+  radius: 20
+  effect: melee_swing
+  payload:
+    kind: damage
+    amount: 10
+skills:
+  - tier: 1
+    id: cleric_hot
+    name: Hot
+    description: hot
+    behavior:
+      kind: nova
+      effect: nova
+      cooldown_ms: 1200
+      radius: 120
+      payload:
+        kind: heal
+        amount: 0
+        status:
+          kind: hot
+          duration_ms: 3000
+          tick_interval_ms: 1000
+          magnitude: 4
+          max_stacks: 2
+  - tier: 2
+    id: cleric_two
+    name: Two
+    description: Two
+    behavior:
+      kind: beam
+      effect: beam
+      cooldown_ms: 100
+      range: 20
+      radius: 10
+      payload:
+        kind: damage
+        amount: 2
+  - tier: 3
+    id: cleric_three
+    name: Three
+    description: Three
+    behavior:
+      kind: beam
+      effect: beam
+      cooldown_ms: 100
+      range: 20
+      radius: 10
+      payload:
+        kind: damage
+        amount: 2
+  - tier: 4
+    id: cleric_four
+    name: Four
+    description: Four
+    behavior:
+      kind: beam
+      effect: beam
+      cooldown_ms: 100
+      range: 20
+      radius: 10
+      payload:
+        kind: damage
+        amount: 2
+  - tier: 5
+    id: cleric_five
+    name: Five
+    description: Five
+    behavior:
+      kind: beam
+      effect: beam
+      cooldown_ms: 100
+      range: 20
+      radius: 10
+      payload:
+        kind: damage
+        amount: 2
+";
+    assert!(matches!(
+        parse_skill_yaml("skills/cleric.yaml", invalid_hot),
+        Err(ContentError::Validation { message, .. })
+            if message == "status 'Hot' max_stacks must be exactly one"
+    ));
+
+    let invalid_root = r"
+tree: Cleric
+melee:
+  id: cleric_mace
+  name: Mace
+  description: bonk
+  cooldown_ms: 100
+  range: 50
+  radius: 20
+  effect: melee_swing
+  payload:
+    kind: damage
+    amount: 10
+skills:
+  - tier: 1
+    id: cleric_root
+    name: Root
+    description: root
+    behavior:
+      kind: projectile
+      effect: skill_shot
+      cooldown_ms: 1200
+      speed: 180
+      range: 220
+      radius: 14
+      payload:
+        kind: damage
+        amount: 5
+        status:
+          kind: root
+          duration_ms: 3000
+          magnitude: 1
+          max_stacks: 1
+  - tier: 2
+    id: cleric_two
+    name: Two
+    description: Two
+    behavior:
+      kind: beam
+      effect: beam
+      cooldown_ms: 100
+      range: 20
+      radius: 10
+      payload:
+        kind: damage
+        amount: 2
+  - tier: 3
+    id: cleric_three
+    name: Three
+    description: Three
+    behavior:
+      kind: beam
+      effect: beam
+      cooldown_ms: 100
+      range: 20
+      radius: 10
+      payload:
+        kind: damage
+        amount: 2
+  - tier: 4
+    id: cleric_four
+    name: Four
+    description: Four
+    behavior:
+      kind: beam
+      effect: beam
+      cooldown_ms: 100
+      range: 20
+      radius: 10
+      payload:
+        kind: damage
+        amount: 2
+  - tier: 5
+    id: cleric_five
+    name: Five
+    description: Five
+    behavior:
+      kind: beam
+      effect: beam
+      cooldown_ms: 100
+      range: 20
+      radius: 10
+      payload:
+        kind: damage
+        amount: 2
+";
+    assert!(matches!(
+        parse_skill_yaml("skills/cleric.yaml", invalid_root),
+        Err(ContentError::Validation { message, .. })
+            if message == "status.magnitude must be zero for this mechanic"
     ));
 }
 
@@ -398,6 +718,15 @@ fn load_skill_catalog_rejects_duplicate_authored_ids_across_files() {
     assert!(matches!(
         load_skill_catalog_from_pairs(&pairs),
         Err(ContentError::Validation { .. })
+    ));
+}
+
+#[test]
+fn load_skill_catalog_requires_at_least_one_class_file() {
+    assert!(matches!(
+        load_skill_catalog_from_pairs(&[]),
+        Err(ContentError::Validation { source, message })
+            if source == "skills" && message == "at least one class skill file is required"
     ));
 }
 

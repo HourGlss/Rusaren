@@ -26,7 +26,7 @@ impl WebRtcIceServerConfig {
     }
 
     /// Validates that the config is safe to send to the client and feed into `WebRTC`.
-    fn validate(&self) -> Result<(), String> {
+    pub(super) fn validate(&self) -> Result<(), String> {
         if self.urls.is_empty() {
             return Err(String::from(
                 "ICE server configuration requires at least one URL",

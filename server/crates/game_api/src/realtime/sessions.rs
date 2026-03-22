@@ -26,7 +26,7 @@ pub(super) async fn handle_binary_message(
 }
 
 /// Processes the first connect packet that binds a transport session to a player.
-async fn bind_initial_player(
+pub(super) async fn bind_initial_player(
     state: &DevServerState,
     connection_id: ConnectionId,
     outbound: &ClientOutbound,
@@ -83,7 +83,7 @@ async fn bind_initial_player(
 }
 
 /// Forwards a bound packet into the application ingress channel.
-fn forward_bound_packet(
+pub(super) fn forward_bound_packet(
     state: &DevServerState,
     connection_id: ConnectionId,
     packet: Vec<u8>,

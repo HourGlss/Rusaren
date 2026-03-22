@@ -48,55 +48,98 @@ impl ServerControlEvent {
     fn decode_body(kind: u8, payload: &[u8], index: &mut usize) -> Result<Self, PacketError> {
         match kind {
             1 => decode_connected_event(payload, index),
-            2 => Ok(Self::GameLobbyCreated {
-                lobby_id: read_lobby_id(payload, index, "GameLobbyCreated")?,
-            }),
-            3 => decode_lobby_and_player_event(
-                payload,
-                index,
-                "GameLobbyJoined",
-                |lobby_id, player_id| Self::GameLobbyJoined {
-                    lobby_id,
-                    player_id,
-                },
-            ),
-            4 => decode_lobby_and_player_event(
-                payload,
-                index,
-                "GameLobbyLeft",
-                |lobby_id, player_id| Self::GameLobbyLeft {
-                    lobby_id,
-                    player_id,
-                },
-            ),
-            5 => decode_team_selected_event(payload, index),
-            6 => Ok(Self::ReadyChanged {
-                player_id: read_player_id(payload, index, "ReadyChanged")?,
-                ready: read_ready_state(payload, index, "ReadyChanged")?,
-            }),
-            7 => decode_countdown_started_event(payload, index),
-            8 => decode_countdown_tick_event(payload, index),
-            9 => decode_match_started_event(payload, index),
-            10 => decode_skill_chosen_event(payload, index),
-            11 => Ok(Self::PreCombatStarted {
-                seconds_remaining: read_u8(payload, index, "PreCombatStarted")?,
-            }),
-            12 => Ok(Self::CombatStarted),
-            13 => decode_round_won_event(payload, index),
-            14 => decode_match_ended_event(payload, index),
-            15 => Ok(Self::ReturnedToCentralLobby {
-                record: read_player_record(payload, index, "ReturnedToCentralLobby")?,
-            }),
-            16 => Ok(Self::Error {
-                message: read_string(payload, index, "Error", "message", MAX_MESSAGE_BYTES)?,
-            }),
-            17 => decode_lobby_directory_snapshot(payload, index),
-            18 => decode_game_lobby_snapshot(payload, index),
-            19 => decode_arena_state_snapshot(payload, index),
-            20 => decode_arena_delta_snapshot(payload, index),
-            21 => decode_arena_effect_batch(payload, index),
+            2..=6 => decode_lobby_event(kind, payload, index),
+            7..=14 => decode_match_event(kind, payload, index),
+            15..=16 => decode_terminal_event(kind, payload, index),
+            17..=21 => decode_snapshot_event(kind, payload, index),
             other => Err(PacketError::UnknownServerEvent(other)),
         }
+    }
+}
+
+fn decode_lobby_event(
+    kind: u8,
+    payload: &[u8],
+    index: &mut usize,
+) -> Result<ServerControlEvent, PacketError> {
+    match kind {
+        2 => Ok(ServerControlEvent::GameLobbyCreated {
+            lobby_id: read_lobby_id(payload, index, "GameLobbyCreated")?,
+        }),
+        3 => decode_lobby_and_player_event(
+            payload,
+            index,
+            "GameLobbyJoined",
+            |lobby_id, player_id| ServerControlEvent::GameLobbyJoined {
+                lobby_id,
+                player_id,
+            },
+        ),
+        4 => {
+            decode_lobby_and_player_event(payload, index, "GameLobbyLeft", |lobby_id, player_id| {
+                ServerControlEvent::GameLobbyLeft {
+                    lobby_id,
+                    player_id,
+                }
+            })
+        }
+        5 => decode_team_selected_event(payload, index),
+        6 => Ok(ServerControlEvent::ReadyChanged {
+            player_id: read_player_id(payload, index, "ReadyChanged")?,
+            ready: read_ready_state(payload, index, "ReadyChanged")?,
+        }),
+        _ => Err(PacketError::UnknownServerEvent(kind)),
+    }
+}
+
+fn decode_match_event(
+    kind: u8,
+    payload: &[u8],
+    index: &mut usize,
+) -> Result<ServerControlEvent, PacketError> {
+    match kind {
+        7 => decode_countdown_started_event(payload, index),
+        8 => decode_countdown_tick_event(payload, index),
+        9 => decode_match_started_event(payload, index),
+        10 => decode_skill_chosen_event(payload, index),
+        11 => Ok(ServerControlEvent::PreCombatStarted {
+            seconds_remaining: read_u8(payload, index, "PreCombatStarted")?,
+        }),
+        12 => Ok(ServerControlEvent::CombatStarted),
+        13 => decode_round_won_event(payload, index),
+        14 => decode_match_ended_event(payload, index),
+        _ => Err(PacketError::UnknownServerEvent(kind)),
+    }
+}
+
+fn decode_terminal_event(
+    kind: u8,
+    payload: &[u8],
+    index: &mut usize,
+) -> Result<ServerControlEvent, PacketError> {
+    match kind {
+        15 => Ok(ServerControlEvent::ReturnedToCentralLobby {
+            record: read_player_record(payload, index, "ReturnedToCentralLobby")?,
+        }),
+        16 => Ok(ServerControlEvent::Error {
+            message: read_string(payload, index, "Error", "message", MAX_MESSAGE_BYTES)?,
+        }),
+        _ => Err(PacketError::UnknownServerEvent(kind)),
+    }
+}
+
+fn decode_snapshot_event(
+    kind: u8,
+    payload: &[u8],
+    index: &mut usize,
+) -> Result<ServerControlEvent, PacketError> {
+    match kind {
+        17 => decode_lobby_directory_snapshot(payload, index),
+        18 => decode_game_lobby_snapshot(payload, index),
+        19 => decode_arena_state_snapshot(payload, index),
+        20 => decode_arena_delta_snapshot(payload, index),
+        21 => decode_arena_effect_batch(payload, index),
+        _ => Err(PacketError::UnknownServerEvent(kind)),
     }
 }
 

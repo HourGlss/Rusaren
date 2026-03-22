@@ -42,139 +42,233 @@ impl ServerControlEvent {
         }
     }
 
-    const fn kind_byte(&self) -> u8 {
+    fn kind_byte(&self) -> u8 {
         match self {
-            Self::Connected { .. } => 1,
-            Self::GameLobbyCreated { .. } => 2,
-            Self::GameLobbyJoined { .. } => 3,
-            Self::GameLobbyLeft { .. } => 4,
-            Self::TeamSelected { .. } => 5,
-            Self::ReadyChanged { .. } => 6,
-            Self::LaunchCountdownStarted { .. } => 7,
-            Self::LaunchCountdownTick { .. } => 8,
-            Self::MatchStarted { .. } => 9,
-            Self::SkillChosen { .. } => 10,
-            Self::PreCombatStarted { .. } => 11,
-            Self::CombatStarted => 12,
-            Self::RoundWon { .. } => 13,
-            Self::MatchEnded { .. } => 14,
-            Self::ReturnedToCentralLobby { .. } => 15,
-            Self::Error { .. } => 16,
-            Self::LobbyDirectorySnapshot { .. } => 17,
-            Self::GameLobbySnapshot { .. } => 18,
             Self::ArenaStateSnapshot { .. } => 19,
             Self::ArenaDeltaSnapshot { .. } => 20,
             Self::ArenaEffectBatch { .. } => 21,
+            _ => control_kind_byte(self),
         }
     }
 
-    #[allow(clippy::too_many_lines)]
     fn encode_body(self, payload: &mut Vec<u8>) -> Result<(), PacketError> {
         match self {
-            Self::Connected {
-                player_id,
-                player_name,
-                record,
-                skill_catalog,
-            } => encode_connected_event(payload, player_id, &player_name, record, &skill_catalog),
-            Self::GameLobbyCreated { lobby_id } => {
-                encode_lobby_id_event(payload, lobby_id);
-                Ok(())
-            }
-            Self::GameLobbyJoined {
-                lobby_id,
-                player_id,
-            }
-            | Self::GameLobbyLeft {
-                lobby_id,
-                player_id,
-            } => {
-                encode_lobby_and_player_event(payload, lobby_id, player_id);
-                Ok(())
-            }
-            Self::TeamSelected {
-                player_id,
-                team,
-                ready_reset,
-            } => {
-                encode_team_selected_event(payload, player_id, team, ready_reset);
-                Ok(())
-            }
-            Self::ReadyChanged { player_id, ready } => {
-                encode_ready_changed_event(payload, player_id, ready);
-                Ok(())
-            }
-            Self::LaunchCountdownStarted {
-                lobby_id,
-                seconds_remaining,
-                roster_size,
-            } => {
-                encode_countdown_started_event(payload, lobby_id, seconds_remaining, roster_size);
-                Ok(())
-            }
-            Self::LaunchCountdownTick {
-                lobby_id,
-                seconds_remaining,
-            } => {
-                encode_countdown_tick_event(payload, lobby_id, seconds_remaining);
-                Ok(())
-            }
-            Self::MatchStarted {
-                match_id,
-                round,
-                skill_pick_seconds,
-            } => {
-                encode_match_started_event(payload, match_id, round, skill_pick_seconds);
-                Ok(())
-            }
-            Self::SkillChosen {
-                player_id,
-                tree,
-                tier,
-            } => encode_skill_chosen_event(payload, player_id, &tree, tier),
-            Self::PreCombatStarted { seconds_remaining } => {
-                payload.push(seconds_remaining);
-                Ok(())
-            }
-            Self::CombatStarted => Ok(()),
-            Self::RoundWon {
-                round,
-                winning_team,
-                score_a,
-                score_b,
-            } => {
-                encode_round_won_event(payload, round, winning_team, score_a, score_b);
-                Ok(())
-            }
-            Self::MatchEnded {
-                outcome,
-                score_a,
-                score_b,
-                message,
-            } => encode_match_ended_event(payload, outcome, score_a, score_b, &message),
-            Self::ReturnedToCentralLobby { record } => {
-                encode_player_record(payload, record);
-                Ok(())
-            }
-            Self::LobbyDirectorySnapshot { lobbies } => {
-                encode_lobby_directory_snapshot(payload, &lobbies)
-            }
-            Self::GameLobbySnapshot {
-                lobby_id,
-                phase,
-                players,
-            } => encode_game_lobby_snapshot(payload, lobby_id, phase, &players),
-            Self::ArenaStateSnapshot { snapshot } => {
-                encode_arena_state_snapshot(payload, &snapshot)
-            }
-            Self::ArenaDeltaSnapshot { snapshot } => {
-                encode_arena_delta_snapshot(payload, &snapshot)
-            }
-            Self::ArenaEffectBatch { effects } => encode_arena_effect_batch(payload, &effects),
-            Self::Error { message } => {
-                push_len_prefixed_string(payload, "message", &message, MAX_MESSAGE_BYTES)
-            }
+            Self::ArenaStateSnapshot { .. }
+            | Self::ArenaDeltaSnapshot { .. }
+            | Self::ArenaEffectBatch { .. } => encode_snapshot_body(self, payload),
+            _ => encode_control_body(self, payload),
         }
+    }
+}
+
+fn control_kind_byte(event: &ServerControlEvent) -> u8 {
+    match event {
+        ServerControlEvent::Connected { .. }
+        | ServerControlEvent::GameLobbyCreated { .. }
+        | ServerControlEvent::GameLobbyJoined { .. }
+        | ServerControlEvent::GameLobbyLeft { .. }
+        | ServerControlEvent::TeamSelected { .. }
+        | ServerControlEvent::ReadyChanged { .. }
+        | ServerControlEvent::LaunchCountdownStarted { .. }
+        | ServerControlEvent::LaunchCountdownTick { .. } => lobby_kind_byte(event),
+        ServerControlEvent::MatchStarted { .. }
+        | ServerControlEvent::SkillChosen { .. }
+        | ServerControlEvent::PreCombatStarted { .. }
+        | ServerControlEvent::CombatStarted
+        | ServerControlEvent::RoundWon { .. }
+        | ServerControlEvent::MatchEnded { .. }
+        | ServerControlEvent::ReturnedToCentralLobby { .. }
+        | ServerControlEvent::Error { .. } => match_kind_byte(event),
+        ServerControlEvent::LobbyDirectorySnapshot { .. } => 17,
+        ServerControlEvent::GameLobbySnapshot { .. } => 18,
+        ServerControlEvent::ArenaStateSnapshot { .. }
+        | ServerControlEvent::ArenaDeltaSnapshot { .. }
+        | ServerControlEvent::ArenaEffectBatch { .. } => {
+            unreachable!("snapshot variants use direct kind bytes")
+        }
+    }
+}
+
+fn lobby_kind_byte(event: &ServerControlEvent) -> u8 {
+    match event {
+        ServerControlEvent::Connected { .. } => 1,
+        ServerControlEvent::GameLobbyCreated { .. } => 2,
+        ServerControlEvent::GameLobbyJoined { .. } => 3,
+        ServerControlEvent::GameLobbyLeft { .. } => 4,
+        ServerControlEvent::TeamSelected { .. } => 5,
+        ServerControlEvent::ReadyChanged { .. } => 6,
+        ServerControlEvent::LaunchCountdownStarted { .. } => 7,
+        ServerControlEvent::LaunchCountdownTick { .. } => 8,
+        _ => unreachable!("match variants should not route through lobby_kind_byte"),
+    }
+}
+
+fn match_kind_byte(event: &ServerControlEvent) -> u8 {
+    match event {
+        ServerControlEvent::MatchStarted { .. } => 9,
+        ServerControlEvent::SkillChosen { .. } => 10,
+        ServerControlEvent::PreCombatStarted { .. } => 11,
+        ServerControlEvent::CombatStarted => 12,
+        ServerControlEvent::RoundWon { .. } => 13,
+        ServerControlEvent::MatchEnded { .. } => 14,
+        ServerControlEvent::ReturnedToCentralLobby { .. } => 15,
+        ServerControlEvent::Error { .. } => 16,
+        _ => unreachable!("lobby variants should not route through match_kind_byte"),
+    }
+}
+
+fn encode_control_body(
+    event: ServerControlEvent,
+    payload: &mut Vec<u8>,
+) -> Result<(), PacketError> {
+    match event {
+        ServerControlEvent::Connected { .. }
+        | ServerControlEvent::GameLobbyCreated { .. }
+        | ServerControlEvent::GameLobbyJoined { .. }
+        | ServerControlEvent::GameLobbyLeft { .. }
+        | ServerControlEvent::TeamSelected { .. }
+        | ServerControlEvent::ReadyChanged { .. }
+        | ServerControlEvent::LaunchCountdownStarted { .. }
+        | ServerControlEvent::LaunchCountdownTick { .. } => encode_lobby_body(event, payload),
+        ServerControlEvent::MatchStarted { .. }
+        | ServerControlEvent::SkillChosen { .. }
+        | ServerControlEvent::PreCombatStarted { .. }
+        | ServerControlEvent::CombatStarted
+        | ServerControlEvent::RoundWon { .. }
+        | ServerControlEvent::MatchEnded { .. }
+        | ServerControlEvent::ReturnedToCentralLobby { .. }
+        | ServerControlEvent::Error { .. } => encode_match_body(event, payload),
+        ServerControlEvent::LobbyDirectorySnapshot { lobbies } => {
+            encode_lobby_directory_snapshot(payload, &lobbies)
+        }
+        ServerControlEvent::GameLobbySnapshot {
+            lobby_id,
+            phase,
+            players,
+        } => encode_game_lobby_snapshot(payload, lobby_id, phase, &players),
+        ServerControlEvent::ArenaStateSnapshot { .. }
+        | ServerControlEvent::ArenaDeltaSnapshot { .. }
+        | ServerControlEvent::ArenaEffectBatch { .. } => {
+            unreachable!("snapshot variants use encode_snapshot_body")
+        }
+    }
+}
+
+fn encode_lobby_body(event: ServerControlEvent, payload: &mut Vec<u8>) -> Result<(), PacketError> {
+    match event {
+        ServerControlEvent::Connected {
+            player_id,
+            player_name,
+            record,
+            skill_catalog,
+        } => encode_connected_event(payload, player_id, &player_name, record, &skill_catalog),
+        ServerControlEvent::GameLobbyCreated { lobby_id } => {
+            encode_lobby_id_event(payload, lobby_id);
+            Ok(())
+        }
+        ServerControlEvent::GameLobbyJoined {
+            lobby_id,
+            player_id,
+        }
+        | ServerControlEvent::GameLobbyLeft {
+            lobby_id,
+            player_id,
+        } => {
+            encode_lobby_and_player_event(payload, lobby_id, player_id);
+            Ok(())
+        }
+        ServerControlEvent::TeamSelected {
+            player_id,
+            team,
+            ready_reset,
+        } => {
+            encode_team_selected_event(payload, player_id, team, ready_reset);
+            Ok(())
+        }
+        ServerControlEvent::ReadyChanged { player_id, ready } => {
+            encode_ready_changed_event(payload, player_id, ready);
+            Ok(())
+        }
+        ServerControlEvent::LaunchCountdownStarted {
+            lobby_id,
+            seconds_remaining,
+            roster_size,
+        } => {
+            encode_countdown_started_event(payload, lobby_id, seconds_remaining, roster_size);
+            Ok(())
+        }
+        ServerControlEvent::LaunchCountdownTick {
+            lobby_id,
+            seconds_remaining,
+        } => {
+            encode_countdown_tick_event(payload, lobby_id, seconds_remaining);
+            Ok(())
+        }
+        _ => unreachable!("match variants should not route through encode_lobby_body"),
+    }
+}
+
+fn encode_match_body(event: ServerControlEvent, payload: &mut Vec<u8>) -> Result<(), PacketError> {
+    match event {
+        ServerControlEvent::MatchStarted {
+            match_id,
+            round,
+            skill_pick_seconds,
+        } => {
+            encode_match_started_event(payload, match_id, round, skill_pick_seconds);
+            Ok(())
+        }
+        ServerControlEvent::SkillChosen {
+            player_id,
+            tree,
+            tier,
+        } => encode_skill_chosen_event(payload, player_id, &tree, tier),
+        ServerControlEvent::PreCombatStarted { seconds_remaining } => {
+            payload.push(seconds_remaining);
+            Ok(())
+        }
+        ServerControlEvent::CombatStarted => Ok(()),
+        ServerControlEvent::RoundWon {
+            round,
+            winning_team,
+            score_a,
+            score_b,
+        } => {
+            encode_round_won_event(payload, round, winning_team, score_a, score_b);
+            Ok(())
+        }
+        ServerControlEvent::MatchEnded {
+            outcome,
+            score_a,
+            score_b,
+            message,
+        } => encode_match_ended_event(payload, outcome, score_a, score_b, &message),
+        ServerControlEvent::ReturnedToCentralLobby { record } => {
+            encode_player_record(payload, record);
+            Ok(())
+        }
+        ServerControlEvent::Error { message } => {
+            push_len_prefixed_string(payload, "message", &message, MAX_MESSAGE_BYTES)
+        }
+        _ => unreachable!("lobby variants should not route through encode_match_body"),
+    }
+}
+
+fn encode_snapshot_body(
+    event: ServerControlEvent,
+    payload: &mut Vec<u8>,
+) -> Result<(), PacketError> {
+    match event {
+        ServerControlEvent::ArenaStateSnapshot { snapshot } => {
+            encode_arena_state_snapshot(payload, &snapshot)
+        }
+        ServerControlEvent::ArenaDeltaSnapshot { snapshot } => {
+            encode_arena_delta_snapshot(payload, &snapshot)
+        }
+        ServerControlEvent::ArenaEffectBatch { effects } => {
+            encode_arena_effect_batch(payload, &effects)
+        }
+        _ => unreachable!("control variants should not route through encode_snapshot_body"),
     }
 }
 

@@ -2,7 +2,7 @@ use std::env;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use game_api::WebRtcRuntimeConfig;
+use game_api::{AdminAuthConfig, WebRtcRuntimeConfig};
 use game_sim::COMBAT_FRAME_MS;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -13,6 +13,7 @@ pub(crate) struct ServerConfig {
     pub web_client_root: PathBuf,
     pub tick_interval: Duration,
     pub webrtc: WebRtcRuntimeConfig,
+    pub admin_auth: Option<AdminAuthConfig>,
 }
 
 impl ServerConfig {
@@ -28,6 +29,7 @@ impl ServerConfig {
                 .map_or_else(default_web_client_root, PathBuf::from),
             tick_interval: parse_tick_interval(env::var("RARENA_TICK_INTERVAL_MS").ok()),
             webrtc: parse_webrtc_config_from_env()?,
+            admin_auth: parse_admin_auth_from_env()?,
         })
     }
 }
@@ -104,4 +106,23 @@ pub(crate) fn parse_webrtc_config_from_env() -> Result<WebRtcRuntimeConfig, Stri
             .filter(|secret| !secret.is_empty()),
         turn_ttl: parse_turn_ttl(env::var("RARENA_WEBRTC_TURN_TTL_SECONDS").ok())?,
     })
+}
+
+pub(crate) fn parse_admin_auth_from_env() -> Result<Option<AdminAuthConfig>, String> {
+    let username = env::var("RARENA_ADMIN_USERNAME")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let password = env::var("RARENA_ADMIN_PASSWORD")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    match (username, password) {
+        (None, None) => Ok(None),
+        (Some(_), None) | (None, Some(_)) => Err(String::from(
+            "RARENA_ADMIN_USERNAME and RARENA_ADMIN_PASSWORD must either both be set or both be omitted",
+        )),
+        (Some(username), Some(password)) => AdminAuthConfig::new(username, password).map(Some),
+    }
 }

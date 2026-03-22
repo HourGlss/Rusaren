@@ -78,3 +78,101 @@ fn runtime_config_requires_secret_for_turn_urls() {
         ))
     );
 }
+
+#[test]
+fn runtime_config_rejects_blank_urls_and_zero_ttl() {
+    let blank_stun = WebRtcRuntimeConfig {
+        stun_urls: vec![
+            String::from("stun:turn.example.com:3478"),
+            String::from("  "),
+        ],
+        turn_urls: Vec::new(),
+        turn_shared_secret: None,
+        turn_ttl: Duration::from_secs(300),
+    };
+    assert_eq!(
+        blank_stun.validate(),
+        Err(String::from("STUN URLs must not contain blank entries"))
+    );
+
+    let blank_turn = WebRtcRuntimeConfig {
+        stun_urls: Vec::new(),
+        turn_urls: vec![String::from("turn:turn.example.com:3478"), String::new()],
+        turn_shared_secret: Some(String::from("shared-secret")),
+        turn_ttl: Duration::from_secs(300),
+    };
+    assert_eq!(
+        blank_turn.validate(),
+        Err(String::from("TURN URLs must not contain blank entries"))
+    );
+
+    let zero_ttl = WebRtcRuntimeConfig {
+        stun_urls: Vec::new(),
+        turn_urls: Vec::new(),
+        turn_shared_secret: None,
+        turn_ttl: Duration::ZERO,
+    };
+    assert_eq!(
+        zero_ttl.validate(),
+        Err(String::from(
+            "TURN credential TTL must be greater than zero"
+        ))
+    );
+}
+
+#[test]
+fn ice_server_config_validates_and_converts_cleanly() {
+    let server = WebRtcIceServerConfig {
+        urls: vec![String::from("stun:turn.example.com:3478")],
+        username: String::from("user"),
+        credential: String::from("secret"),
+    };
+    let rtc = server.to_rtc_ice_server();
+    assert_eq!(rtc.urls, server.urls);
+    assert_eq!(rtc.username, server.username);
+    assert_eq!(rtc.credential, server.credential);
+
+    let empty = WebRtcIceServerConfig {
+        urls: Vec::new(),
+        username: String::new(),
+        credential: String::new(),
+    };
+    assert_eq!(
+        empty.validate(),
+        Err(String::from(
+            "ICE server configuration requires at least one URL"
+        ))
+    );
+
+    let blank = WebRtcIceServerConfig {
+        urls: vec![String::from("   ")],
+        username: String::new(),
+        credential: String::new(),
+    };
+    assert_eq!(
+        blank.validate(),
+        Err(String::from("ICE server URLs must not be blank"))
+    );
+}
+
+#[test]
+fn runtime_config_reports_clock_and_url_validation_failures_from_ice_servers() {
+    let connection_id = ConnectionId::new(9).expect("valid connection id");
+    let before_epoch = config_with_turn()
+        .ice_servers_for_connection(connection_id, UNIX_EPOCH - Duration::from_secs(1));
+    assert!(matches!(
+        before_epoch,
+        Err(message) if message.starts_with("system clock is before the unix epoch:")
+    ));
+
+    let invalid_url = WebRtcRuntimeConfig {
+        stun_urls: vec![String::from(" ")],
+        turn_urls: Vec::new(),
+        turn_shared_secret: None,
+        turn_ttl: Duration::from_secs(60),
+    };
+    assert_eq!(
+        invalid_url.ice_servers_for_connection(connection_id, UNIX_EPOCH),
+        Err(String::from("STUN URLs must not contain blank entries"))
+    );
+}

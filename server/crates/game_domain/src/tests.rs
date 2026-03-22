@@ -197,6 +197,65 @@ fn round_number_accepts_valid_bounds_and_rejects_out_of_range_values() {
     assert_eq!(assert_ok(RoundNumber::new(MAX_ROUNDS)).next(), None);
 }
 
+#[test]
+fn domain_error_display_messages_are_precise() {
+    assert_eq!(
+        DomainError::IdMustBeNonZero("player_id").to_string(),
+        "player_id must be non-zero"
+    );
+    assert_eq!(
+        DomainError::PlayerNameEmpty.to_string(),
+        "player name must not be empty"
+    );
+    assert_eq!(
+        DomainError::PlayerNameTooLong { len: 17, max: 16 }.to_string(),
+        "player name length 17 exceeds maximum 16"
+    );
+    assert_eq!(
+        DomainError::PlayerNameInvalidCharacter { ch: '@' }.to_string(),
+        "player name contains invalid character '@'"
+    );
+    assert_eq!(
+        DomainError::SkillTierOutOfRange {
+            tier: 6,
+            min: 1,
+            max: 5,
+        }
+        .to_string(),
+        "skill tier 6 is outside the allowed range 1..=5"
+    );
+    assert_eq!(
+        DomainError::SkillTreeNameEmpty.to_string(),
+        "skill tree name must not be empty"
+    );
+    assert_eq!(
+        DomainError::SkillTreeNameTooLong { len: 33, max: 32 }.to_string(),
+        "skill tree name length 33 exceeds maximum 32"
+    );
+    assert_eq!(
+        DomainError::SkillTreeNameInvalidCharacter { ch: '!' }.to_string(),
+        "skill tree name contains invalid character '!'"
+    );
+    assert_eq!(
+        DomainError::SkillTierGap {
+            tree: SkillTree::Mage,
+            expected: 2,
+            actual: 4,
+        }
+        .to_string(),
+        "skill progression for Mage expected tier 2 but received tier 4"
+    );
+    assert_eq!(
+        DomainError::RoundOutOfRange {
+            round: 7,
+            min: 1,
+            max: 5,
+        }
+        .to_string(),
+        "round 7 is outside the allowed range 1..=5"
+    );
+}
+
 proptest! {
     #[test]
     fn prop_player_name_accepts_all_valid_ascii_identifiers(

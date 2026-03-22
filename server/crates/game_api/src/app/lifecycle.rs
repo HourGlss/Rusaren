@@ -10,55 +10,80 @@ impl ServerApp {
     pub(super) fn advance_combat_frames<T: AppTransport>(&mut self, transport: &mut T) {
         let match_ids = self.matches.keys().copied().collect::<Vec<_>>();
         for match_id in match_ids {
-            let phase = match self.matches.get(&match_id) {
-                Some(runtime) => runtime.session.phase().clone(),
-                None => continue,
-            };
-            if !matches!(phase, MatchPhase::Combat) {
+            if !self.is_combat_match(match_id) {
                 continue;
             }
 
-            let (effect_batch, match_events, errors) = {
-                let runtime = match self.matches.get_mut(&match_id) {
-                    Some(runtime) => runtime,
-                    None => continue,
-                };
-                let simulation_events = runtime.world.tick(COMBAT_FRAME_MS);
-                let effect_batch = Self::collect_effect_batch(&simulation_events);
-                let defeated_targets = Self::collect_defeated_targets(&simulation_events);
-                let mut match_events = Vec::new();
-                let mut errors = Vec::new();
-                for target_id in defeated_targets {
-                    match runtime.session.mark_player_defeated(target_id) {
-                        Ok(events) => match_events.extend(events),
-                        Err(error) => errors.push(error.to_string()),
-                    }
-                }
-                if matches!(runtime.session.phase(), MatchPhase::SkillPick { .. })
-                    && !matches!(runtime.session.phase(), MatchPhase::MatchEnd { .. })
-                {
-                    runtime.rebuild_world(&self.content);
-                }
-                (effect_batch, match_events, errors)
-            };
-
-            if !effect_batch.is_empty() {
-                self.broadcast_arena_effect_batch(transport, match_id, &effect_batch);
-            }
-            if !errors.is_empty() {
-                self.broadcast_event(
-                    transport,
-                    &self.match_recipients(match_id),
-                    ServerControlEvent::Error {
-                        message: errors.join(" | "),
-                    },
-                );
-            }
-            if !match_events.is_empty() {
-                self.dispatch_match_events(transport, match_id, &match_events);
-            }
-            self.broadcast_arena_delta_snapshot(transport, match_id);
+            self.advance_combat_match(transport, match_id);
         }
+    }
+
+    fn is_combat_match(&self, match_id: MatchId) -> bool {
+        self.matches
+            .get(&match_id)
+            .is_some_and(|runtime| matches!(runtime.session.phase(), MatchPhase::Combat))
+    }
+
+    fn advance_combat_match<T: AppTransport>(&mut self, transport: &mut T, match_id: MatchId) {
+        let Some((effect_batch, match_events, errors)) = self.tick_combat_match(match_id) else {
+            return;
+        };
+
+        if !effect_batch.is_empty() {
+            self.broadcast_arena_effect_batch(transport, match_id, &effect_batch);
+        }
+        if !errors.is_empty() {
+            self.broadcast_event(
+                transport,
+                &self.match_recipients(match_id),
+                ServerControlEvent::Error {
+                    message: errors.join(" | "),
+                },
+            );
+        }
+        if !match_events.is_empty() {
+            self.dispatch_match_events(transport, match_id, &match_events);
+        }
+        self.broadcast_arena_delta_snapshot(transport, match_id);
+    }
+
+    fn tick_combat_match(
+        &mut self,
+        match_id: MatchId,
+    ) -> Option<(
+        Vec<game_net::ArenaEffectSnapshot>,
+        Vec<MatchEvent>,
+        Vec<String>,
+    )> {
+        let runtime = self.matches.get_mut(&match_id)?;
+        let simulation_events = runtime.world.tick(COMBAT_FRAME_MS);
+        let effect_batch = Self::collect_effect_batch(&simulation_events);
+        let (match_events, errors) =
+            Self::resolve_match_progress(runtime, &simulation_events, &self.content);
+        Some((effect_batch, match_events, errors))
+    }
+
+    fn resolve_match_progress(
+        runtime: &mut MatchRuntime,
+        simulation_events: &[game_sim::SimulationEvent],
+        content: &game_content::GameContent,
+    ) -> (Vec<MatchEvent>, Vec<String>) {
+        let mut match_events = Vec::new();
+        let mut errors = Vec::new();
+        for target_id in Self::collect_defeated_targets(simulation_events) {
+            match runtime.session.mark_player_defeated(target_id) {
+                Ok(events) => match_events.extend(events),
+                Err(error) => errors.push(error.to_string()),
+            }
+        }
+
+        if matches!(runtime.session.phase(), MatchPhase::SkillPick { .. })
+            && !matches!(runtime.session.phase(), MatchPhase::MatchEnd { .. })
+        {
+            runtime.rebuild_world(content);
+        }
+
+        (match_events, errors)
     }
 
     pub(super) fn advance_lobby_countdowns<T: AppTransport>(&mut self, transport: &mut T) {

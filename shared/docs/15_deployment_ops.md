@@ -29,6 +29,7 @@ Files:
 - `deploy/.env.example`
 - `deploy/linode-setup.sh`
 - `deploy/linode-deploy.sh`
+- `deploy/host-smoke.sh`
 - `server/scripts/docker-smoke.ps1`
 
 What each part does:
@@ -58,6 +59,7 @@ What each part does:
 3. Verify:
    - `https://pvpnowfast.com/`
    - `https://pvpnowfast.com/healthz`
+   - `https://pvpnowfast.com/adminz`
    - Prometheus locally on the bind from `PROMETHEUS_BIND`
    - the root route serves the Godot shell directly
 
@@ -125,13 +127,25 @@ Current logs:
 - `RARENA_LOG_FORMAT=json` is the recommended hosted default
 - `RUST_LOG` or `RARENA_RUST_LOG` controls verbosity
 
+Current operator surface:
+- `/adminz` is a private read-only dashboard protected by deploy-time basic auth
+- `deploy/.env` now carries `RARENA_ADMIN_USERNAME` and `RARENA_ADMIN_PASSWORD`
+- `deploy/host-smoke.sh` checks that `/adminz` rejects anonymous access and renders with valid credentials when the admin surface is enabled
+
 ## Security posture for this milestone
 - TLS is terminated by Caddy
 - `/metrics` is scraped internally by Prometheus and is not proxied publicly by the checked-in `Caddyfile`
 - `coturn` uses long-term credentials via a shared secret in this deployment milestone
 - `rarena-server` now runs as a non-root user with a read-only root filesystem, `no-new-privileges`, and all Linux capabilities dropped in the checked-in compose path
 - TURN secrets and public host values still need to be replaced with operator-generated production values and kept out of git
+- admin credentials still need to be replaced with operator-generated production values and kept out of git
 - Docker-published service ports should still be protected by Linode Cloud Firewall rules because Docker documents that published container ports bypass `ufw` filtering
+
+## Hosted smoke probes
+- `deploy/linode-deploy.sh` now runs local smoke probes against `http://127.0.0.1:3000` after the compose stack reports healthy
+- the same deploy script then runs hosted smoke probes against `https://$PUBLIC_HOST` unless `RUN_PUBLIC_SMOKE=0`
+- `deploy/host-smoke.sh` validates `/`, `/healthz`, `/session/bootstrap`, and `/adminz`
+- `deploy/linode-setup.sh` installs a `rusaren-smoke.timer` systemd timer so the host keeps re-running the public probes after deploy
 
 ## Current limitation
 This deploy path is production-style and testable, but not yet the final game transport:

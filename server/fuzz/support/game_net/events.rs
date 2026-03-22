@@ -404,15 +404,7 @@ impl FuzzServerControlEvent {
                 player_name,
                 record,
                 skill_catalog,
-            } => ServerControlEvent::Connected {
-                player_id: normalize_player_id(player_id),
-                player_name: sanitize_player_name(&player_name),
-                record: record.into_real(),
-                skill_catalog: take_vec(skill_catalog, MAX_CATALOG_ENTRIES)
-                    .into_iter()
-                    .map(FuzzSkillCatalogEntry::into_real)
-                    .collect(),
-            },
+            } => build_connected_event(player_id, &player_name, record, skill_catalog),
             Self::GameLobbyCreated { lobby_id } => ServerControlEvent::GameLobbyCreated {
                 lobby_id: normalize_lobby_id(lobby_id),
             },
@@ -434,11 +426,7 @@ impl FuzzServerControlEvent {
                 player_id,
                 team,
                 ready_reset,
-            } => ServerControlEvent::TeamSelected {
-                player_id: normalize_player_id(player_id),
-                team: team.into_real(),
-                ready_reset,
-            },
+            } => build_team_selected_event(player_id, team, ready_reset),
             Self::ReadyChanged { player_id, ready } => ServerControlEvent::ReadyChanged {
                 player_id: normalize_player_id(player_id),
                 ready: ready.into_real(),
@@ -447,11 +435,7 @@ impl FuzzServerControlEvent {
                 lobby_id,
                 seconds_remaining,
                 roster_size,
-            } => ServerControlEvent::LaunchCountdownStarted {
-                lobby_id: normalize_lobby_id(lobby_id),
-                seconds_remaining,
-                roster_size,
-            },
+            } => build_launch_countdown_started_event(lobby_id, seconds_remaining, roster_size),
             Self::LaunchCountdownTick {
                 lobby_id,
                 seconds_remaining,
@@ -463,11 +447,7 @@ impl FuzzServerControlEvent {
                 match_id,
                 round,
                 skill_pick_seconds,
-            } => ServerControlEvent::MatchStarted {
-                match_id: normalize_match_id(match_id),
-                round: normalize_round(round),
-                skill_pick_seconds,
-            },
+            } => build_match_started_event(match_id, round, skill_pick_seconds),
             Self::SkillChosen {
                 player_id,
                 tree,
@@ -486,62 +466,147 @@ impl FuzzServerControlEvent {
                 winning_team,
                 score_a,
                 score_b,
-            } => ServerControlEvent::RoundWon {
-                round: normalize_round(round),
-                winning_team: winning_team.into_real(),
-                score_a,
-                score_b,
-            },
+            } => build_round_won_event(round, winning_team, score_a, score_b),
             Self::MatchEnded {
                 outcome,
                 score_a,
                 score_b,
                 message,
-            } => ServerControlEvent::MatchEnded {
-                outcome: outcome.into_real(),
-                score_a,
-                score_b,
-                message: sanitize_display_text(&message, 48, "match ended"),
-            },
+            } => build_match_ended_event(outcome, score_a, score_b, &message),
             Self::ReturnedToCentralLobby { record } => ServerControlEvent::ReturnedToCentralLobby {
                 record: record.into_real(),
             },
-            Self::LobbyDirectorySnapshot { lobbies } => {
-                ServerControlEvent::LobbyDirectorySnapshot {
-                    lobbies: take_vec(lobbies, MAX_DIRECTORY_ENTRIES)
-                        .into_iter()
-                        .map(FuzzLobbyDirectoryEntry::into_real)
-                        .collect(),
-                }
-            }
+            Self::LobbyDirectorySnapshot { lobbies } => build_lobby_directory_snapshot(lobbies),
             Self::GameLobbySnapshot {
                 lobby_id,
                 phase,
                 players,
-            } => ServerControlEvent::GameLobbySnapshot {
-                lobby_id: normalize_lobby_id(lobby_id),
-                phase: phase.into_real(),
-                players: take_vec(players, MAX_LOBBY_PLAYERS)
-                    .into_iter()
-                    .map(FuzzLobbySnapshotPlayer::into_real)
-                    .collect(),
-            },
+            } => build_game_lobby_snapshot(lobby_id, phase, players),
             Self::ArenaStateSnapshot { snapshot } => ServerControlEvent::ArenaStateSnapshot {
                 snapshot: snapshot.into_real(),
             },
             Self::ArenaDeltaSnapshot { snapshot } => ServerControlEvent::ArenaDeltaSnapshot {
                 snapshot: snapshot.into_real(),
             },
-            Self::ArenaEffectBatch { effects } => ServerControlEvent::ArenaEffectBatch {
-                effects: take_vec(effects, MAX_EFFECTS)
-                    .into_iter()
-                    .map(FuzzArenaEffectSnapshot::into_real)
-                    .collect(),
-            },
+            Self::ArenaEffectBatch { effects } => build_arena_effect_batch(effects),
             Self::Error { message } => ServerControlEvent::Error {
                 message: sanitize_display_text(&message, 48, "error"),
             },
         }
+    }
+}
+
+fn build_connected_event(
+    player_id: u32,
+    player_name: &[u8],
+    record: FuzzPlayerRecord,
+    skill_catalog: Vec<FuzzSkillCatalogEntry>,
+) -> ServerControlEvent {
+    ServerControlEvent::Connected {
+        player_id: normalize_player_id(player_id),
+        player_name: sanitize_player_name(player_name),
+        record: record.into_real(),
+        skill_catalog: take_vec(skill_catalog, MAX_CATALOG_ENTRIES)
+            .into_iter()
+            .map(FuzzSkillCatalogEntry::into_real)
+            .collect(),
+    }
+}
+
+fn build_team_selected_event(
+    player_id: u32,
+    team: FuzzTeamSide,
+    ready_reset: bool,
+) -> ServerControlEvent {
+    ServerControlEvent::TeamSelected {
+        player_id: normalize_player_id(player_id),
+        team: team.into_real(),
+        ready_reset,
+    }
+}
+
+fn build_launch_countdown_started_event(
+    lobby_id: u32,
+    seconds_remaining: u8,
+    roster_size: u16,
+) -> ServerControlEvent {
+    ServerControlEvent::LaunchCountdownStarted {
+        lobby_id: normalize_lobby_id(lobby_id),
+        seconds_remaining,
+        roster_size,
+    }
+}
+
+fn build_match_started_event(
+    match_id: u32,
+    round: u8,
+    skill_pick_seconds: u8,
+) -> ServerControlEvent {
+    ServerControlEvent::MatchStarted {
+        match_id: normalize_match_id(match_id),
+        round: normalize_round(round),
+        skill_pick_seconds,
+    }
+}
+
+fn build_round_won_event(
+    round: u8,
+    winning_team: FuzzTeamSide,
+    score_a: u8,
+    score_b: u8,
+) -> ServerControlEvent {
+    ServerControlEvent::RoundWon {
+        round: normalize_round(round),
+        winning_team: winning_team.into_real(),
+        score_a,
+        score_b,
+    }
+}
+
+fn build_match_ended_event(
+    outcome: FuzzMatchOutcome,
+    score_a: u8,
+    score_b: u8,
+    message: &[u8],
+) -> ServerControlEvent {
+    ServerControlEvent::MatchEnded {
+        outcome: outcome.into_real(),
+        score_a,
+        score_b,
+        message: sanitize_display_text(message, 48, "match ended"),
+    }
+}
+
+fn build_lobby_directory_snapshot(lobbies: Vec<FuzzLobbyDirectoryEntry>) -> ServerControlEvent {
+    ServerControlEvent::LobbyDirectorySnapshot {
+        lobbies: take_vec(lobbies, MAX_DIRECTORY_ENTRIES)
+            .into_iter()
+            .map(FuzzLobbyDirectoryEntry::into_real)
+            .collect(),
+    }
+}
+
+fn build_game_lobby_snapshot(
+    lobby_id: u32,
+    phase: FuzzLobbySnapshotPhase,
+    players: Vec<FuzzLobbySnapshotPlayer>,
+) -> ServerControlEvent {
+    ServerControlEvent::GameLobbySnapshot {
+        lobby_id: normalize_lobby_id(lobby_id),
+        phase: phase.into_real(),
+        players: take_vec(players, MAX_LOBBY_PLAYERS)
+            .into_iter()
+            .map(FuzzLobbySnapshotPlayer::into_real)
+            .collect(),
+    }
+}
+
+fn build_arena_effect_batch(effects: Vec<FuzzArenaEffectSnapshot>) -> ServerControlEvent {
+    ServerControlEvent::ArenaEffectBatch {
+        effects: take_vec(effects, MAX_EFFECTS)
+            .into_iter()
+            .map(FuzzArenaEffectSnapshot::into_real)
+            .collect(),
     }
 }
 
@@ -570,45 +635,39 @@ pub fn run_server_control_event_roundtrip(bytes: &[u8]) {
     let Some(envelope) = parse_input::<FuzzServerEventEnvelope>(bytes) else {
         return;
     };
-    run_server_event_roundtrip(envelope.event.into_real(), envelope.seq, envelope.sim_tick);
+    let event = envelope.event.into_real();
+    run_server_event_roundtrip(&event, envelope.seq, envelope.sim_tick);
 }
 
 pub fn run_arena_full_snapshot_roundtrip(bytes: &[u8]) {
     let Some(envelope) = parse_input::<FuzzArenaStateEnvelope>(bytes) else {
         return;
     };
-    run_server_event_roundtrip(
-        ServerControlEvent::ArenaStateSnapshot {
-            snapshot: envelope.snapshot.into_real(),
-        },
-        envelope.seq,
-        envelope.sim_tick,
-    );
+    let event = ServerControlEvent::ArenaStateSnapshot {
+        snapshot: envelope.snapshot.into_real(),
+    };
+    run_server_event_roundtrip(&event, envelope.seq, envelope.sim_tick);
 }
 
 pub fn run_arena_delta_snapshot_roundtrip(bytes: &[u8]) {
     let Some(envelope) = parse_input::<FuzzArenaDeltaEnvelope>(bytes) else {
         return;
     };
-    run_server_event_roundtrip(
-        ServerControlEvent::ArenaDeltaSnapshot {
-            snapshot: envelope.snapshot.into_real(),
-        },
-        envelope.seq,
-        envelope.sim_tick,
-    );
+    let event = ServerControlEvent::ArenaDeltaSnapshot {
+        snapshot: envelope.snapshot.into_real(),
+    };
+    run_server_event_roundtrip(&event, envelope.seq, envelope.sim_tick);
 }
 
-fn run_server_event_roundtrip(event: ServerControlEvent, seq: u32, sim_tick: u32) {
-    let packet = match event.clone().encode_packet(seq, sim_tick) {
-        Ok(packet) => packet,
-        Err(_) => return,
+fn run_server_event_roundtrip(event: &ServerControlEvent, seq: u32, sim_tick: u32) {
+    let Ok(packet) = event.clone().encode_packet(seq, sim_tick) else {
+        return;
     };
     let Ok((header, decoded)) = ServerControlEvent::decode_packet(&packet) else {
         panic!("encoded server event should decode");
     };
 
-    assert_eq!(decoded, event);
+    assert_eq!(decoded, *event);
     assert_eq!(header.seq, seq);
     assert_eq!(header.sim_tick, sim_tick);
 }

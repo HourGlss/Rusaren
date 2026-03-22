@@ -12,6 +12,8 @@ pub enum HttpRouteLabel {
     Healthz,
     /// The Prometheus metrics endpoint.
     Metrics,
+    /// The password-protected operator dashboard.
+    Admin,
     /// One-time bootstrap token minting for websocket signaling upgrades.
     SessionBootstrap,
     /// Either the signaling websocket or the websocket dev adapter.
@@ -28,6 +30,7 @@ impl HttpRouteLabel {
             Self::Root => "root",
             Self::Healthz => "healthz",
             Self::Metrics => "metrics",
+            Self::Admin => "admin",
             Self::SessionBootstrap => "session_bootstrap",
             Self::WebSocket => "ws",
             Self::StaticAsset => "static_asset",
@@ -42,6 +45,7 @@ pub fn classify_http_path(path: &str) -> HttpRouteLabel {
         "/" => HttpRouteLabel::Root,
         "/healthz" => HttpRouteLabel::Healthz,
         "/metrics" => HttpRouteLabel::Metrics,
+        "/adminz" => HttpRouteLabel::Admin,
         "/session/bootstrap" => HttpRouteLabel::SessionBootstrap,
         "/ws" | "/ws-dev" => HttpRouteLabel::WebSocket,
         _ => HttpRouteLabel::StaticAsset,
@@ -55,6 +59,7 @@ struct ServerObservabilityInner {
     http_root_requests: AtomicU64,
     http_healthz_requests: AtomicU64,
     http_metrics_requests: AtomicU64,
+    http_admin_requests: AtomicU64,
     http_session_bootstrap_requests: AtomicU64,
     http_websocket_requests: AtomicU64,
     http_static_asset_requests: AtomicU64,
@@ -78,6 +83,7 @@ impl ServerObservabilityInner {
             http_root_requests: AtomicU64::new(0),
             http_healthz_requests: AtomicU64::new(0),
             http_metrics_requests: AtomicU64::new(0),
+            http_admin_requests: AtomicU64::new(0),
             http_session_bootstrap_requests: AtomicU64::new(0),
             http_websocket_requests: AtomicU64::new(0),
             http_static_asset_requests: AtomicU64::new(0),
@@ -116,6 +122,7 @@ impl ServerObservability {
             HttpRouteLabel::Root => &self.inner.http_root_requests,
             HttpRouteLabel::Healthz => &self.inner.http_healthz_requests,
             HttpRouteLabel::Metrics => &self.inner.http_metrics_requests,
+            HttpRouteLabel::Admin => &self.inner.http_admin_requests,
             HttpRouteLabel::SessionBootstrap => &self.inner.http_session_bootstrap_requests,
             HttpRouteLabel::WebSocket => &self.inner.http_websocket_requests,
             HttpRouteLabel::StaticAsset => &self.inner.http_static_asset_requests,
@@ -188,6 +195,66 @@ impl ServerObservability {
         write_build_info_metric(&mut output, &self.inner.version);
         output
     }
+
+    /// Returns the process uptime tracked by the observability registry.
+    #[must_use]
+    pub fn uptime(&self) -> Duration {
+        self.inner.started_at.elapsed()
+    }
+
+    /// Returns the active websocket-session gauge.
+    #[must_use]
+    pub fn websocket_sessions_active(&self) -> u64 {
+        load_counter(&self.inner.websocket_sessions_active)
+    }
+
+    /// Returns the total number of bound websocket sessions.
+    #[must_use]
+    pub fn websocket_sessions_bound_total(&self) -> u64 {
+        load_counter(&self.inner.websocket_sessions_bound)
+    }
+
+    /// Returns the total number of websocket disconnects.
+    #[must_use]
+    pub fn websocket_disconnects_total(&self) -> u64 {
+        load_counter(&self.inner.websocket_disconnects)
+    }
+
+    /// Returns the total number of websocket rejections.
+    #[must_use]
+    pub fn websocket_rejections_total(&self) -> u64 {
+        load_counter(&self.inner.websocket_rejections)
+    }
+
+    /// Returns accepted ingress packet count.
+    #[must_use]
+    pub fn ingress_packets_accepted_total(&self) -> u64 {
+        load_counter(&self.inner.ingress_packets_accepted)
+    }
+
+    /// Returns rejected ingress packet count.
+    #[must_use]
+    pub fn ingress_packets_rejected_total(&self) -> u64 {
+        load_counter(&self.inner.ingress_packets_rejected)
+    }
+
+    /// Returns the number of recorded simulation ticks.
+    #[must_use]
+    pub fn tick_iterations(&self) -> u64 {
+        load_counter(&self.inner.tick_iterations)
+    }
+
+    /// Returns the most recently observed tick duration.
+    #[must_use]
+    pub fn tick_duration_last(&self) -> Duration {
+        Duration::from_micros(load_counter(&self.inner.tick_duration_last_micros))
+    }
+
+    /// Returns the maximum observed tick duration.
+    #[must_use]
+    pub fn tick_duration_max(&self) -> Duration {
+        Duration::from_micros(load_counter(&self.inner.tick_duration_max_micros))
+    }
 }
 
 fn decrement_clamped(counter: &AtomicU64) {
@@ -223,6 +290,7 @@ fn write_http_metrics(output: &mut String, inner: &ServerObservabilityInner) {
                 "metrics",
                 load_counter(&inner.http_metrics_requests),
             ),
+            ("route", "admin", load_counter(&inner.http_admin_requests)),
             (
                 "route",
                 "session_bootstrap",

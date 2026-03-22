@@ -5,7 +5,7 @@ use game_net::{
 };
 use game_sim::MovementIntent;
 
-use super::super::{PlayerLocation, ServerApp};
+use super::super::{MatchRuntime, PlayerLocation, ServerApp};
 use super::AppTransport;
 
 impl ServerApp {
@@ -83,44 +83,12 @@ impl ServerApp {
         sender_id: PlayerId,
         frame: ValidatedInputFrame,
     ) {
-        let match_id = match self.require_match(transport, sender_id) {
-            Some(match_id) => match_id,
-            None => return,
-        };
-
-        let phase = match self.matches.get(&match_id) {
-            Some(runtime) => runtime.session.phase().clone(),
-            None => {
-                self.send_error(transport, sender_id, "match does not exist");
-                return;
-            }
-        };
-        if !matches!(phase, MatchPhase::Combat) {
-            self.send_error(
-                transport,
-                sender_id,
-                "input frames are only accepted during combat",
-            );
+        let Some(match_id) = self.require_combat_match_id(transport, sender_id, frame.buttons)
+        else {
             return;
-        }
-        if frame.buttons & BUTTON_QUIT_TO_LOBBY != 0 {
-            self.send_error(
-                transport,
-                sender_id,
-                "quit-to-lobby input is not valid during combat",
-            );
-            return;
-        }
-
-        let move_x = match Self::decode_axis(frame.move_horizontal_q, "move_horizontal_q") {
-            Ok(value) => value,
-            Err(message) => {
-                self.send_error(transport, sender_id, &message);
-                return;
-            }
         };
-        let move_y = match Self::decode_axis(frame.move_vertical_q, "move_vertical_q") {
-            Ok(value) => value,
+        let movement = match Self::decode_movement_input(&frame) {
+            Ok(movement) => movement,
             Err(message) => {
                 self.send_error(transport, sender_id, &message);
                 return;
@@ -135,13 +103,6 @@ impl ServerApp {
             }
         };
 
-        let movement = match MovementIntent::new(move_x, move_y) {
-            Ok(movement) => movement,
-            Err(error) => {
-                self.send_error(transport, sender_id, &error.to_string());
-                return;
-            }
-        };
         let aim_changed =
             match runtime
                 .world
@@ -158,54 +119,95 @@ impl ServerApp {
             return;
         }
 
-        if frame.buttons & BUTTON_PRIMARY != 0 {
-            if let Err(error) = runtime.world.queue_primary_attack(sender_id) {
-                self.send_error(transport, sender_id, &error.to_string());
-                return;
-            }
-        }
-
-        if frame.buttons & BUTTON_CAST != 0 {
-            let slot = u8::try_from(frame.ability_or_context).unwrap_or(u8::MAX);
-            let unlocked_slots = runtime.session.current_round().get();
-            if slot == 0 || slot > unlocked_slots {
-                self.send_error(
-                    transport,
-                    sender_id,
-                    &format!("skill slot {slot} is not unlocked for round {unlocked_slots}"),
-                );
-                return;
-            }
-            let Some(choice) = runtime.session.equipped_choice(sender_id, slot) else {
-                self.send_error(
-                    transport,
-                    sender_id,
-                    &format!("skill slot {slot} is not equipped"),
-                );
-                return;
-            };
-            let Some(skill) = self.content.skills().resolve(&choice) else {
-                self.send_error(
-                    transport,
-                    sender_id,
-                    &format!(
-                        "authored skill data is missing for {} tier {}",
-                        choice.tree, choice.tier
-                    ),
-                );
-                return;
-            };
-
-            let _ = skill;
-            if let Err(error) = runtime.world.queue_cast(sender_id, slot) {
-                self.send_error(transport, sender_id, &error.to_string());
-                return;
-            }
+        if let Err(message) =
+            Self::queue_requested_actions(&self.content, runtime, sender_id, &frame)
+        {
+            self.send_error(transport, sender_id, &message);
+            return;
         }
 
         let _ = runtime;
         if aim_changed {
             self.broadcast_arena_delta_snapshot(transport, match_id);
         }
+    }
+
+    fn require_combat_match_id<T: AppTransport>(
+        &mut self,
+        transport: &mut T,
+        sender_id: PlayerId,
+        buttons: u16,
+    ) -> Option<game_domain::MatchId> {
+        let match_id = self.require_match(transport, sender_id)?;
+        let Some(runtime) = self.matches.get(&match_id) else {
+            self.send_error(transport, sender_id, "match does not exist");
+            return None;
+        };
+
+        if !matches!(runtime.session.phase(), MatchPhase::Combat) {
+            self.send_error(
+                transport,
+                sender_id,
+                "input frames are only accepted during combat",
+            );
+            return None;
+        }
+        if buttons & BUTTON_QUIT_TO_LOBBY != 0 {
+            self.send_error(
+                transport,
+                sender_id,
+                "quit-to-lobby input is not valid during combat",
+            );
+            return None;
+        }
+
+        Some(match_id)
+    }
+
+    fn decode_movement_input(frame: &ValidatedInputFrame) -> Result<MovementIntent, String> {
+        let move_x = Self::decode_axis(frame.move_horizontal_q, "move_horizontal_q")?;
+        let move_y = Self::decode_axis(frame.move_vertical_q, "move_vertical_q")?;
+        MovementIntent::new(move_x, move_y).map_err(|error| error.to_string())
+    }
+
+    fn queue_requested_actions(
+        content: &game_content::GameContent,
+        runtime: &mut MatchRuntime,
+        sender_id: PlayerId,
+        frame: &ValidatedInputFrame,
+    ) -> Result<(), String> {
+        if frame.buttons & BUTTON_PRIMARY != 0 {
+            runtime
+                .world
+                .queue_primary_attack(sender_id)
+                .map_err(|error| error.to_string())?;
+        }
+
+        if frame.buttons & BUTTON_CAST == 0 {
+            return Ok(());
+        }
+
+        let slot = u8::try_from(frame.ability_or_context).unwrap_or(u8::MAX);
+        let unlocked_slots = runtime.session.current_round().get();
+        if slot == 0 || slot > unlocked_slots {
+            return Err(format!(
+                "skill slot {slot} is not unlocked for round {unlocked_slots}"
+            ));
+        }
+
+        let Some(choice) = runtime.session.equipped_choice(sender_id, slot) else {
+            return Err(format!("skill slot {slot} is not equipped"));
+        };
+        if content.skills().resolve(&choice).is_none() {
+            return Err(format!(
+                "authored skill data is missing for {} tier {}",
+                choice.tree, choice.tier
+            ));
+        }
+
+        runtime
+            .world
+            .queue_cast(sender_id, slot)
+            .map_err(|error| error.to_string())
     }
 }

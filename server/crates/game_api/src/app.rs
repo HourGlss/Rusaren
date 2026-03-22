@@ -201,6 +201,39 @@ impl ServerApp {
         }
     }
 
+    /// Returns the number of currently connected players.
+    #[must_use]
+    pub fn connected_player_count(&self) -> usize {
+        self.players.len()
+    }
+
+    /// Returns the number of currently bound transport connections.
+    #[must_use]
+    pub fn bound_connection_count(&self) -> usize {
+        self.connections.len()
+    }
+
+    /// Returns the number of players currently in the central lobby.
+    #[must_use]
+    pub fn central_lobby_player_count(&self) -> usize {
+        self.players
+            .values()
+            .filter(|player| matches!(player.location, PlayerLocation::CentralLobby))
+            .count()
+    }
+
+    /// Returns the number of active game lobbies.
+    #[must_use]
+    pub fn active_lobby_count(&self) -> usize {
+        self.game_lobbies.len()
+    }
+
+    /// Returns the number of active matches.
+    #[must_use]
+    pub fn active_match_count(&self) -> usize {
+        self.matches.len()
+    }
+
     /// Drains all currently queued transport packets and applies them to server state.
     pub fn pump_transport<T: AppTransport>(&mut self, transport: &mut T) {
         while let Some((connection_id, packet)) = transport.recv_from_client() {

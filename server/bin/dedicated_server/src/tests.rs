@@ -4,7 +4,8 @@ use game_api::WebRtcRuntimeConfig;
 use game_sim::COMBAT_FRAME_MS;
 
 use crate::config::{
-    parse_csv_urls, parse_tick_interval, parse_turn_ttl, parse_webrtc_config_from_env,
+    parse_admin_auth_from_env, parse_csv_urls, parse_tick_interval, parse_turn_ttl,
+    parse_webrtc_config_from_env,
 };
 use crate::demo::run_demo;
 use crate::logging::LogFormat;
@@ -87,6 +88,35 @@ fn parse_webrtc_config_from_env_uses_defaults_when_variables_are_missing() {
     restore_env("RARENA_WEBRTC_TURN_URLS", previous_turn);
     restore_env("RARENA_WEBRTC_TURN_SECRET", previous_secret);
     restore_env("RARENA_WEBRTC_TURN_TTL_SECONDS", previous_ttl);
+}
+
+#[test]
+fn parse_admin_auth_from_env_requires_both_or_neither_variable() {
+    let previous_username = std::env::var("RARENA_ADMIN_USERNAME").ok();
+    let previous_password = std::env::var("RARENA_ADMIN_PASSWORD").ok();
+
+    std::env::remove_var("RARENA_ADMIN_USERNAME");
+    std::env::remove_var("RARENA_ADMIN_PASSWORD");
+    assert_eq!(
+        parse_admin_auth_from_env().expect("missing admin auth should be allowed"),
+        None
+    );
+
+    std::env::set_var("RARENA_ADMIN_USERNAME", "admin");
+    std::env::remove_var("RARENA_ADMIN_PASSWORD");
+    assert_eq!(
+        parse_admin_auth_from_env().expect_err("missing password should fail"),
+        "RARENA_ADMIN_USERNAME and RARENA_ADMIN_PASSWORD must either both be set or both be omitted"
+    );
+
+    std::env::set_var("RARENA_ADMIN_PASSWORD", "secret");
+    let config = parse_admin_auth_from_env()
+        .expect("complete admin auth should parse")
+        .expect("admin auth should exist");
+    assert_eq!(config.username(), "admin");
+
+    restore_env("RARENA_ADMIN_USERNAME", previous_username);
+    restore_env("RARENA_ADMIN_PASSWORD", previous_password);
 }
 
 #[test]

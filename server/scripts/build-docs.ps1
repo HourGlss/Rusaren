@@ -166,6 +166,7 @@ if (-not (Test-ToolAvailable -CommandName "mdbook")) {
 
 $orderedSources = @(
     "00_index.md",
+    "README.md",
     "01_principles.md",
     "02_repo_layout.md",
     "03_domain_model.md",
@@ -182,11 +183,19 @@ $orderedSources = @(
     "14_buildability_assessment.md",
     "15_deployment_ops.md",
     "16_runbooks.md",
-    "classes\warrior.md",
-    "classes\rogue.md",
-    "classes\mage.md",
+    "17_linode_deploy.md",
+    "maps\README.md",
+    "maps\_template.md",
+    "classes\README.md",
+    "classes\bard.md",
     "classes\cleric.md",
-    "maps\_template.md"
+    "classes\druid.md",
+    "classes\mage.md",
+    "classes\necromancer.md",
+    "classes\paladin.md",
+    "classes\ranger.md",
+    "classes\rogue.md",
+    "classes\warrior.md"
 )
 $orderedSourceSet = @{}
 foreach ($relativePath in $orderedSources) {
@@ -230,9 +239,15 @@ Copy-Item -Path (Join-Path $bookSourceRoot "00_index.md") -Destination (Join-Pat
 $classSummaryEntries = Get-ChildItem -Path (Join-Path $bookSourceRoot "classes") -Filter *.md |
     Sort-Object Name |
     ForEach-Object {
-        $label = [System.Globalization.CultureInfo]::InvariantCulture.TextInfo.ToTitleCase(
-            [System.IO.Path]::GetFileNameWithoutExtension($_.Name).Replace("_", " ")
-        )
+        $baseName = [System.IO.Path]::GetFileNameWithoutExtension($_.Name)
+        $label = if ($baseName -eq "README") {
+            "Classes Reference"
+        }
+        else {
+            [System.Globalization.CultureInfo]::InvariantCulture.TextInfo.ToTitleCase(
+                $baseName.Replace("_", " ")
+            )
+        }
         "  - [{0}](classes/{1})" -f $label, $_.Name
     }
 
@@ -242,10 +257,32 @@ $classSummaryBlock = if ($classSummaryEntries.Count -gt 0) {
     "  - [No Class Docs Yet](11_classes.md)"
 }
 
+$mapSummaryEntries = Get-ChildItem -Path (Join-Path $bookSourceRoot "maps") -Filter *.md |
+    Sort-Object Name |
+    ForEach-Object {
+        $baseName = [System.IO.Path]::GetFileNameWithoutExtension($_.Name)
+        $label = if ($baseName -eq "README") {
+            "Maps Reference"
+        }
+        else {
+            [System.Globalization.CultureInfo]::InvariantCulture.TextInfo.ToTitleCase(
+                $baseName.Replace("_", " ")
+            )
+        }
+        "  - [{0}](maps/{1})" -f $label, $_.Name
+    }
+
+$mapSummaryBlock = if ($mapSummaryEntries.Count -gt 0) {
+    ($mapSummaryEntries -join "`n")
+} else {
+    "  - [Map Template](maps/_template.md)"
+}
+
 $summaryContent = @"
 # Summary
 
 - [Overview](index.md)
+- [Docs Catalog](README.md)
 - [Principles](01_principles.md)
 - [Repo Layout](02_repo_layout.md)
 - [Domain Model](03_domain_model.md)
@@ -256,7 +293,7 @@ $summaryContent = @"
 - [Godot Client](08_godot_client.md)
 - [Testing, Validation, Ops](09_testing_ops.md)
 - [Maps](10_maps.md)
-  - [Map Template](maps/_template.md)
+$mapSummaryBlock
 - [Classes](11_classes.md)
 $classSummaryBlock
 - [Rust Tooling](12_rust_tooling.md)
@@ -264,6 +301,7 @@ $classSummaryBlock
 - [Buildability Assessment](14_buildability_assessment.md)
 - [Deployment and Ops](15_deployment_ops.md)
 - [Runbooks](16_runbooks.md)
+- [Linode Deployment](17_linode_deploy.md)
 "@
 Set-Content -Path (Join-Path $bookSourceRoot "SUMMARY.md") -Value $summaryContent -Encoding UTF8
 
@@ -323,6 +361,15 @@ foreach ($docFile in Get-ChildItem -Path $sharedDocsRoot -Recurse -File -Filter 
     if ($included) {
         $outputRelative = if ($relativePath -eq "00_index.md") {
             "index.html"
+        }
+        elseif ([System.IO.Path]::GetFileName($relativePath) -eq "README.md") {
+            $relativeDirectory = [System.IO.Path]::GetDirectoryName($relativePath)
+            if ([string]::IsNullOrWhiteSpace($relativeDirectory)) {
+                "README.html"
+            }
+            else {
+                ($relativeDirectory.Replace('\', '/') + "/index.html")
+            }
         }
         else {
             ($relativePath -replace '\.md$', '.html')

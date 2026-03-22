@@ -41,6 +41,10 @@ const STATUS_NUMERIC_FIELDS: [&str; 4] = [
 type AnchorPoint = (i16, i16);
 
 fn workspace_content_root() -> PathBuf {
+    if let Ok(server_root) = std::env::var("RARENA_SERVER_ROOT") {
+        return PathBuf::from(server_root).join("content");
+    }
+
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("..")

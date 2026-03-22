@@ -127,24 +127,19 @@ impl SimulationWorld {
                 radius,
                 effect,
                 payload,
-            } => {
-                if !self.consume_skill_mana(attacker, mana_cost) {
-                    return Vec::new();
-                }
-                if let Some(player) = self.players.get_mut(&attacker) {
-                    player.slot_cooldown_remaining_ms[slot_index] = cooldown_ms;
-                }
-                self.spawn_projectile(
-                    attacker,
-                    slot,
-                    attacker_state,
-                    speed,
-                    range,
-                    radius,
-                    arena_effect_kind(effect),
-                    payload,
-                )
-            }
+            } => self.resolve_projectile_cast(
+                attacker,
+                attacker_state,
+                slot,
+                slot_index,
+                cooldown_ms,
+                mana_cost,
+                speed,
+                range,
+                radius,
+                effect,
+                payload,
+            ),
             SkillBehavior::Beam {
                 cooldown_ms,
                 mana_cost,
@@ -152,23 +147,18 @@ impl SimulationWorld {
                 radius,
                 effect,
                 payload,
-            } => {
-                if !self.consume_skill_mana(attacker, mana_cost) {
-                    return Vec::new();
-                }
-                if let Some(player) = self.players.get_mut(&attacker) {
-                    player.slot_cooldown_remaining_ms[slot_index] = cooldown_ms;
-                }
-                self.cast_beam_skill(
-                    attacker,
-                    attacker_state,
-                    slot,
-                    range,
-                    radius,
-                    arena_effect_kind(effect),
-                    payload,
-                )
-            }
+            } => self.resolve_beam_cast(
+                attacker,
+                attacker_state,
+                slot,
+                slot_index,
+                cooldown_ms,
+                mana_cost,
+                range,
+                radius,
+                effect,
+                payload,
+            ),
             SkillBehavior::Dash {
                 cooldown_ms,
                 mana_cost,
@@ -176,23 +166,18 @@ impl SimulationWorld {
                 effect,
                 impact_radius,
                 payload,
-            } => {
-                if !self.consume_skill_mana(attacker, mana_cost) {
-                    return Vec::new();
-                }
-                if let Some(player) = self.players.get_mut(&attacker) {
-                    player.slot_cooldown_remaining_ms[slot_index] = cooldown_ms;
-                }
-                self.cast_dash_skill(
-                    attacker,
-                    attacker_state,
-                    slot,
-                    distance,
-                    arena_effect_kind(effect),
-                    impact_radius,
-                    payload,
-                )
-            }
+            } => self.resolve_dash_cast(
+                attacker,
+                attacker_state,
+                slot,
+                slot_index,
+                cooldown_ms,
+                mana_cost,
+                distance,
+                effect,
+                impact_radius,
+                payload,
+            ),
             SkillBehavior::Burst {
                 cooldown_ms,
                 mana_cost,
@@ -200,46 +185,197 @@ impl SimulationWorld {
                 radius,
                 effect,
                 payload,
-            } => {
-                if !self.consume_skill_mana(attacker, mana_cost) {
-                    return Vec::new();
-                }
-                if let Some(player) = self.players.get_mut(&attacker) {
-                    player.slot_cooldown_remaining_ms[slot_index] = cooldown_ms;
-                }
-                self.cast_burst_skill(
-                    attacker,
-                    attacker_state,
-                    slot,
-                    range,
-                    radius,
-                    arena_effect_kind(effect),
-                    payload,
-                )
-            }
+            } => self.resolve_burst_cast(
+                attacker,
+                attacker_state,
+                slot,
+                slot_index,
+                cooldown_ms,
+                mana_cost,
+                range,
+                radius,
+                effect,
+                payload,
+            ),
             SkillBehavior::Nova {
                 cooldown_ms,
                 mana_cost,
                 radius,
                 effect,
                 payload,
-            } => {
-                if !self.consume_skill_mana(attacker, mana_cost) {
-                    return Vec::new();
-                }
-                if let Some(player) = self.players.get_mut(&attacker) {
-                    player.slot_cooldown_remaining_ms[slot_index] = cooldown_ms;
-                }
-                self.cast_nova_skill(
-                    attacker,
-                    attacker_state,
-                    slot,
-                    radius,
-                    arena_effect_kind(effect),
-                    payload,
-                )
-            }
+            } => self.resolve_nova_cast(
+                attacker,
+                attacker_state,
+                slot,
+                slot_index,
+                cooldown_ms,
+                mana_cost,
+                radius,
+                effect,
+                payload,
+            ),
         }
+    }
+
+    fn start_skill_cast(
+        &mut self,
+        attacker: PlayerId,
+        slot_index: usize,
+        cooldown_ms: u16,
+        mana_cost: u16,
+    ) -> bool {
+        if !self.consume_skill_mana(attacker, mana_cost) {
+            return false;
+        }
+        if let Some(player) = self.players.get_mut(&attacker) {
+            player.slot_cooldown_remaining_ms[slot_index] = cooldown_ms;
+        }
+        true
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn resolve_projectile_cast(
+        &mut self,
+        attacker: PlayerId,
+        attacker_state: SimPlayerState,
+        slot: u8,
+        slot_index: usize,
+        cooldown_ms: u16,
+        mana_cost: u16,
+        speed: u16,
+        range: u16,
+        radius: u16,
+        effect: game_content::SkillEffectKind,
+        payload: game_content::EffectPayload,
+    ) -> Vec<SimulationEvent> {
+        if !self.start_skill_cast(attacker, slot_index, cooldown_ms, mana_cost) {
+            return Vec::new();
+        }
+
+        self.spawn_projectile(
+            attacker,
+            slot,
+            attacker_state,
+            speed,
+            range,
+            radius,
+            arena_effect_kind(effect),
+            payload,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn resolve_beam_cast(
+        &mut self,
+        attacker: PlayerId,
+        attacker_state: SimPlayerState,
+        slot: u8,
+        slot_index: usize,
+        cooldown_ms: u16,
+        mana_cost: u16,
+        range: u16,
+        radius: u16,
+        effect: game_content::SkillEffectKind,
+        payload: game_content::EffectPayload,
+    ) -> Vec<SimulationEvent> {
+        if !self.start_skill_cast(attacker, slot_index, cooldown_ms, mana_cost) {
+            return Vec::new();
+        }
+
+        self.cast_beam_skill(
+            attacker,
+            attacker_state,
+            slot,
+            range,
+            radius,
+            arena_effect_kind(effect),
+            payload,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn resolve_dash_cast(
+        &mut self,
+        attacker: PlayerId,
+        attacker_state: SimPlayerState,
+        slot: u8,
+        slot_index: usize,
+        cooldown_ms: u16,
+        mana_cost: u16,
+        distance: u16,
+        effect: game_content::SkillEffectKind,
+        impact_radius: Option<u16>,
+        payload: Option<game_content::EffectPayload>,
+    ) -> Vec<SimulationEvent> {
+        if !self.start_skill_cast(attacker, slot_index, cooldown_ms, mana_cost) {
+            return Vec::new();
+        }
+
+        self.cast_dash_skill(
+            attacker,
+            attacker_state,
+            slot,
+            distance,
+            arena_effect_kind(effect),
+            impact_radius,
+            payload,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn resolve_burst_cast(
+        &mut self,
+        attacker: PlayerId,
+        attacker_state: SimPlayerState,
+        slot: u8,
+        slot_index: usize,
+        cooldown_ms: u16,
+        mana_cost: u16,
+        range: u16,
+        radius: u16,
+        effect: game_content::SkillEffectKind,
+        payload: game_content::EffectPayload,
+    ) -> Vec<SimulationEvent> {
+        if !self.start_skill_cast(attacker, slot_index, cooldown_ms, mana_cost) {
+            return Vec::new();
+        }
+
+        self.cast_burst_skill(
+            attacker,
+            attacker_state,
+            slot,
+            range,
+            radius,
+            arena_effect_kind(effect),
+            payload,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn resolve_nova_cast(
+        &mut self,
+        attacker: PlayerId,
+        attacker_state: SimPlayerState,
+        slot: u8,
+        slot_index: usize,
+        cooldown_ms: u16,
+        mana_cost: u16,
+        radius: u16,
+        effect: game_content::SkillEffectKind,
+        payload: game_content::EffectPayload,
+    ) -> Vec<SimulationEvent> {
+        if !self.start_skill_cast(attacker, slot_index, cooldown_ms, mana_cost) {
+            return Vec::new();
+        }
+
+        self.cast_nova_skill(
+            attacker,
+            attacker_state,
+            slot,
+            radius,
+            arena_effect_kind(effect),
+            payload,
+        )
     }
 
     pub(super) fn consume_skill_mana(&mut self, player_id: PlayerId, mana_cost: u16) -> bool {

@@ -9,11 +9,14 @@
 4. Check:
    - `https://domain.com/`
    - `https://domain.com/healthz`
+   - `https://domain.com/adminz`
    - Prometheus scrape status
+   - `bash deploy/host-smoke.sh --env-file deploy/.env`
 
 Success criteria:
 - root page serves the shell
 - `/healthz` returns `ok`
+- `/adminz` requires auth and renders for operators
 - Prometheus sees the backend target as `UP`
 
 If the deploy target is Linode, follow the host/DNS/firewall setup in `17_linode_deploy.md` first.
@@ -46,6 +49,13 @@ Check:
 2. `docker compose logs prometheus --tail=200`
 3. that `rarena-server` is healthy
 4. that `prometheus.yml` still points to `rarena-server:3000`
+
+## `/adminz` is unavailable
+Check:
+1. `RARENA_ADMIN_USERNAME` and `RARENA_ADMIN_PASSWORD` exist in `deploy/.env`
+2. `docker compose logs rarena-server --tail=200`
+3. `bash deploy/host-smoke.sh --env-file deploy/.env`
+4. that you are using the expected credentials and did not leave the example password in place
 
 ## Logs are too noisy or too quiet
 Set `RARENA_RUST_LOG` in `deploy/.env`.

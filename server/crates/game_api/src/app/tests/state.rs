@@ -331,6 +331,44 @@ fn lobby_directory_and_location_helpers_report_exact_state() {
 }
 
 #[test]
+fn malformed_packets_reject_unbound_connections_with_direct_errors() {
+    let mut server = ServerApp::new();
+    let mut transport = InMemoryTransport::new();
+    let mut intruder = HeadlessClient::new(connection_id(77), player_name("Intruder"));
+
+    transport.send_from_client(intruder.connection_id(), vec![0xAA, 0xBB, 0xCC]);
+    server.pump_transport(&mut transport);
+
+    let events = intruder
+        .drain_events(&mut transport)
+        .expect("malformed packet response should decode");
+    assert!(events.iter().any(|event| matches!(
+        event,
+        ServerControlEvent::Error { message }
+            if message.contains("minimum header length")
+    )));
+}
+
+#[test]
+fn malformed_packets_reject_bound_connections_with_error_events() {
+    let mut server = ServerApp::new();
+    let mut transport = InMemoryTransport::new();
+    let mut alice = connect_player(&mut server, &mut transport, 1, "Alice");
+
+    transport.send_from_client(alice.connection_id(), vec![0xAA, 0xBB, 0xCC]);
+    server.pump_transport(&mut transport);
+
+    let events = alice
+        .drain_events(&mut transport)
+        .expect("malformed packet response should decode");
+    assert!(events.iter().any(|event| matches!(
+        event,
+        ServerControlEvent::Error { message }
+            if message.contains("minimum header length")
+    )));
+}
+
+#[test]
 fn lobby_directory_entries_count_only_assigned_members_and_specific_lobbies() {
     let mut server = ServerApp::new();
     let mut transport = InMemoryTransport::new();

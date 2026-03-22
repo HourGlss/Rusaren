@@ -37,42 +37,71 @@ fn validate_mechanics(
     let mut seen_ids = BTreeSet::new();
     let mut mechanics = Vec::with_capacity(yaml_mechanics.len());
     for yaml in yaml_mechanics {
-        validate_skill_text(source, "mechanic.id", &yaml.id)?;
-        validate_skill_text(source, "mechanic.label", &yaml.label)?;
-        validate_skill_text(source, "mechanic.inspiration", &yaml.inspiration)?;
-        validate_skill_text(source, "mechanic.notes", &yaml.notes)?;
-        if !seen_ids.insert(yaml.id.clone()) {
-            return Err(ContentError::Validation {
-                source: String::from(source),
-                message: format!("duplicate mechanic id '{}'", yaml.id),
-            });
-        }
-        mechanics.push(MechanicDefinition {
-            id: yaml.id,
-            label: yaml.label,
+        mechanics.push(validate_mechanic_definition(
+            source,
+            yaml,
             category,
-            implemented: yaml.implemented,
-            inspiration: yaml.inspiration,
-            notes: yaml.notes,
-            behavior_schema: match category {
-                MechanicCategory::Behavior => Some(parse_behavior_schema(
-                    source,
-                    yaml.implemented,
-                    yaml.schema.as_ref(),
-                )?),
-                MechanicCategory::Status => None,
-            },
-            status_schema: match category {
-                MechanicCategory::Behavior => None,
-                MechanicCategory::Status => Some(parse_status_schema(
-                    source,
-                    yaml.implemented,
-                    yaml.schema.as_ref(),
-                )?),
-            },
-        });
+            &mut seen_ids,
+        )?);
     }
     Ok(mechanics)
+}
+
+fn validate_mechanic_definition(
+    source: &str,
+    yaml: MechanicYaml,
+    category: MechanicCategory,
+    seen_ids: &mut BTreeSet<String>,
+) -> Result<MechanicDefinition, ContentError> {
+    validate_skill_text(source, "mechanic.id", &yaml.id)?;
+    validate_skill_text(source, "mechanic.label", &yaml.label)?;
+    validate_skill_text(source, "mechanic.inspiration", &yaml.inspiration)?;
+    validate_skill_text(source, "mechanic.notes", &yaml.notes)?;
+    if !seen_ids.insert(yaml.id.clone()) {
+        return Err(ContentError::Validation {
+            source: String::from(source),
+            message: format!("duplicate mechanic id '{}'", yaml.id),
+        });
+    }
+    let behavior_schema = parse_optional_behavior_schema(source, category, &yaml)?;
+    let status_schema = parse_optional_status_schema(source, category, &yaml)?;
+
+    Ok(MechanicDefinition {
+        id: yaml.id,
+        label: yaml.label,
+        category,
+        implemented: yaml.implemented,
+        inspiration: yaml.inspiration,
+        notes: yaml.notes,
+        behavior_schema,
+        status_schema,
+    })
+}
+
+fn parse_optional_behavior_schema(
+    source: &str,
+    category: MechanicCategory,
+    yaml: &MechanicYaml,
+) -> Result<Option<BehaviorSchema>, ContentError> {
+    match category {
+        MechanicCategory::Behavior => {
+            parse_behavior_schema(source, yaml.implemented, yaml.schema.as_ref()).map(Some)
+        }
+        MechanicCategory::Status => Ok(None),
+    }
+}
+
+fn parse_optional_status_schema(
+    source: &str,
+    category: MechanicCategory,
+    yaml: &MechanicYaml,
+) -> Result<Option<StatusSchema>, ContentError> {
+    match category {
+        MechanicCategory::Behavior => Ok(None),
+        MechanicCategory::Status => {
+            parse_status_schema(source, yaml.implemented, yaml.schema.as_ref()).map(Some)
+        }
+    }
 }
 
 fn parse_behavior_schema(

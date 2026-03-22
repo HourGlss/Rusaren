@@ -558,6 +558,53 @@ fn end_to_end_rejects_out_of_range_movement_components() {
 }
 
 #[test]
+fn end_to_end_rejects_input_frames_outside_combat() {
+    let mut server = ServerApp::new();
+    let mut transport = InMemoryTransport::new();
+    let (mut alice, mut bob) = connect_pair(&mut server, &mut transport);
+    let _ = launch_match(&mut server, &mut transport, &mut alice, &mut bob);
+    let alice_id = alice.player_id().expect("alice id");
+
+    server.handle_input_frame(&mut transport, alice_id, movement_input_frame(1, 1, 0));
+    let alice_events = alice
+        .drain_events(&mut transport)
+        .expect("alice non-combat input events");
+    assert!(alice_events.iter().any(|event| matches!(
+        event,
+        ServerControlEvent::Error { message }
+            if message == "input frames are only accepted during combat"
+    )));
+}
+
+#[test]
+fn end_to_end_rejects_quit_button_frames_during_combat() {
+    let mut server = ServerApp::new();
+    let mut transport = InMemoryTransport::new();
+    let (mut alice, mut bob) = connect_pair(&mut server, &mut transport);
+    let _ = enter_combat(
+        &mut server,
+        &mut transport,
+        &mut alice,
+        &mut bob,
+        skill(SkillTree::Mage, 1),
+        skill(SkillTree::Rogue, 1),
+    );
+
+    alice
+        .send_input(&mut transport, quit_input_frame(1), 1)
+        .expect("quit input packet");
+    server.pump_transport(&mut transport);
+    let alice_events = alice
+        .drain_events(&mut transport)
+        .expect("alice quit-button events");
+    assert!(alice_events.iter().any(|event| matches!(
+        event,
+        ServerControlEvent::Error { message }
+            if message == "quit-to-lobby input is not valid during combat"
+    )));
+}
+
+#[test]
 fn primary_and_cast_button_paths_are_independent() {
     let mut server = ServerApp::new();
     let mut transport = InMemoryTransport::new();

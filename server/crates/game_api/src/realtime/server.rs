@@ -1,11 +1,11 @@
 use super::{
     classify_http_path, debug, get, get_service, header, info, info_span, io, mpsc, oneshot, warn,
-    Arc, AtomicU64, DevServerHandle, DevServerOptions, DevServerState, Duration, GameContent, Html,
-    IngressEvent, Instant, IntoResponse, Json, Mutex, Path, PathBuf, Query, RealtimeTransport,
-    Request, Response, Router, RuntimeState, ServeDir, ServerApp, SessionBootstrapQuery,
-    SessionBootstrapResponse, SessionBootstrapTokenRegistry, SocketAddr, State, StatusCode,
-    TcpListener, TraceLayer, WebSocketUpgrade, MAX_INGRESS_PACKET_BYTES, MAX_SIGNAL_MESSAGE_BYTES,
-    SESSION_BOOTSTRAP_TOKEN_TTL,
+    Arc, AtomicU64, DevServerHandle, DevServerOptions, DevServerState, Duration, GameContent,
+    HeaderMap, Html, IngressEvent, Instant, IntoResponse, Json, Mutex, Path, PathBuf, Query,
+    RealtimeTransport, Request, Response, Router, RuntimeState, ServeDir, ServerApp,
+    SessionBootstrapQuery, SessionBootstrapResponse, SessionBootstrapTokenRegistry, SocketAddr,
+    State, StatusCode, TcpListener, TraceLayer, WebSocketUpgrade, MAX_INGRESS_PACKET_BYTES,
+    MAX_SIGNAL_MESSAGE_BYTES, SESSION_BOOTSTRAP_TOKEN_TTL,
 };
 
 use super::signaling::{handle_signaling_socket, handle_websocket_dev_socket};
@@ -68,6 +68,7 @@ pub async fn spawn_dev_server_with_options(
         observability: options.observability.clone(),
     }));
     let state = DevServerState {
+        runtime: runtime.clone(),
         ingress_tx: ingress_tx.clone(),
         web_client_root: options.web_client_root.clone(),
         observability: options.observability,
@@ -76,6 +77,7 @@ pub async fn spawn_dev_server_with_options(
             SESSION_BOOTSTRAP_TOKEN_TTL,
         ))),
         webrtc: options.webrtc,
+        admin_auth: options.admin_auth,
     };
 
     let ingress_task = tokio::spawn(run_ingress_loop(runtime.clone(), ingress_rx));
@@ -137,6 +139,7 @@ fn build_router(state: DevServerState) -> Router {
         .route("/", get(web_client_index))
         .route("/healthz", get(healthcheck))
         .route("/metrics", get(metrics_export))
+        .route("/adminz", get(admin_dashboard))
         .route("/session/bootstrap", get(session_bootstrap))
         .route("/ws", get(signaling_upgrade))
         .route("/ws-dev", get(websocket_dev_upgrade))
@@ -311,6 +314,28 @@ async fn metrics_export(State(state): State<DevServerState>) -> Response {
         .into_response()
 }
 
+/// Serves a password-protected read-only admin dashboard for operators.
+async fn admin_dashboard(State(state): State<DevServerState>, headers: HeaderMap) -> Response {
+    if let Some(observability) = &state.observability {
+        observability.record_http_request(crate::HttpRouteLabel::Admin);
+    }
+
+    let Some(admin_auth) = &state.admin_auth else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if !admin_auth.is_authorized(&headers) {
+        return unauthorized_admin_response();
+    }
+
+    let runtime = state.runtime.lock().await;
+    let metrics = state
+        .observability
+        .as_ref()
+        .map(crate::ServerObservability::render_prometheus);
+    let body = render_admin_dashboard(&runtime, state.observability.as_ref(), metrics.as_deref());
+    Html(body).into_response()
+}
+
 /// Issues a short-lived one-time token required by websocket signaling upgrades.
 async fn session_bootstrap(
     State(state): State<DevServerState>,
@@ -353,6 +378,127 @@ fn render_missing_web_client_page(web_client_root: &Path) -> String {
         ),
         web_client_root.display()
     )
+}
+
+fn unauthorized_admin_response() -> Response {
+    (
+        StatusCode::UNAUTHORIZED,
+        [(header::WWW_AUTHENTICATE, "Basic realm=\"Rusaren Admin\"")],
+        Html(String::from(
+            "<!doctype html><html><body><h1>Rusaren admin authentication required</h1></body></html>",
+        )),
+    )
+        .into_response()
+}
+
+fn render_admin_dashboard(
+    runtime: &RuntimeState,
+    observability: Option<&crate::ServerObservability>,
+    metrics: Option<&str>,
+) -> String {
+    let connected_players = runtime.app.connected_player_count();
+    let bound_connections = runtime.app.bound_connection_count();
+    let central_lobby_players = runtime.app.central_lobby_player_count();
+    let active_lobbies = runtime.app.active_lobby_count();
+    let active_matches = runtime.app.active_match_count();
+    let active_sessions = runtime.transport.outgoing.len();
+
+    let uptime = observability
+        .map(crate::ServerObservability::uptime)
+        .unwrap_or_default();
+    let tick_iterations = observability
+        .map_or(0, crate::ServerObservability::tick_iterations);
+    let tick_last_ms = observability
+        .map(crate::ServerObservability::tick_duration_last)
+        .unwrap_or_default()
+        .as_secs_f64()
+        * 1000.0;
+    let tick_max_ms = observability
+        .map(crate::ServerObservability::tick_duration_max)
+        .unwrap_or_default()
+        .as_secs_f64()
+        * 1000.0;
+    let ingress_accepted = observability
+        .map_or(0, crate::ServerObservability::ingress_packets_accepted_total);
+    let ingress_rejected = observability
+        .map_or(0, crate::ServerObservability::ingress_packets_rejected_total);
+    let websocket_bound = observability
+        .map_or(0, crate::ServerObservability::websocket_sessions_bound_total);
+    let websocket_disconnects = observability
+        .map_or(0, crate::ServerObservability::websocket_disconnects_total);
+    let websocket_rejections = observability
+        .map_or(0, crate::ServerObservability::websocket_rejections_total);
+    let websocket_active = observability
+        .map_or(0, crate::ServerObservability::websocket_sessions_active);
+
+    let metrics_block = metrics.map_or_else(
+        || String::from("<p>Observability is disabled.</p>"),
+        |metrics| {
+            format!(
+                "<details><summary>Prometheus Snapshot</summary><pre>{}</pre></details>",
+                html_escape(metrics)
+            )
+        },
+    );
+
+    format!(
+        concat!(
+            "<!doctype html><html><head><meta charset=\"utf-8\">",
+            "<title>Rusaren Admin</title>",
+            "<style>body{{font-family:Consolas,monospace;max-width:1100px;margin:2rem auto;padding:0 1rem;}}",
+            "table{{border-collapse:collapse;width:100%;margin-bottom:1.5rem;}}",
+            "th,td{{border:1px solid #bbb;padding:.5rem;text-align:left;vertical-align:top;}}",
+            "h1,h2{{margin-bottom:.5rem;}}pre{{white-space:pre-wrap;word-break:break-word;}}</style>",
+            "</head><body><h1>Rusaren Admin Dashboard</h1>",
+            "<p>Read-only operator view for the live backend.</p>",
+            "<h2>Runtime</h2><table>",
+            "<tr><th>Connected players</th><td>{}</td></tr>",
+            "<tr><th>Bound connections</th><td>{}</td></tr>",
+            "<tr><th>Active realtime sessions</th><td>{}</td></tr>",
+            "<tr><th>Central lobby players</th><td>{}</td></tr>",
+            "<tr><th>Active lobbies</th><td>{}</td></tr>",
+            "<tr><th>Active matches</th><td>{}</td></tr>",
+            "</table>",
+            "<h2>Tick Health</h2><table>",
+            "<tr><th>Uptime seconds</th><td>{:.3}</td></tr>",
+            "<tr><th>Tick iterations</th><td>{}</td></tr>",
+            "<tr><th>Last tick ms</th><td>{:.3}</td></tr>",
+            "<tr><th>Max tick ms</th><td>{:.3}</td></tr>",
+            "</table>",
+            "<h2>Transport</h2><table>",
+            "<tr><th>Ingress accepted</th><td>{}</td></tr>",
+            "<tr><th>Ingress rejected</th><td>{}</td></tr>",
+            "<tr><th>Websocket sessions bound</th><td>{}</td></tr>",
+            "<tr><th>Websocket sessions active</th><td>{}</td></tr>",
+            "<tr><th>Websocket disconnects</th><td>{}</td></tr>",
+            "<tr><th>Websocket rejections</th><td>{}</td></tr>",
+            "</table>{}</body></html>"
+        ),
+        connected_players,
+        bound_connections,
+        active_sessions,
+        central_lobby_players,
+        active_lobbies,
+        active_matches,
+        uptime.as_secs_f64(),
+        tick_iterations,
+        tick_last_ms,
+        tick_max_ms,
+        ingress_accepted,
+        ingress_rejected,
+        websocket_bound,
+        websocket_active,
+        websocket_disconnects,
+        websocket_rejections,
+        metrics_block,
+    )
+}
+
+fn html_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 /// Upgrades `/ws` into the websocket signaling channel used for `WebRTC` setup.

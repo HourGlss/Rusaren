@@ -25,3 +25,6 @@ Docs:
 - 15_deployment_ops.md
 - 16_runbooks.md
 - 17_linode_deploy.md
+- 18_performance_budgets.md
+- 19_architecture_governance.md
+- adr/README.md

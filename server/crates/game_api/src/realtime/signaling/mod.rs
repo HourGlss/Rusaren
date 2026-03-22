@@ -7,6 +7,8 @@ use super::sessions::{
 
 mod transport;
 
+#[cfg(test)]
+pub(crate) use transport::validate_webrtc_packet_channel;
 use transport::{
     accept_webrtc_offer, add_remote_ice_candidate, create_signaling_transport,
     install_webrtc_callbacks,

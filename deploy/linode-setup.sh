@@ -24,7 +24,10 @@ TURN_EXTERNAL_IP="${TURN_EXTERNAL_IP:-}"
 TURN_TTL_SECONDS="${TURN_TTL_SECONDS:-3600}"
 PROMETHEUS_BIND="${PROMETHEUS_BIND:-127.0.0.1:9090}"
 RARENA_RUST_LOG="${RARENA_RUST_LOG:-info,axum=info,tower_http=info}"
+RARENA_ADMIN_USERNAME="${RARENA_ADMIN_USERNAME:-admin}"
+RARENA_ADMIN_PASSWORD="${RARENA_ADMIN_PASSWORD:-}"
 ADMIN_CIDR="${ADMIN_CIDR:-}"
+SMOKE_INTERVAL_MINUTES="${SMOKE_INTERVAL_MINUTES:-5}"
 RUN_DEPLOY="${RUN_DEPLOY:-1}"
 
 log() {
@@ -267,6 +270,8 @@ TURN_REALM=${TURN_REALM}
 TURN_SHARED_SECRET=${TURN_SHARED_SECRET}
 TURN_EXTERNAL_IP=${TURN_EXTERNAL_IP}
 TURN_TTL_SECONDS=${TURN_TTL_SECONDS}
+RARENA_ADMIN_USERNAME=${RARENA_ADMIN_USERNAME}
+RARENA_ADMIN_PASSWORD=${RARENA_ADMIN_PASSWORD}
 EOF
     chown "${DEPLOY_USER}:${DEPLOY_USER}" "${env_file}"
 }
@@ -298,6 +303,40 @@ EOF
     systemctl enable rusaren-compose.service
 }
 
+install_smoke_probe_timer() {
+    local service_file="/etc/systemd/system/rusaren-smoke.service"
+    local timer_file="/etc/systemd/system/rusaren-smoke.timer"
+
+    log "installing hosted smoke probe timer"
+    cat > "${service_file}" <<EOF
+[Unit]
+Description=Rusaren hosted smoke probes
+After=rusaren-compose.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=${DEPLOY_DIR}
+ExecStart=/usr/bin/env bash ${DEPLOY_DIR}/deploy/host-smoke.sh --env-file ${DEPLOY_DIR}/deploy/.env
+EOF
+
+    cat > "${timer_file}" <<EOF
+[Unit]
+Description=Run Rusaren hosted smoke probes on a schedule
+
+[Timer]
+OnBootSec=5m
+OnUnitActiveSec=${SMOKE_INTERVAL_MINUTES}m
+Unit=rusaren-smoke.service
+
+[Install]
+WantedBy=timers.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable --now rusaren-smoke.timer
+}
+
 main() {
     require_value PUBLIC_HOST
     require_value ACME_EMAIL
@@ -312,6 +351,9 @@ main() {
 
     if [[ -z "${TURN_SHARED_SECRET}" ]]; then
         TURN_SHARED_SECRET="$(openssl rand -hex 32)"
+    fi
+    if [[ -z "${RARENA_ADMIN_PASSWORD}" ]]; then
+        RARENA_ADMIN_PASSWORD="$(openssl rand -base64 24 | tr -d '\n')"
     fi
 
     if [[ -z "${TURN_EXTERNAL_IP}" ]]; then
@@ -330,12 +372,15 @@ main() {
     prepare_repo
     write_deploy_env
     install_compose_service
+    install_smoke_probe_timer
 
     if [[ "${RUN_DEPLOY}" == "1" ]]; then
         systemctl restart rusaren-compose.service
     fi
 
     log "bootstrap complete"
+    log "private admin dashboard: https://${PUBLIC_HOST}/adminz (user ${RARENA_ADMIN_USERNAME})"
+    log "smoke timer: rusaren-smoke.timer every ${SMOKE_INTERVAL_MINUTES} minute(s)"
     log "Cloud Firewall should still be enabled in Linode to restrict SSH source ranges at the network edge"
 }
 

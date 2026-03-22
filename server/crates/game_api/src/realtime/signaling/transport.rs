@@ -467,7 +467,7 @@ async fn handle_webrtc_binary_message(
 }
 
 /// Verifies that a packet arrived on the correct negotiated data channel.
-fn validate_webrtc_packet_channel(
+pub(crate) fn validate_webrtc_packet_channel(
     packet: &[u8],
     expected_channel: ChannelId,
 ) -> Result<(), String> {

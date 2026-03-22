@@ -15,71 +15,133 @@ impl ServerApp {
     ) {
         let bound_player = self.connections.get(&connection_id).copied();
         if let Ok((header, command)) = ClientControlCommand::decode_packet(packet) {
-            match bound_player {
-                Some(player_id) => {
-                    if let Some(player) = self.players.get_mut(&player_id) {
-                        if let Err(error) = player.inbound_control.observe(header.seq) {
-                            self.send_error(transport, player_id, &error.to_string());
-                            return;
-                        }
-                    }
-
-                    self.handle_control_command(
-                        transport,
-                        connection_id,
-                        player_id,
-                        header.seq,
-                        command,
-                    );
-                }
-                None => match command {
-                    ClientControlCommand::Connect { player_name } => {
-                        self.handle_connect_command(
-                            transport,
-                            connection_id,
-                            header.seq,
-                            player_name,
-                        );
-                    }
-                    _ => self.send_direct_error(
-                        transport,
-                        connection_id,
-                        "first packet must be a connect command",
-                    ),
-                },
-            }
+            self.handle_control_packet(transport, connection_id, bound_player, header.seq, command);
             return;
         }
 
         match ValidatedInputFrame::decode_packet(packet) {
-            Ok((header, frame)) => match bound_player {
-                Some(player_id) => {
-                    if let Some(player) = self.players.get_mut(&player_id) {
-                        if let Err(error) = player.inbound_input.observe(header.seq) {
-                            self.send_error(transport, player_id, &error.to_string());
-                            return;
-                        }
-                        if let Err(error) =
-                            player.observe_client_input_tick(frame.client_input_tick)
-                        {
-                            self.send_error(transport, player_id, &error);
-                            return;
-                        }
-                    }
-
-                    self.handle_input_frame(transport, player_id, frame);
-                }
-                None => self.send_direct_error(
-                    transport,
-                    connection_id,
-                    "first packet must be a connect command",
-                ),
-            },
-            Err(error) => match bound_player {
-                Some(player_id) => self.send_error(transport, player_id, &error.to_string()),
-                None => self.send_direct_error(transport, connection_id, &error.to_string()),
-            },
+            Ok((header, frame)) => {
+                self.handle_input_packet(transport, connection_id, bound_player, header.seq, frame)
+            }
+            Err(error) => self.handle_invalid_packet(transport, connection_id, bound_player, error),
         }
+    }
+
+    fn handle_control_packet<T: AppTransport>(
+        &mut self,
+        transport: &mut T,
+        connection_id: ConnectionId,
+        bound_player: Option<PlayerId>,
+        seq: u32,
+        command: ClientControlCommand,
+    ) {
+        match bound_player {
+            Some(player_id) => {
+                if !self.observe_inbound_control_sequence(transport, player_id, seq) {
+                    return;
+                }
+
+                self.handle_control_command(transport, connection_id, player_id, seq, command);
+            }
+            None => self.handle_unbound_control_packet(transport, connection_id, seq, command),
+        }
+    }
+
+    fn handle_input_packet<T: AppTransport>(
+        &mut self,
+        transport: &mut T,
+        connection_id: ConnectionId,
+        bound_player: Option<PlayerId>,
+        seq: u32,
+        frame: ValidatedInputFrame,
+    ) {
+        let Some(player_id) = bound_player else {
+            self.send_direct_error(
+                transport,
+                connection_id,
+                "first packet must be a connect command",
+            );
+            return;
+        };
+        if !self.observe_inbound_input(transport, player_id, seq, frame.client_input_tick) {
+            return;
+        }
+
+        self.handle_input_frame(transport, player_id, frame);
+    }
+
+    fn handle_invalid_packet<T: AppTransport>(
+        &mut self,
+        transport: &mut T,
+        connection_id: ConnectionId,
+        bound_player: Option<PlayerId>,
+        error: game_net::PacketError,
+    ) {
+        match bound_player {
+            Some(player_id) => self.send_error(transport, player_id, &error.to_string()),
+            None => self.send_direct_error(transport, connection_id, &error.to_string()),
+        }
+    }
+
+    fn handle_unbound_control_packet<T: AppTransport>(
+        &mut self,
+        transport: &mut T,
+        connection_id: ConnectionId,
+        seq: u32,
+        command: ClientControlCommand,
+    ) {
+        match command {
+            ClientControlCommand::Connect { player_name } => {
+                self.handle_connect_command(transport, connection_id, seq, player_name);
+            }
+            _ => self.send_direct_error(
+                transport,
+                connection_id,
+                "first packet must be a connect command",
+            ),
+        }
+    }
+
+    fn observe_inbound_control_sequence<T: AppTransport>(
+        &mut self,
+        transport: &mut T,
+        player_id: PlayerId,
+        seq: u32,
+    ) -> bool {
+        let Some(player) = self.players.get_mut(&player_id) else {
+            return true;
+        };
+
+        match player.inbound_control.observe(seq) {
+            Ok(()) => true,
+            Err(error) => {
+                self.send_error(transport, player_id, &error.to_string());
+                false
+            }
+        }
+    }
+
+    fn observe_inbound_input<T: AppTransport>(
+        &mut self,
+        transport: &mut T,
+        player_id: PlayerId,
+        seq: u32,
+        client_input_tick: u32,
+    ) -> bool {
+        let Some(player) = self.players.get_mut(&player_id) else {
+            return true;
+        };
+
+        if let Err(error) = player.inbound_input.observe(seq) {
+            self.send_error(transport, player_id, &error.to_string());
+            return false;
+        }
+        if let Err(error) = player.observe_client_input_tick(client_input_tick) {
+            self.send_error(transport, player_id, &error);
+            return false;
+        }
+
+        true
     }
 
     pub(super) fn handle_control_command<T: AppTransport>(

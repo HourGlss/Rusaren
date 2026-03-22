@@ -108,6 +108,7 @@ async fn main() {
             web_client_root: config.web_client_root,
             observability: DevServerOptions::default().observability,
             webrtc: config.webrtc,
+            admin_auth: config.admin_auth,
         },
     )
     .await
