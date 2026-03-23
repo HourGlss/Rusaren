@@ -1,7 +1,7 @@
 # Runbooks
 
 ## Deploy or update the hosted stack
-1. Export the Godot web client into `server/static/webclient/`.
+1. Export the Godot web client into `server/static/webclient/` with `bash server/scripts/export-web-client.sh`.
 2. Update `deploy/.env`.
 3. Run:
    - `docker compose --env-file deploy/.env -f deploy/docker-compose.yml build`
@@ -32,7 +32,7 @@ If the deploy target is Linode, follow the host/DNS/firewall setup in `17_linode
 This means the backend started, but the web export bundle is missing from `server/static/webclient/`.
 
 Fix:
-1. Run `server/scripts/export-web-client.ps1`.
+1. Run `bash server/scripts/export-web-client.sh`.
 2. Rebuild the backend image.
 3. Restart `rarena-server`.
 

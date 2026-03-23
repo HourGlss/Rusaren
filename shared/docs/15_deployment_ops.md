@@ -142,7 +142,7 @@ Current operator surface:
 - Docker-published service ports should still be protected by Linode Cloud Firewall rules because Docker documents that published container ports bypass `ufw` filtering
 
 ## Hosted smoke probes
-- `deploy/linode-deploy.sh` now runs local smoke probes against `http://127.0.0.1:3000` after the compose stack reports healthy
+- `deploy/linode-deploy.sh` now waits for the backend container healthcheck before it runs hosted smoke probes
 - the same deploy script then runs hosted smoke probes against `https://$PUBLIC_HOST` unless `RUN_PUBLIC_SMOKE=0`
 - `deploy/host-smoke.sh` validates `/`, `/healthz`, `/session/bootstrap`, and `/adminz`
 - `deploy/linode-setup.sh` installs a `rusaren-smoke.timer` systemd timer so the host keeps re-running the public probes after deploy

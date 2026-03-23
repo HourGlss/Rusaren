@@ -8,7 +8,8 @@ Use the structure notes below to find the right file or subfolder quickly.
 - `build-docs.ps1`: Builds the mdBook, rustdoc, and documentation artifacts published by the quality pipeline.
 - `check-core-coverage.ps1`: Checks the core runtime coverage gate after report generation.
 - `docker-smoke.ps1`: Builds and smoke-tests the Docker deployment path locally.
-- `export-web-client.ps1`: Exports the Godot web client into the backend static root.
+- `export-web-client.ps1`: Windows-friendly Godot web export helper for the backend static root.
+- `export-web-client.sh`: Linux-friendly Godot web export helper for the backend static root.
 - `generate-reports.ps1`: Generates the backend HTML, JSON, complexity, docs, and fuzz reports.
 - `install-tools.ps1`: Installs the Rust, fuzzing, docs, and analysis tools used by the repo scripts.
 - `play-local.ps1`: Starts the easiest local end-to-end browser path for the game.

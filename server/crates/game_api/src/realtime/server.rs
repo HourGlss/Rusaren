@@ -373,7 +373,7 @@ fn render_missing_web_client_page(web_client_root: &Path) -> String {
             "<h1>Rusaren web client is not built yet.</h1>",
             "<p>Build the Godot Web export into the server static root, then reload this page.</p>",
             "<p>Expected export root: <code>{}</code></p>",
-            "<p>Suggested command: <code>powershell -NoProfile -ExecutionPolicy Bypass -File server/scripts/export-web-client.ps1</code></p>",
+            "<p>Suggested command: <code>bash server/scripts/export-web-client.sh</code></p>",
             "</body></html>"
         ),
         web_client_root.display()

@@ -152,6 +152,9 @@ Export the Godot web client into the Rust server static root:
 
 ```powershell
 ./server/scripts/export-web-client.ps1 -GodotExecutable <GODOT_EXECUTABLE> -InstallTemplates
+
+# Linux
+bash server/scripts/export-web-client.sh --godot-bin godot4
 ```
 
 If a local `Godot/webrtc/` bundle exists, that export script also syncs it into the ignored local project path `client/godot/webrtc/` so native/headless Godot checks can use the same extension bundle.

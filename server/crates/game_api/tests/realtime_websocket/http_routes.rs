@@ -41,7 +41,7 @@ async fn hosted_root_returns_a_clear_placeholder_when_the_web_bundle_is_missing(
     let (status_code, body) = http_get(&base_url, "/").await;
     assert_eq!(status_code, 503);
     assert!(body.contains("Rusaren web client is not built yet."));
-    assert!(body.contains("export-web-client.ps1"));
+    assert!(body.contains("export-web-client.sh"));
 
     server.shutdown().await;
 }

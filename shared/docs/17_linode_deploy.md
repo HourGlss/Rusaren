@@ -146,8 +146,8 @@ They are not tracked in git, so you must either:
 Local-first path:
 1. On the dev machine, run:
 
-```powershell
-./server/scripts/export-web-client.ps1 -GodotExecutable <GODOT_EXECUTABLE> -InstallTemplates
+```bash
+bash server/scripts/export-web-client.sh --godot-bin godot4
 ```
 
 2. Copy the repo to the host.
@@ -178,7 +178,7 @@ If the admin password is omitted, the setup script generates one and writes it t
 
 ### 8. Build and start the stack
 
-`deploy/linode-deploy.sh` validates the compose file, builds the image, starts the stack, and waits for `/healthz`.
+`deploy/linode-deploy.sh` validates the compose file, builds the image, starts the stack, waits for the backend container healthcheck, and then runs hosted smoke probes.
 
 ### 9. Verify the live test
 
