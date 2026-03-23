@@ -332,8 +332,13 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
+User=${DEPLOY_USER}
+Group=${DEPLOY_USER}
+SupplementaryGroups=docker
+Environment=HOME=/home/${DEPLOY_USER}
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin
 WorkingDirectory=${DEPLOY_DIR}
-ExecStart=/usr/bin/env bash ${DEPLOY_DIR}/deploy/linode-deploy.sh
+ExecStart=/usr/bin/env bash ${DEPLOY_DIR}/deploy/deploy.sh
 ExecStop=/usr/bin/docker compose --env-file ${DEPLOY_DIR}/deploy/.env -f ${DEPLOY_DIR}/deploy/docker-compose.yml down
 TimeoutStartSec=0
 
@@ -358,6 +363,10 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
+User=${DEPLOY_USER}
+Group=${DEPLOY_USER}
+Environment=HOME=/home/${DEPLOY_USER}
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin
 WorkingDirectory=${DEPLOY_DIR}
 ExecStart=/usr/bin/env bash ${DEPLOY_DIR}/deploy/host-smoke.sh --env-file ${DEPLOY_DIR}/deploy/.env
 EOF

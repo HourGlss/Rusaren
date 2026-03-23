@@ -34,6 +34,17 @@ Defaults:
 EOF
 }
 
+resolve_home_dir() {
+    if [[ -n "${HOME:-}" ]]; then
+        printf '%s\n' "${HOME}"
+        return
+    fi
+
+    local current_user
+    current_user="$(id -un)"
+    getent passwd "${current_user}" | cut -d: -f6
+}
+
 find_godot_bin() {
     if [[ -n "${GODOT_BIN}" ]]; then
         [[ -x "${GODOT_BIN}" ]] || fatal "Godot binary is not executable: ${GODOT_BIN}"
@@ -53,6 +64,16 @@ find_godot_bin() {
 
     if command -v godot >/dev/null 2>&1; then
         command -v godot
+        return
+    fi
+
+    if [[ -x /snap/bin/godot4 ]]; then
+        printf '%s\n' /snap/bin/godot4
+        return
+    fi
+
+    if [[ -x /snap/bin/godot-4 ]]; then
+        printf '%s\n' /snap/bin/godot-4
         return
     fi
 
@@ -77,6 +98,8 @@ parse_godot_build_info() {
 
 resolve_template_root() {
     local godot_bin="$1"
+    local home_dir
+    home_dir="$(resolve_home_dir)"
 
     if [[ -n "${TEMPLATE_ROOT}" ]]; then
         printf '%s\n' "${TEMPLATE_ROOT}"
@@ -86,7 +109,7 @@ resolve_template_root() {
     if [[ "${godot_bin}" == *"/snap/"* || "${godot_bin}" == "/snap/bin/"* ]]; then
         local snap_name
         snap_name="$(basename -- "${godot_bin}")"
-        printf '%s\n' "${HOME}/snap/${snap_name}/current/.local/share/godot/export_templates"
+        printf '%s\n' "${home_dir}/snap/${snap_name}/current/.local/share/godot/export_templates"
         return
     fi
 
@@ -95,7 +118,7 @@ resolve_template_root() {
         return
     fi
 
-    printf '%s\n' "${HOME}/.local/share/godot/export_templates"
+    printf '%s\n' "${home_dir}/.local/share/godot/export_templates"
 }
 
 ensure_templates_installed() {
