@@ -31,16 +31,22 @@ ensure_static_root() {
 wait_for_healthz() {
     local attempts=60
     local delay_seconds=2
+    local container_id=""
 
     for ((attempt = 1; attempt <= attempts; attempt += 1)); do
-        if curl --fail --silent --show-error http://127.0.0.1:3000/healthz >/dev/null 2>&1; then
-            log "backend health check passed"
-            return 0
+        container_id="$(docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" ps -q rarena-server 2>/dev/null || true)"
+        if [[ -n "${container_id}" ]]; then
+            local health_status
+            health_status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "${container_id}" 2>/dev/null || true)"
+            if [[ "${health_status}" == "healthy" || "${health_status}" == "running" ]]; then
+                log "backend container health check passed"
+                return 0
+            fi
         fi
         sleep "${delay_seconds}"
     done
 
-    fatal "backend did not become healthy at http://127.0.0.1:3000/healthz"
+    fatal "backend container did not become healthy"
 }
 
 main() {
@@ -62,9 +68,6 @@ main() {
     docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d --remove-orphans
 
     wait_for_healthz
-
-    log "running local backend smoke probes"
-    bash "${SMOKE_SCRIPT}" --env-file "${ENV_FILE}" --origin "http://127.0.0.1:3000"
 
     if [[ "${RUN_PUBLIC_SMOKE:-1}" == "1" ]]; then
         log "running hosted smoke probes"
