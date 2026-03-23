@@ -103,13 +103,27 @@ ensure_templates_installed() {
     local template_root
     template_root="$(resolve_template_root "${godot_bin}")"
     local template_dir="${template_root}/${GODOT_TEMPLATE_DIR}"
+    local required_templates=(
+        web_debug.zip
+        web_release.zip
+        web_nothreads_debug.zip
+        web_nothreads_release.zip
+    )
+    local missing_templates=()
+    local template_name
 
-    if find "${template_dir}" -type f >/dev/null 2>&1; then
+    for template_name in "${required_templates[@]}"; do
+        if [[ ! -f "${template_dir}/${template_name}" ]]; then
+            missing_templates+=("${template_name}")
+        fi
+    done
+
+    if [[ "${#missing_templates[@]}" -eq 0 ]]; then
         return
     fi
 
     if [[ "${INSTALL_TEMPLATES}" != "1" ]]; then
-        fatal "Godot export templates were not found at ${template_dir}. Re-run without --skip-template-install or install them manually."
+        fatal "Godot export templates are incomplete at ${template_dir}. Missing: ${missing_templates[*]}. Re-run without --skip-template-install or install them manually."
     fi
 
     command -v curl >/dev/null 2>&1 || fatal "curl is required to install Godot export templates"
@@ -120,9 +134,10 @@ ensure_templates_installed() {
     archive_path="${temp_root}/godot-templates.tpz"
     extract_root="${temp_root}/extract"
 
+    rm -rf "${template_dir}"
     mkdir -p "${template_dir}" "${extract_root}"
 
-    log "downloading Godot export templates for ${GODOT_VERSION_TAG}"
+    log "downloading Godot export templates for ${GODOT_VERSION_TAG} into ${template_dir}"
     curl -L --fail --output "${archive_path}" \
         "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION_TAG}/Godot_v${GODOT_VERSION_TAG}_export_templates.tpz"
 
