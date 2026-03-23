@@ -1,10 +1,10 @@
 # Runbooks
 
 ## Deploy or update the hosted stack
-1. On Linux hosts, let `deploy/linode-deploy.sh` rebuild the Godot web client by default; if you want to do it manually first, run `bash server/scripts/export-web-client.sh`.
+1. On Linux hosts, let `deploy/deploy.sh` rebuild the Godot web client by default; if you want to do it manually first, run `bash server/scripts/export-web-client.sh`.
 2. Update `deploy/.env`.
 3. Run:
-   - `sudo bash deploy/linode-deploy.sh`
+   - `sudo bash deploy/deploy.sh`
 4. Check:
    - `https://domain.com/`
    - `https://domain.com/healthz`
@@ -32,7 +32,7 @@ This means the backend started, but the web export bundle is missing from `serve
 
 Fix:
 1. Run `bash server/scripts/export-web-client.sh`.
-2. Rerun `sudo bash deploy/linode-deploy.sh`.
+2. Rerun `sudo bash deploy/deploy.sh`.
 
 If the host should not build the bundle automatically, check that `BUILD_WEB_CLIENT` was not set to `0`.
 

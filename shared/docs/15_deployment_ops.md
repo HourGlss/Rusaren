@@ -27,6 +27,8 @@ Files:
 - `deploy/prometheus.yml`
 - `deploy/coturn/turnserver.conf`
 - `deploy/.env.example`
+- `deploy/setup.sh`
+- `deploy/deploy.sh`
 - `deploy/linode-setup.sh`
 - `deploy/linode-deploy.sh`
 - `deploy/host-smoke.sh`
@@ -55,9 +57,9 @@ What each part does:
 
 ## First deploy
 1. On the Linode host, run:
-   - `sudo PUBLIC_HOST=<your domain> ACME_EMAIL=<your email> bash deploy/linode-setup.sh`
+   - `sudo PUBLIC_HOST=<your domain> ACME_EMAIL=<your email> bash deploy/setup.sh`
 2. For later updates from the repo root on the host, run:
-   - `sudo bash deploy/linode-deploy.sh`
+   - `sudo bash deploy/deploy.sh`
 3. Verify:
    - `https://pvpnowfast.com/`
    - `https://pvpnowfast.com/healthz`
@@ -144,7 +146,7 @@ Current operator surface:
 - Docker-published service ports should still be protected by Linode Cloud Firewall rules because Docker documents that published container ports bypass `ufw` filtering
 
 ## Hosted smoke probes
-- `deploy/linode-deploy.sh` now waits for the backend container healthcheck before it runs hosted smoke probes
+- `deploy/deploy.sh` now waits for the backend container healthcheck before it runs hosted smoke probes
 - the same deploy script now rebuilds the Godot web bundle on Linux by default unless `BUILD_WEB_CLIENT=0`
 - the same deploy script then runs hosted smoke probes against `https://$PUBLIC_HOST` unless `RUN_PUBLIC_SMOKE=0`
 - `deploy/host-smoke.sh` validates `/`, `/healthz`, `/session/bootstrap`, and `/adminz`

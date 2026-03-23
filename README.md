@@ -479,9 +479,9 @@ The checked-in `0.8.0` hosted path is:
 - `deploy/.env.example`
 
 High-level hosted flow:
-1. let `deploy/linode-deploy.sh` rebuild the Godot web client on Linux, or manually export it into `server/static/webclient/`
+1. let `deploy/deploy.sh` rebuild the Godot web client on Linux, or manually export it into `server/static/webclient/`
 2. copy `deploy/.env.example` to `deploy/.env` and fill the real host and secrets
-3. run `sudo bash deploy/linode-deploy.sh`
+3. run `sudo bash deploy/deploy.sh`
 
 For the current live-domain target:
 - `https://pvpnowfast.com/` should serve the game shell directly
