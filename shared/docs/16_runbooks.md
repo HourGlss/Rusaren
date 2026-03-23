@@ -2,7 +2,7 @@
 
 ## Deploy or update the hosted stack
 1. On Linux hosts, let `deploy/deploy.sh` rebuild the Godot web client by default; if you want to do it manually first, run `bash server/scripts/export-web-client.sh`.
-2. Update `deploy/.env`.
+2. Update `~/rusaren-config/config.env`.
 3. Run:
    - `sudo bash deploy/deploy.sh`
 4. Check:
@@ -10,7 +10,7 @@
    - `https://domain.com/healthz`
    - `https://domain.com/adminz`
    - Prometheus scrape status
-   - `bash deploy/host-smoke.sh --env-file deploy/.env`
+   - `bash deploy/host-smoke.sh --env-file ~/rusaren-config/config.env`
 
 Success criteria:
 - root page serves the shell
@@ -24,7 +24,7 @@ If the deploy target is Linode, follow the host/DNS/firewall setup in `17_linode
 1. Restore the previous image or git revision.
 2. Rebuild or pull the prior backend image.
 3. Run:
-   - `docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d`
+   - `docker compose --env-file ~/rusaren-config/config.env -f deploy/docker-compose.yml up -d`
 4. Re-check `https://domain.com/healthz` and Prometheus target health.
 
 ## Root page shows the “web client is not built yet” placeholder
@@ -52,13 +52,13 @@ Check:
 
 ## `/adminz` is unavailable
 Check:
-1. `RARENA_ADMIN_USERNAME` and `RARENA_ADMIN_PASSWORD` exist in `deploy/.env`
+1. `RARENA_ADMIN_USERNAME` and `RARENA_ADMIN_PASSWORD` exist in `~/rusaren-config/config.env`
 2. `docker compose logs rarena-server --tail=200`
-3. `bash deploy/host-smoke.sh --env-file deploy/.env`
+3. `bash deploy/host-smoke.sh --env-file ~/rusaren-config/config.env`
 4. that you are using the expected credentials and did not leave the example password in place
 
 ## Logs are too noisy or too quiet
-Set `RARENA_RUST_LOG` in `deploy/.env`.
+Set `RARENA_RUST_LOG` in `~/rusaren-config/config.env`.
 
 Examples:
 - `info,axum=info,tower_http=info`

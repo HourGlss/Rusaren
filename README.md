@@ -476,11 +476,12 @@ The checked-in `0.8.0` hosted path is:
 - `deploy/Caddyfile`
 - `deploy/prometheus.yml`
 - `deploy/coturn/turnserver.conf`
-- `deploy/.env.example`
+- `deploy/config.env.example`
+- `deploy/docker-compose.override.example.yml`
 
 High-level hosted flow:
 1. let `deploy/deploy.sh` rebuild the Godot web client on Linux, or manually export it into `server/static/webclient/`
-2. copy `deploy/.env.example` to `deploy/.env` and fill the real host and secrets
+2. let `deploy/setup.sh` create `~/rusaren-config/config.env`, then edit that external file with the real host and secrets
 3. run `sudo bash deploy/deploy.sh`
 
 For the current live-domain target:

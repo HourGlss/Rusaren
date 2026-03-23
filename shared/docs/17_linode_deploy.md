@@ -73,7 +73,8 @@ That script now handles:
 - `snapd`, `unzip`, and a compatible Godot snap by default so the host can build the web export
 - Docker Engine install from Docker's apt repository
 - Docker daemon settings for `buildkit`, `live-restore`, and rotating `local` logs
-- `deploy/.env` creation
+- `~/rusaren-config/config.env` creation
+- `~/rusaren-config/docker-compose.override.yml` creation
 - a `rusaren-compose.service` systemd unit
 - a `rusaren-smoke.timer` systemd timer
 - first stack bring-up through `deploy/deploy.sh`
@@ -165,7 +166,7 @@ rsync -avz --delete ./ user@app-host:/opt/rusaren/
 
 ### 7. Configure environment values
 
-`deploy/setup.sh` writes `deploy/.env`.
+`deploy/setup.sh` writes `~/rusaren-config/config.env` and `~/rusaren-config/docker-compose.override.yml`.
 Set these variables before running it if you want to override the defaults:
 - `PUBLIC_HOST=pvpnowfast.com`
 - `ACME_EMAIL=<your real email>`
@@ -178,7 +179,7 @@ Set these variables before running it if you want to override the defaults:
 - `RARENA_ADMIN_PASSWORD=<admin password>`
 
 If TURN is on a separate Linode, keep the same shared secret and public host aligned with that machine.
-If the admin password is omitted, the setup script generates one and writes it to `deploy/.env`.
+If the admin password is omitted, the setup script generates one and writes it to `~/rusaren-config/config.env`.
 
 ### 8. Build and start the stack
 
@@ -201,10 +202,10 @@ sudo BUILD_WEB_CLIENT=0 bash deploy/deploy.sh
 Check:
 
 ```bash
-docker compose --env-file deploy/.env -f deploy/docker-compose.yml ps
-docker compose --env-file deploy/.env -f deploy/docker-compose.yml logs rarena-server --tail=200
-docker compose --env-file deploy/.env -f deploy/docker-compose.yml logs caddy --tail=200
-docker compose --env-file deploy/.env -f deploy/docker-compose.yml logs coturn --tail=200
+docker compose --env-file ~/rusaren-config/config.env -f deploy/docker-compose.yml ps
+docker compose --env-file ~/rusaren-config/config.env -f deploy/docker-compose.yml logs rarena-server --tail=200
+docker compose --env-file ~/rusaren-config/config.env -f deploy/docker-compose.yml logs caddy --tail=200
+docker compose --env-file ~/rusaren-config/config.env -f deploy/docker-compose.yml logs coturn --tail=200
 ```
 
 Then test:
@@ -218,7 +219,7 @@ Then test:
 Also run:
 
 ```bash
-bash deploy/host-smoke.sh --env-file deploy/.env
+bash deploy/host-smoke.sh --env-file ~/rusaren-config/config.env
 systemctl status rusaren-smoke.timer
 ```
 

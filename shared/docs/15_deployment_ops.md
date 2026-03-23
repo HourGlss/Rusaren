@@ -26,7 +26,8 @@ Files:
 - `deploy/Caddyfile`
 - `deploy/prometheus.yml`
 - `deploy/coturn/turnserver.conf`
-- `deploy/.env.example`
+- `deploy/config.env.example`
+- `deploy/docker-compose.override.example.yml`
 - `deploy/setup.sh`
 - `deploy/deploy.sh`
 - `deploy/linode-setup.sh`
@@ -53,7 +54,9 @@ What each part does:
   - `3478/tcp`
   - `3478/udp`
   - `49160-49200/udp`
-- a copy of `deploy/.env.example` saved as `deploy/.env` with real values
+- a host-side config directory, by default `~/rusaren-config/`, with:
+  - `config.env`
+  - optional `docker-compose.override.yml`
 
 ## First deploy
 1. On the Linode host, run:
@@ -133,7 +136,7 @@ Current logs:
 
 Current operator surface:
 - `/adminz` is a private read-only dashboard protected by deploy-time basic auth
-- `deploy/.env` now carries `RARENA_ADMIN_USERNAME` and `RARENA_ADMIN_PASSWORD`
+- `~/rusaren-config/config.env` now carries `RARENA_ADMIN_USERNAME` and `RARENA_ADMIN_PASSWORD`
 - `deploy/host-smoke.sh` checks that `/adminz` rejects anonymous access and renders with valid credentials when the admin surface is enabled
 
 ## Security posture for this milestone

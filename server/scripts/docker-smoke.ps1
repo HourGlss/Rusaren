@@ -82,7 +82,7 @@ try {
     New-PlaceholderWebBundle -Root $tempWebRoot
 
     Invoke-CheckedDockerCommand -Description "validate compose file" -Command {
-        docker compose --env-file deploy/.env.example -f deploy/docker-compose.yml config | Out-Host
+        docker compose --env-file deploy/config.env.example -f deploy/docker-compose.yml config | Out-Host
     }
 
     Invoke-CheckedDockerCommand -Description "build server image" -Command {

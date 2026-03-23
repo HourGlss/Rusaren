@@ -11,6 +11,7 @@ REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 
 DEPLOY_USER="${DEPLOY_USER:-${SUDO_USER:-rarena}}"
 DEPLOY_DIR="${DEPLOY_DIR:-${REPO_ROOT}}"
+CONFIG_DIR="${CONFIG_DIR:-/home/${DEPLOY_USER}/rusaren-config}"
 REPO_URL="${REPO_URL:-https://github.com/HourGlss/Rusaren.git}"
 REPO_REF="${REPO_REF:-main}"
 TIMEZONE="${TIMEZONE:-UTC}"
@@ -297,11 +298,20 @@ prepare_repo() {
     chown -R "${DEPLOY_USER}:${DEPLOY_USER}" "${DEPLOY_DIR}"
 }
 
+prepare_config_dir() {
+    install -d -m 700 "${CONFIG_DIR}"
+    chown "${DEPLOY_USER}:${DEPLOY_USER}" "${CONFIG_DIR}"
+}
+
 write_deploy_env() {
-    local env_file="${DEPLOY_DIR}/deploy/.env"
+    local env_file="${CONFIG_DIR}/config.env"
+
+    if [[ -f "${env_file}" ]]; then
+        log "preserving existing ${env_file}"
+        return
+    fi
 
     log "writing ${env_file}"
-    backup_if_present "${env_file}"
     cat > "${env_file}" <<EOF
 PUBLIC_HOST=${PUBLIC_HOST}
 ACME_EMAIL=${ACME_EMAIL}
@@ -316,6 +326,23 @@ RARENA_ADMIN_USERNAME=${RARENA_ADMIN_USERNAME}
 RARENA_ADMIN_PASSWORD=${RARENA_ADMIN_PASSWORD}
 EOF
     chown "${DEPLOY_USER}:${DEPLOY_USER}" "${env_file}"
+    chmod 600 "${env_file}"
+}
+
+write_compose_override() {
+    local override_file="${CONFIG_DIR}/docker-compose.override.yml"
+
+    if [[ -f "${override_file}" ]]; then
+        log "preserving existing ${override_file}"
+        return
+    fi
+
+    log "writing ${override_file}"
+    cat > "${override_file}" <<'EOF'
+services: {}
+EOF
+    chown "${DEPLOY_USER}:${DEPLOY_USER}" "${override_file}"
+    chmod 600 "${override_file}"
 }
 
 install_compose_service() {
@@ -337,9 +364,10 @@ Group=${DEPLOY_USER}
 SupplementaryGroups=docker
 Environment=HOME=/home/${DEPLOY_USER}
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin
+Environment=CONFIG_DIR=${CONFIG_DIR}
 WorkingDirectory=${DEPLOY_DIR}
 ExecStart=/usr/bin/env bash ${DEPLOY_DIR}/deploy/deploy.sh
-ExecStop=/usr/bin/docker compose --env-file ${DEPLOY_DIR}/deploy/.env -f ${DEPLOY_DIR}/deploy/docker-compose.yml down
+ExecStop=/usr/bin/env bash ${DEPLOY_DIR}/deploy/deploy.sh --down
 TimeoutStartSec=0
 
 [Install]
@@ -367,8 +395,9 @@ User=${DEPLOY_USER}
 Group=${DEPLOY_USER}
 Environment=HOME=/home/${DEPLOY_USER}
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin
+Environment=CONFIG_DIR=${CONFIG_DIR}
 WorkingDirectory=${DEPLOY_DIR}
-ExecStart=/usr/bin/env bash ${DEPLOY_DIR}/deploy/host-smoke.sh --env-file ${DEPLOY_DIR}/deploy/.env
+ExecStart=/usr/bin/env bash ${DEPLOY_DIR}/deploy/host-smoke.sh --env-file ${CONFIG_DIR}/config.env
 EOF
 
     cat > "${timer_file}" <<EOF
@@ -422,7 +451,9 @@ main() {
     install_docker
     configure_docker_daemon
     prepare_repo
+    prepare_config_dir
     write_deploy_env
+    write_compose_override
     install_compose_service
     install_smoke_probe_timer
 
@@ -431,6 +462,7 @@ main() {
     fi
 
     log "bootstrap complete"
+    log "deploy config directory: ${CONFIG_DIR}"
     log "private admin dashboard: https://${PUBLIC_HOST}/adminz (user ${RARENA_ADMIN_USERNAME})"
     log "smoke timer: rusaren-smoke.timer every ${SMOKE_INTERVAL_MINUTES} minute(s)"
     if [[ "${INSTALL_GODOT}" == "1" ]]; then

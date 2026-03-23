@@ -4,9 +4,13 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 COMPOSE_FILE="${REPO_ROOT}/deploy/docker-compose.yml"
-ENV_FILE="${REPO_ROOT}/deploy/.env"
 SMOKE_SCRIPT="${REPO_ROOT}/deploy/host-smoke.sh"
 EXPORT_SCRIPT="${REPO_ROOT}/server/scripts/export-web-client.sh"
+CONFIG_DIR="${CONFIG_DIR:-}"
+ENV_FILE="${ENV_FILE:-}"
+COMPOSE_OVERRIDE_FILE="${COMPOSE_OVERRIDE_FILE:-}"
+DOWN_ONLY=0
+COMPOSE_ARGS=()
 
 log() {
     printf '[linode-deploy] %s\n' "$*"
@@ -22,9 +26,9 @@ require_file() {
     [[ -f "${path}" ]] || fatal "missing required file: ${path}"
 }
 
-resolve_export_user() {
-    if [[ -n "${DEPLOY_EXPORT_USER:-}" ]]; then
-        printf '%s\n' "${DEPLOY_EXPORT_USER}"
+resolve_runtime_user() {
+    if [[ -n "${DEPLOY_RUNTIME_USER:-}" ]]; then
+        printf '%s\n' "${DEPLOY_RUNTIME_USER}"
         return
     fi
 
@@ -43,6 +47,44 @@ resolve_export_user() {
     fi
 
     id -un
+}
+
+resolve_runtime_home() {
+    local runtime_user
+    runtime_user="$(resolve_runtime_user)"
+    local runtime_home
+    runtime_home="$(getent passwd "${runtime_user}" | cut -d: -f6)"
+    [[ -n "${runtime_home}" ]] || fatal "unable to resolve a home directory for runtime user ${runtime_user}"
+    printf '%s\n' "${runtime_home}"
+}
+
+resolve_config_dir() {
+    if [[ -n "${CONFIG_DIR}" ]]; then
+        printf '%s\n' "${CONFIG_DIR}"
+        return
+    fi
+
+    printf '%s/rusaren-config\n' "$(resolve_runtime_home)"
+}
+
+build_compose_args() {
+    COMPOSE_ARGS=(--env-file "${ENV_FILE}" -f "${COMPOSE_FILE}")
+    if [[ -n "${COMPOSE_OVERRIDE_FILE}" && -f "${COMPOSE_OVERRIDE_FILE}" ]]; then
+        COMPOSE_ARGS+=(-f "${COMPOSE_OVERRIDE_FILE}")
+    fi
+}
+
+run_compose() {
+    docker compose "${COMPOSE_ARGS[@]}" "$@"
+}
+
+resolve_export_user() {
+    if [[ -n "${DEPLOY_EXPORT_USER:-}" ]]; then
+        printf '%s\n' "${DEPLOY_EXPORT_USER}"
+        return
+    fi
+
+    resolve_runtime_user
 }
 
 run_web_client_export() {
@@ -114,7 +156,7 @@ wait_for_healthz() {
     local container_id=""
 
     for ((attempt = 1; attempt <= attempts; attempt += 1)); do
-        container_id="$(docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" ps -q rarena-server 2>/dev/null || true)"
+        container_id="$(run_compose ps -q rarena-server 2>/dev/null || true)"
         if [[ -n "${container_id}" ]]; then
             local health_status
             health_status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "${container_id}" 2>/dev/null || true)"
@@ -129,24 +171,96 @@ wait_for_healthz() {
     fatal "backend container did not become healthy"
 }
 
+usage() {
+    cat <<'EOF'
+Usage: deploy/deploy.sh [--down] [--config-dir PATH] [--env-file PATH] [--compose-override PATH]
+
+Deploys or stops the Rusaren hosted stack using `~/rusaren-config/` by default.
+EOF
+}
+
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --down)
+                DOWN_ONLY=1
+                shift
+                ;;
+            --config-dir)
+                [[ $# -ge 2 ]] || fatal "--config-dir requires a path"
+                CONFIG_DIR="$2"
+                shift 2
+                ;;
+            --env-file)
+                [[ $# -ge 2 ]] || fatal "--env-file requires a path"
+                ENV_FILE="$2"
+                shift 2
+                ;;
+            --compose-override)
+                [[ $# -ge 2 ]] || fatal "--compose-override requires a path"
+                COMPOSE_OVERRIDE_FILE="$2"
+                shift 2
+                ;;
+            -h|--help)
+                usage
+                exit 0
+                ;;
+            *)
+                fatal "unknown argument: $1"
+                ;;
+        esac
+    done
+}
+
+ensure_env_file() {
+    local default_example="${REPO_ROOT}/deploy/config.env.example"
+    local legacy_example="${REPO_ROOT}/deploy/.env.example"
+
+    if [[ -f "${ENV_FILE}" ]]; then
+        return
+    fi
+
+    mkdir -p "$(dirname -- "${ENV_FILE}")"
+    if [[ -f "${default_example}" ]]; then
+        cp "${default_example}" "${ENV_FILE}"
+    else
+        require_file "${legacy_example}"
+        cp "${legacy_example}" "${ENV_FILE}"
+    fi
+
+    fatal "created ${ENV_FILE}; set real values first, then rerun this script"
+}
+
 main() {
+    parse_args "$@"
+
     require_file "${COMPOSE_FILE}"
     require_file "${SMOKE_SCRIPT}"
-    if [[ ! -f "${ENV_FILE}" ]]; then
-        require_file "${REPO_ROOT}/deploy/.env.example"
-        cp "${REPO_ROOT}/deploy/.env.example" "${ENV_FILE}"
-        fatal "created ${ENV_FILE}; set real values first, then rerun this script"
+
+    if [[ -z "${ENV_FILE}" ]]; then
+        ENV_FILE="$(resolve_config_dir)/config.env"
+    fi
+    if [[ -z "${COMPOSE_OVERRIDE_FILE}" ]]; then
+        COMPOSE_OVERRIDE_FILE="$(resolve_config_dir)/docker-compose.override.yml"
+    fi
+    build_compose_args
+    ensure_env_file
+
+    if [[ "${DOWN_ONLY}" -eq 1 ]]; then
+        log "stopping the production stack"
+        run_compose down
+        return
     fi
 
     ensure_static_root
     build_web_client_if_requested
 
     log "validating compose configuration"
-    docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" config -q
+    run_compose config -q
 
     log "building and starting the production stack"
-    docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" build --pull
-    docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d --remove-orphans
+    run_compose build --pull
+    run_compose up -d --remove-orphans
 
     wait_for_healthz
 
@@ -158,7 +272,7 @@ main() {
     fi
 
     log "current service status"
-    docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" ps
+    run_compose ps
 }
 
 main "$@"

@@ -3,7 +3,8 @@ set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
-ENV_FILE="${ENV_FILE:-${REPO_ROOT}/deploy/.env}"
+CONFIG_DIR="${CONFIG_DIR:-}"
+ENV_FILE="${ENV_FILE:-}"
 BASE_URL="${BASE_URL:-}"
 SKIP_ADMIN_CHECK=0
 
@@ -23,10 +24,33 @@ Usage: deploy/host-smoke.sh [--origin URL] [--env-file PATH] [--skip-admin]
 Runs a small post-deploy smoke suite against the hosted backend path.
 The script checks `/`, `/healthz`, `/session/bootstrap`, and `/adminz` when
 admin credentials are present in the deploy environment file.
+By default it loads `~/rusaren-config/config.env` for the current deploy user.
 EOF
 }
 
+default_config_dir() {
+    if [[ -n "${CONFIG_DIR}" ]]; then
+        printf '%s\n' "${CONFIG_DIR}"
+        return
+    fi
+
+    if [[ "${EUID:-$(id -u)}" -eq 0 && -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
+        local sudo_home
+        sudo_home="$(getent passwd "${SUDO_USER}" | cut -d: -f6)"
+        if [[ -n "${sudo_home}" ]]; then
+            printf '%s/rusaren-config\n' "${sudo_home}"
+            return
+        fi
+    fi
+
+    printf '%s/rusaren-config\n' "${HOME}"
+}
+
 load_env() {
+    if [[ -z "${ENV_FILE}" ]]; then
+        ENV_FILE="$(default_config_dir)/config.env"
+    fi
+
     if [[ -f "${ENV_FILE}" ]]; then
         set -a
         # shellcheck disable=SC1090
