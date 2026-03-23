@@ -1,11 +1,10 @@
 # Runbooks
 
 ## Deploy or update the hosted stack
-1. Export the Godot web client into `server/static/webclient/` with `bash server/scripts/export-web-client.sh`.
+1. On Linux hosts, let `deploy/linode-deploy.sh` rebuild the Godot web client by default; if you want to do it manually first, run `bash server/scripts/export-web-client.sh`.
 2. Update `deploy/.env`.
 3. Run:
-   - `docker compose --env-file deploy/.env -f deploy/docker-compose.yml build`
-   - `docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d`
+   - `sudo bash deploy/linode-deploy.sh`
 4. Check:
    - `https://domain.com/`
    - `https://domain.com/healthz`
@@ -33,8 +32,9 @@ This means the backend started, but the web export bundle is missing from `serve
 
 Fix:
 1. Run `bash server/scripts/export-web-client.sh`.
-2. Rebuild the backend image.
-3. Restart `rarena-server`.
+2. Rerun `sudo bash deploy/linode-deploy.sh`.
+
+If the host should not build the bundle automatically, check that `BUILD_WEB_CLIENT` was not set to `0`.
 
 ## `/healthz` fails
 Check in order:

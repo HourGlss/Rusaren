@@ -479,10 +479,9 @@ The checked-in `0.8.0` hosted path is:
 - `deploy/.env.example`
 
 High-level hosted flow:
-1. export the Godot web client into `server/static/webclient/`
+1. let `deploy/linode-deploy.sh` rebuild the Godot web client on Linux, or manually export it into `server/static/webclient/`
 2. copy `deploy/.env.example` to `deploy/.env` and fill the real host and secrets
-3. run `docker compose --env-file deploy/.env -f deploy/docker-compose.yml build`
-4. run `docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d`
+3. run `sudo bash deploy/linode-deploy.sh`
 
 For the current live-domain target:
 - `https://pvpnowfast.com/` should serve the game shell directly
@@ -501,7 +500,7 @@ For the first real internet-reachable test, the current recommended shape is:
 - one app host
 - optional separate TURN host
 - Docker Compose deploy
-- exported Godot web bundle copied to the host before `docker compose build`
+- on-host Godot web export through `server/scripts/export-web-client.sh` during deploy
 
 That is the honest target for the current codebase because match ownership and player records are still local to the running server.
 - `shared/docs/16_runbooks.md`

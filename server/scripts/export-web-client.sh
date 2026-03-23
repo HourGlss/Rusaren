@@ -28,7 +28,7 @@ Exports the Godot Web build into server/static/webclient for the hosted backend.
 Defaults:
   --project-path client/godot
   --output-path  server/static/webclient/index.html
-  --godot-bin    auto-detect godot4, then godot
+  --godot-bin    auto-detect godot4, godot-4, then godot
   --template-root auto-detect standard Linux or snap Godot template paths
   --skip-template-install do not auto-download export templates if missing
 EOF
@@ -43,6 +43,11 @@ find_godot_bin() {
 
     if command -v godot4 >/dev/null 2>&1; then
         command -v godot4
+        return
+    fi
+
+    if command -v godot-4 >/dev/null 2>&1; then
+        command -v godot-4
         return
     fi
 

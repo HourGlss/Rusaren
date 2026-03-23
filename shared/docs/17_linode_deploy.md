@@ -5,7 +5,7 @@ It assumes the repo's current architecture honestly:
 - one primary app host
 - optional separate TURN host
 - Docker Compose deploy
-- exported Godot web bundle already built
+- Linux-native Godot web export available on the host
 - `pvpnowfast.com` should serve the game shell directly at `/`, not a chooser page
 
 Official Linode references:
@@ -39,7 +39,9 @@ Do not jump to multi-app-host gameplay yet:
 
 1. A domain you control.
 2. An SSH key uploaded to Linode Cloud Manager.
-3. A built Godot web export under `server/static/webclient/`.
+3. Either:
+   - a built Godot web export under `server/static/webclient/`, or
+   - the host must be allowed to install a compatible Godot snap (`godot4` or `godot-4`) and build that export during deploy.
 4. Real values for:
    - `PUBLIC_HOST`
    - `ACME_EMAIL`
@@ -68,6 +70,7 @@ That script now handles:
 - unattended security upgrades
 - `fail2ban`
 - `ufw`
+- `snapd`, `unzip`, and a compatible Godot snap by default so the host can build the web export
 - Docker Engine install from Docker's apt repository
 - Docker daemon settings for `buildkit`, `live-restore`, and rotating `local` logs
 - `deploy/.env` creation
@@ -80,6 +83,8 @@ For later code updates on the same host:
 ```bash
 sudo bash deploy/linode-deploy.sh
 ```
+
+By default, `deploy/linode-deploy.sh` now rebuilds the Godot web bundle on the host before it builds the Docker image.
 
 ## Step-by-step
 
@@ -136,22 +141,21 @@ Docker's published container ports intentionally remain reachable, and Docker do
 
 `deploy/linode-setup.sh` installs Docker Engine from Docker's official apt repository, not the convenience script.
 
-### 6. Copy the repo and the exported web bundle
+### 6. Copy the repo
 
-The live deploy needs the generated web client files.
-They are not tracked in git, so you must either:
-- export locally and copy them to the host, or
-- build them in CI and deploy the artifact
+The live deploy needs the generated web client files, but you no longer have to prebuild them on Windows.
+The default host path is:
+1. Copy the repo to the host.
+2. Let `deploy/linode-setup.sh` install a compatible Godot snap.
+3. Let `deploy/linode-deploy.sh` run `server/scripts/export-web-client.sh` on the host before the Docker build.
 
-Local-first path:
-1. On the dev machine, run:
+If you prefer to prebuild locally instead, this still works:
 
 ```bash
 bash server/scripts/export-web-client.sh --godot-bin godot4
 ```
 
-2. Copy the repo to the host.
-3. Make sure `server/static/webclient/` exists on the host after the copy.
+Then copy the repo with `server/static/webclient/` already populated.
 
 Example copy command from a Unix-like shell:
 
@@ -178,7 +182,19 @@ If the admin password is omitted, the setup script generates one and writes it t
 
 ### 8. Build and start the stack
 
-`deploy/linode-deploy.sh` validates the compose file, builds the image, starts the stack, waits for the backend container healthcheck, and then runs hosted smoke probes.
+`deploy/linode-deploy.sh` now:
+- exports the Godot web client on the host by default
+- validates the compose file
+- builds the image
+- starts the stack
+- waits for the backend container healthcheck
+- runs hosted smoke probes
+
+If you intentionally want to skip the on-host web export and keep the placeholder page, run:
+
+```bash
+sudo BUILD_WEB_CLIENT=0 bash deploy/linode-deploy.sh
+```
 
 ### 9. Verify the live test
 

@@ -31,12 +31,14 @@ Files:
 - `deploy/linode-deploy.sh`
 - `deploy/host-smoke.sh`
 - `server/scripts/docker-smoke.ps1`
+- `server/scripts/export-web-client.sh`
 
 What each part does:
 - `rarena-server`: serves `/`, `/session/bootstrap`, `/ws`, `/ws-dev`, `/healthz`, and `/metrics`
 - `caddy`: terminates TLS and reverse-proxies the public site to the Rust server
 - `prometheus`: scrapes backend metrics
 - `coturn`: provides STUN/TURN service on the operator-managed domain
+- `server/scripts/export-web-client.sh`: Linux-native Godot Web export helper used by deploy when the hosted shell needs to be rebuilt on the server
 
 ## Prerequisites
 - Docker and Docker Compose plugin on the host
@@ -70,7 +72,7 @@ Live-test / staging target:
   - Caddy
   - `rarena-server`
   - Prometheus
-  - the exported Godot web bundle
+  - the exported Godot web bundle, built on-host by default during deploy
 - one TURN host:
   - either the same Linode for a cheap first live test
   - or a second small Linode for cleaner isolation
@@ -143,8 +145,10 @@ Current operator surface:
 
 ## Hosted smoke probes
 - `deploy/linode-deploy.sh` now waits for the backend container healthcheck before it runs hosted smoke probes
+- the same deploy script now rebuilds the Godot web bundle on Linux by default unless `BUILD_WEB_CLIENT=0`
 - the same deploy script then runs hosted smoke probes against `https://$PUBLIC_HOST` unless `RUN_PUBLIC_SMOKE=0`
 - `deploy/host-smoke.sh` validates `/`, `/healthz`, `/session/bootstrap`, and `/adminz`
+- `deploy/linode-setup.sh` installs `snapd`, `unzip`, and a compatible Godot snap by default so the host can build the web bundle without a Windows step
 - `deploy/linode-setup.sh` installs a `rusaren-smoke.timer` systemd timer so the host keeps re-running the public probes after deploy
 
 ## Current limitation

@@ -6,6 +6,7 @@ REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 COMPOSE_FILE="${REPO_ROOT}/deploy/docker-compose.yml"
 ENV_FILE="${REPO_ROOT}/deploy/.env"
 SMOKE_SCRIPT="${REPO_ROOT}/deploy/host-smoke.sh"
+EXPORT_SCRIPT="${REPO_ROOT}/server/scripts/export-web-client.sh"
 
 log() {
     printf '[linode-deploy] %s\n' "$*"
@@ -23,8 +24,41 @@ require_file() {
 
 ensure_static_root() {
     mkdir -p "${REPO_ROOT}/server/static/webclient"
-    if [[ ! -f "${REPO_ROOT}/server/static/webclient/index.html" ]]; then
-        log "no exported web bundle detected at server/static/webclient; the backend will still start and serve the placeholder root page"
+}
+
+build_web_client_if_requested() {
+    local mode="${BUILD_WEB_CLIENT:-1}"
+    local index_path="${REPO_ROOT}/server/static/webclient/index.html"
+    local should_build=0
+
+    case "${mode}" in
+        1|true|always)
+            should_build=1
+            ;;
+        auto)
+            if [[ ! -f "${index_path}" ]]; then
+                should_build=1
+            fi
+            ;;
+        0|false|never)
+            if [[ ! -f "${index_path}" ]]; then
+                log "no exported web bundle detected at server/static/webclient; deploy will continue and the backend will serve the placeholder root page"
+            fi
+            return
+            ;;
+        *)
+            fatal "invalid BUILD_WEB_CLIENT value: ${mode}"
+            ;;
+    esac
+
+    [[ "${should_build}" -eq 1 ]] || return
+    require_file "${EXPORT_SCRIPT}"
+
+    log "building the Godot web client on the host"
+    if [[ -n "${GODOT_BIN:-}" ]]; then
+        bash "${EXPORT_SCRIPT}" --godot-bin "${GODOT_BIN}"
+    else
+        bash "${EXPORT_SCRIPT}"
     fi
 }
 
@@ -59,6 +93,7 @@ main() {
     fi
 
     ensure_static_root
+    build_web_client_if_requested
 
     log "validating compose configuration"
     docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" config -q

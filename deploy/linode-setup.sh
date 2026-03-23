@@ -27,6 +27,8 @@ RARENA_RUST_LOG="${RARENA_RUST_LOG:-info,axum=info,tower_http=info}"
 RARENA_ADMIN_USERNAME="${RARENA_ADMIN_USERNAME:-admin}"
 RARENA_ADMIN_PASSWORD="${RARENA_ADMIN_PASSWORD:-}"
 ADMIN_CIDR="${ADMIN_CIDR:-}"
+INSTALL_GODOT="${INSTALL_GODOT:-1}"
+GODOT_SNAP_NAME="${GODOT_SNAP_NAME:-}"
 SMOKE_INTERVAL_MINUTES="${SMOKE_INTERVAL_MINUTES:-5}"
 RUN_DEPLOY="${RUN_DEPLOY:-1}"
 
@@ -96,8 +98,10 @@ install_base_packages() {
         gnupg \
         jq \
         openssl \
+        snapd \
         software-properties-common \
         ufw \
+        unzip \
         unattended-upgrades
 }
 
@@ -199,6 +203,44 @@ configure_firewall() {
     ufw allow 3478/udp
     ufw allow 49160:49200/udp
     ufw --force enable
+}
+
+install_godot_cli() {
+    if [[ "${INSTALL_GODOT}" != "1" ]]; then
+        log "skipping Godot install because INSTALL_GODOT=${INSTALL_GODOT}"
+        return
+    fi
+
+    log "installing Godot CLI from snap"
+    systemctl enable --now snapd.socket
+    systemctl enable --now snapd.service >/dev/null 2>&1 || true
+    systemctl enable --now snapd.apparmor.service >/dev/null 2>&1 || true
+    snap wait system seed.loaded >/dev/null 2>&1 || true
+
+    local snap_name=""
+    if [[ -n "${GODOT_SNAP_NAME}" ]]; then
+        snap_name="${GODOT_SNAP_NAME}"
+    elif snap list godot4 >/dev/null 2>&1; then
+        snap_name="godot4"
+    elif snap list godot-4 >/dev/null 2>&1; then
+        snap_name="godot-4"
+    fi
+
+    if [[ -z "${snap_name}" ]]; then
+        for candidate in godot4 godot-4; do
+            if snap install "${candidate}" >/dev/null 2>&1; then
+                snap_name="${candidate}"
+                break
+            fi
+        done
+    fi
+
+    [[ -n "${snap_name}" ]] || fatal "failed to install a Godot snap; set GODOT_SNAP_NAME explicitly to a valid snap package"
+
+    if ! snap list "${snap_name}" >/dev/null 2>&1; then
+        snap install "${snap_name}"
+    fi
+    log "Godot CLI is available via snap package ${snap_name}"
 }
 
 install_docker() {
@@ -367,6 +409,7 @@ main() {
     configure_unattended_upgrades
     configure_fail2ban
     configure_firewall
+    install_godot_cli
     install_docker
     configure_docker_daemon
     prepare_repo
@@ -381,6 +424,9 @@ main() {
     log "bootstrap complete"
     log "private admin dashboard: https://${PUBLIC_HOST}/adminz (user ${RARENA_ADMIN_USERNAME})"
     log "smoke timer: rusaren-smoke.timer every ${SMOKE_INTERVAL_MINUTES} minute(s)"
+    if [[ "${INSTALL_GODOT}" == "1" ]]; then
+        log "Godot CLI installed via snap; deploy can now build the web client on-host with server/scripts/export-web-client.sh"
+    fi
     log "Cloud Firewall should still be enabled in Linode to restrict SSH source ranges at the network edge"
 }
 
