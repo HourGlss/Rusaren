@@ -8,6 +8,8 @@ REPO_ROOT="$(cd -- "${SERVER_ROOT}/.." && pwd)"
 GODOT_BIN="${GODOT_BIN:-}"
 PROJECT_PATH="${PROJECT_PATH:-${REPO_ROOT}/client/godot}"
 OUTPUT_PATH="${OUTPUT_PATH:-${SERVER_ROOT}/static/webclient/index.html}"
+TEMPLATE_ROOT="${TEMPLATE_ROOT:-}"
+INSTALL_TEMPLATES=1
 
 log() {
     printf '[export-web-client] %s\n' "$*"
@@ -20,13 +22,15 @@ fatal() {
 
 usage() {
     cat <<'EOF'
-Usage: server/scripts/export-web-client.sh [--godot-bin PATH] [--project-path PATH] [--output-path PATH]
+Usage: server/scripts/export-web-client.sh [--godot-bin PATH] [--project-path PATH] [--output-path PATH] [--template-root PATH] [--skip-template-install]
 
 Exports the Godot Web build into server/static/webclient for the hosted backend.
 Defaults:
   --project-path client/godot
   --output-path  server/static/webclient/index.html
   --godot-bin    auto-detect godot4, then godot
+  --template-root auto-detect standard Linux or snap Godot template paths
+  --skip-template-install do not auto-download export templates if missing
 EOF
 }
 
@@ -48,6 +52,82 @@ find_godot_bin() {
     fi
 
     fatal "No Godot binary found. Install godot4 or set GODOT_BIN/--godot-bin."
+}
+
+parse_godot_build_info() {
+    local godot_bin="$1"
+    local version_output
+    version_output="$("${godot_bin}" --version | head -n1)"
+
+    if [[ "${version_output}" =~ ^([0-9]+\.[0-9]+(\.[0-9]+)?)\.([A-Za-z0-9]+) ]]; then
+        GODOT_VERSION_TEXT="${BASH_REMATCH[1]}"
+        GODOT_CHANNEL="${BASH_REMATCH[3]}"
+        GODOT_VERSION_TAG="${GODOT_VERSION_TEXT}-${GODOT_CHANNEL}"
+        GODOT_TEMPLATE_DIR="${GODOT_VERSION_TEXT}.${GODOT_CHANNEL}"
+        return
+    fi
+
+    fatal "Unable to parse Godot version from: ${version_output}"
+}
+
+resolve_template_root() {
+    local godot_bin="$1"
+
+    if [[ -n "${TEMPLATE_ROOT}" ]]; then
+        printf '%s\n' "${TEMPLATE_ROOT}"
+        return
+    fi
+
+    if [[ "${godot_bin}" == *"/snap/"* || "${godot_bin}" == "/snap/bin/"* ]]; then
+        local snap_name
+        snap_name="$(basename -- "${godot_bin}")"
+        printf '%s\n' "${HOME}/snap/${snap_name}/current/.local/share/godot/export_templates"
+        return
+    fi
+
+    if [[ -n "${XDG_DATA_HOME:-}" ]]; then
+        printf '%s\n' "${XDG_DATA_HOME}/godot/export_templates"
+        return
+    fi
+
+    printf '%s\n' "${HOME}/.local/share/godot/export_templates"
+}
+
+ensure_templates_installed() {
+    local godot_bin="$1"
+    local template_root
+    template_root="$(resolve_template_root "${godot_bin}")"
+    local template_dir="${template_root}/${GODOT_TEMPLATE_DIR}"
+
+    if find "${template_dir}" -type f >/dev/null 2>&1; then
+        return
+    fi
+
+    if [[ "${INSTALL_TEMPLATES}" != "1" ]]; then
+        fatal "Godot export templates were not found at ${template_dir}. Re-run without --skip-template-install or install them manually."
+    fi
+
+    command -v curl >/dev/null 2>&1 || fatal "curl is required to install Godot export templates"
+    command -v unzip >/dev/null 2>&1 || fatal "unzip is required to install Godot export templates"
+
+    local temp_root archive_path extract_root payload_dir
+    temp_root="$(mktemp -d)"
+    archive_path="${temp_root}/godot-templates.tpz"
+    extract_root="${temp_root}/extract"
+
+    mkdir -p "${template_dir}" "${extract_root}"
+
+    log "downloading Godot export templates for ${GODOT_VERSION_TAG}"
+    curl -L --fail --output "${archive_path}" \
+        "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION_TAG}/Godot_v${GODOT_VERSION_TAG}_export_templates.tpz"
+
+    unzip -q "${archive_path}" -d "${extract_root}"
+    payload_dir="$(find "${extract_root}" -type f -name version.txt -printf '%h\n' | head -n1)"
+    [[ -n "${payload_dir}" ]] || fatal "Could not locate extracted Godot export templates payload"
+
+    cp -a "${payload_dir}/." "${template_dir}/"
+    rm -rf "${temp_root}"
+    log "installed Godot export templates into ${template_dir}"
 }
 
 clear_output_root() {
@@ -84,6 +164,15 @@ main() {
                 OUTPUT_PATH="$2"
                 shift 2
                 ;;
+            --template-root)
+                [[ $# -ge 2 ]] || fatal "--template-root requires a value"
+                TEMPLATE_ROOT="$2"
+                shift 2
+                ;;
+            --skip-template-install)
+                INSTALL_TEMPLATES=0
+                shift
+                ;;
             -h|--help)
                 usage
                 exit 0
@@ -98,6 +187,8 @@ main() {
 
     local godot_bin
     godot_bin="$(find_godot_bin)"
+    parse_godot_build_info "${godot_bin}"
+    ensure_templates_installed "${godot_bin}"
     clear_output_root
 
     log "exporting Web build with ${godot_bin}"
