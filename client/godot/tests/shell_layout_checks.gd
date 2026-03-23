@@ -9,10 +9,24 @@ func _init() -> void:
 
 func _run() -> void:
 	var success := true
+	success = await _assert_connection_panel_hides_signaling_url() and success
 	success = await _assert_joined_shell_hides_setup_chrome() and success
 	success = await _assert_skill_pick_layout_prioritizes_skill_buttons() and success
 	success = await _assert_disconnect_resets_back_to_central_shell() and success
 	quit(0 if success else 1)
+
+
+func _assert_connection_panel_hides_signaling_url() -> bool:
+	var shell = await _spawn_shell()
+	var success := true
+	if _tree_contains_label(shell.connection_panel, "Signaling URL"):
+		success = _fail("connection panel should not expose a signaling URL field to players")
+	var line_edit_count := _count_nodes_of_type(shell.connection_panel, LineEdit)
+	if line_edit_count != 2:
+		success = _fail("connection panel should only expose player name and join lobby inputs") and success
+
+	await _despawn_shell(shell)
+	return success
 
 
 func _assert_joined_shell_hides_setup_chrome() -> bool:
@@ -147,6 +161,22 @@ func _spawn_shell():
 func _despawn_shell(shell: Node) -> void:
 	shell.queue_free()
 	await process_frame
+
+
+func _tree_contains_label(root: Node, text: String) -> bool:
+	if root is Label and (root as Label).text == text:
+		return true
+	for child in root.get_children():
+		if _tree_contains_label(child, text):
+			return true
+	return false
+
+
+func _count_nodes_of_type(root: Node, script_type) -> int:
+	var total := 1 if is_instance_of(root, script_type) else 0
+	for child in root.get_children():
+		total += _count_nodes_of_type(child, script_type)
+	return total
 
 
 func _fail(message: String) -> bool:

@@ -9,7 +9,7 @@ var local_player_id := 0
 var local_player_name := ""
 var transport_state := "closed"
 var screen := "central"
-var banner_message := "Connect to the Rust signaling endpoint to negotiate WebRTC gameplay channels. Browser exports default to the same-origin /ws endpoint."
+var banner_message := "Connect to enter the central lobby. Browser builds use the hosted realtime service automatically."
 var phase_label := "Central Lobby"
 var countdown_label := ""
 var outcome_label := ""
@@ -42,16 +42,13 @@ var visible_tiles := PackedByteArray()
 var explored_tiles := PackedByteArray()
 
 
-func prepare_for_connection(url: String, player_name: String) -> void:
-	websocket_url = WebSocketConfigScript.new().runtime_default_url(url)
+func prepare_for_connection(player_name: String) -> void:
+	websocket_url = WebSocketConfigScript.new().runtime_default_url()
 	local_player_id = 0
 	local_player_name = player_name.strip_edges()
 	transport_state = "connecting"
 	screen = "central"
-	banner_message = "Connecting to %s as %s. Waiting for a server-assigned player ID." % [
-		websocket_url,
-		local_player_name,
-	]
+	banner_message = "Connecting as %s. Waiting for a server-assigned player ID." % local_player_name
 	phase_label = "Central Lobby"
 	countdown_label = ""
 	outcome_label = ""
@@ -69,16 +66,16 @@ func prepare_for_connection(url: String, player_name: String) -> void:
 	_reset_local_skill_progress()
 	local_round_skill_locked = false
 	_clear_arena_state()
-	_append_event("Connecting to %s." % websocket_url)
+	_append_event("Connecting as %s." % local_player_name)
 
 
 func mark_transport_state(state_name: String) -> void:
 	transport_state = state_name
 	match state_name:
 		"connecting":
-			banner_message = "Signaling and WebRTC negotiation are in progress."
+			banner_message = "Connecting to the hosted backend."
 		"open":
-			banner_message = "WebRTC control channel is open. Waiting for the server to accept the connect command."
+			banner_message = "Realtime session is open. Waiting for the server to accept the connect command."
 		"closing":
 			banner_message = "Realtime transport closing."
 		"closed":

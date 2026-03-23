@@ -13,7 +13,6 @@ var websocket_config := WebSocketConfigScript.new()
 var connect_button: Button
 var disconnect_button: Button
 var connection_panel: PanelContainer
-var ws_url_input: LineEdit
 var player_name_input: LineEdit
 var banner_label: Label
 var status_label: Label
@@ -163,7 +162,7 @@ func _build_header() -> Control:
 	wrapper.add_child(title)
 
 	var subtitle := Label.new()
-	subtitle.text = "Godot web shell wired to WebRTC gameplay channels over same-origin websocket signaling. Gameplay rendering stays intentionally rough while the transport and rules settle."
+	subtitle.text = "Godot web shell wired to the hosted Rusaren backend. Gameplay rendering stays intentionally rough while the transport and rules settle."
 	subtitle.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	subtitle.add_theme_color_override("font_color", Color8(184, 191, 198))
 	wrapper.add_child(subtitle)
@@ -201,12 +200,11 @@ func _build_connection_panel() -> Control:
 	body.add_child(banner_label)
 
 	var grid := GridContainer.new()
-	grid.columns = 3
+	grid.columns = 2
 	grid.add_theme_constant_override("h_separation", 14)
 	grid.add_theme_constant_override("v_separation", 10)
 	body.add_child(grid)
 
-	ws_url_input = _labeled_line_edit(grid, "Signaling URL", app_state.websocket_url)
 	player_name_input = _labeled_line_edit(grid, "Player name", "Alice")
 	join_lobby_input = _labeled_line_edit(grid, "Join lobby ID", "")
 
@@ -277,13 +275,13 @@ func _build_central_panel() -> PanelContainer:
 	body.add_child(title)
 
 	var summary := Label.new()
-	summary.text = "Create a game lobby or click one from the directory below to join it. Browser exports default to same-origin websocket signaling at /ws, then switch live gameplay onto WebRTC data channels."
+	summary.text = "Create a game lobby or click one from the directory below to join it. Browser builds connect to the hosted realtime service automatically, then switch live gameplay onto WebRTC data channels."
 	summary.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	summary.add_theme_color_override("font_color", Color8(187, 196, 203))
 	body.add_child(summary)
 
 	var prompt := Label.new()
-	prompt.text = "Connection, identity, and join controls live in the dev adapter panel above."
+	prompt.text = "Connection, identity, and join controls live in the panel above."
 	prompt.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	prompt.add_theme_color_override("font_color", Color8(164, 178, 188))
 	body.add_child(prompt)
@@ -620,17 +618,15 @@ func _labeled_line_edit(parent: Control, label_text: String, default_value: Stri
 
 
 func _on_connect_pressed() -> void:
-	var url := ws_url_input.text.strip_edges()
 	var player_name := player_name_input.text.strip_edges()
 	_next_client_input_tick = 1
 	_pending_primary_attack = false
 	_pending_cast_slot = 0
 	_last_sent_aim = Vector2i.ZERO
-	app_state.prepare_for_connection(url, player_name)
-	ws_url_input.text = app_state.websocket_url
+	app_state.prepare_for_connection(player_name)
 	var bootstrap_url := websocket_config.bootstrap_url(app_state.websocket_url)
 	if bootstrap_url == "":
-		app_state.mark_transport_error("Unable to derive the session bootstrap URL from the signaling URL.")
+		app_state.mark_transport_error("Unable to prepare the session bootstrap request.")
 		_refresh_ui()
 		return
 
@@ -641,13 +637,13 @@ func _on_connect_pressed() -> void:
 	var request_error := _bootstrap_request.request(bootstrap_url)
 	if request_error != OK:
 		_pending_bootstrap_url = ""
-		app_state.mark_transport_error("Unable to request a signaling bootstrap token.")
+		app_state.mark_transport_error("Unable to request a session token.")
 		_refresh_ui()
 		return
 
 	_bootstrap_request_active = true
 	app_state.mark_transport_state("bootstrapping")
-	app_state.announce_local("Requested a short-lived signaling token.")
+	app_state.announce_local("Requested a short-lived session token.")
 	_refresh_ui()
 
 
@@ -765,14 +761,14 @@ func _on_bootstrap_request_completed(
 		return
 
 	if result != HTTPRequest.RESULT_SUCCESS:
-		app_state.mark_transport_error("The signaling bootstrap request failed.")
+		app_state.mark_transport_error("The session bootstrap request failed.")
 		_refresh_ui()
 		return
 
 	var payload_text := body.get_string_from_utf8()
 	var payload: Variant = JSON.parse_string(payload_text)
 	if response_code != 200:
-		var error_message := "The signaling bootstrap request was rejected."
+		var error_message := "The session bootstrap request was rejected."
 		if typeof(payload) == TYPE_DICTIONARY:
 			error_message = String((payload as Dictionary).get("error", error_message))
 		app_state.mark_transport_error(error_message)
@@ -780,19 +776,19 @@ func _on_bootstrap_request_completed(
 		return
 
 	if typeof(payload) != TYPE_DICTIONARY:
-		app_state.mark_transport_error("The signaling bootstrap response was not valid JSON.")
+		app_state.mark_transport_error("The session bootstrap response was not valid JSON.")
 		_refresh_ui()
 		return
 
 	var token := String((payload as Dictionary).get("token", ""))
 	if token.strip_edges() == "":
-		app_state.mark_transport_error("The signaling bootstrap response did not contain a token.")
+		app_state.mark_transport_error("The session bootstrap response did not contain a token.")
 		_refresh_ui()
 		return
 
 	var tokenized_url := websocket_config.append_session_token(expected_signal_url, token)
 	if not transport.open(tokenized_url):
-		app_state.mark_transport_error("Unable to start the signaling connection.")
+		app_state.mark_transport_error("Unable to start the realtime connection.")
 		_refresh_ui()
 
 
