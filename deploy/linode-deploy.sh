@@ -22,6 +22,57 @@ require_file() {
     [[ -f "${path}" ]] || fatal "missing required file: ${path}"
 }
 
+resolve_export_user() {
+    if [[ -n "${DEPLOY_EXPORT_USER:-}" ]]; then
+        printf '%s\n' "${DEPLOY_EXPORT_USER}"
+        return
+    fi
+
+    if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+        if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
+            printf '%s\n' "${SUDO_USER}"
+            return
+        fi
+
+        local repo_owner
+        repo_owner="$(stat -c '%U' "${REPO_ROOT}" 2>/dev/null || true)"
+        if [[ -n "${repo_owner}" && "${repo_owner}" != "root" ]]; then
+            printf '%s\n' "${repo_owner}"
+            return
+        fi
+    fi
+
+    id -un
+}
+
+run_web_client_export() {
+    local export_user
+    export_user="$(resolve_export_user)"
+    local export_home
+    export_home="$(getent passwd "${export_user}" | cut -d: -f6)"
+    [[ -n "${export_home}" ]] || fatal "unable to resolve a home directory for export user ${export_user}"
+    local -a export_args
+    export_args=("${EXPORT_SCRIPT}")
+    if [[ -n "${GODOT_BIN:-}" ]]; then
+        export_args+=("--godot-bin" "${GODOT_BIN}")
+    fi
+
+    log "building the Godot web client on the host as ${export_user}"
+
+    if [[ "${export_user}" == "$(id -un)" ]]; then
+        HOME="${export_home}" bash "${export_args[@]}"
+        return
+    fi
+
+    local -a export_env
+    export_env=("HOME=${export_home}")
+    if [[ -n "${GODOT_BIN:-}" ]]; then
+        export_env+=("GODOT_BIN=${GODOT_BIN}")
+    fi
+
+    runuser -u "${export_user}" -- env "${export_env[@]}" bash "${export_args[@]}"
+}
+
 ensure_static_root() {
     mkdir -p "${REPO_ROOT}/server/static/webclient"
 }
@@ -54,12 +105,7 @@ build_web_client_if_requested() {
     [[ "${should_build}" -eq 1 ]] || return
     require_file "${EXPORT_SCRIPT}"
 
-    log "building the Godot web client on the host"
-    if [[ -n "${GODOT_BIN:-}" ]]; then
-        bash "${EXPORT_SCRIPT}" --godot-bin "${GODOT_BIN}"
-    else
-        bash "${EXPORT_SCRIPT}"
-    fi
+    run_web_client_export
 }
 
 wait_for_healthz() {
