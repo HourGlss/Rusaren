@@ -12,6 +12,7 @@ func _run() -> void:
 	success = await _assert_shell_removes_old_header_and_manual_connect_buttons() and success
 	success = await _assert_menu_opens_fullscreen_views() and success
 	success = await _assert_joined_shell_hides_setup_chrome() and success
+	success = await _assert_lobby_panel_shows_roster_team_and_ready_state() and success
 	success = await _assert_skill_pick_layout_prioritizes_skill_buttons() and success
 	success = await _assert_disconnect_resets_back_to_central_shell() and success
 	quit(0 if success else 1)
@@ -91,6 +92,47 @@ func _assert_joined_shell_hides_setup_chrome() -> bool:
 		success = _fail("joined lobby view should not force the fullscreen menu open") and success
 	if shell.menu_button == null or shell.menu_button.text != "Menu":
 		success = _fail("joined lobby view should keep the Menu button available") and success
+
+	await _despawn_shell(shell)
+	return success
+
+
+func _assert_lobby_panel_shows_roster_team_and_ready_state() -> bool:
+	var shell = await _spawn_shell()
+	shell.app_state.mark_transport_state("open")
+	shell.app_state.local_player_id = 11
+	shell.app_state.local_player_name = "Alice"
+	shell.app_state.apply_server_event({
+		"type": "GameLobbySnapshot",
+		"lobby_id": 7,
+		"players": [
+			{
+				"player_id": 11,
+				"player_name": "Alice",
+				"team": "Team A",
+				"ready": "Ready",
+			},
+			{
+				"player_id": 22,
+				"player_name": "Bob",
+				"team": "Team B",
+				"ready": "Not Ready",
+			},
+		],
+		"phase": {
+			"name": "Open",
+		},
+	})
+	shell._refresh_ui()
+
+	var success := true
+	if shell.lobby_roster_log == null:
+		success = _fail("lobby panel should expose a roster log") and success
+	else:
+		if not shell.lobby_roster_log.text.contains("Alice  |  Team A  |  Ready"):
+			success = _fail("lobby panel should show the local player's team and ready state") and success
+		if not shell.lobby_roster_log.text.contains("Bob  |  Team B  |  Not Ready"):
+			success = _fail("lobby panel should show other players, their teams, and ready states") and success
 
 	await _despawn_shell(shell)
 	return success

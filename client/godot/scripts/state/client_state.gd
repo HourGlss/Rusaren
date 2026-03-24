@@ -377,6 +377,22 @@ func roster_lines() -> Array[String]:
 	return lines
 
 
+func lobby_roster_lines() -> Array[String]:
+	var lines: Array[String] = []
+	var ids := roster.keys()
+	ids.sort()
+	for player_id in ids:
+		var member: Dictionary = roster[player_id]
+		lines.append("%s  |  %s  |  %s" % [
+			member.get("name", "Player %d" % int(player_id)),
+			member.get("team", "Unassigned"),
+			member.get("ready", "Not Ready"),
+		])
+	if lines.is_empty():
+		lines.append("No players are currently in this lobby.")
+	return lines
+
+
 func lobby_directory_lines() -> Array[String]:
 	var lines: Array[String] = []
 	for lobby in lobby_directory:

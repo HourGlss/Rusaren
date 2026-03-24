@@ -48,6 +48,7 @@ var outcome_label: Label
 var lobby_label: Label
 var lobby_note_label: Label
 var team_label: Label
+var lobby_roster_log: RichTextLabel
 var central_panel: PanelContainer
 var lobby_panel: PanelContainer
 var match_panel: PanelContainer
@@ -345,6 +346,18 @@ func _build_lobby_panel() -> PanelContainer:
 	team_label = Label.new()
 	team_label.add_theme_color_override("font_color", Color8(240, 241, 220))
 	body.add_child(team_label)
+
+	var roster_title := Label.new()
+	roster_title.text = "Lobby roster"
+	roster_title.add_theme_color_override("font_color", Color8(228, 240, 228))
+	body.add_child(roster_title)
+
+	lobby_roster_log = RichTextLabel.new()
+	lobby_roster_log.fit_content = true
+	lobby_roster_log.scroll_active = false
+	lobby_roster_log.custom_minimum_size = Vector2(0, 120)
+	lobby_roster_log.add_theme_color_override("default_color", Color8(221, 234, 223))
+	body.add_child(lobby_roster_log)
 
 	var team_row := HBoxContainer.new()
 	team_row.add_theme_constant_override("separation", 10)
@@ -1069,6 +1082,7 @@ func _refresh_ui() -> void:
 	lobby_label.text = lobby_text
 	lobby_note_label.text = app_state.lobby_note()
 	team_label.text = "Current team: %s" % app_state.current_team()
+	lobby_roster_log.text = "\n".join(app_state.lobby_roster_lines())
 	phase_label.text = app_state.phase_label
 	score_label.text = app_state.score_text()
 	countdown_value_label.text = app_state.countdown_label
