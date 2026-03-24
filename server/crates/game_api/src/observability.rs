@@ -1,7 +1,26 @@
+use std::collections::VecDeque;
 use std::fmt::Write as _;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
+
+const MAX_RECENT_DIAGNOSTICS: usize = 128;
+
+/// One recent low-volume diagnostic event captured for operator inspection.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecentDiagnosticEvent {
+    /// Milliseconds elapsed since the server process started.
+    pub elapsed_ms: u64,
+    /// Stable category name for the event source.
+    pub category: &'static str,
+    /// Connection id when one transport session is involved.
+    pub connection_id: Option<u64>,
+    /// Player id when the transport was already bound.
+    pub player_id: Option<u64>,
+    /// Human-readable diagnostic detail.
+    pub detail: String,
+}
 
 /// Low-cardinality labels for the HTTP surface exposed by the server.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -56,6 +75,7 @@ pub fn classify_http_path(path: &str) -> HttpRouteLabel {
 struct ServerObservabilityInner {
     version: String,
     started_at: Instant,
+    recent_diagnostics: Mutex<VecDeque<RecentDiagnosticEvent>>,
     http_root_requests: AtomicU64,
     http_healthz_requests: AtomicU64,
     http_metrics_requests: AtomicU64,
@@ -80,6 +100,7 @@ impl ServerObservabilityInner {
         Self {
             version,
             started_at: Instant::now(),
+            recent_diagnostics: Mutex::new(VecDeque::with_capacity(MAX_RECENT_DIAGNOSTICS)),
             http_root_requests: AtomicU64::new(0),
             http_healthz_requests: AtomicU64::new(0),
             http_metrics_requests: AtomicU64::new(0),
@@ -183,6 +204,39 @@ impl ServerObservability {
         update_max(&self.inner.tick_duration_max_micros, micros);
     }
 
+    /// Records one recent diagnostic event for the operator dashboard.
+    pub fn record_diagnostic(
+        &self,
+        category: &'static str,
+        connection_id: Option<u64>,
+        player_id: Option<u64>,
+        detail: impl Into<String>,
+    ) {
+        let elapsed_ms = u64::try_from(
+            self.inner
+                .started_at
+                .elapsed()
+                .as_millis()
+                .min(u128::from(u64::MAX)),
+        )
+        .unwrap_or(u64::MAX);
+        let event = RecentDiagnosticEvent {
+            elapsed_ms,
+            category,
+            connection_id,
+            player_id,
+            detail: detail.into(),
+        };
+
+        let Ok(mut diagnostics) = self.inner.recent_diagnostics.lock() else {
+            return;
+        };
+        diagnostics.push_back(event);
+        while diagnostics.len() > MAX_RECENT_DIAGNOSTICS {
+            diagnostics.pop_front();
+        }
+    }
+
     /// Renders the current metrics snapshot in Prometheus text format.
     #[must_use]
     pub fn render_prometheus(&self) -> String {
@@ -254,6 +308,16 @@ impl ServerObservability {
     #[must_use]
     pub fn tick_duration_max(&self) -> Duration {
         Duration::from_micros(load_counter(&self.inner.tick_duration_max_micros))
+    }
+
+    /// Returns the recent diagnostic trail captured for the operator dashboard.
+    #[must_use]
+    pub fn recent_diagnostics(&self) -> Vec<RecentDiagnosticEvent> {
+        self.inner
+            .recent_diagnostics
+            .lock()
+            .map(|events| events.iter().cloned().collect())
+            .unwrap_or_default()
     }
 }
 

@@ -12,6 +12,14 @@ pub(super) async fn create_signaling_transport(
     {
         Ok(ice_servers) => ice_servers,
         Err(message) => {
+            if let Some(observability) = &state.observability {
+                observability.record_diagnostic(
+                    "webrtc",
+                    Some(connection_id.get()),
+                    None,
+                    format!("failed to build ICE server list: {message}"),
+                );
+            }
             let _ = signal_tx.send(ServerSignalMessage::Error { message });
             return Err(());
         }
@@ -20,6 +28,14 @@ pub(super) async fn create_signaling_transport(
     let peer = match create_peer_connection(&ice_servers).await {
         Ok(peer) => Arc::new(peer),
         Err(error) => {
+            if let Some(observability) = &state.observability {
+                observability.record_diagnostic(
+                    "webrtc",
+                    Some(connection_id.get()),
+                    None,
+                    format!("failed to create peer connection: {error}"),
+                );
+            }
             let _ = signal_tx.send(ServerSignalMessage::Error {
                 message: format!("failed to create the WebRTC peer connection: {error}"),
             });
@@ -39,11 +55,31 @@ pub(super) async fn create_signaling_transport(
     {
         Ok(outbound) => outbound,
         Err(message) => {
+            if let Some(observability) = &state.observability {
+                observability.record_diagnostic(
+                    "webrtc",
+                    Some(connection_id.get()),
+                    None,
+                    format!("failed to create the negotiated transport channels: {message}"),
+                );
+            }
             let _ = signal_tx.send(ServerSignalMessage::Error { message });
             let _ = peer.close().await;
             return Err(());
         }
     };
+
+    if let Some(observability) = &state.observability {
+        observability.record_diagnostic(
+            "webrtc",
+            Some(connection_id.get()),
+            None,
+            format!(
+                "created peer connection and negotiated channel wiring with {} ICE server entries",
+                ice_servers.len()
+            ),
+        );
+    }
 
     Ok(SignalingTransport {
         peer,
@@ -56,6 +92,7 @@ pub(super) async fn create_signaling_transport(
 
 /// Accepts the client's SDP offer and emits the server answer.
 pub(super) async fn accept_webrtc_offer(
+    state: &DevServerState,
     connection_id: ConnectionId,
     signal_tx: &mpsc::UnboundedSender<ServerSignalMessage>,
     peer: &Arc<RTCPeerConnection>,
@@ -64,9 +101,13 @@ pub(super) async fn accept_webrtc_offer(
 ) -> bool {
     let mut negotiation = negotiation_state.lock().await;
     if negotiation.offer_seen {
+        let message = String::from("a WebRTC offer has already been processed");
         let _ = signal_tx.send(ServerSignalMessage::Error {
-            message: String::from("a WebRTC offer has already been processed"),
+            message: message.clone(),
         });
+        if let Some(observability) = &state.observability {
+            observability.record_diagnostic("webrtc", Some(connection_id.get()), None, message);
+        }
         drop(negotiation);
         let _ = peer.close().await;
         return false;
@@ -75,6 +116,14 @@ pub(super) async fn accept_webrtc_offer(
     let remote_description = match description.to_rtc_description() {
         Ok(remote_description) => remote_description,
         Err(message) => {
+            if let Some(observability) = &state.observability {
+                observability.record_diagnostic(
+                    "webrtc",
+                    Some(connection_id.get()),
+                    None,
+                    format!("rejected remote session description: {message}"),
+                );
+            }
             let _ = signal_tx.send(ServerSignalMessage::Error { message });
             drop(negotiation);
             let _ = peer.close().await;
@@ -83,6 +132,14 @@ pub(super) async fn accept_webrtc_offer(
     };
 
     if let Err(error) = peer.set_remote_description(remote_description).await {
+        if let Some(observability) = &state.observability {
+            observability.record_diagnostic(
+                "webrtc",
+                Some(connection_id.get()),
+                None,
+                format!("failed to apply the remote offer: {error}"),
+            );
+        }
         let _ = signal_tx.send(ServerSignalMessage::Error {
             message: format!("failed to apply the remote offer: {error}"),
         });
@@ -94,6 +151,14 @@ pub(super) async fn accept_webrtc_offer(
     let answer = match peer.create_answer(None).await {
         Ok(answer) => answer,
         Err(error) => {
+            if let Some(observability) = &state.observability {
+                observability.record_diagnostic(
+                    "webrtc",
+                    Some(connection_id.get()),
+                    None,
+                    format!("failed to create the WebRTC answer: {error}"),
+                );
+            }
             let _ = signal_tx.send(ServerSignalMessage::Error {
                 message: format!("failed to create the WebRTC answer: {error}"),
             });
@@ -103,6 +168,14 @@ pub(super) async fn accept_webrtc_offer(
         }
     };
     if let Err(error) = peer.set_local_description(answer.clone()).await {
+        if let Some(observability) = &state.observability {
+            observability.record_diagnostic(
+                "webrtc",
+                Some(connection_id.get()),
+                None,
+                format!("failed to apply the local answer: {error}"),
+            );
+        }
         let _ = signal_tx.send(ServerSignalMessage::Error {
             message: format!("failed to apply the local answer: {error}"),
         });
@@ -126,11 +199,21 @@ pub(super) async fn accept_webrtc_offer(
         connection_id = connection_id.get(),
         "WebRTC offer accepted and answer sent"
     );
+    if let Some(observability) = &state.observability {
+        observability.record_diagnostic(
+            "webrtc",
+            Some(connection_id.get()),
+            None,
+            "accepted WebRTC offer and sent the server answer",
+        );
+    }
     true
 }
 
 /// Adds one remote ICE candidate after an offer has been accepted.
 pub(super) async fn add_remote_ice_candidate(
+    state: &DevServerState,
+    connection_id: ConnectionId,
     signal_tx: &mpsc::UnboundedSender<ServerSignalMessage>,
     peer: &Arc<RTCPeerConnection>,
     negotiation_state: &Arc<Mutex<WebRtcNegotiationState>>,
@@ -138,6 +221,14 @@ pub(super) async fn add_remote_ice_candidate(
 ) -> bool {
     let negotiation = negotiation_state.lock().await;
     if !negotiation.offer_seen {
+        if let Some(observability) = &state.observability {
+            observability.record_diagnostic(
+                "webrtc",
+                Some(connection_id.get()),
+                None,
+                "rejected remote ICE candidate because no offer has been processed yet",
+            );
+        }
         let _ = signal_tx.send(ServerSignalMessage::Error {
             message: String::from("ICE candidates are not accepted before an offer"),
         });
@@ -150,6 +241,14 @@ pub(super) async fn add_remote_ice_candidate(
     let candidate_init = match candidate.to_rtc_candidate_init() {
         Ok(candidate_init) => candidate_init,
         Err(message) => {
+            if let Some(observability) = &state.observability {
+                observability.record_diagnostic(
+                    "webrtc",
+                    Some(connection_id.get()),
+                    None,
+                    format!("rejected malformed remote ICE candidate: {message}"),
+                );
+            }
             let _ = signal_tx.send(ServerSignalMessage::Error { message });
             let _ = peer.close().await;
             return false;
@@ -157,11 +256,27 @@ pub(super) async fn add_remote_ice_candidate(
     };
 
     if let Err(error) = peer.add_ice_candidate(candidate_init).await {
+        if let Some(observability) = &state.observability {
+            observability.record_diagnostic(
+                "webrtc",
+                Some(connection_id.get()),
+                None,
+                format!("failed to add the remote ICE candidate: {error}"),
+            );
+        }
         let _ = signal_tx.send(ServerSignalMessage::Error {
             message: format!("failed to add the remote ICE candidate: {error}"),
         });
         let _ = peer.close().await;
         return false;
+    }
+    if let Some(observability) = &state.observability {
+        observability.record_diagnostic(
+            "webrtc",
+            Some(connection_id.get()),
+            None,
+            "accepted a remote ICE candidate",
+        );
     }
     true
 }
@@ -197,11 +312,15 @@ async fn create_webrtc_outbound(
 
     tokio::spawn(run_webrtc_channel_writer(
         "control",
+        state.observability.clone(),
+        connection_id,
         Arc::clone(&control_channel),
         control_rx,
     ));
     tokio::spawn(run_webrtc_channel_writer(
         "snapshot",
+        state.observability.clone(),
+        connection_id,
         Arc::clone(&snapshot_channel),
         snapshot_rx,
     ));
@@ -259,6 +378,14 @@ pub(super) fn install_webrtc_callbacks(
                 peer_state = %peer_state,
                 "WebRTC peer connection state changed"
             );
+            if let Some(observability) = &state.observability {
+                observability.record_diagnostic(
+                    "webrtc",
+                    Some(connection_id.get()),
+                    None,
+                    format!("peer connection state changed to {peer_state}"),
+                );
+            }
             if peer_state == RTCPeerConnectionState::Failed {
                 outbound.send_error("the WebRTC transport failed");
                 let _ = peer.close().await;
@@ -269,7 +396,9 @@ pub(super) fn install_webrtc_callbacks(
                     | RTCPeerConnectionState::Failed
                     | RTCPeerConnectionState::Closed
             ) {
-                disconnect_bound_session(&state, connection_id, &binding_state, "WebRTC").await;
+                let reason = format!("peer connection state changed to {peer_state}");
+                disconnect_bound_session(&state, connection_id, &binding_state, "WebRTC", &reason)
+                    .await;
             }
         })
     }));
@@ -327,7 +456,14 @@ fn install_webrtc_message_handler(
                     "text data-channel messages are not accepted",
                 )
                 .await;
-                disconnect_bound_session(&state, connection_id, &binding_state, "WebRTC").await;
+                disconnect_bound_session(
+                    &state,
+                    connection_id,
+                    &binding_state,
+                    "WebRTC",
+                    "client sent a text data-channel message",
+                )
+                .await;
                 return;
             }
 
@@ -343,7 +479,14 @@ fn install_webrtc_message_handler(
             )
             .await;
             if !keep_open {
-                disconnect_bound_session(&state, connection_id, &binding_state, "WebRTC").await;
+                disconnect_bound_session(
+                    &state,
+                    connection_id,
+                    &binding_state,
+                    "WebRTC",
+                    "WebRTC packet handling rejected the session",
+                )
+                .await;
             }
         })
     }));
@@ -376,6 +519,8 @@ fn install_snapshot_rejection_handler(
 /// Writes queued packets onto one `WebRTC` data channel once it is open.
 async fn run_webrtc_channel_writer(
     label: &'static str,
+    observability: Option<ServerObservability>,
+    connection_id: ConnectionId,
     data_channel: Arc<RTCDataChannel>,
     mut outbound_rx: mpsc::UnboundedReceiver<Vec<u8>>,
 ) {
@@ -393,6 +538,14 @@ async fn run_webrtc_channel_writer(
         }
         if let Err(error) = data_channel.send(&Bytes::from(packet)).await {
             warn!(channel = label, %error, "failed to send a WebRTC packet");
+            if let Some(observability) = &observability {
+                observability.record_diagnostic(
+                    "webrtc",
+                    Some(connection_id.get()),
+                    None,
+                    format!("failed to send a packet on the {label} data channel: {error}"),
+                );
+            }
             break;
         }
     }
@@ -448,6 +601,14 @@ async fn handle_webrtc_binary_message(
     packet: Vec<u8>,
 ) -> bool {
     if let Err(message) = validate_webrtc_packet_channel(&packet, expected_channel) {
+        if let Some(observability) = &state.observability {
+            observability.record_diagnostic(
+                "webrtc",
+                Some(connection_id.get()),
+                None,
+                format!("rejected inbound data-channel packet: {message}"),
+            );
+        }
         reject_peer_session(outbound, state.observability.as_ref(), peer, &message).await;
         return false;
     }

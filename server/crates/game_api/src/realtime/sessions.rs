@@ -13,6 +13,14 @@ pub(super) async fn handle_binary_message(
     packet: Vec<u8>,
 ) -> bool {
     if let Err(error) = guard.accept_packet(&packet) {
+        if let Some(observability) = &state.observability {
+            observability.record_diagnostic(
+                "ingress_reject",
+                Some(connection_id.get()),
+                bound_player.map(|player_id| u64::from(player_id.get())),
+                error.to_string(),
+            );
+        }
         reject_client_session(outbound, state.observability.as_ref(), &error.to_string());
         return false;
     }
@@ -45,6 +53,14 @@ pub(super) async fn bind_initial_player(
         })
         .is_err()
     {
+        if let Some(observability) = &state.observability {
+            observability.record_diagnostic(
+                "session_bind",
+                Some(connection_id.get()),
+                None,
+                "server ingress channel was unavailable during the initial connect",
+            );
+        }
         reject_client_session(
             outbound,
             state.observability.as_ref(),
@@ -64,14 +80,38 @@ pub(super) async fn bind_initial_player(
                 player_id = player_id.get(),
                 "session bound to player"
             );
+            if let Some(observability) = &state.observability {
+                observability.record_diagnostic(
+                    "session_bind",
+                    Some(connection_id.get()),
+                    Some(u64::from(player_id.get())),
+                    "transport session bound to a player",
+                );
+            }
             *bound_player = Some(player_id);
             true
         }
         Ok(Err(message)) => {
+            if let Some(observability) = &state.observability {
+                observability.record_diagnostic(
+                    "session_bind",
+                    Some(connection_id.get()),
+                    None,
+                    format!("server rejected the initial connect packet: {message}"),
+                );
+            }
             reject_client_session(outbound, state.observability.as_ref(), &message);
             false
         }
         Err(_) => {
+            if let Some(observability) = &state.observability {
+                observability.record_diagnostic(
+                    "session_bind",
+                    Some(connection_id.get()),
+                    None,
+                    "server did not acknowledge the initial connect packet",
+                );
+            }
             reject_client_session(
                 outbound,
                 state.observability.as_ref(),
@@ -102,6 +142,12 @@ pub(super) fn forward_bound_packet(
     if let Some(observability) = &state.observability {
         observability.record_websocket_rejection();
         observability.record_ingress_packet(false);
+        observability.record_diagnostic(
+            "ingress_reject",
+            Some(connection_id.get()),
+            None,
+            "realtime ingress channel closed while forwarding a bound packet",
+        );
     }
     error!(
         connection_id = connection_id.get(),
@@ -116,6 +162,7 @@ pub(super) async fn disconnect_bound_session(
     connection_id: ConnectionId,
     binding_state: &Arc<Mutex<BindingState>>,
     transport_name: &'static str,
+    reason: &str,
 ) {
     let mut binding = binding_state.lock().await;
     if binding.disconnected {
@@ -129,6 +176,12 @@ pub(super) async fn disconnect_bound_session(
 
     if let Some(observability) = &state.observability {
         observability.record_websocket_disconnect();
+        observability.record_diagnostic(
+            "session_disconnect",
+            Some(connection_id.get()),
+            Some(u64::from(player_id.get())),
+            format!("{transport_name} session disconnected: {reason}"),
+        );
     }
     let _ = state
         .ingress_tx
@@ -137,6 +190,7 @@ pub(super) async fn disconnect_bound_session(
         connection_id = connection_id.get(),
         player_id = player_id.get(),
         transport = transport_name,
+        reason,
         "bound realtime session disconnected"
     );
 }
@@ -159,6 +213,7 @@ pub(super) fn reject_client_session(
     if let Some(observability) = observability {
         observability.record_websocket_rejection();
         observability.record_ingress_packet(false);
+        observability.record_diagnostic("session_reject", None, None, message.to_string());
     }
     warn!(%message, "rejecting realtime client session");
     outbound.send_error(message);

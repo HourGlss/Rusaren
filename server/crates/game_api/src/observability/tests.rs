@@ -69,3 +69,26 @@ fn prometheus_render_includes_http_websocket_ingress_and_tick_metrics() {
     assert_eq!(observability.tick_duration_max(), Duration::from_millis(12));
     assert!(observability.uptime() <= Duration::from_secs(1));
 }
+
+#[test]
+fn recent_diagnostics_capture_connection_scoped_events_in_order() {
+    let observability = ServerObservability::new("0.8.0-test");
+    observability.record_diagnostic("session_bootstrap", None, None, "issued bootstrap token");
+    observability.record_diagnostic(
+        "webrtc",
+        Some(17),
+        Some(41),
+        "peer connection state changed to connected",
+    );
+
+    let diagnostics = observability.recent_diagnostics();
+    assert_eq!(diagnostics.len(), 2);
+    assert_eq!(diagnostics[0].category, "session_bootstrap");
+    assert_eq!(diagnostics[0].connection_id, None);
+    assert_eq!(diagnostics[1].category, "webrtc");
+    assert_eq!(diagnostics[1].connection_id, Some(17));
+    assert_eq!(diagnostics[1].player_id, Some(41));
+    assert!(diagnostics[1]
+        .detail
+        .contains("peer connection state changed to connected"));
+}

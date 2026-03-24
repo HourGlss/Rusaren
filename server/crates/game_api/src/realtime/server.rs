@@ -7,6 +7,7 @@ use super::{
     State, StatusCode, TcpListener, TraceLayer, WebSocketUpgrade, MAX_INGRESS_PACKET_BYTES,
     MAX_SIGNAL_MESSAGE_BYTES, SESSION_BOOTSTRAP_TOKEN_TTL,
 };
+use std::fmt::Write as _;
 
 use super::signaling::{handle_signaling_socket, handle_websocket_dev_socket};
 
@@ -349,6 +350,14 @@ async fn session_bootstrap(
         match tokens.mint(Instant::now()) {
             Ok(token) => token,
             Err(message) => {
+                if let Some(observability) = &state.observability {
+                    observability.record_diagnostic(
+                        "session_bootstrap",
+                        None,
+                        None,
+                        format!("failed to mint bootstrap token: {message}"),
+                    );
+                }
                 return Err((
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(serde_json::json!({ "error": message })),
@@ -357,6 +366,15 @@ async fn session_bootstrap(
             }
         }
     };
+
+    if let Some(observability) = &state.observability {
+        observability.record_diagnostic(
+            "session_bootstrap",
+            None,
+            None,
+            "issued one-time websocket bootstrap token",
+        );
+    }
 
     Ok(Json(SessionBootstrapResponse {
         token,
@@ -435,6 +453,9 @@ fn render_admin_dashboard(
         observability.map_or(0, crate::ServerObservability::websocket_rejections_total);
     let websocket_active =
         observability.map_or(0, crate::ServerObservability::websocket_sessions_active);
+    let recent_diagnostics = observability
+        .map(crate::ServerObservability::recent_diagnostics)
+        .unwrap_or_default();
 
     let metrics_block = metrics.map_or_else(
         || String::from("<p>Observability is disabled.</p>"),
@@ -445,6 +466,37 @@ fn render_admin_dashboard(
             )
         },
     );
+    let diagnostics_block = if recent_diagnostics.is_empty() {
+        String::from("<p>No recent diagnostics captured.</p>")
+    } else {
+        let mut rows = String::new();
+        for event in recent_diagnostics.iter().rev() {
+            let connection_text = event
+                .connection_id
+                .map_or_else(|| String::from("-"), |value| value.to_string());
+            let player_text = event
+                .player_id
+                .map_or_else(|| String::from("-"), |value| value.to_string());
+            let _ = write!(
+                rows,
+                "<tr><td>{:.3}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                (event.elapsed_ms as f64) / 1000.0,
+                html_escape(event.category),
+                html_escape(&connection_text),
+                html_escape(&player_text),
+                html_escape(&event.detail),
+            );
+        }
+        format!(
+            concat!(
+                "<h2>Recent Diagnostics</h2><table>",
+                "<tr><th>Elapsed s</th><th>Category</th><th>Connection</th><th>Player</th><th>Detail</th></tr>",
+                "{}",
+                "</table>"
+            ),
+            rows
+        )
+    };
 
     format!(
         concat!(
@@ -477,7 +529,7 @@ fn render_admin_dashboard(
             "<tr><th>Websocket sessions active</th><td>{}</td></tr>",
             "<tr><th>Websocket disconnects</th><td>{}</td></tr>",
             "<tr><th>Websocket rejections</th><td>{}</td></tr>",
-            "</table>{}</body></html>"
+            "</table>{}{}</body></html>"
         ),
         connected_players,
         bound_connections,
@@ -495,6 +547,7 @@ fn render_admin_dashboard(
         websocket_active,
         websocket_disconnects,
         websocket_rejections,
+        diagnostics_block,
         metrics_block,
     )
 }
@@ -564,6 +617,12 @@ async fn authorize_websocket_upgrade(
     let Some(token) = token else {
         if let Some(observability) = &state.observability {
             observability.record_websocket_rejection();
+            observability.record_diagnostic(
+                "websocket_upgrade",
+                None,
+                None,
+                "rejected websocket upgrade because the bootstrap token was missing",
+            );
         }
         return Err((
             StatusCode::UNAUTHORIZED,
@@ -581,12 +640,27 @@ async fn authorize_websocket_upgrade(
     if let Err(message) = consume_result {
         if let Some(observability) = &state.observability {
             observability.record_websocket_rejection();
+            observability.record_diagnostic(
+                "websocket_upgrade",
+                None,
+                None,
+                format!("rejected websocket upgrade: {message}"),
+            );
         }
         return Err((
             StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({ "error": message })),
         )
             .into_response());
+    }
+
+    if let Some(observability) = &state.observability {
+        observability.record_diagnostic(
+            "websocket_upgrade",
+            None,
+            None,
+            "authorized websocket upgrade with a valid bootstrap token",
+        );
     }
 
     Ok(())
