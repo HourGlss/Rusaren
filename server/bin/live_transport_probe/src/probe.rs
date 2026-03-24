@@ -2,10 +2,13 @@ use std::collections::{btree_map::Entry, BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use game_domain::{LobbyId, MatchId, PlayerId, PlayerRecord, ReadyState, SkillTree, TeamSide};
+use game_content::{CombatValueKind, GameContent, SkillBehavior};
+use game_domain::{
+    LobbyId, MatchId, PlayerId, PlayerRecord, ReadyState, SkillChoice, SkillTree, TeamSide,
+};
 use game_net::{
-    ArenaPlayerSnapshot, ClientControlCommand, LobbySnapshotPlayer, ServerControlEvent,
-    SkillCatalogEntry,
+    ArenaEffectSnapshot, ArenaPlayerSnapshot, ClientControlCommand, LobbySnapshotPlayer,
+    ServerControlEvent, SkillCatalogEntry,
 };
 use serde_json::json;
 
@@ -38,6 +41,74 @@ pub struct ProbeOutcome {
     pub total_skills: usize,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct MeleeProfile {
+    range: u16,
+    radius: u16,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SkillRole {
+    Damage,
+    Support,
+    Engage,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SkillProfile {
+    role: SkillRole,
+    behavior: SkillBehavior,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CombatLoadout {
+    melee: MeleeProfile,
+    round_skills: BTreeMap<u8, SkillProfile>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct TargetState {
+    player_id: PlayerId,
+    x: i16,
+    y: i16,
+    team: TeamSide,
+    hit_points: u16,
+    max_hit_points: u16,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct AttackWindow {
+    min: i32,
+    ideal: i32,
+    max: i32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AimTarget {
+    Enemy,
+    Ally,
+    Center,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PlannedAction {
+    buttons: u16,
+    ability_or_context: u16,
+    aim_target: AimTarget,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct CombatProgressState {
+    visible_players: usize,
+    team_a_hp: u32,
+    team_b_hp: u32,
+    team_a_alive: usize,
+    team_b_alive: usize,
+    min_enemy_distance: Option<u16>,
+    observed_effects: usize,
+    exercised_skills: usize,
+}
+
 struct ProbeClientState {
     label: String,
     client: LiveClient,
@@ -51,8 +122,10 @@ struct ProbeClientState {
     roster: BTreeMap<PlayerId, LobbySnapshotPlayer>,
     arena_players: BTreeMap<PlayerId, ArenaPlayerSnapshot>,
     assigned_tree: Option<TreePlan>,
-    next_slot_cursor: u8,
-    used_slots_this_round: BTreeSet<u8>,
+    combat_loadout: Option<CombatLoadout>,
+    current_skill_choice: Option<SkillChoice>,
+    current_skill_exercised: bool,
+    observed_effects_this_round: usize,
     transport_broken: Option<String>,
 }
 
@@ -88,8 +161,10 @@ impl ProbeClientState {
             roster: BTreeMap::new(),
             arena_players: BTreeMap::new(),
             assigned_tree: None,
-            next_slot_cursor: 1,
-            used_slots_this_round: BTreeSet::new(),
+            combat_loadout: None,
+            current_skill_choice: None,
+            current_skill_exercised: false,
+            observed_effects_this_round: 0,
             transport_broken: None,
         }
     }
@@ -247,7 +322,9 @@ impl ProbeClientState {
                 self.last_completed_round = 0;
                 self.current_phase = PhaseState::SkillPick;
                 self.arena_players.clear();
-                self.used_slots_this_round.clear();
+                self.current_skill_choice = None;
+                self.current_skill_exercised = false;
+                self.observed_effects_this_round = 0;
                 logger.info(
                     "match_started",
                     json!({
@@ -275,9 +352,11 @@ impl ProbeClientState {
                 score_b,
             } => {
                 self.last_completed_round = round.get();
-                self.current_round = round.get();
+                self.current_round = round.get().saturating_add(1);
                 self.current_phase = PhaseState::SkillPick;
-                self.used_slots_this_round.clear();
+                self.current_skill_choice = None;
+                self.current_skill_exercised = false;
+                self.observed_effects_this_round = 0;
                 logger.info(
                     "round_won",
                     json!({
@@ -311,10 +390,13 @@ impl ProbeClientState {
                 self.reset_after_match(logger)?;
             }
             ServerControlEvent::ArenaStateSnapshot { snapshot } => {
-                self.apply_snapshot(&snapshot.players, snapshot.phase);
+                self.apply_snapshot(logger, &snapshot.players, snapshot.phase)?;
             }
             ServerControlEvent::ArenaDeltaSnapshot { snapshot } => {
-                self.apply_snapshot(&snapshot.players, snapshot.phase);
+                self.apply_snapshot(logger, &snapshot.players, snapshot.phase)?;
+            }
+            ServerControlEvent::ArenaEffectBatch { effects } => {
+                self.apply_effect_batch(logger, effects)?;
             }
             _ => return Ok(false),
         }
@@ -332,6 +414,14 @@ impl ProbeClientState {
                 tree,
                 tier,
             } => {
+                if Some(*player_id) == self.player_id {
+                    self.current_skill_choice = Some(
+                        SkillChoice::new(tree.clone(), *tier)
+                            .map_err(|error| ProbeError::new(error.to_string()))?,
+                    );
+                    self.current_skill_exercised = false;
+                    self.observed_effects_this_round = 0;
+                }
                 logger.info(
                     "skill_chosen",
                     json!({
@@ -382,23 +472,74 @@ impl ProbeClientState {
         self.last_completed_round = 0;
         self.roster.clear();
         self.arena_players.clear();
-        self.next_slot_cursor = 1;
-        self.used_slots_this_round.clear();
+        self.current_skill_choice = None;
+        self.current_skill_exercised = false;
+        self.observed_effects_this_round = 0;
         logger.info("returned_to_central", json!({ "client": self.label }))?;
         Ok(())
     }
 
     fn apply_snapshot(
         &mut self,
+        logger: &mut ProbeLogger,
         players: &[ArenaPlayerSnapshot],
         phase: game_net::ArenaMatchPhase,
-    ) {
+    ) -> ProbeResult<()> {
+        let previous_local = self.local_player().cloned();
         self.arena_players = players
             .iter()
             .cloned()
             .map(|player| (player.player_id, player))
             .collect();
         self.current_phase = phase.into();
+        self.observe_local_skill_state(logger, previous_local.as_ref())?;
+        Ok(())
+    }
+
+    fn apply_effect_batch(
+        &mut self,
+        logger: &mut ProbeLogger,
+        effects: &[ArenaEffectSnapshot],
+    ) -> ProbeResult<()> {
+        if effects.is_empty() {
+            return Ok(());
+        }
+
+        self.observed_effects_this_round = self
+            .observed_effects_this_round
+            .saturating_add(effects.len());
+        logger.info(
+            "arena_effect_batch",
+            json!({
+                "client": self.label,
+                "count": effects.len(),
+                "owners": effects.iter().map(|effect| effect.owner.get()).collect::<Vec<_>>(),
+                "slots": effects.iter().map(|effect| effect.slot).collect::<Vec<_>>(),
+            }),
+        )?;
+
+        let Some(player_id) = self.player_id else {
+            return Ok(());
+        };
+        let Some(slot) = self.current_skill_slot() else {
+            return Ok(());
+        };
+        if !self.current_skill_exercised
+            && effects
+                .iter()
+                .any(|effect| effect.owner == player_id && effect.slot == slot)
+        {
+            self.current_skill_exercised = true;
+            logger.info(
+                "skill_activation_observed",
+                json!({
+                    "client": self.label,
+                    "slot": slot,
+                    "method": "effect_batch",
+                }),
+            )?;
+        }
+        Ok(())
     }
 
     async fn drain_messages(
@@ -432,77 +573,321 @@ impl ProbeClientState {
             return None;
         }
 
-        let (aim_x, aim_y, move_x, move_y) = self.navigation_target(&me);
-        let (buttons, ability_or_context) = self.next_action(&me);
+        let nearest_enemy = self.nearest_enemy(&me);
+        let allied_focus = self.best_ally_target(&me);
+        let action = self.next_action(&me, nearest_enemy.as_ref(), allied_focus.as_ref());
+        let (aim_x, aim_y) =
+            Self::aim_vector(&me, nearest_enemy.as_ref(), allied_focus.as_ref(), action);
+        let (move_x, move_y) = self.navigation_target(&me, nearest_enemy.as_ref());
         Some(PendingInput {
             move_x,
             move_y,
             aim_x,
             aim_y,
-            buttons,
-            ability_or_context,
+            buttons: action.buttons,
+            ability_or_context: action.ability_or_context,
         })
     }
 
-    fn navigation_target(&self, me: &ArenaPlayerSnapshot) -> (i16, i16, i16, i16) {
-        let nearest_enemy = self
-            .arena_players
+    fn nearest_enemy(&self, me: &ArenaPlayerSnapshot) -> Option<TargetState> {
+        self.arena_players
             .values()
             .filter(|player| player.team != me.team && player.alive)
-            .min_by_key(|player| {
-                let dx = i32::from(player.x) - i32::from(me.x);
-                let dy = i32::from(player.y) - i32::from(me.y);
-                dx * dx + dy * dy
-            });
-
-        let (delta_x, delta_y) = if let Some(enemy) = nearest_enemy {
-            (enemy.x.saturating_sub(me.x), enemy.y.saturating_sub(me.y))
-        } else {
-            (-me.x, -me.y)
-        };
-
-        let aim_x = if delta_x == 0 && delta_y == 0 {
-            120
-        } else {
-            delta_x
-        };
-        let aim_y = if delta_x == 0 && delta_y == 0 {
-            0
-        } else {
-            delta_y
-        };
-        let move_x = delta_x.signum();
-        let move_y = delta_y.signum();
-        (aim_x, aim_y, move_x, move_y)
+            .min_by_key(|player| distance_sq(me.x, me.y, player.x, player.y))
+            .map(TargetState::from)
     }
 
-    fn next_action(&mut self, me: &ArenaPlayerSnapshot) -> (u16, u16) {
-        let unlocked_slots = usize::from(me.unlocked_skill_slots.min(5));
-        if unlocked_slots > 0 {
-            for _ in 0..unlocked_slots {
-                let slot = self
-                    .next_slot_cursor
-                    .clamp(1, me.unlocked_skill_slots.max(1));
-                self.next_slot_cursor = if slot >= me.unlocked_skill_slots.max(1) {
-                    1
+    fn best_ally_target(&self, me: &ArenaPlayerSnapshot) -> Option<TargetState> {
+        self.arena_players
+            .values()
+            .filter(|player| player.team == me.team && player.alive)
+            .max_by_key(|player| {
+                (
+                    player.max_hit_points.saturating_sub(player.hit_points),
+                    u8::from(player.player_id != me.player_id),
+                )
+            })
+            .map(TargetState::from)
+    }
+
+    fn aim_vector(
+        me: &ArenaPlayerSnapshot,
+        nearest_enemy: Option<&TargetState>,
+        allied_focus: Option<&TargetState>,
+        action: PlannedAction,
+    ) -> (i16, i16) {
+        let target = match action.aim_target {
+            AimTarget::Enemy => nearest_enemy.map(|enemy| (enemy.x, enemy.y)),
+            AimTarget::Ally => allied_focus.map(|ally| (ally.x, ally.y)),
+            AimTarget::Center => Some((0, 0)),
+        };
+        let (target_x, target_y) = target.unwrap_or((0, 0));
+        let delta_x = target_x.saturating_sub(me.x);
+        let delta_y = target_y.saturating_sub(me.y);
+        if delta_x == 0 && delta_y == 0 {
+            if me.team == TeamSide::TeamA {
+                (120, 0)
+            } else {
+                (-120, 0)
+            }
+        } else {
+            (delta_x, delta_y)
+        }
+    }
+
+    fn navigation_target(
+        &self,
+        me: &ArenaPlayerSnapshot,
+        nearest_enemy: Option<&TargetState>,
+    ) -> (i16, i16) {
+        if let Some(enemy) = nearest_enemy {
+            let distance = i32::from(distance_between(me.x, me.y, enemy.x, enemy.y));
+            let preferred_window = self.preferred_engagement_window(me);
+            if me.y.abs() > 48 && distance > preferred_window.max + 60 {
+                return (0, (-me.y).signum());
+            }
+            if distance > preferred_window.max {
+                return (
+                    enemy.x.saturating_sub(me.x).signum(),
+                    enemy.y.saturating_sub(me.y).signum(),
+                );
+            }
+            if distance < preferred_window.min {
+                return (
+                    me.x.saturating_sub(enemy.x).signum(),
+                    me.y.saturating_sub(enemy.y).signum(),
+                );
+            }
+            return (0, 0);
+        }
+
+        if me.y.abs() > 48 {
+            (0, (-me.y).signum())
+        } else {
+            ((-me.x).signum(), 0)
+        }
+    }
+
+    fn next_action(
+        &self,
+        me: &ArenaPlayerSnapshot,
+        nearest_enemy: Option<&TargetState>,
+        allied_focus: Option<&TargetState>,
+    ) -> PlannedAction {
+        if let Some(skill_action) = self.current_skill_action(me, nearest_enemy, allied_focus) {
+            return skill_action;
+        }
+
+        if me.primary_cooldown_remaining_ms == 0
+            && nearest_enemy.is_some_and(|enemy| {
+                self.primary_attack_window()
+                    .contains(i32::from(distance_between(me.x, me.y, enemy.x, enemy.y)))
+            })
+        {
+            return PlannedAction {
+                buttons: game_net::BUTTON_PRIMARY,
+                ability_or_context: 0,
+                aim_target: AimTarget::Enemy,
+            };
+        }
+
+        PlannedAction {
+            buttons: 0,
+            ability_or_context: 0,
+            aim_target: if nearest_enemy.is_some() {
+                AimTarget::Enemy
+            } else {
+                AimTarget::Center
+            },
+        }
+    }
+
+    fn current_skill_action(
+        &self,
+        me: &ArenaPlayerSnapshot,
+        nearest_enemy: Option<&TargetState>,
+        allied_focus: Option<&TargetState>,
+    ) -> Option<PlannedAction> {
+        let slot = self.current_skill_slot()?;
+        if slot == 0 || slot > me.unlocked_skill_slots {
+            return None;
+        }
+        let slot_index = usize::from(slot - 1);
+        let skill = self.current_skill_profile()?;
+        if me.slot_cooldown_remaining_ms[slot_index] > 0 || me.mana < skill.behavior.mana_cost() {
+            return None;
+        }
+
+        match skill.role {
+            SkillRole::Damage => {
+                let enemy = nearest_enemy?;
+                let distance = i32::from(distance_between(me.x, me.y, enemy.x, enemy.y));
+                if Self::attack_window_for_skill(skill).contains(distance) {
+                    Some(PlannedAction {
+                        buttons: game_net::BUTTON_CAST,
+                        ability_or_context: u16::from(slot),
+                        aim_target: AimTarget::Enemy,
+                    })
                 } else {
-                    slot + 1
-                };
-                let slot_index = usize::from(slot - 1);
-                if !self.used_slots_this_round.contains(&slot)
-                    && me.slot_cooldown_remaining_ms[slot_index] == 0
+                    None
+                }
+            }
+            SkillRole::Support => {
+                if self.current_skill_exercised {
+                    return None;
+                }
+                let ally = allied_focus?;
+                let distance = i32::from(distance_between(me.x, me.y, ally.x, ally.y));
+                if Self::attack_window_for_skill(skill).contains(distance) {
+                    Some(PlannedAction {
+                        buttons: game_net::BUTTON_CAST,
+                        ability_or_context: u16::from(slot),
+                        aim_target: AimTarget::Ally,
+                    })
+                } else {
+                    None
+                }
+            }
+            SkillRole::Engage => {
+                if self.current_skill_exercised {
+                    return None;
+                }
+                let enemy = nearest_enemy?;
+                let distance = i32::from(distance_between(me.x, me.y, enemy.x, enemy.y));
+                let primary_window = self.primary_attack_window();
+                if Self::attack_window_for_skill(skill).contains(distance)
+                    && distance > primary_window.max
                 {
-                    self.used_slots_this_round.insert(slot);
-                    return (game_net::BUTTON_CAST, u16::from(slot));
+                    Some(PlannedAction {
+                        buttons: game_net::BUTTON_CAST,
+                        ability_or_context: u16::from(slot),
+                        aim_target: AimTarget::Enemy,
+                    })
+                } else {
+                    None
                 }
             }
         }
+    }
 
-        if me.primary_cooldown_remaining_ms == 0 {
-            return (game_net::BUTTON_PRIMARY, 0);
+    fn current_skill_slot(&self) -> Option<u8> {
+        let slot = self.current_round.clamp(1, 5);
+        (slot > 0).then_some(slot)
+    }
+
+    fn current_skill_profile(&self) -> Option<SkillProfile> {
+        let slot = self.current_skill_slot()?;
+        self.combat_loadout
+            .as_ref()?
+            .round_skills
+            .get(&slot)
+            .copied()
+    }
+
+    fn preferred_engagement_window(&self, me: &ArenaPlayerSnapshot) -> AttackWindow {
+        if let Some(skill) = self.current_skill_profile() {
+            let slot = usize::from(self.current_skill_slot().unwrap_or(1).saturating_sub(1));
+            if matches!(skill.role, SkillRole::Damage | SkillRole::Engage)
+                && slot < me.slot_cooldown_remaining_ms.len()
+                && me.slot_cooldown_remaining_ms[slot] == 0
+                && me.mana >= skill.behavior.mana_cost()
+            {
+                return Self::attack_window_for_skill(skill);
+            }
         }
+        self.primary_attack_window()
+    }
 
-        (0, 0)
+    fn primary_attack_window(&self) -> AttackWindow {
+        let melee = self.combat_loadout.as_ref().map_or(
+            MeleeProfile {
+                range: 92,
+                radius: 40,
+            },
+            |loadout| loadout.melee,
+        );
+        AttackWindow {
+            min: (i32::from(melee.range) - i32::from(melee.radius) - 24).max(0),
+            ideal: i32::from(melee.range),
+            max: i32::from(melee.range) + i32::from(melee.radius) + 24,
+        }
+    }
+
+    fn attack_window_for_skill(skill: SkillProfile) -> AttackWindow {
+        match skill.behavior {
+            SkillBehavior::Projectile { range, radius, .. }
+            | SkillBehavior::Beam { range, radius, .. } => AttackWindow {
+                min: 0,
+                ideal: i32::from(range.min(220)),
+                max: i32::from(range) + i32::from(radius) + 24,
+            },
+            SkillBehavior::Burst { range, radius, .. } => AttackWindow {
+                min: (i32::from(range) - i32::from(radius) - 24).max(0),
+                ideal: i32::from(range),
+                max: i32::from(range) + i32::from(radius) + 24,
+            },
+            SkillBehavior::Nova { radius, .. } => AttackWindow {
+                min: 0,
+                ideal: i32::from(radius).saturating_sub(24),
+                max: i32::from(radius) + 24,
+            },
+            SkillBehavior::Dash {
+                distance,
+                impact_radius,
+                ..
+            } => {
+                let impact_radius = i32::from(impact_radius.unwrap_or(0));
+                AttackWindow {
+                    min: (i32::from(distance) - impact_radius - 30).max(0),
+                    ideal: i32::from(distance).saturating_sub(16),
+                    max: i32::from(distance) + impact_radius + 24,
+                }
+            }
+        }
+    }
+
+    fn observe_local_skill_state(
+        &mut self,
+        logger: &mut ProbeLogger,
+        previous_local: Option<&ArenaPlayerSnapshot>,
+    ) -> ProbeResult<()> {
+        if self.current_skill_exercised {
+            return Ok(());
+        }
+        let Some(slot) = self.current_skill_slot() else {
+            return Ok(());
+        };
+        let Some(local) = self.local_player() else {
+            return Ok(());
+        };
+        let slot_index = usize::from(slot.saturating_sub(1));
+        let cooldown_started = local
+            .slot_cooldown_remaining_ms
+            .get(slot_index)
+            .copied()
+            .unwrap_or_default()
+            > 0
+            && previous_local.is_none_or(|previous| {
+                previous
+                    .slot_cooldown_remaining_ms
+                    .get(slot_index)
+                    .copied()
+                    .unwrap_or_default()
+                    < local.slot_cooldown_remaining_ms[slot_index]
+            });
+        let mana_spent = previous_local.is_some_and(|previous| local.mana < previous.mana);
+        if cooldown_started || mana_spent {
+            self.current_skill_exercised = true;
+            logger.info(
+                "skill_activation_observed",
+                json!({
+                    "client": self.label,
+                    "slot": slot,
+                    "method": if cooldown_started { "cooldown" } else { "mana" },
+                }),
+            )?;
+        }
+        Ok(())
     }
 }
 
@@ -515,6 +900,125 @@ impl From<game_net::ArenaMatchPhase> for PhaseState {
             game_net::ArenaMatchPhase::MatchEnd => Self::Results,
         }
     }
+}
+
+impl AttackWindow {
+    fn contains(self, distance: i32) -> bool {
+        distance >= self.min && distance <= self.max
+    }
+}
+
+impl From<&ArenaPlayerSnapshot> for TargetState {
+    fn from(value: &ArenaPlayerSnapshot) -> Self {
+        Self {
+            player_id: value.player_id,
+            x: value.x,
+            y: value.y,
+            team: value.team,
+            hit_points: value.hit_points,
+            max_hit_points: value.max_hit_points,
+        }
+    }
+}
+
+fn distance_sq(x0: i16, y0: i16, x1: i16, y1: i16) -> i32 {
+    let dx = i32::from(x1) - i32::from(x0);
+    let dy = i32::from(y1) - i32::from(y0);
+    dx * dx + dy * dy
+}
+
+fn distance_between(x0: i16, y0: i16, x1: i16, y1: i16) -> u16 {
+    let squared = u32::try_from(distance_sq(x0, y0, x1, y1)).unwrap_or(u32::MAX);
+    integer_sqrt_rounded(squared)
+}
+
+fn integer_sqrt_rounded(value: u32) -> u16 {
+    let mut low = 0_u32;
+    let mut high = value.min(u32::from(u16::MAX));
+    while low < high {
+        let mid = low + (high - low).div_ceil(2);
+        if mid.saturating_mul(mid) <= value {
+            low = mid;
+        } else {
+            high = mid - 1;
+        }
+    }
+
+    let lower = low;
+    let upper = low.saturating_add(1);
+    let rounded = if upper.saturating_mul(upper).saturating_sub(value)
+        < value.saturating_sub(lower.saturating_mul(lower))
+    {
+        upper
+    } else {
+        lower
+    };
+    u16::try_from(rounded).unwrap_or(u16::MAX)
+}
+
+fn repo_content_root() -> PathBuf {
+    if let Ok(server_root) = std::env::var("RARENA_SERVER_ROOT") {
+        return PathBuf::from(server_root).join("content");
+    }
+
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("content")
+}
+
+fn skill_role(behavior: SkillBehavior) -> SkillRole {
+    match behavior {
+        SkillBehavior::Projectile { payload, .. }
+        | SkillBehavior::Beam { payload, .. }
+        | SkillBehavior::Burst { payload, .. }
+        | SkillBehavior::Nova { payload, .. } => match payload.kind {
+            CombatValueKind::Damage => SkillRole::Damage,
+            CombatValueKind::Heal => SkillRole::Support,
+        },
+        SkillBehavior::Dash { payload, .. } => payload.map_or(SkillRole::Engage, |payload| {
+            if payload.kind == CombatValueKind::Damage {
+                SkillRole::Damage
+            } else {
+                SkillRole::Support
+            }
+        }),
+    }
+}
+
+fn build_combat_loadout(content: &GameContent, tree_plan: &TreePlan) -> ProbeResult<CombatLoadout> {
+    let melee = content.skills().melee_for(&tree_plan.tree).ok_or_else(|| {
+        ProbeError::new(format!(
+            "no authored melee entry exists for {}",
+            tree_plan.tree
+        ))
+    })?;
+    let mut round_skills = BTreeMap::new();
+    for &tier in &tree_plan.tiers {
+        let choice = SkillChoice::new(tree_plan.tree.clone(), tier)
+            .map_err(|error| ProbeError::new(error.to_string()))?;
+        let definition = content.skills().resolve(&choice).ok_or_else(|| {
+            ProbeError::new(format!(
+                "no authored skill exists for {} tier {}",
+                tree_plan.tree, tier
+            ))
+        })?;
+        round_skills.insert(
+            tier,
+            SkillProfile {
+                role: skill_role(definition.behavior),
+                behavior: definition.behavior,
+            },
+        );
+    }
+
+    Ok(CombatLoadout {
+        melee: MeleeProfile {
+            range: melee.range,
+            radius: melee.radius,
+        },
+        round_skills,
+    })
 }
 
 fn placeholder_lobby_player(player_id: PlayerId) -> ProbeResult<LobbySnapshotPlayer> {
@@ -535,6 +1039,8 @@ fn is_transient_probe_error(message: &str) -> bool {
 
 pub async fn run_probe(config: ProbeConfig) -> ProbeResult<ProbeOutcome> {
     let mut logger = ProbeLogger::new(&config.output_path, &config.origin)?;
+    let content = GameContent::load_from_root(repo_content_root())
+        .map_err(|error| ProbeError::new(format!("probe content load failed: {error}")))?;
 
     let labels = ["probe-a1", "probe-a2", "probe-b1", "probe-b2"];
     let mut clients = Vec::new();
@@ -548,6 +1054,7 @@ pub async fn run_probe(config: ProbeConfig) -> ProbeResult<ProbeOutcome> {
         clients,
         config,
         logger,
+        content,
         covered_skills: BTreeSet::new(),
     };
 
@@ -564,6 +1071,7 @@ struct ProbeRunner {
     clients: Vec<ProbeClientState>,
     config: ProbeConfig,
     logger: ProbeLogger,
+    content: GameContent,
     covered_skills: BTreeSet<(SkillTree, u8)>,
 }
 
@@ -629,7 +1137,7 @@ impl ProbeRunner {
 
     async fn play_match(&mut self, plan: &MatchPlan) -> ProbeResult<()> {
         self.log_match_plan_started(plan)?;
-        self.assign_match_plan(plan);
+        self.assign_match_plan(plan)?;
 
         let lobby_id = self.create_lobby().await?;
         self.join_remaining_clients(lobby_id).await?;
@@ -654,11 +1162,15 @@ impl ProbeRunner {
         )
     }
 
-    fn assign_match_plan(&mut self, plan: &MatchPlan) {
+    fn assign_match_plan(&mut self, plan: &MatchPlan) -> ProbeResult<()> {
         for (client, tree_plan) in self.clients.iter_mut().zip(plan.players.iter()) {
             client.assigned_tree = Some(tree_plan.clone());
-            client.next_slot_cursor = 1;
+            client.combat_loadout = Some(build_combat_loadout(&self.content, tree_plan)?);
+            client.current_skill_choice = None;
+            client.current_skill_exercised = false;
+            client.observed_effects_this_round = 0;
         }
+        Ok(())
     }
 
     async fn create_lobby(&mut self) -> ProbeResult<LobbyId> {
@@ -816,6 +1328,8 @@ impl ProbeRunner {
                 .tiers
                 .get(round_index)
                 .ok_or_else(|| ProbeError::new("assigned tree is missing the next round tier"))?;
+            let choice = SkillChoice::new(tree_plan.tree.clone(), tier)
+                .map_err(|error| ProbeError::new(error.to_string()))?;
             client
                 .client
                 .send_command(ClientControlCommand::ChooseSkill {
@@ -823,6 +1337,9 @@ impl ProbeRunner {
                     tier,
                 })
                 .await?;
+            client.current_skill_choice = Some(choice);
+            client.current_skill_exercised = false;
+            client.observed_effects_this_round = 0;
             self.covered_skills.insert((tree_plan.tree.clone(), tier));
         }
         Ok(())
@@ -874,8 +1391,26 @@ impl ProbeRunner {
     async fn drive_combat(&mut self, round: u8) -> ProbeResult<CombatDriveOutcome> {
         let started_at = Instant::now();
         let mut loop_count = 0usize;
+        let mut last_progress = self.capture_combat_progress();
+        let mut last_progress_at = Instant::now();
+        self.log_combat_progress(round, loop_count, "combat_progress", last_progress)?;
         while started_at.elapsed() < self.config.round_timeout {
             self.drain_all(Duration::from_millis(50)).await?;
+            let progress = self.capture_combat_progress();
+            if progress != last_progress {
+                last_progress = progress;
+                last_progress_at = Instant::now();
+                self.log_combat_progress(round, loop_count, "combat_progress", progress)?;
+            } else if last_progress_at.elapsed() >= Duration::from_secs(10)
+                && loop_count.is_multiple_of(10)
+            {
+                self.log_combat_stall(
+                    round,
+                    loop_count,
+                    last_progress_at.elapsed().as_secs(),
+                    progress,
+                )?;
+            }
             if self.round_finished(round) {
                 return Ok(CombatDriveOutcome::RoundFinished);
             }
@@ -911,16 +1446,138 @@ impl ProbeRunner {
             }
         }
 
-        Err(ProbeError::new(format!(
-            "round {round} did not finish within {}s",
-            self.config.round_timeout.as_secs()
-        )))
+        Err(self.combat_timeout_error(round, last_progress))
     }
 
     fn round_finished(&self, round: u8) -> bool {
         self.clients.iter().all(|client| {
             client.current_phase == PhaseState::Results || client.last_completed_round >= round
         })
+    }
+
+    fn capture_combat_progress(&self) -> CombatProgressState {
+        let mut merged_players = BTreeMap::<PlayerId, ArenaPlayerSnapshot>::new();
+        let mut min_enemy_distance = None;
+        let mut team_a_hp = 0_u32;
+        let mut team_b_hp = 0_u32;
+        let mut team_a_alive = 0_usize;
+        let mut team_b_alive = 0_usize;
+
+        for client in &self.clients {
+            for (&player_id, player) in &client.arena_players {
+                merged_players
+                    .entry(player_id)
+                    .or_insert_with(|| player.clone());
+            }
+            if let Some(me) = client.local_player() {
+                if let Some(enemy) = client.nearest_enemy(me) {
+                    let distance = distance_between(me.x, me.y, enemy.x, enemy.y);
+                    min_enemy_distance = Some(
+                        min_enemy_distance.map_or(distance, |current: u16| current.min(distance)),
+                    );
+                }
+            }
+        }
+
+        for player in merged_players.values() {
+            match player.team {
+                TeamSide::TeamA => {
+                    team_a_hp = team_a_hp.saturating_add(u32::from(player.hit_points));
+                    if player.alive {
+                        team_a_alive += 1;
+                    }
+                }
+                TeamSide::TeamB => {
+                    team_b_hp = team_b_hp.saturating_add(u32::from(player.hit_points));
+                    if player.alive {
+                        team_b_alive += 1;
+                    }
+                }
+            }
+        }
+
+        CombatProgressState {
+            visible_players: merged_players.len(),
+            team_a_hp,
+            team_b_hp,
+            team_a_alive,
+            team_b_alive,
+            min_enemy_distance,
+            observed_effects: self
+                .clients
+                .iter()
+                .map(|client| client.observed_effects_this_round)
+                .sum(),
+            exercised_skills: self
+                .clients
+                .iter()
+                .filter(|client| client.current_skill_exercised)
+                .count(),
+        }
+    }
+
+    fn log_combat_progress(
+        &mut self,
+        round: u8,
+        loop_count: usize,
+        kind: &str,
+        progress: CombatProgressState,
+    ) -> ProbeResult<()> {
+        self.logger.info(
+            kind,
+            json!({
+                "round": round,
+                "iterations": loop_count,
+                "visible_players": progress.visible_players,
+                "team_a_hp": progress.team_a_hp,
+                "team_b_hp": progress.team_b_hp,
+                "team_a_alive": progress.team_a_alive,
+                "team_b_alive": progress.team_b_alive,
+                "min_enemy_distance": progress.min_enemy_distance,
+                "observed_effects": progress.observed_effects,
+                "exercised_skills": progress.exercised_skills,
+            }),
+        )
+    }
+
+    fn log_combat_stall(
+        &mut self,
+        round: u8,
+        loop_count: usize,
+        stall_seconds: u64,
+        progress: CombatProgressState,
+    ) -> ProbeResult<()> {
+        self.logger.info(
+            "combat_progress_stalled",
+            json!({
+                "round": round,
+                "iterations": loop_count,
+                "stall_seconds": stall_seconds,
+                "visible_players": progress.visible_players,
+                "team_a_hp": progress.team_a_hp,
+                "team_b_hp": progress.team_b_hp,
+                "team_a_alive": progress.team_a_alive,
+                "team_b_alive": progress.team_b_alive,
+                "min_enemy_distance": progress.min_enemy_distance,
+                "observed_effects": progress.observed_effects,
+                "exercised_skills": progress.exercised_skills,
+            }),
+        )
+    }
+
+    fn combat_timeout_error(&self, round: u8, progress: CombatProgressState) -> ProbeError {
+        ProbeError::new(format!(
+            "round {round} did not finish within {}s (visible_players={} team_a_hp={} team_b_hp={} team_a_alive={} team_b_alive={} min_enemy_distance={:?} observed_effects={} exercised_skills={})",
+            self.config.round_timeout.as_secs(),
+            progress.visible_players,
+            progress.team_a_hp,
+            progress.team_b_hp,
+            progress.team_a_alive,
+            progress.team_b_alive,
+            progress.min_enemy_distance,
+            progress.observed_effects,
+            progress.exercised_skills,
+        ))
     }
 
     async fn wait_for<F>(
@@ -951,5 +1608,71 @@ impl ProbeRunner {
                 .await?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod probe_tests {
+    use super::*;
+
+    fn test_content() -> GameContent {
+        GameContent::load_from_root(repo_content_root()).expect("bundled probe content should load")
+    }
+
+    #[test]
+    fn combat_loadout_builder_uses_authored_melee_and_skill_roles() {
+        let content = test_content();
+        let loadout = build_combat_loadout(
+            &content,
+            &TreePlan {
+                tree: SkillTree::Warrior,
+                tiers: vec![1, 2, 3, 4, 5],
+            },
+        )
+        .expect("warrior loadout should build");
+
+        assert_eq!(loadout.melee.range, 92);
+        assert_eq!(loadout.melee.radius, 42);
+        assert_eq!(loadout.round_skills[&1].role, SkillRole::Damage);
+        assert_eq!(loadout.round_skills[&4].role, SkillRole::Damage);
+    }
+
+    #[test]
+    fn skill_role_classifies_heals_as_support_and_empty_dash_as_engage() {
+        let content = test_content();
+        let cleric = build_combat_loadout(
+            &content,
+            &TreePlan {
+                tree: SkillTree::Cleric,
+                tiers: vec![1, 2, 3, 4, 5],
+            },
+        )
+        .expect("cleric loadout should build");
+        let rogue = build_combat_loadout(
+            &content,
+            &TreePlan {
+                tree: SkillTree::Rogue,
+                tiers: vec![1, 2, 3, 4, 5],
+            },
+        )
+        .expect("rogue loadout should build");
+
+        assert_eq!(cleric.round_skills[&1].role, SkillRole::Support);
+        assert_eq!(cleric.round_skills[&3].role, SkillRole::Support);
+        assert_eq!(rogue.round_skills[&2].role, SkillRole::Engage);
+    }
+
+    #[test]
+    fn attack_window_requires_real_spacing_instead_of_point_blank_overlap() {
+        let window = AttackWindow {
+            min: 26,
+            ideal: 92,
+            max: 158,
+        };
+
+        assert!(!window.contains(0));
+        assert!(window.contains(92));
+        assert!(window.contains(140));
+        assert!(!window.contains(220));
     }
 }

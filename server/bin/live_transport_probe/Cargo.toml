@@ -9,6 +9,7 @@ publish.workspace = true
 bytes.workspace = true
 futures-util.workspace = true
 game_api = { path = "../../crates/game_api" }
+game_content = { path = "../../crates/game_content" }
 game_domain = { path = "../../crates/game_domain" }
 game_net = { path = "../../crates/game_net" }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
