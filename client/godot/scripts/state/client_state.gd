@@ -9,7 +9,7 @@ var local_player_id := 0
 var local_player_name := ""
 var transport_state := "closed"
 var screen := "central"
-var banner_message := "Connect to enter the central lobby. Browser builds use the hosted realtime service automatically."
+var banner_message := "Preparing your realtime session."
 var phase_label := "Central Lobby"
 var countdown_label := ""
 var outcome_label := ""
@@ -445,7 +445,7 @@ func event_log_text() -> String:
 
 
 func lobby_note() -> String:
-	return "Click an open lobby in the directory or enter a manual lobby ID. The backend sends authoritative directory, roster, and arena snapshots so late joiners land on current state."
+	return "Click an open lobby in the directory or enter a manual lobby ID. Use Menu for your alias, record, roster, and event views while the backend keeps directory, roster, and arena state authoritative."
 
 
 func can_join_or_create_lobby() -> bool:

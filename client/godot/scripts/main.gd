@@ -6,14 +6,35 @@ const ArenaViewScript := preload("res://scripts/arena/arena_view.gd")
 const Protocol := preload("res://scripts/net/protocol.gd")
 const WebSocketConfigScript := preload("res://scripts/net/websocket_config.gd")
 
+const MENU_SECTION_NAME := "name"
+const MENU_SECTION_RECORD := "record"
+const MENU_SECTION_ROSTER := "roster"
+const MENU_SECTION_EVENTS := "events"
+
+const MENU_ACTION_CHANGE_NAME := 1
+const MENU_ACTION_PLAYER_RECORD := 2
+const MENU_ACTION_ROSTER_WATCH := 3
+const MENU_ACTION_EVENT_FEED := 4
+
+const AUTO_RECONNECT_DELAY_SECONDS := 2.0
+const RANDOM_PLAYER_NAME_LENGTH := 10
+const PLAYER_NAME_ALPHABET := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+var auto_connect_enabled := true
+
 var app_state := ClientStateScript.new()
 var transport := DevSocketClientScript.new()
 var websocket_config := WebSocketConfigScript.new()
 
-var connect_button: Button
-var disconnect_button: Button
 var connection_panel: PanelContainer
 var player_name_input: LineEdit
+var menu_button: MenuButton
+var fullscreen_menu: Control
+var fullscreen_menu_title: Label
+var name_menu_view: VBoxContainer
+var record_view: VBoxContainer
+var roster_view: VBoxContainer
+var event_view: VBoxContainer
 var banner_label: Label
 var status_label: Label
 var record_label: Label
@@ -43,7 +64,8 @@ var join_lobby_button: Button
 var team_a_button: Button
 var team_b_button: Button
 var primary_attack_button: Button
-var right_column: VBoxContainer
+var name_save_button: Button
+var name_randomize_button: Button
 var skill_pick_panel: PanelContainer
 var skill_pick_summary_label: Label
 var skill_scroll: ScrollContainer
@@ -59,20 +81,28 @@ var _last_sent_aim := Vector2i.ZERO
 var _bootstrap_request: HTTPRequest
 var _bootstrap_request_active := false
 var _pending_bootstrap_url := ""
+var _menu_section := ""
+var _auto_connect_retry_seconds := -1.0
+var _name_rng := RandomNumberGenerator.new()
 
 
 func _ready() -> void:
+	_name_rng.randomize()
 	_bootstrap_request = HTTPRequest.new()
 	add_child(_bootstrap_request)
 	_bootstrap_request.request_completed.connect(_on_bootstrap_request_completed)
 	_build_shell()
 	_bind_transport()
+	_apply_player_name(_random_player_name())
 	_refresh_ui()
+	if auto_connect_enabled:
+		_queue_auto_connect(0.0)
 
 
 func _process(delta: float) -> void:
 	app_state.advance_visuals(delta)
 	transport.poll()
+	_tick_auto_connect(delta)
 	_drive_combat_input()
 	_refresh_ui()
 
@@ -143,53 +173,77 @@ func _build_shell() -> void:
 	add_child(margin)
 
 	var root_column := VBoxContainer.new()
+	root_column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	root_column.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	root_column.add_theme_constant_override("separation", 18)
 	margin.add_child(root_column)
 
-	root_column.add_child(_build_header())
-	root_column.add_child(_build_connection_panel())
+	root_column.add_child(_build_top_bar())
 	root_column.add_child(_build_body())
+	add_child(_build_fullscreen_menu())
 
 
-func _build_header() -> Control:
-	var wrapper := VBoxContainer.new()
-	wrapper.add_theme_constant_override("separation", 8)
-
-	var title := Label.new()
-	title.text = "Rusaren Control Shell"
-	title.add_theme_font_size_override("font_size", 34)
-	title.add_theme_color_override("font_color", Color8(240, 232, 219))
-	wrapper.add_child(title)
-
-	var subtitle := Label.new()
-	subtitle.text = "Godot web shell wired to the hosted Rusaren backend. Gameplay rendering stays intentionally rough while the transport and rules settle."
-	subtitle.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	subtitle.add_theme_color_override("font_color", Color8(184, 191, 198))
-	wrapper.add_child(subtitle)
-
-	var badge_row := HBoxContainer.new()
-	badge_row.add_theme_constant_override("separation", 12)
-	wrapper.add_child(badge_row)
+func _build_top_bar() -> Control:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 12)
 
 	status_label = Label.new()
 	status_label.add_theme_font_size_override("font_size", 14)
 	status_label.add_theme_color_override("font_color", Color8(255, 214, 102))
-	badge_row.add_child(status_label)
+	row.add_child(status_label)
 
 	identity_label = Label.new()
 	identity_label.add_theme_color_override("font_color", Color8(128, 201, 255))
-	badge_row.add_child(identity_label)
+	row.add_child(identity_label)
 
-	return wrapper
+	var spacer := Control.new()
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(spacer)
+
+	menu_button = MenuButton.new()
+	menu_button.text = "Menu"
+	menu_button.custom_minimum_size = Vector2(132, 42)
+	_style_clickable(menu_button, Color8(53, 73, 94))
+	row.add_child(menu_button)
+
+	var popup := menu_button.get_popup()
+	popup.add_item("Change Name", MENU_ACTION_CHANGE_NAME)
+	popup.add_separator()
+	popup.add_item("Player Record", MENU_ACTION_PLAYER_RECORD)
+	popup.add_item("Roster Watch", MENU_ACTION_ROSTER_WATCH)
+	popup.add_item("Event Feed", MENU_ACTION_EVENT_FEED)
+	popup.id_pressed.connect(_on_menu_option_selected)
+
+	return row
 
 
-func _build_connection_panel() -> Control:
+func _build_body() -> Control:
+	var column := VBoxContainer.new()
+	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	column.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	column.add_theme_constant_override("separation", 14)
+
+	connection_panel = _build_connection_panel()
+	central_panel = _build_central_panel()
+	lobby_panel = _build_lobby_panel()
+	match_panel = _build_match_panel()
+	results_panel = _build_results_panel()
+
+	column.add_child(connection_panel)
+	column.add_child(central_panel)
+	column.add_child(lobby_panel)
+	column.add_child(match_panel)
+	column.add_child(results_panel)
+	return column
+
+
+func _build_connection_panel() -> PanelContainer:
 	var panel := _make_panel(Color8(29, 42, 53), Color8(92, 120, 143))
 	connection_panel = panel
 	var body := panel.get_meta("body") as VBoxContainer
 
 	var heading := Label.new()
-	heading.text = "Realtime transport"
+	heading.text = "Central Actions"
 	heading.add_theme_font_size_override("font_size", 19)
 	heading.add_theme_color_override("font_color", Color8(244, 239, 232))
 	body.add_child(heading)
@@ -199,69 +253,38 @@ func _build_connection_panel() -> Control:
 	banner_label.add_theme_color_override("font_color", Color8(214, 192, 154))
 	body.add_child(banner_label)
 
-	var grid := GridContainer.new()
-	grid.columns = 2
-	grid.add_theme_constant_override("h_separation", 14)
-	grid.add_theme_constant_override("v_separation", 10)
-	body.add_child(grid)
+	var note := Label.new()
+	note.text = "The client now connects automatically. Use Menu to change your alias or open record, roster, and event views."
+	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	note.add_theme_color_override("font_color", Color8(184, 191, 198))
+	body.add_child(note)
 
-	player_name_input = _labeled_line_edit(grid, "Player name", "Alice")
-	join_lobby_input = _labeled_line_edit(grid, "Join lobby ID", "")
+	var controls := HBoxContainer.new()
+	controls.add_theme_constant_override("separation", 12)
+	body.add_child(controls)
 
-	var button_row := HBoxContainer.new()
-	button_row.add_theme_constant_override("separation", 10)
-	body.add_child(button_row)
+	var join_wrapper := VBoxContainer.new()
+	join_wrapper.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	controls.add_child(join_wrapper)
 
-	connect_button = _action_button("Connect", Color8(28, 102, 82))
-	connect_button.pressed.connect(_on_connect_pressed)
-	button_row.add_child(connect_button)
+	var join_label := Label.new()
+	join_label.text = "Join lobby ID"
+	join_label.add_theme_color_override("font_color", Color8(205, 214, 221))
+	join_wrapper.add_child(join_label)
 
-	disconnect_button = _action_button("Disconnect", Color8(116, 47, 47))
-	disconnect_button.pressed.connect(_on_disconnect_pressed)
-	button_row.add_child(disconnect_button)
+	join_lobby_input = LineEdit.new()
+	join_lobby_input.placeholder_text = "Join lobby ID"
+	join_wrapper.add_child(join_lobby_input)
 
 	create_lobby_button = _action_button("Create Lobby", Color8(45, 74, 126))
 	create_lobby_button.pressed.connect(_on_create_lobby_pressed)
-	button_row.add_child(create_lobby_button)
+	controls.add_child(create_lobby_button)
 
 	join_lobby_button = _action_button("Join Lobby", Color8(102, 72, 28))
 	join_lobby_button.pressed.connect(_on_join_lobby_pressed)
-	button_row.add_child(join_lobby_button)
+	controls.add_child(join_lobby_button)
 
 	return panel
-
-
-func _build_body() -> Control:
-	var split := HSplitContainer.new()
-	split.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	split.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	split.split_offset = 840
-
-	var left_column := VBoxContainer.new()
-	left_column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	left_column.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	left_column.add_theme_constant_override("separation", 14)
-	split.add_child(left_column)
-
-	central_panel = _build_central_panel()
-	lobby_panel = _build_lobby_panel()
-	match_panel = _build_match_panel()
-	results_panel = _build_results_panel()
-	left_column.add_child(central_panel)
-	left_column.add_child(lobby_panel)
-	left_column.add_child(match_panel)
-	left_column.add_child(results_panel)
-
-	right_column = VBoxContainer.new()
-	right_column.custom_minimum_size = Vector2(360, 0)
-	right_column.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	right_column.add_theme_constant_override("separation", 14)
-	split.add_child(right_column)
-
-	right_column.add_child(_build_record_panel())
-	right_column.add_child(_build_roster_panel())
-	right_column.add_child(_build_event_panel())
-	return split
 
 
 func _build_central_panel() -> PanelContainer:
@@ -275,16 +298,10 @@ func _build_central_panel() -> PanelContainer:
 	body.add_child(title)
 
 	var summary := Label.new()
-	summary.text = "Create a game lobby or click one from the directory below to join it. Browser builds connect to the hosted realtime service automatically, then switch live gameplay onto WebRTC data channels."
+	summary.text = "Create a game lobby or click one from the directory below to join it. The browser shell stays same-origin, auto-connects, and hands live gameplay to WebRTC once signaling finishes."
 	summary.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	summary.add_theme_color_override("font_color", Color8(187, 196, 203))
 	body.add_child(summary)
-
-	var prompt := Label.new()
-	prompt.text = "Connection, identity, and join controls live in the panel above."
-	prompt.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	prompt.add_theme_color_override("font_color", Color8(164, 178, 188))
-	body.add_child(prompt)
 
 	var list_title := Label.new()
 	list_title.text = "Active game lobbies"
@@ -296,7 +313,8 @@ func _build_central_panel() -> PanelContainer:
 	central_directory_log.fit_content = true
 	central_directory_log.meta_underlined = true
 	central_directory_log.scroll_active = true
-	central_directory_log.custom_minimum_size = Vector2(0, 150)
+	central_directory_log.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	central_directory_log.custom_minimum_size = Vector2(0, 220)
 	central_directory_log.add_theme_color_override("default_color", Color8(222, 230, 236))
 	central_directory_log.meta_clicked.connect(_on_lobby_directory_meta_clicked)
 	body.add_child(central_directory_log)
@@ -478,76 +496,184 @@ func _build_results_panel() -> PanelContainer:
 	return panel
 
 
-func _build_record_panel() -> PanelContainer:
-	var panel := _make_panel(Color8(24, 34, 44), Color8(78, 108, 128))
-	var body := panel.get_meta("body") as VBoxContainer
+func _build_fullscreen_menu() -> Control:
+	var overlay := Control.new()
+	overlay.anchor_right = 1.0
+	overlay.anchor_bottom = 1.0
+	overlay.visible = false
+	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	fullscreen_menu = overlay
 
-	var title := Label.new()
-	title.text = "Player Record"
-	title.add_theme_font_size_override("font_size", 20)
-	title.add_theme_color_override("font_color", Color8(246, 242, 236))
-	body.add_child(title)
+	var shade := ColorRect.new()
+	shade.color = Color8(6, 10, 14, 210)
+	shade.anchor_right = 1.0
+	shade.anchor_bottom = 1.0
+	shade.mouse_filter = Control.MOUSE_FILTER_STOP
+	overlay.add_child(shade)
+
+	var margin := MarginContainer.new()
+	margin.anchor_right = 1.0
+	margin.anchor_bottom = 1.0
+	margin.add_theme_constant_override("margin_left", 24)
+	margin.add_theme_constant_override("margin_top", 24)
+	margin.add_theme_constant_override("margin_right", 24)
+	margin.add_theme_constant_override("margin_bottom", 24)
+	overlay.add_child(margin)
+
+	var panel := PanelContainer.new()
+	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color8(18, 28, 36)
+	style.border_color = Color8(87, 119, 143)
+	style.set_border_width_all(2)
+	style.corner_radius_top_left = 20
+	style.corner_radius_top_right = 20
+	style.corner_radius_bottom_right = 20
+	style.corner_radius_bottom_left = 20
+	style.content_margin_left = 22
+	style.content_margin_top = 22
+	style.content_margin_right = 22
+	style.content_margin_bottom = 22
+	panel.add_theme_stylebox_override("panel", style)
+	margin.add_child(panel)
+
+	var body := VBoxContainer.new()
+	body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	body.add_theme_constant_override("separation", 16)
+	panel.add_child(body)
+
+	var top_row := HBoxContainer.new()
+	top_row.add_theme_constant_override("separation", 12)
+	body.add_child(top_row)
+
+	fullscreen_menu_title = Label.new()
+	fullscreen_menu_title.add_theme_font_size_override("font_size", 28)
+	fullscreen_menu_title.add_theme_color_override("font_color", Color8(244, 239, 232))
+	top_row.add_child(fullscreen_menu_title)
+
+	var spacer := Control.new()
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	top_row.add_child(spacer)
+
+	var close_button := _action_button("Close", Color8(72, 61, 81))
+	close_button.pressed.connect(_close_fullscreen_menu)
+	top_row.add_child(close_button)
+
+	name_menu_view = _build_name_menu_view()
+	record_view = _build_record_view()
+	roster_view = _build_roster_view()
+	event_view = _build_event_view()
+	body.add_child(name_menu_view)
+	body.add_child(record_view)
+	body.add_child(roster_view)
+	body.add_child(event_view)
+
+	return overlay
+
+
+func _build_name_menu_view() -> VBoxContainer:
+	var view := VBoxContainer.new()
+	view.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	view.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	view.add_theme_constant_override("separation", 14)
+
+	var note := Label.new()
+	note.text = "Your alias is client-side and saving it refreshes the realtime session. Only A-Z and a-z are kept. Blank names reroll automatically."
+	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	note.add_theme_color_override("font_color", Color8(188, 200, 210))
+	view.add_child(note)
+
+	var input_label := Label.new()
+	input_label.text = "Player alias"
+	input_label.add_theme_color_override("font_color", Color8(226, 232, 236))
+	view.add_child(input_label)
+
+	player_name_input = LineEdit.new()
+	player_name_input.max_length = RANDOM_PLAYER_NAME_LENGTH
+	player_name_input.placeholder_text = "Exactly 10 letters is recommended"
+	player_name_input.custom_minimum_size = Vector2(0, 42)
+	player_name_input.text_submitted.connect(_on_name_submitted)
+	view.add_child(player_name_input)
+
+	var action_row := HBoxContainer.new()
+	action_row.add_theme_constant_override("separation", 12)
+	view.add_child(action_row)
+
+	name_save_button = _action_button("Save Name", Color8(36, 108, 85))
+	name_save_button.pressed.connect(_on_save_name_pressed)
+	action_row.add_child(name_save_button)
+
+	name_randomize_button = _action_button("Randomize", Color8(74, 86, 116))
+	name_randomize_button.pressed.connect(_on_randomize_name_pressed)
+	action_row.add_child(name_randomize_button)
+
+	return view
+
+
+func _build_record_view() -> VBoxContainer:
+	var view := VBoxContainer.new()
+	view.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	view.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	view.add_theme_constant_override("separation", 12)
 
 	var info := Label.new()
 	info.text = "The server remains authoritative. W-L-NC updates only when the backend sends Connected or ReturnedToCentralLobby."
 	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	info.add_theme_color_override("font_color", Color8(180, 188, 194))
-	body.add_child(info)
+	view.add_child(info)
 
 	record_label = Label.new()
-	record_label.add_theme_font_size_override("font_size", 26)
+	record_label.add_theme_font_size_override("font_size", 34)
 	record_label.add_theme_color_override("font_color", Color8(255, 217, 122))
-	body.add_child(record_label)
+	view.add_child(record_label)
 
-	return panel
+	return view
 
 
-func _build_roster_panel() -> PanelContainer:
-	var panel := _make_panel(Color8(25, 44, 41), Color8(74, 135, 124))
-	var body := panel.get_meta("body") as VBoxContainer
-	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
-
-	var title := Label.new()
-	title.text = "Roster Watch"
-	title.add_theme_font_size_override("font_size", 20)
-	title.add_theme_color_override("font_color", Color8(242, 247, 244))
-	body.add_child(title)
+func _build_roster_view() -> VBoxContainer:
+	var view := VBoxContainer.new()
+	view.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	view.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	view.add_theme_constant_override("separation", 12)
 
 	var note := Label.new()
 	note.text = "Authoritative roster built from the current backend snapshot plus live updates."
 	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	note.add_theme_color_override("font_color", Color8(179, 199, 192))
-	body.add_child(note)
+	view.add_child(note)
 
 	roster_log = RichTextLabel.new()
-	roster_log.fit_content = true
+	roster_log.fit_content = false
 	roster_log.scroll_active = true
 	roster_log.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	roster_log.add_theme_color_override("default_color", Color8(226, 237, 233))
-	body.add_child(roster_log)
+	view.add_child(roster_log)
 
-	return panel
+	return view
 
 
-func _build_event_panel() -> PanelContainer:
-	var panel := _make_panel(Color8(28, 28, 35), Color8(95, 95, 121))
-	var body := panel.get_meta("body") as VBoxContainer
-	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
+func _build_event_view() -> VBoxContainer:
+	var view := VBoxContainer.new()
+	view.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	view.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	view.add_theme_constant_override("separation", 12)
 
-	var title := Label.new()
-	title.text = "Event Feed"
-	title.add_theme_font_size_override("font_size", 20)
-	title.add_theme_color_override("font_color", Color8(243, 243, 248))
-	body.add_child(title)
+	var note := Label.new()
+	note.text = "Recent shell-visible events from authoritative snapshots, lobby flow, and local transport transitions."
+	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	note.add_theme_color_override("font_color", Color8(188, 190, 205))
+	view.add_child(note)
 
 	event_log = RichTextLabel.new()
-	event_log.fit_content = true
+	event_log.fit_content = false
 	event_log.scroll_active = true
 	event_log.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	event_log.add_theme_color_override("default_color", Color8(212, 214, 226))
-	body.add_child(event_log)
+	view.add_child(event_log)
 
-	return panel
+	return view
 
 
 func _make_panel(background: Color, border: Color) -> PanelContainer:
@@ -568,16 +694,14 @@ func _make_panel(background: Color, border: Color) -> PanelContainer:
 	panel.add_theme_stylebox_override("panel", style)
 
 	var body := VBoxContainer.new()
+	body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	body.add_theme_constant_override("separation", 10)
 	panel.add_child(body)
 	panel.set_meta("body", body)
 	return panel
 
 
-func _action_button(text: String, color: Color) -> Button:
-	var button := Button.new()
-	button.text = text
-	button.custom_minimum_size = Vector2(0, 42)
+func _style_clickable(control: Control, color: Color) -> void:
 	var normal := StyleBoxFlat.new()
 	normal.bg_color = color
 	normal.corner_radius_top_left = 12
@@ -586,39 +710,167 @@ func _action_button(text: String, color: Color) -> Button:
 	normal.corner_radius_bottom_left = 12
 	normal.border_color = color.lightened(0.18)
 	normal.set_border_width_all(1)
-	button.add_theme_stylebox_override("normal", normal)
+	control.add_theme_stylebox_override("normal", normal)
 
 	var hover := normal.duplicate()
 	hover.bg_color = color.lightened(0.08)
-	button.add_theme_stylebox_override("hover", hover)
+	control.add_theme_stylebox_override("hover", hover)
 
 	var disabled := normal.duplicate()
 	disabled.bg_color = color.darkened(0.55)
 	disabled.border_color = color.darkened(0.35)
-	button.add_theme_stylebox_override("disabled", disabled)
-	button.add_theme_color_override("font_color", Color8(246, 244, 240))
+	control.add_theme_stylebox_override("disabled", disabled)
+	control.add_theme_color_override("font_color", Color8(246, 244, 240))
+
+
+func _action_button(text: String, color: Color) -> Button:
+	var button := Button.new()
+	button.text = text
+	button.custom_minimum_size = Vector2(0, 42)
+	_style_clickable(button, color)
 	return button
 
 
-func _labeled_line_edit(parent: Control, label_text: String, default_value: String) -> LineEdit:
-	var wrapper := VBoxContainer.new()
-	wrapper.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	parent.add_child(wrapper)
+func _queue_auto_connect(delay_seconds: float) -> void:
+	if not auto_connect_enabled:
+		return
+	_auto_connect_retry_seconds = maxf(0.0, delay_seconds)
 
-	var label := Label.new()
-	label.text = label_text
-	label.add_theme_color_override("font_color", Color8(205, 214, 221))
-	wrapper.add_child(label)
 
-	var input := LineEdit.new()
-	input.text = default_value
-	input.placeholder_text = label_text
-	wrapper.add_child(input)
-	return input
+func _tick_auto_connect(delta: float) -> void:
+	if _auto_connect_retry_seconds < 0.0:
+		return
+	_auto_connect_retry_seconds = maxf(-1.0, _auto_connect_retry_seconds - delta)
+	if _auto_connect_retry_seconds > 0.0:
+		return
+	_auto_connect_retry_seconds = -1.0
+	_on_connect_pressed()
+
+
+func _cancel_bootstrap_request() -> void:
+	if _bootstrap_request_active:
+		_bootstrap_request.cancel_request()
+		_bootstrap_request_active = false
+	_pending_bootstrap_url = ""
+
+
+func _random_player_name() -> String:
+	var result := ""
+	for _index in range(RANDOM_PLAYER_NAME_LENGTH):
+		var char_index := _name_rng.randi_range(0, PLAYER_NAME_ALPHABET.length() - 1)
+		result += PLAYER_NAME_ALPHABET.substr(char_index, 1)
+	return result
+
+
+func _sanitize_player_name(raw_name: String) -> String:
+	var sanitized := ""
+	for index in range(raw_name.length()):
+		var code := raw_name.unicode_at(index)
+		var is_upper := code >= 65 and code <= 90
+		var is_lower := code >= 97 and code <= 122
+		if is_upper or is_lower:
+			sanitized += raw_name.substr(index, 1)
+		if sanitized.length() >= RANDOM_PLAYER_NAME_LENGTH:
+			break
+	return sanitized
+
+
+func _apply_player_name(raw_name: String) -> String:
+	var sanitized := _sanitize_player_name(raw_name)
+	if sanitized == "":
+		sanitized = _random_player_name()
+	if player_name_input != null:
+		player_name_input.text = sanitized
+	return sanitized
+
+
+func _current_requested_player_name() -> String:
+	return _apply_player_name("" if player_name_input == null else player_name_input.text)
+
+
+func _open_fullscreen_menu(section: String) -> void:
+	_menu_section = section
+	fullscreen_menu.visible = true
+	name_menu_view.visible = section == MENU_SECTION_NAME
+	record_view.visible = section == MENU_SECTION_RECORD
+	roster_view.visible = section == MENU_SECTION_ROSTER
+	event_view.visible = section == MENU_SECTION_EVENTS
+
+	match section:
+		MENU_SECTION_NAME:
+			fullscreen_menu_title.text = "Change Name"
+			player_name_input.grab_focus()
+			player_name_input.select_all()
+		MENU_SECTION_RECORD:
+			fullscreen_menu_title.text = "Player Record"
+		MENU_SECTION_ROSTER:
+			fullscreen_menu_title.text = "Roster Watch"
+		MENU_SECTION_EVENTS:
+			fullscreen_menu_title.text = "Event Feed"
+		_:
+			fullscreen_menu_title.text = "Menu"
+
+
+func _close_fullscreen_menu() -> void:
+	_menu_section = ""
+	fullscreen_menu.visible = false
+
+
+func _on_menu_option_selected(menu_id: int) -> void:
+	match menu_id:
+		MENU_ACTION_CHANGE_NAME:
+			_open_fullscreen_menu(MENU_SECTION_NAME)
+		MENU_ACTION_PLAYER_RECORD:
+			_open_fullscreen_menu(MENU_SECTION_RECORD)
+		MENU_ACTION_ROSTER_WATCH:
+			_open_fullscreen_menu(MENU_SECTION_ROSTER)
+		MENU_ACTION_EVENT_FEED:
+			_open_fullscreen_menu(MENU_SECTION_EVENTS)
+
+
+func _on_name_submitted(_text: String) -> void:
+	_on_save_name_pressed()
+
+
+func _on_randomize_name_pressed() -> void:
+	_apply_player_name(_random_player_name())
+	_refresh_ui()
+
+
+func _on_save_name_pressed() -> void:
+	var previous_name := _current_requested_player_name()
+	var new_name := _apply_player_name(player_name_input.text)
+	_close_fullscreen_menu()
+
+	if new_name == previous_name and (
+		transport.is_open()
+		or _bootstrap_request_active
+		or app_state.transport_state == "connecting"
+		or app_state.transport_state == "bootstrapping"
+	):
+		app_state.announce_local("Alias remains %s." % new_name)
+		_refresh_ui()
+		return
+
+	if transport.is_open() or _bootstrap_request_active or app_state.transport_state == "connecting" or app_state.transport_state == "bootstrapping":
+		_cancel_bootstrap_request()
+		transport.close()
+		app_state.mark_transport_closed("Refreshing realtime session for alias %s." % new_name)
+		_queue_auto_connect(0.1)
+	else:
+		app_state.announce_local("Alias set to %s." % new_name)
+		_queue_auto_connect(0.0)
+
+	_refresh_ui()
 
 
 func _on_connect_pressed() -> void:
-	var player_name := player_name_input.text.strip_edges()
+	if _bootstrap_request_active or transport.is_open():
+		return
+	if app_state.transport_state == "connecting" or app_state.transport_state == "bootstrapping":
+		return
+
+	var player_name := _current_requested_player_name()
 	_next_client_input_tick = 1
 	_pending_primary_attack = false
 	_pending_cast_slot = 0
@@ -626,38 +878,24 @@ func _on_connect_pressed() -> void:
 	app_state.prepare_for_connection(player_name)
 	var bootstrap_url := websocket_config.bootstrap_url(app_state.websocket_url)
 	if bootstrap_url == "":
-		app_state.mark_transport_error("Unable to prepare the session bootstrap request.")
+		app_state.mark_transport_closed("Unable to prepare the session bootstrap request.")
+		_queue_auto_connect(AUTO_RECONNECT_DELAY_SECONDS)
 		_refresh_ui()
 		return
 
-	if _bootstrap_request_active:
-		_bootstrap_request.cancel_request()
-		_bootstrap_request_active = false
+	_cancel_bootstrap_request()
 	_pending_bootstrap_url = app_state.websocket_url
 	var request_error := _bootstrap_request.request(bootstrap_url)
 	if request_error != OK:
 		_pending_bootstrap_url = ""
-		app_state.mark_transport_error("Unable to request a session token.")
+		app_state.mark_transport_closed("Unable to request a session token.")
+		_queue_auto_connect(AUTO_RECONNECT_DELAY_SECONDS)
 		_refresh_ui()
 		return
 
 	_bootstrap_request_active = true
 	app_state.mark_transport_state("bootstrapping")
 	app_state.announce_local("Requested a short-lived session token.")
-	_refresh_ui()
-
-
-func _on_disconnect_pressed() -> void:
-	_next_client_input_tick = 1
-	_pending_primary_attack = false
-	_pending_cast_slot = 0
-	_last_sent_aim = Vector2i.ZERO
-	if _bootstrap_request_active:
-		_bootstrap_request.cancel_request()
-		_bootstrap_request_active = false
-	_pending_bootstrap_url = ""
-	transport.close()
-	app_state.mark_transport_closed("Disconnected by the local client.")
 	_refresh_ui()
 
 
@@ -731,20 +969,26 @@ func _on_transport_state_changed(state_name: String) -> void:
 
 func _on_transport_error(message: String) -> void:
 	app_state.mark_transport_error(message)
+	if auto_connect_enabled and not transport.is_open() and not _bootstrap_request_active:
+		_queue_auto_connect(AUTO_RECONNECT_DELAY_SECONDS)
 	_refresh_ui()
 
 
 func _on_socket_opened() -> void:
-	var player_name := player_name_input.text.strip_edges()
+	var player_name := _current_requested_player_name()
 	if not transport.send_control_command("Connect", {
 		"player_name": player_name,
 	}):
-		app_state.mark_transport_error("The initial connect command could not be sent.")
+		app_state.mark_transport_closed("The initial connect command could not be sent.")
+		transport.close()
+		_queue_auto_connect(AUTO_RECONNECT_DELAY_SECONDS)
 	_refresh_ui()
 
 
 func _on_socket_closed(reason: String) -> void:
 	app_state.mark_transport_closed(reason)
+	if auto_connect_enabled:
+		_queue_auto_connect(AUTO_RECONNECT_DELAY_SECONDS)
 	_refresh_ui()
 
 
@@ -761,7 +1005,8 @@ func _on_bootstrap_request_completed(
 		return
 
 	if result != HTTPRequest.RESULT_SUCCESS:
-		app_state.mark_transport_error("The session bootstrap request failed.")
+		app_state.mark_transport_closed("The session bootstrap request failed.")
+		_queue_auto_connect(AUTO_RECONNECT_DELAY_SECONDS)
 		_refresh_ui()
 		return
 
@@ -771,24 +1016,28 @@ func _on_bootstrap_request_completed(
 		var error_message := "The session bootstrap request was rejected."
 		if typeof(payload) == TYPE_DICTIONARY:
 			error_message = String((payload as Dictionary).get("error", error_message))
-		app_state.mark_transport_error(error_message)
+		app_state.mark_transport_closed(error_message)
+		_queue_auto_connect(AUTO_RECONNECT_DELAY_SECONDS)
 		_refresh_ui()
 		return
 
 	if typeof(payload) != TYPE_DICTIONARY:
-		app_state.mark_transport_error("The session bootstrap response was not valid JSON.")
+		app_state.mark_transport_closed("The session bootstrap response was not valid JSON.")
+		_queue_auto_connect(AUTO_RECONNECT_DELAY_SECONDS)
 		_refresh_ui()
 		return
 
 	var token := String((payload as Dictionary).get("token", ""))
 	if token.strip_edges() == "":
-		app_state.mark_transport_error("The session bootstrap response did not contain a token.")
+		app_state.mark_transport_closed("The session bootstrap response did not contain a token.")
+		_queue_auto_connect(AUTO_RECONNECT_DELAY_SECONDS)
 		_refresh_ui()
 		return
 
 	var tokenized_url := websocket_config.append_session_token(expected_signal_url, token)
 	if not transport.open(tokenized_url):
-		app_state.mark_transport_error("Unable to start the realtime connection.")
+		app_state.mark_transport_closed("Unable to start the realtime connection.")
+		_queue_auto_connect(AUTO_RECONNECT_DELAY_SECONDS)
 		_refresh_ui()
 
 
@@ -802,7 +1051,8 @@ func _refresh_ui() -> void:
 	if skill_catalog_signature != _rendered_skill_catalog_signature:
 		_rebuild_skill_buttons()
 
-	var identity_text := "Not connected"
+	var requested_name := _current_requested_player_name()
+	var identity_text := requested_name
 	if app_state.local_player_id > 0 and app_state.local_player_name != "":
 		identity_text = "%s (#%d)" % [app_state.local_player_name, app_state.local_player_id]
 	var lobby_text := "Lobby ID: not assigned yet"
@@ -839,8 +1089,6 @@ func _refresh_ui() -> void:
 	roster_log.text = "\n".join(app_state.roster_lines())
 	event_log.text = app_state.event_log_text()
 
-	connect_button.disabled = app_state.transport_state == "connecting" or app_state.transport_state == "bootstrapping" or transport.is_open()
-	disconnect_button.disabled = not transport.is_open() and app_state.transport_state != "connecting" and app_state.transport_state != "bootstrapping"
 	create_lobby_button.disabled = not app_state.can_join_or_create_lobby()
 	join_lobby_button.disabled = not app_state.can_join_or_create_lobby()
 	team_a_button.disabled = not app_state.can_manage_lobby()
@@ -851,6 +1099,9 @@ func _refresh_ui() -> void:
 	quit_results_button.disabled = not app_state.can_quit_results()
 	primary_attack_button.disabled = not app_state.can_use_primary_attack()
 	primary_attack_button.text = "Primary Attack" if app_state.can_use_primary_attack() else "Primary Cooling"
+	name_save_button.disabled = false
+	name_randomize_button.disabled = false
+
 	for button in skill_buttons:
 		var tree_name := String(button.get_meta("tree_name", ""))
 		var tier := int(button.get_meta("tier", 0))
@@ -872,12 +1123,11 @@ func _refresh_ui() -> void:
 		else:
 			button.tooltip_text = "Skill selection is only available during your active skill-pick window."
 
+	connection_panel.visible = app_state.screen == "central"
 	central_panel.visible = app_state.screen == "central"
 	lobby_panel.visible = app_state.screen == "lobby"
 	match_panel.visible = app_state.screen == "match"
 	results_panel.visible = app_state.screen == "results"
-	connection_panel.visible = app_state.screen == "central"
-	right_column.visible = app_state.screen == "central"
 	skill_pick_panel.visible = show_skill_pick
 	combat_panel.visible = app_state.screen == "match" and not show_skill_pick
 

@@ -9,21 +9,63 @@ func _init() -> void:
 
 func _run() -> void:
 	var success := true
-	success = await _assert_connection_panel_hides_signaling_url() and success
+	success = await _assert_shell_removes_old_header_and_manual_connect_buttons() and success
+	success = await _assert_menu_opens_fullscreen_views() and success
 	success = await _assert_joined_shell_hides_setup_chrome() and success
 	success = await _assert_skill_pick_layout_prioritizes_skill_buttons() and success
 	success = await _assert_disconnect_resets_back_to_central_shell() and success
 	quit(0 if success else 1)
 
 
-func _assert_connection_panel_hides_signaling_url() -> bool:
+func _assert_shell_removes_old_header_and_manual_connect_buttons() -> bool:
 	var shell = await _spawn_shell()
 	var success := true
+	if _tree_contains_label(shell, "Rusaren Control Shell"):
+		success = _fail("shell should remove the old Rusaren Control Shell header") and success
 	if _tree_contains_label(shell.connection_panel, "Signaling URL"):
-		success = _fail("connection panel should not expose a signaling URL field to players")
-	var line_edit_count := _count_nodes_of_type(shell.connection_panel, LineEdit)
-	if line_edit_count != 2:
-		success = _fail("connection panel should only expose player name and join lobby inputs") and success
+		success = _fail("connection panel should not expose a signaling URL field to players") and success
+	if _tree_contains_button(shell.connection_panel, "Connect"):
+		success = _fail("connection panel should not expose a manual connect button") and success
+	if _tree_contains_button(shell.connection_panel, "Disconnect"):
+		success = _fail("connection panel should not expose a manual disconnect button") and success
+	if _count_nodes_of_type(shell.connection_panel, LineEdit) != 1:
+		success = _fail("connection panel should only expose a join lobby input") and success
+	if shell.menu_button == null or shell.menu_button.text != "Menu":
+		success = _fail("shell should expose a top-level Menu button") and success
+	if shell.player_name_input == null:
+		success = _fail("shell should keep a hidden name editor inside the fullscreen menu") and success
+
+	await _despawn_shell(shell)
+	return success
+
+
+func _assert_menu_opens_fullscreen_views() -> bool:
+	var shell = await _spawn_shell()
+	var success := true
+
+	shell._open_fullscreen_menu("record")
+	if not shell.fullscreen_menu.visible:
+		success = _fail("menu selections should open the fullscreen overlay") and success
+	if not shell.record_view.visible or shell.roster_view.visible or shell.event_view.visible or shell.name_menu_view.visible:
+		success = _fail("record menu should only show the record view") and success
+
+	shell._open_fullscreen_menu("roster")
+	if not shell.roster_view.visible or shell.record_view.visible or shell.event_view.visible or shell.name_menu_view.visible:
+		success = _fail("roster menu should only show the roster view") and success
+
+	shell._open_fullscreen_menu("events")
+	if not shell.event_view.visible or shell.record_view.visible or shell.roster_view.visible or shell.name_menu_view.visible:
+		success = _fail("event menu should only show the event view") and success
+
+	shell._open_fullscreen_menu("name")
+	if not shell.name_menu_view.visible or shell.record_view.visible or shell.roster_view.visible or shell.event_view.visible:
+		success = _fail("change-name menu should only show the name editor") and success
+	if shell.player_name_input.text.length() != 10:
+		success = _fail("shell should seed a random ten-letter player alias") and success
+
+	shell._close_fullscreen_menu()
+	if shell.fullscreen_menu.visible:
+		success = _fail("closing the menu should hide the fullscreen overlay") and success
 
 	await _despawn_shell(shell)
 	return success
@@ -42,11 +84,13 @@ func _assert_joined_shell_hides_setup_chrome() -> bool:
 
 	var success := true
 	if shell.connection_panel.visible:
-		success = _fail("joined lobby view should hide the realtime transport panel")
-	if shell.right_column.visible:
-		success = _fail("joined lobby view should hide the right-side status stack") and success
+		success = _fail("joined lobby view should hide the central actions panel")
 	if not shell.lobby_panel.visible:
 		success = _fail("joined lobby view should keep the lobby panel visible") and success
+	if shell.fullscreen_menu.visible:
+		success = _fail("joined lobby view should not force the fullscreen menu open") and success
+	if shell.menu_button == null or shell.menu_button.text != "Menu":
+		success = _fail("joined lobby view should keep the Menu button available") and success
 
 	await _despawn_shell(shell)
 	return success
@@ -143,9 +187,9 @@ func _assert_disconnect_resets_back_to_central_shell() -> bool:
 	if shell.match_panel.visible:
 		success = _fail("disconnect should hide the stale match panel") and success
 	if not shell.connection_panel.visible:
-		success = _fail("disconnect should restore the connection controls") and success
-	if not shell.right_column.visible:
-		success = _fail("disconnect should restore the central sidebar panels") and success
+		success = _fail("disconnect should restore the central actions panel") and success
+	if shell.menu_button == null or shell.menu_button.text != "Menu":
+		success = _fail("disconnect should preserve access to the Menu button") and success
 
 	await _despawn_shell(shell)
 	return success
@@ -153,6 +197,7 @@ func _assert_disconnect_resets_back_to_central_shell() -> bool:
 
 func _spawn_shell():
 	var shell = MainScript.new()
+	shell.auto_connect_enabled = false
 	get_root().add_child(shell)
 	await process_frame
 	return shell
@@ -168,6 +213,15 @@ func _tree_contains_label(root: Node, text: String) -> bool:
 		return true
 	for child in root.get_children():
 		if _tree_contains_label(child, text):
+			return true
+	return false
+
+
+func _tree_contains_button(root: Node, text: String) -> bool:
+	if root is Button and (root as Button).text == text:
+		return true
+	for child in root.get_children():
+		if _tree_contains_button(child, text):
 			return true
 	return false
 
