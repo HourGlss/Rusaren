@@ -57,6 +57,17 @@ Check:
 3. `bash deploy/host-smoke.sh --env-file ~/rusaren-config/config.env`
 4. that you are using the expected credentials and did not leave the example password in place
 
+## Live disconnects need a compact diagnostic bundle
+Run:
+1. `bash deploy/useful_log_collect.sh --output /tmp/rusaren-diagnostics.txt`
+2. paste `/tmp/rusaren-diagnostics.txt`
+
+The collector summarizes:
+- compose state
+- public root, health, bootstrap, and admin checks
+- recent `/adminz` diagnostics
+- filtered backend, proxy, and TURN logs for websocket and WebRTC failures
+
 ## Logs are too noisy or too quiet
 Set `RARENA_RUST_LOG` in `~/rusaren-config/config.env`.
 

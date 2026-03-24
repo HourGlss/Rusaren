@@ -17,3 +17,4 @@ Use the structure notes below to find the right file or subfolder quickly.
 - `linode-setup.sh`: Bootstrap script for a fresh Linode host. It hardens the OS, installs Docker, installs the Linux Godot export toolchain by default, writes external deploy configuration, and registers the systemd service.
 - `prometheus.yml`: Prometheus scrape configuration for the backend metrics endpoint.
 - `setup.sh`: Short wrapper around `linode-setup.sh` for the first Linux host bootstrap.
+- `useful_log_collect.sh`: Compact host-side diagnostics collector that summarizes compose state, public probes, admin diagnostics, and filtered transport logs into one pasteable report.
