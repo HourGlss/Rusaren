@@ -409,55 +409,78 @@ fn unauthorized_admin_response() -> Response {
         .into_response()
 }
 
-fn render_admin_dashboard(
+struct AdminDashboardStats {
+    connected_players: usize,
+    bound_connections: usize,
+    central_lobby_players: usize,
+    active_lobbies: usize,
+    active_matches: usize,
+    active_sessions: usize,
+    uptime_seconds: f64,
+    tick_iterations: u64,
+    tick_last_ms: f64,
+    tick_max_ms: f64,
+    ingress_accepted: u64,
+    ingress_rejected: u64,
+    websocket_bound: u64,
+    websocket_disconnects: u64,
+    websocket_rejections: u64,
+    websocket_active: u64,
+    recent_diagnostics: Vec<crate::observability::RecentDiagnosticEvent>,
+}
+
+fn collect_admin_dashboard_stats(
     runtime: &RuntimeState,
     observability: Option<&crate::ServerObservability>,
-    metrics: Option<&str>,
-) -> String {
-    let connected_players = runtime.app.connected_player_count();
-    let bound_connections = runtime.app.bound_connection_count();
-    let central_lobby_players = runtime.app.central_lobby_player_count();
-    let active_lobbies = runtime.app.active_lobby_count();
-    let active_matches = runtime.app.active_match_count();
-    let active_sessions = runtime.transport.outgoing.len();
-
+) -> AdminDashboardStats {
     let uptime = observability
         .map(crate::ServerObservability::uptime)
         .unwrap_or_default();
-    let tick_iterations = observability.map_or(0, crate::ServerObservability::tick_iterations);
-    let tick_last_ms = observability
-        .map(crate::ServerObservability::tick_duration_last)
-        .unwrap_or_default()
-        .as_secs_f64()
-        * 1000.0;
-    let tick_max_ms = observability
-        .map(crate::ServerObservability::tick_duration_max)
-        .unwrap_or_default()
-        .as_secs_f64()
-        * 1000.0;
-    let ingress_accepted = observability.map_or(
-        0,
-        crate::ServerObservability::ingress_packets_accepted_total,
-    );
-    let ingress_rejected = observability.map_or(
-        0,
-        crate::ServerObservability::ingress_packets_rejected_total,
-    );
-    let websocket_bound = observability.map_or(
-        0,
-        crate::ServerObservability::websocket_sessions_bound_total,
-    );
-    let websocket_disconnects =
-        observability.map_or(0, crate::ServerObservability::websocket_disconnects_total);
-    let websocket_rejections =
-        observability.map_or(0, crate::ServerObservability::websocket_rejections_total);
-    let websocket_active =
-        observability.map_or(0, crate::ServerObservability::websocket_sessions_active);
-    let recent_diagnostics = observability
-        .map(crate::ServerObservability::recent_diagnostics)
-        .unwrap_or_default();
+    AdminDashboardStats {
+        connected_players: runtime.app.connected_player_count(),
+        bound_connections: runtime.app.bound_connection_count(),
+        central_lobby_players: runtime.app.central_lobby_player_count(),
+        active_lobbies: runtime.app.active_lobby_count(),
+        active_matches: runtime.app.active_match_count(),
+        active_sessions: runtime.transport.outgoing.len(),
+        uptime_seconds: uptime.as_secs_f64(),
+        tick_iterations: observability.map_or(0, crate::ServerObservability::tick_iterations),
+        tick_last_ms: observability
+            .map(crate::ServerObservability::tick_duration_last)
+            .unwrap_or_default()
+            .as_secs_f64()
+            * 1000.0,
+        tick_max_ms: observability
+            .map(crate::ServerObservability::tick_duration_max)
+            .unwrap_or_default()
+            .as_secs_f64()
+            * 1000.0,
+        ingress_accepted: observability.map_or(
+            0,
+            crate::ServerObservability::ingress_packets_accepted_total,
+        ),
+        ingress_rejected: observability.map_or(
+            0,
+            crate::ServerObservability::ingress_packets_rejected_total,
+        ),
+        websocket_bound: observability.map_or(
+            0,
+            crate::ServerObservability::websocket_sessions_bound_total,
+        ),
+        websocket_disconnects: observability
+            .map_or(0, crate::ServerObservability::websocket_disconnects_total),
+        websocket_rejections: observability
+            .map_or(0, crate::ServerObservability::websocket_rejections_total),
+        websocket_active: observability
+            .map_or(0, crate::ServerObservability::websocket_sessions_active),
+        recent_diagnostics: observability
+            .map(crate::ServerObservability::recent_diagnostics)
+            .unwrap_or_default(),
+    }
+}
 
-    let metrics_block = metrics.map_or_else(
+fn render_metrics_block(metrics: Option<&str>) -> String {
+    metrics.map_or_else(
         || String::from("<p>Observability is disabled.</p>"),
         |metrics| {
             format!(
@@ -465,38 +488,58 @@ fn render_admin_dashboard(
                 html_escape(metrics)
             )
         },
-    );
-    let diagnostics_block = if recent_diagnostics.is_empty() {
-        String::from("<p>No recent diagnostics captured.</p>")
-    } else {
-        let mut rows = String::new();
-        for event in recent_diagnostics.iter().rev() {
-            let connection_text = event
-                .connection_id
-                .map_or_else(|| String::from("-"), |value| value.to_string());
-            let player_text = event
-                .player_id
-                .map_or_else(|| String::from("-"), |value| value.to_string());
-            let _ = write!(
-                rows,
-                "<tr><td>{:.3}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
-                (event.elapsed_ms as f64) / 1000.0,
-                html_escape(event.category),
-                html_escape(&connection_text),
-                html_escape(&player_text),
-                html_escape(&event.detail),
-            );
-        }
-        format!(
-            concat!(
-                "<h2>Recent Diagnostics</h2><table>",
-                "<tr><th>Elapsed s</th><th>Category</th><th>Connection</th><th>Player</th><th>Detail</th></tr>",
-                "{}",
-                "</table>"
-            ),
-            rows
-        )
-    };
+    )
+}
+
+fn format_elapsed_seconds(elapsed_ms: u64) -> String {
+    format!("{}.{:03}", elapsed_ms / 1000, elapsed_ms % 1000)
+}
+
+fn render_recent_diagnostics_block(
+    recent_diagnostics: &[crate::observability::RecentDiagnosticEvent],
+) -> String {
+    if recent_diagnostics.is_empty() {
+        return String::from("<p>No recent diagnostics captured.</p>");
+    }
+
+    let mut rows = String::new();
+    for event in recent_diagnostics.iter().rev() {
+        let connection_text = event
+            .connection_id
+            .map_or_else(|| String::from("-"), |value| value.to_string());
+        let player_text = event
+            .player_id
+            .map_or_else(|| String::from("-"), |value| value.to_string());
+        let _ = write!(
+            rows,
+            "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+            format_elapsed_seconds(event.elapsed_ms),
+            html_escape(event.category),
+            html_escape(&connection_text),
+            html_escape(&player_text),
+            html_escape(&event.detail),
+        );
+    }
+
+    format!(
+        concat!(
+            "<h2>Recent Diagnostics</h2><table>",
+            "<tr><th>Elapsed s</th><th>Category</th><th>Connection</th><th>Player</th><th>Detail</th></tr>",
+            "{}",
+            "</table>"
+        ),
+        rows
+    )
+}
+
+fn render_admin_dashboard(
+    runtime: &RuntimeState,
+    observability: Option<&crate::ServerObservability>,
+    metrics: Option<&str>,
+) -> String {
+    let stats = collect_admin_dashboard_stats(runtime, observability);
+    let metrics_block = render_metrics_block(metrics);
+    let diagnostics_block = render_recent_diagnostics_block(&stats.recent_diagnostics);
 
     format!(
         concat!(
@@ -531,22 +574,22 @@ fn render_admin_dashboard(
             "<tr><th>Websocket rejections</th><td>{}</td></tr>",
             "</table>{}{}</body></html>"
         ),
-        connected_players,
-        bound_connections,
-        active_sessions,
-        central_lobby_players,
-        active_lobbies,
-        active_matches,
-        uptime.as_secs_f64(),
-        tick_iterations,
-        tick_last_ms,
-        tick_max_ms,
-        ingress_accepted,
-        ingress_rejected,
-        websocket_bound,
-        websocket_active,
-        websocket_disconnects,
-        websocket_rejections,
+        stats.connected_players,
+        stats.bound_connections,
+        stats.active_sessions,
+        stats.central_lobby_players,
+        stats.active_lobbies,
+        stats.active_matches,
+        stats.uptime_seconds,
+        stats.tick_iterations,
+        stats.tick_last_ms,
+        stats.tick_max_ms,
+        stats.ingress_accepted,
+        stats.ingress_rejected,
+        stats.websocket_bound,
+        stats.websocket_active,
+        stats.websocket_disconnects,
+        stats.websocket_rejections,
         diagnostics_block,
         metrics_block,
     )

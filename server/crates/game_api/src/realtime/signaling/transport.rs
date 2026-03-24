@@ -90,6 +90,25 @@ pub(super) async fn create_signaling_transport(
     })
 }
 
+async fn reject_webrtc_offer(
+    state: &DevServerState,
+    connection_id: ConnectionId,
+    signal_tx: &mpsc::UnboundedSender<ServerSignalMessage>,
+    peer: &Arc<RTCPeerConnection>,
+    negotiation: tokio::sync::MutexGuard<'_, WebRtcNegotiationState>,
+    message: String,
+) -> bool {
+    if let Some(observability) = &state.observability {
+        observability.record_diagnostic("webrtc", Some(connection_id.get()), None, message.clone());
+    }
+    let _ = signal_tx.send(ServerSignalMessage::Error {
+        message: message.clone(),
+    });
+    drop(negotiation);
+    let _ = peer.close().await;
+    false
+}
+
 /// Accepts the client's SDP offer and emits the server answer.
 pub(super) async fn accept_webrtc_offer(
     state: &DevServerState,
@@ -101,87 +120,68 @@ pub(super) async fn accept_webrtc_offer(
 ) -> bool {
     let mut negotiation = negotiation_state.lock().await;
     if negotiation.offer_seen {
-        let message = String::from("a WebRTC offer has already been processed");
-        let _ = signal_tx.send(ServerSignalMessage::Error {
-            message: message.clone(),
-        });
-        if let Some(observability) = &state.observability {
-            observability.record_diagnostic("webrtc", Some(connection_id.get()), None, message);
-        }
-        drop(negotiation);
-        let _ = peer.close().await;
-        return false;
+        return reject_webrtc_offer(
+            state,
+            connection_id,
+            signal_tx,
+            peer,
+            negotiation,
+            String::from("a WebRTC offer has already been processed"),
+        )
+        .await;
     }
 
     let remote_description = match description.to_rtc_description() {
         Ok(remote_description) => remote_description,
         Err(message) => {
-            if let Some(observability) = &state.observability {
-                observability.record_diagnostic(
-                    "webrtc",
-                    Some(connection_id.get()),
-                    None,
-                    format!("rejected remote session description: {message}"),
-                );
-            }
-            let _ = signal_tx.send(ServerSignalMessage::Error { message });
-            drop(negotiation);
-            let _ = peer.close().await;
-            return false;
+            return reject_webrtc_offer(
+                state,
+                connection_id,
+                signal_tx,
+                peer,
+                negotiation,
+                format!("rejected remote session description: {message}"),
+            )
+            .await;
         }
     };
 
     if let Err(error) = peer.set_remote_description(remote_description).await {
-        if let Some(observability) = &state.observability {
-            observability.record_diagnostic(
-                "webrtc",
-                Some(connection_id.get()),
-                None,
-                format!("failed to apply the remote offer: {error}"),
-            );
-        }
-        let _ = signal_tx.send(ServerSignalMessage::Error {
-            message: format!("failed to apply the remote offer: {error}"),
-        });
-        drop(negotiation);
-        let _ = peer.close().await;
-        return false;
+        return reject_webrtc_offer(
+            state,
+            connection_id,
+            signal_tx,
+            peer,
+            negotiation,
+            format!("failed to apply the remote offer: {error}"),
+        )
+        .await;
     }
 
     let answer = match peer.create_answer(None).await {
         Ok(answer) => answer,
         Err(error) => {
-            if let Some(observability) = &state.observability {
-                observability.record_diagnostic(
-                    "webrtc",
-                    Some(connection_id.get()),
-                    None,
-                    format!("failed to create the WebRTC answer: {error}"),
-                );
-            }
-            let _ = signal_tx.send(ServerSignalMessage::Error {
-                message: format!("failed to create the WebRTC answer: {error}"),
-            });
-            drop(negotiation);
-            let _ = peer.close().await;
-            return false;
+            return reject_webrtc_offer(
+                state,
+                connection_id,
+                signal_tx,
+                peer,
+                negotiation,
+                format!("failed to create the WebRTC answer: {error}"),
+            )
+            .await;
         }
     };
     if let Err(error) = peer.set_local_description(answer.clone()).await {
-        if let Some(observability) = &state.observability {
-            observability.record_diagnostic(
-                "webrtc",
-                Some(connection_id.get()),
-                None,
-                format!("failed to apply the local answer: {error}"),
-            );
-        }
-        let _ = signal_tx.send(ServerSignalMessage::Error {
-            message: format!("failed to apply the local answer: {error}"),
-        });
-        drop(negotiation);
-        let _ = peer.close().await;
-        return false;
+        return reject_webrtc_offer(
+            state,
+            connection_id,
+            signal_tx,
+            peer,
+            negotiation,
+            format!("failed to apply the local answer: {error}"),
+        )
+        .await;
     }
 
     let answer_description = peer.local_description().await.unwrap_or(answer);

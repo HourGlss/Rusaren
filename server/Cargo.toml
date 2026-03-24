@@ -2,6 +2,7 @@
 members = [
   "bin/fuzz_seed_builder",
   "bin/backend_callgraph",
+  "bin/live_transport_probe",
   "bin/scip_json_dump",
   "bin/dedicated_server",
   "crates/game_api",

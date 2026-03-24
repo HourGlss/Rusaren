@@ -16,5 +16,6 @@ Use the structure notes below to find the right file or subfolder quickly.
 - `linode-deploy.sh`: Idempotent deployment script for code updates on an existing host. It reads `~/rusaren-config/config.env` by default, honors an external Compose override, rebuilds the Godot web client on Linux, and starts the stack.
 - `linode-setup.sh`: Bootstrap script for a fresh Linode host. It hardens the OS, installs Docker, installs the Linux Godot export toolchain by default, writes external deploy configuration, and registers the systemd service.
 - `prometheus.yml`: Prometheus scrape configuration for the backend metrics endpoint.
+- `run_live_transport_probe.sh`: Linux wrapper that runs the four-client transport probe and auto-collects backend diagnostics on failure.
 - `setup.sh`: Short wrapper around `linode-setup.sh` for the first Linux host bootstrap.
 - `useful_log_collect.sh`: Compact host-side diagnostics collector that summarizes compose state, public probes, admin diagnostics, and filtered transport logs into one pasteable report.

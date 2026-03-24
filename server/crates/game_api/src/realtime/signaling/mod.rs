@@ -14,10 +14,11 @@ use transport::{
     install_webrtc_callbacks,
 };
 
-pub(super) async fn handle_signaling_socket(state: DevServerState, socket: WebSocket) {
-    let (mut sender, mut receiver) = socket.split();
-    let (signal_tx, mut signal_rx) = mpsc::unbounded_channel::<ServerSignalMessage>();
-    let writer = tokio::spawn(async move {
+fn spawn_signaling_writer(
+    mut sender: futures_util::stream::SplitSink<WebSocket, Message>,
+    mut signal_rx: mpsc::UnboundedReceiver<ServerSignalMessage>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
         while let Some(message) = signal_rx.recv().await {
             let text = match serde_json::to_string(&message) {
                 Ok(text) => text,
@@ -31,7 +32,13 @@ pub(super) async fn handle_signaling_socket(state: DevServerState, socket: WebSo
                 break;
             }
         }
-    });
+    })
+}
+
+pub(super) async fn handle_signaling_socket(state: DevServerState, socket: WebSocket) {
+    let (sender, mut receiver) = socket.split();
+    let (signal_tx, signal_rx) = mpsc::unbounded_channel::<ServerSignalMessage>();
+    let writer = spawn_signaling_writer(sender, signal_rx);
 
     let connection_id = allocate_connection_id(&state.next_connection_id);
     info!(
@@ -77,44 +84,15 @@ pub(super) async fn handle_signaling_socket(state: DevServerState, socket: WebSo
         );
     }
 
-    let mut close_reason = String::from("signaling websocket loop ended");
-    while let Some(message_result) = receiver.next().await {
-        let message = match message_result {
-            Ok(message) => message,
-            Err(error) => {
-                warn!(
-                    connection_id = connection_id.get(),
-                    %error,
-                    "WebRTC signaling websocket ended with an error"
-                );
-                if let Some(observability) = &state.observability {
-                    observability.record_diagnostic(
-                        "signaling",
-                        Some(connection_id.get()),
-                        None,
-                        format!("signaling websocket ended with an error: {error}"),
-                    );
-                }
-                close_reason = format!("signaling websocket read error: {error}");
-                break;
-            }
-        };
-
-        let keep_open = process_signaling_websocket_message(
-            &state,
-            connection_id,
-            &signal_tx,
-            &transport.peer,
-            &transport.negotiation_state,
-            message,
-        )
-        .await;
-
-        if !keep_open {
-            close_reason = String::from("signaling message handler closed the session");
-            break;
-        }
-    }
+    let close_reason = run_signaling_socket_loop(
+        &state,
+        connection_id,
+        &signal_tx,
+        &transport.peer,
+        &transport.negotiation_state,
+        &mut receiver,
+    )
+    .await;
 
     disconnect_bound_session(
         &state,
@@ -172,76 +150,15 @@ pub(super) async fn handle_websocket_dev_socket(state: DevServerState, socket: W
         );
     }
 
-    let mut close_reason = String::from("websocket dev session loop ended");
-    while let Some(message_result) = receiver.next().await {
-        let message = match message_result {
-            Ok(message) => message,
-            Err(error) => {
-                warn!(
-                    connection_id = connection_id.get(),
-                    %error,
-                    "websocket dev stream ended with an error"
-                );
-                if let Some(observability) = &state.observability {
-                    observability.record_diagnostic(
-                        "ws_dev",
-                        Some(connection_id.get()),
-                        bound_player.map(|player_id: PlayerId| u64::from(player_id.get())),
-                        format!("websocket dev stream ended with an error: {error}"),
-                    );
-                }
-                close_reason = format!("websocket dev read error: {error}");
-                break;
-            }
-        };
-
-        match message {
-            Message::Binary(bytes) => {
-                let keep_open = handle_binary_message(
-                    &state,
-                    connection_id,
-                    &outbound,
-                    &mut guard,
-                    &mut bound_player,
-                    bytes.to_vec(),
-                )
-                .await;
-                if !keep_open {
-                    close_reason = String::from("websocket dev packet handler closed the session");
-                    break;
-                }
-            }
-            Message::Text(_) => {
-                reject_client_session(
-                    &outbound,
-                    state.observability.as_ref(),
-                    "text websocket messages are not accepted",
-                );
-                close_reason = String::from("websocket dev client sent a text frame");
-                break;
-            }
-            Message::Close(frame) => {
-                close_reason = match frame {
-                    Some(frame) => format!(
-                        "websocket dev close frame code={} reason={}",
-                        u16::from(frame.code),
-                        frame.reason
-                    ),
-                    None => String::from("websocket dev close frame without details"),
-                };
-                if let Some(observability) = &state.observability {
-                    observability.record_diagnostic(
-                        "ws_dev",
-                        Some(connection_id.get()),
-                        bound_player.map(|player_id: PlayerId| u64::from(player_id.get())),
-                        close_reason.clone(),
-                    );
-                }
-                break;
-            }
-            Message::Ping(_) | Message::Pong(_) => {}
-        }
-    }
+    let close_reason = run_websocket_dev_loop(
+        &state,
+        connection_id,
+        &outbound,
+        &mut guard,
+        &mut bound_player,
+        &mut receiver,
+    )
+    .await;
 
     if let Some(player_id) = bound_player {
         if let Some(observability) = &state.observability {
@@ -272,6 +189,133 @@ pub(super) async fn handle_websocket_dev_socket(state: DevServerState, socket: W
             format!("legacy websocket gameplay session closed: {close_reason}"),
         );
     }
+}
+
+async fn run_signaling_socket_loop(
+    state: &DevServerState,
+    connection_id: ConnectionId,
+    signal_tx: &mpsc::UnboundedSender<ServerSignalMessage>,
+    peer: &Arc<RTCPeerConnection>,
+    negotiation_state: &Arc<Mutex<WebRtcNegotiationState>>,
+    receiver: &mut futures_util::stream::SplitStream<WebSocket>,
+) -> String {
+    let mut close_reason = String::from("signaling websocket loop ended");
+    while let Some(message_result) = receiver.next().await {
+        let message = match message_result {
+            Ok(message) => message,
+            Err(error) => {
+                warn!(
+                    connection_id = connection_id.get(),
+                    %error,
+                    "WebRTC signaling websocket ended with an error"
+                );
+                if let Some(observability) = &state.observability {
+                    observability.record_diagnostic(
+                        "signaling",
+                        Some(connection_id.get()),
+                        None,
+                        format!("signaling websocket ended with an error: {error}"),
+                    );
+                }
+                return format!("signaling websocket read error: {error}");
+            }
+        };
+
+        let keep_open = process_signaling_websocket_message(
+            state,
+            connection_id,
+            signal_tx,
+            peer,
+            negotiation_state,
+            message,
+        )
+        .await;
+
+        if !keep_open {
+            close_reason = String::from("signaling message handler closed the session");
+            break;
+        }
+    }
+    close_reason
+}
+
+async fn run_websocket_dev_loop(
+    state: &DevServerState,
+    connection_id: ConnectionId,
+    outbound: &ClientOutbound,
+    guard: &mut NetworkSessionGuard,
+    bound_player: &mut Option<PlayerId>,
+    receiver: &mut futures_util::stream::SplitStream<WebSocket>,
+) -> String {
+    let mut close_reason = String::from("websocket dev session loop ended");
+    while let Some(message_result) = receiver.next().await {
+        let message = match message_result {
+            Ok(message) => message,
+            Err(error) => {
+                warn!(
+                    connection_id = connection_id.get(),
+                    %error,
+                    "websocket dev stream ended with an error"
+                );
+                if let Some(observability) = &state.observability {
+                    observability.record_diagnostic(
+                        "ws_dev",
+                        Some(connection_id.get()),
+                        bound_player.map(|player_id| u64::from(player_id.get())),
+                        format!("websocket dev stream ended with an error: {error}"),
+                    );
+                }
+                return format!("websocket dev read error: {error}");
+            }
+        };
+
+        match message {
+            Message::Binary(bytes) => {
+                let keep_open = handle_binary_message(
+                    state,
+                    connection_id,
+                    outbound,
+                    guard,
+                    bound_player,
+                    bytes.to_vec(),
+                )
+                .await;
+                if !keep_open {
+                    close_reason = String::from("websocket dev packet handler closed the session");
+                    break;
+                }
+            }
+            Message::Text(_) => {
+                reject_client_session(
+                    outbound,
+                    state.observability.as_ref(),
+                    "text websocket messages are not accepted",
+                );
+                close_reason = String::from("websocket dev client sent a text frame");
+                break;
+            }
+            Message::Close(frame) => {
+                close_reason = match frame {
+                    Some(frame) => format!(
+                        "websocket dev close frame code={} reason={}",
+                        frame.code, frame.reason
+                    ),
+                    None => String::from("websocket dev close frame without details"),
+                };
+                if let Some(observability) = &state.observability {
+                    observability.record_diagnostic(
+                        "ws_dev",
+                        Some(connection_id.get()),
+                        bound_player.map(|player_id| u64::from(player_id.get())),
+                        close_reason.clone(),
+                    );
+                }
+                break;
+            }
+            Message::Ping(_) | Message::Pong(_) => {}
+        }
+    }
+    close_reason
 }
 
 /// Dispatches one websocket frame received on `/ws`.
@@ -311,14 +355,7 @@ async fn process_signaling_websocket_message(
         }
         Message::Close(frame) => {
             if let Some(observability) = &state.observability {
-                let detail = match frame {
-                    Some(frame) => format!(
-                        "client closed signaling websocket with code={} reason={}",
-                        u16::from(frame.code),
-                        frame.reason
-                    ),
-                    None => String::from("client closed signaling websocket without details"),
-                };
+                let detail = signaling_close_detail(frame.as_ref());
                 observability.record_diagnostic(
                     "signaling",
                     Some(connection_id.get()),
@@ -332,9 +369,19 @@ async fn process_signaling_websocket_message(
     }
 }
 
+fn signaling_close_detail(frame: Option<&axum::extract::ws::CloseFrame>) -> String {
+    match frame {
+        Some(frame) => format!(
+            "client closed signaling websocket with code={} reason={}",
+            frame.code, frame.reason
+        ),
+        None => String::from("client closed signaling websocket without details"),
+    }
+}
+
 /// Handles one validated client signaling message against a live peer connection.
 async fn handle_signaling_message(
-    _state: &DevServerState,
+    state: &DevServerState,
     connection_id: ConnectionId,
     signal_tx: &mpsc::UnboundedSender<ServerSignalMessage>,
     peer: &Arc<RTCPeerConnection>,
@@ -344,7 +391,7 @@ async fn handle_signaling_message(
     let message = match decode_client_signal_message(message_text) {
         Ok(message) => message,
         Err(message) => {
-            if let Some(observability) = &_state.observability {
+            if let Some(observability) = &state.observability {
                 observability.record_diagnostic(
                     "signaling",
                     Some(connection_id.get()),
@@ -361,7 +408,7 @@ async fn handle_signaling_message(
     match message {
         ClientSignalMessage::SessionDescription { description } => {
             accept_webrtc_offer(
-                _state,
+                state,
                 connection_id,
                 signal_tx,
                 peer,
@@ -372,7 +419,7 @@ async fn handle_signaling_message(
         }
         ClientSignalMessage::IceCandidate { candidate } => {
             add_remote_ice_candidate(
-                _state,
+                state,
                 connection_id,
                 signal_tx,
                 peer,
