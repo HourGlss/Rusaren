@@ -9,6 +9,7 @@ behaviors:
       allowed_effects: [skill_shot]
       numeric_fields:
         cooldown_ms: required
+        cast_time_ms: optional
         mana_cost: optional
         range: required
         radius: required
@@ -25,6 +26,7 @@ behaviors:
       allowed_effects: [beam, skill_shot]
       numeric_fields:
         cooldown_ms: required
+        cast_time_ms: optional
         mana_cost: optional
         range: required
         radius: required
@@ -41,6 +43,7 @@ behaviors:
       allowed_effects: [dash_trail]
       numeric_fields:
         cooldown_ms: required
+        cast_time_ms: optional
         mana_cost: optional
         range: forbidden
         radius: forbidden
@@ -57,6 +60,7 @@ behaviors:
       allowed_effects: [burst]
       numeric_fields:
         cooldown_ms: required
+        cast_time_ms: optional
         mana_cost: optional
         range: required
         radius: required
@@ -73,12 +77,18 @@ behaviors:
       allowed_effects: [nova]
       numeric_fields:
         cooldown_ms: required
+        cast_time_ms: optional
         mana_cost: optional
         range: forbidden
         radius: required
         distance: forbidden
         speed: forbidden
         impact_radius: forbidden
+  - id: interrupt
+    label: Interrupt
+    implemented: false
+    inspiration: "WoW kicks, spell locks, and counter-casts"
+    notes: "A future anti-cast mechanic that stops an active cast and applies a follow-up silence."
   - id: summon
     label: Summon
     implemented: false
@@ -195,6 +205,11 @@ statuses:
         tick_interval_ms: forbidden
         magnitude: zero
         trigger_duration_ms: forbidden
+  - id: sleep
+    label: Sleep
+    implemented: false
+    inspiration: "Sap, polymorph-style crowd control, and break-on-hit disables"
+    notes: "A future breakable hard crowd control that behaves like a stun but is removed by any incoming damage."
   - id: shield
     label: Shield
     implemented: false

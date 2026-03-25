@@ -176,6 +176,9 @@ fn decode_arena_player(
         primary_cooldown_total_ms: resources.primary_cooldown_total_ms,
         slot_cooldown_remaining_ms: decode_cooldown_array(payload, index, kind)?,
         slot_cooldown_total_ms: decode_cooldown_array(payload, index, kind)?,
+        current_cast_slot: read_optional_u8(payload, index, kind)?,
+        current_cast_remaining_ms: read_u16(payload, index, kind)?,
+        current_cast_total_ms: read_u16(payload, index, kind)?,
         active_statuses: decode_active_statuses(payload, index, kind)?,
     })
 }

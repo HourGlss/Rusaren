@@ -111,6 +111,7 @@ pub struct MeleeDefinition {
 pub enum SkillBehavior {
     Projectile {
         cooldown_ms: u16,
+        cast_time_ms: u16,
         mana_cost: u16,
         speed: u16,
         range: u16,
@@ -120,6 +121,7 @@ pub enum SkillBehavior {
     },
     Beam {
         cooldown_ms: u16,
+        cast_time_ms: u16,
         mana_cost: u16,
         range: u16,
         radius: u16,
@@ -128,6 +130,7 @@ pub enum SkillBehavior {
     },
     Dash {
         cooldown_ms: u16,
+        cast_time_ms: u16,
         mana_cost: u16,
         distance: u16,
         effect: SkillEffectKind,
@@ -136,6 +139,7 @@ pub enum SkillBehavior {
     },
     Burst {
         cooldown_ms: u16,
+        cast_time_ms: u16,
         mana_cost: u16,
         range: u16,
         radius: u16,
@@ -144,6 +148,7 @@ pub enum SkillBehavior {
     },
     Nova {
         cooldown_ms: u16,
+        cast_time_ms: u16,
         mana_cost: u16,
         radius: u16,
         effect: SkillEffectKind,
@@ -160,6 +165,17 @@ impl SkillBehavior {
             | Self::Dash { cooldown_ms, .. }
             | Self::Burst { cooldown_ms, .. }
             | Self::Nova { cooldown_ms, .. } => cooldown_ms,
+        }
+    }
+
+    #[must_use]
+    pub const fn cast_time_ms(self) -> u16 {
+        match self {
+            Self::Projectile { cast_time_ms, .. }
+            | Self::Beam { cast_time_ms, .. }
+            | Self::Dash { cast_time_ms, .. }
+            | Self::Burst { cast_time_ms, .. }
+            | Self::Nova { cast_time_ms, .. } => cast_time_ms,
         }
     }
 

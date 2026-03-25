@@ -109,6 +109,13 @@ impl SimulationWorld {
             } else {
                 player.movement_intent
             };
+            if player.active_cast.is_some() {
+                if movement == MovementIntent::zero() {
+                    player.moving = false;
+                    continue;
+                }
+                player.active_cast = None;
+            }
             player.moving = movement != MovementIntent::zero();
             if !player.moving {
                 continue;

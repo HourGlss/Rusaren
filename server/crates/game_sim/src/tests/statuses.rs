@@ -137,11 +137,13 @@ fn poison_stacks_and_hot_refreshes_from_the_same_source() {
         cleric.hit_points = 80;
     }
 
-    hot_world.queue_cast(player_id(1), 3).expect("first hot");
-    let _ = hot_world.tick(COMBAT_FRAME_MS);
-    for _ in 0..18 {
-        let _ = hot_world.tick(COMBAT_FRAME_MS);
-    }
+    let hot_skill = hot_world
+        .players
+        .get(&player_id(1))
+        .and_then(|player| player.skills[2].clone())
+        .expect("hot should be equipped");
+    let _ = resolve_skill_cast(&mut hot_world, player_id(1), 3, hot_skill.behavior);
+    let _ = collect_ticks(&mut hot_world, 18);
     let hot_before_refresh = hot_world
         .statuses_for(player_id(1))
         .expect("statuses")
@@ -152,8 +154,7 @@ fn poison_stacks_and_hot_refreshes_from_the_same_source() {
     for _ in 0..4 {
         let _ = hot_world.tick(COMBAT_FRAME_MS);
     }
-    hot_world.queue_cast(player_id(1), 3).expect("refresh hot");
-    let _ = hot_world.tick(COMBAT_FRAME_MS);
+    let _ = resolve_skill_cast(&mut hot_world, player_id(1), 3, hot_skill.behavior);
     let hot_after_refresh = hot_world
         .statuses_for(player_id(1))
         .expect("statuses")
@@ -289,8 +290,12 @@ fn chill_stacks_slow_then_root_target() {
     }
 
     for stack in 1..=3 {
-        world.queue_cast(player_id(1), 3).expect("burst");
-        let _ = world.tick(COMBAT_FRAME_MS);
+        let burst_skill = world
+            .players
+            .get(&player_id(1))
+            .and_then(|player| player.skills[2].clone())
+            .expect("burst should be equipped");
+        let _ = resolve_skill_cast(&mut world, player_id(1), 3, burst_skill.behavior);
         let statuses = world.statuses_for(player_id(2)).expect("statuses");
         let chill = statuses
             .iter()
@@ -445,8 +450,12 @@ fn silence_blocks_skill_casts_but_not_primary_attacks_until_it_expires() {
         TEST_AIM_Y,
     );
 
-    world.queue_cast(player_id(1), 1).expect("silence cast");
-    let cast_events = world.tick(COMBAT_FRAME_MS);
+    let silence_skill = world
+        .players
+        .get(&player_id(1))
+        .and_then(|player| player.skills[0].clone())
+        .expect("silence skill");
+    let cast_events = resolve_skill_cast(&mut world, player_id(1), 1, silence_skill.behavior);
     assert!(status_applied_to(&cast_events, player_id(2), StatusKind::Silence).is_some());
 
     world
@@ -478,11 +487,12 @@ fn silence_blocks_skill_casts_but_not_primary_attacks_until_it_expires() {
         "silence should expire"
     );
 
-    world
-        .queue_cast(player_id(2), 1)
-        .expect("post-silence cast");
-    let mut post_events = world.tick(COMBAT_FRAME_MS);
-    post_events.extend(collect_ticks(&mut world, 10));
+    let mage_skill = world
+        .players
+        .get(&player_id(2))
+        .and_then(|player| player.skills[0].clone())
+        .expect("mage skill");
+    let post_events = resolve_skill_cast(&mut world, player_id(2), 1, mage_skill.behavior);
     assert!(
         effect_spawned_by(&post_events, player_id(2), 1),
         "casts should resume after silence expires"
@@ -622,8 +632,12 @@ fn chill_reduces_movement_speed_before_root_expires_cleanly() {
         TEST_AIM_Y,
     );
 
-    world.queue_cast(player_id(1), 3).expect("frost burst");
-    let cast_events = world.tick(COMBAT_FRAME_MS);
+    let frost_burst = world
+        .players
+        .get(&player_id(1))
+        .and_then(|player| player.skills[2].clone())
+        .expect("frost burst");
+    let cast_events = resolve_skill_cast(&mut world, player_id(1), 3, frost_burst.behavior);
     assert_eq!(
         status_applied_to(&cast_events, player_id(2), StatusKind::Chill),
         Some(1)

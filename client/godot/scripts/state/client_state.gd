@@ -573,6 +573,7 @@ func can_use_combat_slot(slot: int) -> bool:
 	var remaining := int(cooldowns[slot - 1]) if cooldowns.size() >= slot else 0
 	return (
 		can_send_combat_input()
+		and int(player.get("current_cast_slot", 0)) == 0
 		and slot <= int(player.get("unlocked_skill_slots", 0))
 		and remaining <= 0
 	)
@@ -580,7 +581,11 @@ func can_use_combat_slot(slot: int) -> bool:
 
 func can_use_primary_attack() -> bool:
 	var player := local_arena_player()
-	return can_send_combat_input() and int(player.get("primary_cooldown_remaining_ms", 0)) <= 0
+	return (
+		can_send_combat_input()
+		and int(player.get("current_cast_slot", 0)) == 0
+		and int(player.get("primary_cooldown_remaining_ms", 0)) <= 0
+	)
 
 
 func local_arena_player() -> Dictionary:
@@ -609,6 +614,19 @@ func local_skill_name_for_slot(slot: int) -> String:
 	if slot <= local_skill_loadout.size():
 		return String(local_skill_loadout[slot - 1].get("skill_name", "Awaiting pick"))
 	return "Awaiting pick"
+
+
+func player_skill_name_for_slot(player_id: int, slot: int) -> String:
+	if slot <= 0:
+		return "Melee"
+	if player_id == local_player_id:
+		return local_skill_name_for_slot(slot)
+	if roster.has(player_id):
+		var member: Dictionary = roster[player_id]
+		var skill_name := String(member.get("skill", ""))
+		if skill_name != "" and skill_name != "Awaiting next pick" and skill_name != "No skill locked":
+			return skill_name
+	return "Slot %d" % slot
 
 
 func debug_overlay_enabled() -> bool:
@@ -662,6 +680,13 @@ func cooldown_summary_text() -> String:
 		return "Cooldowns: waiting for a local combat snapshot."
 
 	var labels: Array[String] = []
+	var current_cast_slot := int(player.get("current_cast_slot", 0))
+	if current_cast_slot > 0:
+		labels.append("Casting %s %d/%dms" % [
+			local_skill_name_for_slot(current_cast_slot),
+			int(player.get("current_cast_remaining_ms", 0)),
+			int(player.get("current_cast_total_ms", 0)),
+		])
 	labels.append("Melee %s" % _cooldown_token(
 		int(player.get("primary_cooldown_remaining_ms", 0)),
 		int(player.get("primary_cooldown_total_ms", 0))
@@ -779,6 +804,13 @@ func debug_summary_lines() -> Array[String]:
 			int(local_player.get("x", 0)),
 			int(local_player.get("y", 0)),
 		])
+		var current_cast_slot := int(local_player.get("current_cast_slot", 0))
+		if current_cast_slot > 0:
+			lines.append("Casting %s %d/%dms" % [
+				local_skill_name_for_slot(current_cast_slot),
+				int(local_player.get("current_cast_remaining_ms", 0)),
+				int(local_player.get("current_cast_total_ms", 0)),
+			])
 	return lines
 
 
@@ -788,14 +820,7 @@ func debug_label_for_projectile(projectile: Dictionary) -> String:
 	var label := "P%d %s" % [owner_id, String(projectile.get("kind", ""))]
 	if slot <= 0:
 		return "%s melee" % label
-	if owner_id == local_player_id:
-		return "%s %s" % [label, local_skill_name_for_slot(slot)]
-	if roster.has(owner_id):
-		var member: Dictionary = roster[owner_id]
-		var skill_name := String(member.get("skill", ""))
-		if skill_name != "" and skill_name != "Awaiting next pick" and skill_name != "No skill locked":
-			return "%s %s" % [label, skill_name]
-	return "%s slot%d" % [label, slot]
+	return "%s %s" % [label, player_skill_name_for_slot(owner_id, slot)]
 
 
 func mark_debug_input(move_x: int, move_y: int, aim: Vector2i, primary: bool, cast_slot: int) -> void:

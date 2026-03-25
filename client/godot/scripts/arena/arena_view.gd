@@ -4,11 +4,15 @@ class_name ArenaView
 const PADDING := 22.0
 const GRID_STEP_UNITS := 60.0
 const PLAYER_RADIUS_UNITS := 28.0
-const FOG_CIRCLE_OVERDRAW := 0.78
+const FOG_EDGE_EXTENSION_RATIO := 0.52
+const FOG_EDGE_ALPHA_SCALE := 0.58
 const DEBUG_TEXT_COLOR := Color(0.96, 0.96, 0.98, 0.96)
 const DEBUG_RENDER_COLOR := Color(0.42, 0.98, 0.72, 0.92)
 const DEBUG_AUTH_COLOR := Color(0.98, 0.34, 0.88, 0.92)
 const DEBUG_LINK_COLOR := Color(1.0, 0.95, 0.62, 0.9)
+const PLAYER_SHADOW_COLOR := Color(0.03, 0.05, 0.08, 0.26)
+const PROJECTILE_SHADOW_COLOR := Color(0.03, 0.05, 0.08, 0.18)
+const OBSTACLE_SHADOW_COLOR := Color(0.03, 0.04, 0.06, 0.16)
 
 var app_state: ClientState = null
 
@@ -122,6 +126,9 @@ func _draw_obstacles(arena_rect: Rect2) -> void:
 			float(obstacle.get("half_width", 0)),
 			float(obstacle.get("half_height", 0))
 		)
+		var shadow_rect := rect
+		shadow_rect.position += Vector2(7.0, 9.0)
+		draw_rect(shadow_rect, OBSTACLE_SHADOW_COLOR)
 		var kind_name := String(obstacle.get("kind", ""))
 		match kind_name:
 			"Shrub":
@@ -192,6 +199,11 @@ func _draw_projectiles(arena_rect: Rect2) -> void:
 		)
 		var radius := _world_radius_to_canvas(arena_rect, float(projectile.get("radius", 0)))
 		var color := _effect_color(String(projectile.get("kind", "")), 0.95)
+		draw_circle(
+			position + Vector2(0.0, radius * 0.72),
+			maxf(radius * 0.88, 4.0),
+			PROJECTILE_SHADOW_COLOR
+		)
 		draw_circle(position, radius + 8.0, Color(color.r, color.g, color.b, 0.18))
 		draw_circle(position, radius + 3.0, Color(0.08, 0.1, 0.12, 0.85))
 		draw_circle(position, radius, color)
@@ -220,6 +232,11 @@ func _draw_players(arena_rect: Rect2) -> void:
 
 		if is_local_player:
 			draw_line(canvas_pos, aim_end, Color(body_color, 0.35), 2.0)
+		draw_circle(
+			canvas_pos + Vector2(0.0, radius * 0.82),
+			radius * 0.96,
+			PLAYER_SHADOW_COLOR
+		)
 		draw_circle(canvas_pos, radius + 9.0, Color(body_color.r, body_color.g, body_color.b, 0.14))
 		draw_circle(canvas_pos, radius + 4.0, outline)
 		draw_circle(canvas_pos, radius, body_color)
@@ -236,6 +253,7 @@ func _draw_players(arena_rect: Rect2) -> void:
 		var mana_origin: Vector2 = hp_origin + Vector2(0.0, 8.0)
 		draw_rect(Rect2(mana_origin, Vector2(hp_width, 4.0)), Color8(28, 44, 78))
 		draw_rect(Rect2(mana_origin, Vector2(hp_width * mana_ratio, 4.0)), Color8(89, 163, 255))
+		_draw_cast_bar(arena_rect, player, canvas_pos, radius)
 
 		if font != null:
 			var name_label := _player_name_label(player)
@@ -309,24 +327,166 @@ func _draw_visibility_overlay(arena_rect: Rect2) -> void:
 				else Color(0.03, 0.04, 0.05, 0.96)
 			)
 			draw_rect(rect, fog_color)
-			if _is_fog_boundary_tile(column, row):
-				draw_circle(
-					rect.get_center(),
-					maxf(rect.size.x, rect.size.y) * FOG_CIRCLE_OVERDRAW,
-					fog_color
-				)
+	_draw_fog_soft_edges(arena_rect, tile_width, tile_height, half_tile)
 
 
-func _is_fog_boundary_tile(column: int, row: int) -> bool:
+func _draw_fog_soft_edges(
+	arena_rect: Rect2,
+	tile_width: int,
+	tile_height: int,
+	half_tile: float
+) -> void:
+	for column in range(tile_width):
+		var row := 0
+		while row < tile_height:
+			if _has_fog_edge(column, row, Vector2i.LEFT):
+				var explored := app_state.is_tile_explored(column, row)
+				var start_row := row
+				while row < tile_height \
+					and _has_fog_edge(column, row, Vector2i.LEFT) \
+					and app_state.is_tile_explored(column, row) == explored:
+					row += 1
+				_draw_fog_edge_run(arena_rect, column, start_row, column, row - 1, half_tile, Vector2i.LEFT, explored)
+				continue
+			row += 1
+
+	for column in range(tile_width):
+		var row := 0
+		while row < tile_height:
+			if _has_fog_edge(column, row, Vector2i.RIGHT):
+				var explored := app_state.is_tile_explored(column, row)
+				var start_row := row
+				while row < tile_height \
+					and _has_fog_edge(column, row, Vector2i.RIGHT) \
+					and app_state.is_tile_explored(column, row) == explored:
+					row += 1
+				_draw_fog_edge_run(arena_rect, column, start_row, column, row - 1, half_tile, Vector2i.RIGHT, explored)
+				continue
+			row += 1
+
+	for row in range(tile_height):
+		var column := 0
+		while column < tile_width:
+			if _has_fog_edge(column, row, Vector2i.UP):
+				var explored := app_state.is_tile_explored(column, row)
+				var start_column := column
+				while column < tile_width \
+					and _has_fog_edge(column, row, Vector2i.UP) \
+					and app_state.is_tile_explored(column, row) == explored:
+					column += 1
+				_draw_fog_edge_run(arena_rect, start_column, row, column - 1, row, half_tile, Vector2i.UP, explored)
+				continue
+			column += 1
+
+	for row in range(tile_height):
+		var column := 0
+		while column < tile_width:
+			if _has_fog_edge(column, row, Vector2i.DOWN):
+				var explored := app_state.is_tile_explored(column, row)
+				var start_column := column
+				while column < tile_width \
+					and _has_fog_edge(column, row, Vector2i.DOWN) \
+					and app_state.is_tile_explored(column, row) == explored:
+					column += 1
+				_draw_fog_edge_run(arena_rect, start_column, row, column - 1, row, half_tile, Vector2i.DOWN, explored)
+				continue
+			column += 1
+
+
+func _has_fog_edge(column: int, row: int, direction: Vector2i) -> bool:
 	if app_state == null or app_state.is_tile_visible(column, row):
 		return false
-	for row_offset in range(-1, 2):
-		for column_offset in range(-1, 2):
-			if row_offset == 0 and column_offset == 0:
-				continue
-			if app_state.is_tile_visible(column + column_offset, row + row_offset):
-				return true
-	return false
+	return app_state.is_tile_visible(column + direction.x, row + direction.y)
+
+
+func _draw_fog_edge_run(
+	arena_rect: Rect2,
+	start_column: int,
+	start_row: int,
+	end_column: int,
+	end_row: int,
+	half_tile: float,
+	direction: Vector2i,
+	explored: bool
+) -> void:
+	var start_center := _tile_center_world(start_column, start_row, half_tile)
+	var end_center := _tile_center_world(end_column, end_row, half_tile)
+	var start_rect := _world_rect_to_canvas(
+		arena_rect,
+		start_center.x,
+		start_center.y,
+		half_tile,
+		half_tile
+	)
+	var end_rect := _world_rect_to_canvas(
+		arena_rect,
+		end_center.x,
+		end_center.y,
+		half_tile,
+		half_tile
+	)
+	var fog_color := (
+		Color(0.06, 0.08, 0.11, 0.56)
+		if explored
+		else Color(0.03, 0.04, 0.05, 0.96)
+	)
+	var edge_color := Color(
+		fog_color.r,
+		fog_color.g,
+		fog_color.b,
+		fog_color.a * FOG_EDGE_ALPHA_SCALE
+	)
+	var transparent := Color(edge_color.r, edge_color.g, edge_color.b, 0.0)
+	var extension_x := start_rect.size.x * FOG_EDGE_EXTENSION_RATIO
+	var extension_y := start_rect.size.y * FOG_EDGE_EXTENSION_RATIO
+
+	if direction == Vector2i.LEFT:
+		draw_polygon(
+			PackedVector2Array([
+				Vector2(start_rect.position.x - extension_x, start_rect.position.y),
+				Vector2(start_rect.position.x, start_rect.position.y),
+				Vector2(end_rect.position.x, end_rect.end.y),
+				Vector2(end_rect.position.x - extension_x, end_rect.end.y),
+			]),
+			PackedColorArray([transparent, edge_color, edge_color, transparent])
+		)
+	elif direction == Vector2i.RIGHT:
+		draw_polygon(
+			PackedVector2Array([
+				Vector2(start_rect.end.x, start_rect.position.y),
+				Vector2(start_rect.end.x + extension_x, start_rect.position.y),
+				Vector2(end_rect.end.x + extension_x, end_rect.end.y),
+				Vector2(end_rect.end.x, end_rect.end.y),
+			]),
+			PackedColorArray([edge_color, transparent, transparent, edge_color])
+		)
+	elif direction == Vector2i.UP:
+		draw_polygon(
+			PackedVector2Array([
+				Vector2(start_rect.position.x, start_rect.position.y - extension_y),
+				Vector2(end_rect.end.x, end_rect.position.y - extension_y),
+				Vector2(end_rect.end.x, end_rect.position.y),
+				Vector2(start_rect.position.x, start_rect.position.y),
+			]),
+			PackedColorArray([transparent, transparent, edge_color, edge_color])
+		)
+	elif direction == Vector2i.DOWN:
+		draw_polygon(
+			PackedVector2Array([
+				Vector2(start_rect.position.x, start_rect.end.y),
+				Vector2(end_rect.end.x, end_rect.end.y),
+				Vector2(end_rect.end.x, end_rect.end.y + extension_y),
+				Vector2(start_rect.position.x, start_rect.end.y + extension_y),
+			]),
+			PackedColorArray([edge_color, edge_color, transparent, transparent])
+		)
+
+
+func _tile_center_world(column: int, row: int, half_tile: float) -> Vector2:
+	return Vector2(
+		-float(app_state.arena_width) * 0.5 + float(column * app_state.arena_tile_units) + half_tile,
+		-float(app_state.arena_height) * 0.5 + float(row * app_state.arena_tile_units) + half_tile
+	)
 
 
 func _draw_centered_text(rect: Rect2, text: String) -> void:
@@ -383,6 +543,9 @@ func _draw_render_debug_overlay(arena_rect: Rect2) -> void:
 			var last_spell := app_state.debug_last_spell_for_player(player_id)
 			if last_spell != "":
 				label = "%s %s" % [label, last_spell]
+			var current_cast_slot := int(player.get("current_cast_slot", 0))
+			if current_cast_slot > 0:
+				label = "%s cast=%s" % [label, _cast_label_for_player(player)]
 			draw_string(
 				font,
 				position + Vector2(radius + 8.0, -radius - 4.0),
@@ -448,6 +611,9 @@ func _draw_auth_debug_overlay(arena_rect: Rect2) -> void:
 				int(player.get("hit_points", 0)),
 				int(player.get("mana", 0)),
 			]
+			var current_cast_slot := int(player.get("current_cast_slot", 0))
+			if current_cast_slot > 0:
+				label = "%s cast=%s" % [label, _cast_label_for_player(player)]
 			draw_string(
 				font,
 				auth_position + Vector2(radius + 8.0, radius + 14.0),
@@ -494,6 +660,65 @@ func _player_resource_label(player: Dictionary) -> String:
 		int(player.get("hit_points", 0)),
 		int(player.get("mana", 0)),
 	]
+
+
+func _cast_label_for_player(player: Dictionary) -> String:
+	var slot := int(player.get("current_cast_slot", 0))
+	if slot <= 0:
+		return ""
+	if app_state == null:
+		return "Slot %d" % slot
+	return app_state.player_skill_name_for_slot(int(player.get("player_id", 0)), slot)
+
+
+func _cast_bar_origin(player: Dictionary, canvas_pos: Vector2, radius: float, bar_width: float) -> Vector2:
+	var line_count := 1
+	if _player_resource_label(player) != "":
+		line_count += 1
+	if not Array(player.get("active_statuses", [])).is_empty():
+		line_count += 1
+	var top_offset := radius + 44.0 + float(max(0, line_count - 1)) * 16.0
+	return canvas_pos + Vector2(-bar_width * 0.5, -top_offset)
+
+
+func _draw_cast_bar(arena_rect: Rect2, player: Dictionary, canvas_pos: Vector2, radius: float) -> void:
+	var slot := int(player.get("current_cast_slot", 0))
+	if slot <= 0:
+		return
+	var total_ms := maxf(1.0, float(player.get("current_cast_total_ms", 0)))
+	var remaining_ms := clampf(float(player.get("current_cast_remaining_ms", 0)), 0.0, total_ms)
+	var progress := clampf(1.0 - (remaining_ms / total_ms), 0.0, 1.0)
+	var bar_width := radius * 2.8
+	var bar_height := 8.0
+	var bar_origin := _cast_bar_origin(player, canvas_pos, radius, bar_width)
+	var outer_rect := Rect2(bar_origin + Vector2(-1.0, -1.0), Vector2(bar_width + 2.0, bar_height + 2.0))
+	draw_rect(outer_rect, Color(0.02, 0.03, 0.04, 0.92))
+	draw_rect(Rect2(bar_origin, Vector2(bar_width, bar_height)), Color(0.11, 0.13, 0.15, 0.92))
+	draw_rect(
+		Rect2(bar_origin, Vector2(bar_width * progress, bar_height)),
+		Color(0.98, 0.84, 0.36, 0.98)
+	)
+	var font := ThemeDB.fallback_font
+	if font != null:
+		var label := "%s  %dms" % [_cast_label_for_player(player), int(remaining_ms)]
+		draw_string(
+			font,
+			bar_origin + Vector2(1.0, -5.0),
+			label,
+			HORIZONTAL_ALIGNMENT_LEFT,
+			-1.0,
+			12,
+			Color(0.02, 0.03, 0.04, 0.88)
+		)
+		draw_string(
+			font,
+			bar_origin + Vector2(0.0, -6.0),
+			label,
+			HORIZONTAL_ALIGNMENT_LEFT,
+			-1.0,
+			12,
+			Color8(242, 240, 230)
+		)
 
 
 func _world_to_canvas(arena_rect: Rect2, world_point: Vector2) -> Vector2:

@@ -461,6 +461,9 @@ fn arena_status_kinds_round_trip_for_all_runtime_statuses() {
                     primary_cooldown_total_ms: 650,
                     slot_cooldown_remaining_ms: [0, 0, 800, 0, 0],
                     slot_cooldown_total_ms: [700, 1700, 2200, 0, 0],
+                    current_cast_slot: Some(2),
+                    current_cast_remaining_ms: 400,
+                    current_cast_total_ms: 600,
                     active_statuses: vec![ArenaStatusSnapshot {
                         source: player_id(8),
                         slot: 2,
@@ -538,6 +541,9 @@ fn sample_full_arena_snapshot_event() -> ServerControlEvent {
                 primary_cooldown_total_ms: 650,
                 slot_cooldown_remaining_ms: [100, 0, 900, 0, 0],
                 slot_cooldown_total_ms: [700, 1700, 2200, 0, 0],
+                current_cast_slot: Some(3),
+                current_cast_remaining_ms: 200,
+                current_cast_total_ms: 300,
                 active_statuses: vec![ArenaStatusSnapshot {
                     source: player_id(8),
                     slot: 2,
@@ -584,6 +590,9 @@ fn sample_delta_arena_snapshot_event() -> ServerControlEvent {
                 primary_cooldown_total_ms: 650,
                 slot_cooldown_remaining_ms: [0, 0, 800, 0, 0],
                 slot_cooldown_total_ms: [700, 1700, 2200, 0, 0],
+                current_cast_slot: None,
+                current_cast_remaining_ms: 0,
+                current_cast_total_ms: 0,
                 active_statuses: vec![ArenaStatusSnapshot {
                     source: player_id(8),
                     slot: 2,
@@ -745,6 +754,9 @@ fn server_control_event_rejects_invalid_delta_snapshot_phase_and_status_values()
     for _ in 0..5 {
         bad_status_payload.extend_from_slice(&0_u16.to_le_bytes());
     }
+    bad_status_payload.push(0);
+    bad_status_payload.extend_from_slice(&0_u16.to_le_bytes());
+    bad_status_payload.extend_from_slice(&0_u16.to_le_bytes());
     bad_status_payload.push(1);
     bad_status_payload.extend_from_slice(&8_u32.to_le_bytes());
     bad_status_payload.push(1);

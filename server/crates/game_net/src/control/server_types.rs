@@ -186,6 +186,9 @@ pub struct ArenaPlayerSnapshot {
     pub primary_cooldown_total_ms: u16,
     pub slot_cooldown_remaining_ms: [u16; 5],
     pub slot_cooldown_total_ms: [u16; 5],
+    pub current_cast_slot: Option<u8>,
+    pub current_cast_remaining_ms: u16,
+    pub current_cast_total_ms: u16,
     pub active_statuses: Vec<ArenaStatusSnapshot>,
 }
 

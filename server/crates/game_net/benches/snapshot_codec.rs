@@ -36,6 +36,9 @@ fn sample_players() -> Vec<ArenaPlayerSnapshot> {
             primary_cooldown_total_ms: 650,
             slot_cooldown_remaining_ms: [0, 0, 800, 0, 0],
             slot_cooldown_total_ms: [700, 1700, 2200, 0, 0],
+            current_cast_slot: Some(2),
+            current_cast_remaining_ms: 400,
+            current_cast_total_ms: 600,
             active_statuses: vec![
                 ArenaStatusSnapshot {
                     source: player_id(4),
@@ -71,6 +74,9 @@ fn sample_players() -> Vec<ArenaPlayerSnapshot> {
             primary_cooldown_total_ms: 550,
             slot_cooldown_remaining_ms: [400, 0, 0, 0, 0],
             slot_cooldown_total_ms: [900, 1700, 2200, 1800, 3200],
+            current_cast_slot: None,
+            current_cast_remaining_ms: 0,
+            current_cast_total_ms: 0,
             active_statuses: vec![
                 ArenaStatusSnapshot {
                     source: player_id(1),

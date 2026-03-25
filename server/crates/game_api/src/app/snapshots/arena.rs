@@ -62,6 +62,9 @@ impl ServerApp {
             primary_cooldown_total_ms: state.primary_cooldown_total_ms,
             slot_cooldown_remaining_ms: state.slot_cooldown_remaining_ms,
             slot_cooldown_total_ms: state.slot_cooldown_total_ms,
+            current_cast_slot: state.current_cast_slot,
+            current_cast_remaining_ms: state.current_cast_remaining_ms,
+            current_cast_total_ms: state.current_cast_total_ms,
             active_statuses: world
                 .statuses_for(assignment.player_id)
                 .unwrap_or_default()

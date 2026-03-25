@@ -38,6 +38,33 @@ fn bundled_content_loads_all_classes_and_the_ascii_map() {
 }
 
 #[test]
+fn bundled_content_exposes_authored_cast_times_and_registry_placeholders() {
+    let content = GameContent::bundled().expect("bundled content should load");
+    let cleric_minor_heal = content
+        .skills()
+        .resolve(&SkillChoice::new(SkillTree::Cleric, 1).expect("choice"))
+        .expect("cleric tier one should exist");
+    assert_eq!(cleric_minor_heal.behavior.cast_time_ms(), 250);
+
+    let mage_prism_beam = content
+        .skills()
+        .resolve(&SkillChoice::new(SkillTree::Mage, 5).expect("choice"))
+        .expect("mage tier five should exist");
+    assert_eq!(mage_prism_beam.behavior.cast_time_ms(), 550);
+
+    assert!(content
+        .mechanics()
+        .behaviors
+        .iter()
+        .any(|mechanic| mechanic.id == "interrupt" && !mechanic.implemented));
+    assert!(content
+        .mechanics()
+        .statuses
+        .iter()
+        .any(|mechanic| mechanic.id == "sleep" && !mechanic.implemented));
+}
+
+#[test]
 fn content_error_display_variants_are_precise() {
     assert_eq!(
         ContentError::Io {

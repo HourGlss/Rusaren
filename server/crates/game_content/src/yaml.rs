@@ -116,6 +116,7 @@ pub(super) struct SkillBehaviorYaml {
     pub(super) kind: String,
     pub(super) effect: String,
     pub(super) cooldown_ms: Option<u16>,
+    pub(super) cast_time_ms: Option<u16>,
     pub(super) mana_cost: Option<u16>,
     pub(super) range: Option<u16>,
     pub(super) radius: Option<u16>,

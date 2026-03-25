@@ -10,6 +10,7 @@ use crate::{
 #[derive(Clone, Copy)]
 struct BehaviorNumericFields {
     cooldown_ms: Option<u16>,
+    cast_time_ms: Option<u16>,
     mana_cost: Option<u16>,
     range: Option<u16>,
     radius: Option<u16>,
@@ -29,6 +30,12 @@ fn parse_behavior_numeric_fields(
             "cooldown_ms",
             yaml.cooldown_ms,
             schema_numeric_rule(&schema.numeric_fields, "cooldown_ms"),
+        )?,
+        cast_time_ms: read_numeric_field(
+            source,
+            "cast_time_ms",
+            yaml.cast_time_ms,
+            schema_numeric_rule(&schema.numeric_fields, "cast_time_ms"),
         )?,
         mana_cost: read_numeric_field(
             source,
@@ -150,6 +157,7 @@ fn parse_projectile_behavior(
 ) -> Result<SkillBehavior, ContentError> {
     Ok(SkillBehavior::Projectile {
         cooldown_ms,
+        cast_time_ms: fields.cast_time_ms.unwrap_or(0),
         mana_cost,
         speed: require_present_u16(source, "speed", fields.speed)?,
         range: require_present_u16(source, "range", fields.range)?,
@@ -171,6 +179,7 @@ fn parse_beam_behavior(
 ) -> Result<SkillBehavior, ContentError> {
     Ok(SkillBehavior::Beam {
         cooldown_ms,
+        cast_time_ms: fields.cast_time_ms.unwrap_or(0),
         mana_cost,
         range: require_present_u16(source, "range", fields.range)?,
         radius: require_present_u16(source, "radius", fields.radius)?,
@@ -191,6 +200,7 @@ fn parse_dash_behavior(
 ) -> Result<SkillBehavior, ContentError> {
     Ok(SkillBehavior::Dash {
         cooldown_ms,
+        cast_time_ms: fields.cast_time_ms.unwrap_or(0),
         mana_cost,
         distance: require_present_u16(source, "distance", fields.distance)?,
         effect,
@@ -216,6 +226,7 @@ fn parse_burst_behavior(
 ) -> Result<SkillBehavior, ContentError> {
     Ok(SkillBehavior::Burst {
         cooldown_ms,
+        cast_time_ms: fields.cast_time_ms.unwrap_or(0),
         mana_cost,
         range: require_present_u16(source, "range", fields.range)?,
         radius: require_present_u16(source, "radius", fields.radius)?,
@@ -236,6 +247,7 @@ fn parse_nova_behavior(
 ) -> Result<SkillBehavior, ContentError> {
     Ok(SkillBehavior::Nova {
         cooldown_ms,
+        cast_time_ms: fields.cast_time_ms.unwrap_or(0),
         mana_cost,
         radius: require_present_u16(source, "radius", fields.radius)?,
         effect,

@@ -2,7 +2,7 @@ extends RefCounted
 class_name RarenaProtocol
 
 const PACKET_MAGIC := 0x5241
-const PROTOCOL_VERSION := 2
+const PROTOCOL_VERSION := 3
 const HEADER_LEN := 16
 const MAX_PLAYER_NAME_LEN := 24
 const MAX_MESSAGE_BYTES := 200
@@ -875,6 +875,9 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 				var slot_cooldown_total_ms: Array[int] = []
 				for _cooldown_total_index in range(5):
 					slot_cooldown_total_ms.append(int(cursor.read_u16()))
+				var current_cast_slot = cursor.read_optional_u8()
+				var current_cast_remaining_ms = cursor.read_u16()
+				var current_cast_total_ms = cursor.read_u16()
 				var status_count = cursor.read_u8()
 				var active_statuses: Array[Dictionary] = []
 				for _status_index in range(int(status_count)):
@@ -912,6 +915,9 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 					"primary_cooldown_total_ms": primary_cooldown_total_ms,
 					"slot_cooldown_remaining_ms": slot_cooldown_remaining_ms,
 					"slot_cooldown_total_ms": slot_cooldown_total_ms,
+					"current_cast_slot": 0 if current_cast_slot == null else int(current_cast_slot),
+					"current_cast_remaining_ms": current_cast_remaining_ms,
+					"current_cast_total_ms": current_cast_total_ms,
 					"active_statuses": active_statuses,
 				})
 			var projectile_count = cursor.read_u16()
@@ -1001,6 +1007,9 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 				var delta_slot_total: Array[int] = []
 				for _delta_total_index in range(5):
 					delta_slot_total.append(int(cursor.read_u16()))
+				var delta_current_cast_slot = cursor.read_optional_u8()
+				var delta_current_cast_remaining_ms = cursor.read_u16()
+				var delta_current_cast_total_ms = cursor.read_u16()
 				var delta_status_count = cursor.read_u8()
 				var delta_statuses: Array[Dictionary] = []
 				for _delta_status_index in range(int(delta_status_count)):
@@ -1038,6 +1047,9 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 					"primary_cooldown_total_ms": delta_primary_total,
 					"slot_cooldown_remaining_ms": delta_slot_remaining,
 					"slot_cooldown_total_ms": delta_slot_total,
+					"current_cast_slot": 0 if delta_current_cast_slot == null else int(delta_current_cast_slot),
+					"current_cast_remaining_ms": delta_current_cast_remaining_ms,
+					"current_cast_total_ms": delta_current_cast_total_ms,
 					"active_statuses": delta_statuses,
 				})
 			var delta_projectile_count = cursor.read_u16()

@@ -211,6 +211,9 @@ pub(super) fn encode_arena_player(
     for total in player.slot_cooldown_total_ms {
         payload.extend_from_slice(&total.to_le_bytes());
     }
+    encode_optional_u8(payload, player.current_cast_slot);
+    payload.extend_from_slice(&player.current_cast_remaining_ms.to_le_bytes());
+    payload.extend_from_slice(&player.current_cast_total_ms.to_le_bytes());
     let status_count =
         u8::try_from(player.active_statuses.len()).map_err(|_| PacketError::PayloadTooLarge {
             actual: player.active_statuses.len(),

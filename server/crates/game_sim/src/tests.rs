@@ -107,6 +107,40 @@ fn projectile_frame_budget(speed: u16, range: u16) -> usize {
     usize::from(range).div_ceil(travel_per_frame) + 3
 }
 
+fn cast_resolution_frame_budget(behavior: SkillBehavior) -> usize {
+    1 + usize::from(behavior.cast_time_ms().div_ceil(COMBAT_FRAME_MS))
+}
+
+fn activate_skill_cast(
+    world: &mut SimulationWorld,
+    attacker_id: PlayerId,
+    slot: u8,
+    behavior: SkillBehavior,
+) -> Vec<SimulationEvent> {
+    world
+        .queue_cast(attacker_id, slot)
+        .expect("cast should queue successfully");
+    let mut events = world.tick(COMBAT_FRAME_MS);
+    let extra_cast_frames = cast_resolution_frame_budget(behavior).saturating_sub(1);
+    if extra_cast_frames > 0 {
+        events.extend(collect_ticks(world, extra_cast_frames));
+    }
+    events
+}
+
+fn resolve_skill_cast(
+    world: &mut SimulationWorld,
+    attacker_id: PlayerId,
+    slot: u8,
+    behavior: SkillBehavior,
+) -> Vec<SimulationEvent> {
+    let mut events = activate_skill_cast(world, attacker_id, slot, behavior);
+    if let SkillBehavior::Projectile { speed, range, .. } = behavior {
+        events.extend(collect_ticks(world, projectile_frame_budget(speed, range)));
+    }
+    events
+}
+
 fn effect_spawned_by(events: &[SimulationEvent], owner: PlayerId, slot: u8) -> bool {
     events.iter().any(|event| {
         matches!(
@@ -176,6 +210,7 @@ fn miss_offset_units(radius: u16) -> i16 {
     i16::try_from(u32::from(radius) + u32::from(PLAYER_RADIUS_UNITS) + 80).unwrap_or(i16::MAX)
 }
 
+mod casting;
 mod combat;
 mod movement;
 mod resources;

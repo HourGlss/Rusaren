@@ -201,6 +201,10 @@ func _assert_decode_arena_state_snapshot() -> bool:
 	for value in [0, 900, 0, 1400, 0]:
 		_push_u16(payload, value)
 	payload.append(1)
+	payload.append(2)
+	_push_u16(payload, 400)
+	_push_u16(payload, 600)
+	payload.append(1)
 	_push_u32(payload, 12)
 	payload.append(2)
 	payload.append(1)
@@ -240,6 +244,10 @@ func _assert_decode_arena_state_snapshot() -> bool:
 		return _fail("arena state snapshot should decode active statuses")
 	if int(players[0].get("primary_cooldown_remaining_ms", 0)) != 180:
 		return _fail("arena state snapshot should decode primary cooldown state")
+	if int(players[0].get("current_cast_slot", 0)) != 2:
+		return _fail("arena state snapshot should decode active cast slots")
+	if int(players[0].get("current_cast_remaining_ms", 0)) != 400:
+		return _fail("arena state snapshot should decode cast remaining state")
 	if projectiles.size() != 1 or String(projectiles[0].get("kind", "")) != "SkillShot":
 		return _fail("arena state snapshot should decode projectile state")
 	return true
@@ -282,6 +290,9 @@ func _assert_decode_arena_delta_snapshot() -> bool:
 		_push_u16(payload, value)
 	for value in [700, 1700, 2200, 0, 0]:
 		_push_u16(payload, value)
+	payload.append(0)
+	_push_u16(payload, 0)
+	_push_u16(payload, 0)
 	payload.append(1)
 	_push_u32(payload, 18)
 	payload.append(3)
@@ -303,6 +314,8 @@ func _assert_decode_arena_delta_snapshot() -> bool:
 		return _fail("arena delta snapshot should preserve tile units")
 	if players.size() != 1 or int(players[0].get("mana", 0)) != 64:
 		return _fail("arena delta snapshot should decode player state")
+	if int(players[0].get("current_cast_slot", 0)) != 0:
+		return _fail("arena delta snapshot should decode the absence of an active cast")
 	return true
 
 

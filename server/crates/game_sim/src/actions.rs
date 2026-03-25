@@ -1,8 +1,8 @@
 use super::{
     arena_effect_kind, normalize_aim, project_from_aim, resolve_movement, round_f32_to_i32,
-    saturating_i16, truncate_line_to_obstacles, ArenaEffect, ArenaEffectKind, PlayerId,
-    ProjectileState, SimPlayerState, SimulationEvent, SimulationWorld, SkillBehavior, StatusKind,
-    PLAYER_RADIUS_UNITS,
+    saturating_i16, truncate_line_to_obstacles, ArenaEffect, ArenaEffectKind, PendingCast,
+    PlayerId, ProjectileState, SimPlayerState, SimulationEvent, SimulationWorld, SkillBehavior,
+    StatusKind, PLAYER_RADIUS_UNITS,
 };
 
 impl SimulationWorld {
@@ -118,9 +118,58 @@ impl SimulationWorld {
         let Some(skill) = player.skills[slot_index].clone() else {
             return Vec::new();
         };
-        match skill.behavior {
+        if skill.behavior.cast_time_ms() > 0 {
+            if self.start_pending_cast(attacker, attacker_state, slot, slot_index, skill.behavior) {
+                return Vec::new();
+            }
+            return Vec::new();
+        }
+
+        self.execute_skill_behavior(attacker, attacker_state, slot, slot_index, skill.behavior)
+    }
+
+    fn start_pending_cast(
+        &mut self,
+        attacker: PlayerId,
+        attacker_state: SimPlayerState,
+        slot: u8,
+        slot_index: usize,
+        behavior: SkillBehavior,
+    ) -> bool {
+        if attacker_state.moving {
+            return false;
+        }
+        let mana_cost = behavior.mana_cost();
+        let cast_time_ms = behavior.cast_time_ms();
+        let Some(player) = self.players.get_mut(&attacker) else {
+            return false;
+        };
+        if player.active_cast.is_some() || player.mana < mana_cost {
+            return false;
+        }
+        player.active_cast = Some(PendingCast {
+            slot,
+            slot_index,
+            remaining_ms: cast_time_ms,
+            total_ms: cast_time_ms,
+            just_started: true,
+        });
+        true
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn execute_skill_behavior(
+        &mut self,
+        attacker: PlayerId,
+        attacker_state: SimPlayerState,
+        slot: u8,
+        slot_index: usize,
+        behavior: SkillBehavior,
+    ) -> Vec<SimulationEvent> {
+        match behavior {
             SkillBehavior::Projectile {
                 cooldown_ms,
+                cast_time_ms: _,
                 mana_cost,
                 speed,
                 range,
@@ -142,6 +191,7 @@ impl SimulationWorld {
             ),
             SkillBehavior::Beam {
                 cooldown_ms,
+                cast_time_ms: _,
                 mana_cost,
                 range,
                 radius,
@@ -161,6 +211,7 @@ impl SimulationWorld {
             ),
             SkillBehavior::Dash {
                 cooldown_ms,
+                cast_time_ms: _,
                 mana_cost,
                 distance,
                 effect,
@@ -180,6 +231,7 @@ impl SimulationWorld {
             ),
             SkillBehavior::Burst {
                 cooldown_ms,
+                cast_time_ms: _,
                 mana_cost,
                 range,
                 radius,
@@ -199,6 +251,7 @@ impl SimulationWorld {
             ),
             SkillBehavior::Nova {
                 cooldown_ms,
+                cast_time_ms: _,
                 mana_cost,
                 radius,
                 effect,
@@ -217,7 +270,7 @@ impl SimulationWorld {
         }
     }
 
-    fn start_skill_cast(
+    fn commit_skill_cast(
         &mut self,
         attacker: PlayerId,
         slot_index: usize,
@@ -248,7 +301,7 @@ impl SimulationWorld {
         effect: game_content::SkillEffectKind,
         payload: game_content::EffectPayload,
     ) -> Vec<SimulationEvent> {
-        if !self.start_skill_cast(attacker, slot_index, cooldown_ms, mana_cost) {
+        if !self.commit_skill_cast(attacker, slot_index, cooldown_ms, mana_cost) {
             return Vec::new();
         }
 
@@ -278,7 +331,7 @@ impl SimulationWorld {
         effect: game_content::SkillEffectKind,
         payload: game_content::EffectPayload,
     ) -> Vec<SimulationEvent> {
-        if !self.start_skill_cast(attacker, slot_index, cooldown_ms, mana_cost) {
+        if !self.commit_skill_cast(attacker, slot_index, cooldown_ms, mana_cost) {
             return Vec::new();
         }
 
@@ -307,7 +360,7 @@ impl SimulationWorld {
         impact_radius: Option<u16>,
         payload: Option<game_content::EffectPayload>,
     ) -> Vec<SimulationEvent> {
-        if !self.start_skill_cast(attacker, slot_index, cooldown_ms, mana_cost) {
+        if !self.commit_skill_cast(attacker, slot_index, cooldown_ms, mana_cost) {
             return Vec::new();
         }
 
@@ -336,7 +389,7 @@ impl SimulationWorld {
         effect: game_content::SkillEffectKind,
         payload: game_content::EffectPayload,
     ) -> Vec<SimulationEvent> {
-        if !self.start_skill_cast(attacker, slot_index, cooldown_ms, mana_cost) {
+        if !self.commit_skill_cast(attacker, slot_index, cooldown_ms, mana_cost) {
             return Vec::new();
         }
 
@@ -364,7 +417,7 @@ impl SimulationWorld {
         effect: game_content::SkillEffectKind,
         payload: game_content::EffectPayload,
     ) -> Vec<SimulationEvent> {
-        if !self.start_skill_cast(attacker, slot_index, cooldown_ms, mana_cost) {
+        if !self.commit_skill_cast(attacker, slot_index, cooldown_ms, mana_cost) {
             return Vec::new();
         }
 
@@ -392,6 +445,69 @@ impl SimulationWorld {
 
         player.mana = player.mana.saturating_sub(mana_cost);
         true
+    }
+
+    pub(super) fn advance_active_casts(
+        &mut self,
+        delta_ms: u16,
+        events: &mut Vec<SimulationEvent>,
+    ) {
+        let player_ids = self.players.keys().copied().collect::<Vec<_>>();
+        for player_id in player_ids {
+            let Some(attacker_state) = self.player_state(player_id) else {
+                continue;
+            };
+            if !attacker_state.alive {
+                if let Some(player) = self.players.get_mut(&player_id) {
+                    player.active_cast = None;
+                }
+                continue;
+            }
+
+            let should_cancel = self.players.get(&player_id).is_some_and(|player| {
+                player.active_cast.is_some()
+                    && player
+                        .statuses
+                        .iter()
+                        .any(|status| matches!(status.kind, StatusKind::Silence | StatusKind::Stun))
+            });
+            if should_cancel {
+                if let Some(player) = self.players.get_mut(&player_id) {
+                    player.active_cast = None;
+                }
+                continue;
+            }
+
+            let Some(player) = self.players.get_mut(&player_id) else {
+                continue;
+            };
+            let Some(active_cast) = player.active_cast.as_mut() else {
+                continue;
+            };
+            if active_cast.just_started {
+                active_cast.just_started = false;
+                continue;
+            }
+            active_cast.remaining_ms = active_cast.remaining_ms.saturating_sub(delta_ms);
+            if active_cast.remaining_ms > 0 {
+                continue;
+            }
+            let Some(skill) = player.skills[active_cast.slot_index].clone() else {
+                player.active_cast = None;
+                continue;
+            };
+            let slot = active_cast.slot;
+            let slot_index = active_cast.slot_index;
+            player.active_cast = None;
+            let cast_events = self.execute_skill_behavior(
+                player_id,
+                attacker_state,
+                slot,
+                slot_index,
+                skill.behavior,
+            );
+            events.extend(cast_events);
+        }
     }
 
     #[allow(clippy::too_many_arguments)]

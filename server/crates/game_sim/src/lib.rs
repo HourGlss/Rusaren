@@ -144,6 +144,9 @@ pub struct SimPlayerState {
     pub primary_cooldown_total_ms: u16,
     pub slot_cooldown_remaining_ms: [u16; 5],
     pub slot_cooldown_total_ms: [u16; 5],
+    pub current_cast_slot: Option<u8>,
+    pub current_cast_remaining_ms: u16,
+    pub current_cast_total_ms: u16,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -271,6 +274,7 @@ struct SimPlayer {
     movement_intent: MovementIntent,
     queued_primary: bool,
     queued_cast_slot: Option<u8>,
+    active_cast: Option<PendingCast>,
     melee: MeleeDefinition,
     skills: [Option<SkillDefinition>; 5],
     primary_cooldown_remaining_ms: u16,
@@ -291,6 +295,15 @@ struct StatusInstance {
     magnitude: u16,
     max_stacks: u8,
     trigger_duration_ms: Option<u16>,
+}
+
+#[derive(Clone, Debug)]
+struct PendingCast {
+    slot: u8,
+    slot_index: usize,
+    remaining_ms: u16,
+    total_ms: u16,
+    just_started: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -358,6 +371,7 @@ impl SimulationWorld {
                         movement_intent: MovementIntent::zero(),
                         queued_primary: false,
                         queued_cast_slot: None,
+                        active_cast: None,
                         melee: player.melee,
                         skills: player.skills,
                         primary_cooldown_remaining_ms: 0,
@@ -433,6 +447,9 @@ impl SimulationWorld {
         if !player.alive {
             return Err(SimulationError::PlayerAlreadyDefeated(player_id));
         }
+        if player.active_cast.is_some() {
+            return Ok(());
+        }
         player.queued_primary = true;
         Ok(())
     }
@@ -452,6 +469,9 @@ impl SimulationWorld {
         if player.skills[usize::from(slot - 1)].is_none() {
             return Err(SimulationError::SkillSlotEmpty(slot));
         }
+        if player.active_cast.is_some() {
+            return Ok(());
+        }
         player.queued_cast_slot = Some(slot);
         Ok(())
     }
@@ -464,6 +484,7 @@ impl SimulationWorld {
         self.move_players(delta_ms, &mut events);
         self.resolve_queued_actions(&mut events);
         self.advance_projectiles(delta_ms, &mut events);
+        self.advance_active_casts(delta_ms, &mut events);
         events
     }
 
@@ -494,6 +515,12 @@ impl SimulationWorld {
                 primary_cooldown_total_ms: player.melee.cooldown_ms,
                 slot_cooldown_remaining_ms: player.slot_cooldown_remaining_ms,
                 slot_cooldown_total_ms,
+                current_cast_slot: player.active_cast.as_ref().map(|cast| cast.slot),
+                current_cast_remaining_ms: player
+                    .active_cast
+                    .as_ref()
+                    .map_or(0, |cast| cast.remaining_ms),
+                current_cast_total_ms: player.active_cast.as_ref().map_or(0, |cast| cast.total_ms),
             }
         })
     }

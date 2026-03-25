@@ -22,8 +22,9 @@ const MAX_MAP_DIMENSION_TILES: usize = 128;
 const MAX_SKILL_TEXT_LEN: usize = 120;
 const REQUIRED_TIERS: [u8; 5] = [1, 2, 3, 4, 5];
 const DEFAULT_MECHANICS_REGISTRY: &str = include_str!("../../../content/mechanics/registry.yaml");
-const BEHAVIOR_NUMERIC_FIELDS: [&str; 7] = [
+const BEHAVIOR_NUMERIC_FIELDS: [&str; 8] = [
     "cooldown_ms",
+    "cast_time_ms",
     "mana_cost",
     "range",
     "radius",

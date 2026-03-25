@@ -196,8 +196,12 @@ fn healing_can_affect_enemy_players_and_caps_at_max_hp() {
         bob.hit_points = 60;
     }
 
-    world.queue_cast(player_id(1), 1).expect("heal");
-    let events = world.tick(COMBAT_FRAME_MS);
+    let skill = world
+        .players
+        .get(&player_id(1))
+        .and_then(|player| player.skills[0].clone())
+        .expect("heal skill should be equipped");
+    let events = resolve_skill_cast(&mut world, player_id(1), 1, skill.behavior);
     assert!(events.iter().any(|event| matches!(event, SimulationEvent::HealingApplied { target, .. } if *target == player_id(2))));
     let bob = world.player_state(player_id(2)).expect("bob");
     assert!(bob.hit_points > 60);
@@ -449,8 +453,7 @@ fn every_authored_skill_hits_with_valid_geometry_and_resources() {
             }
         }
 
-        world.queue_cast(attacker_id, 1).expect("cast should queue");
-        let mut events = world.tick(COMBAT_FRAME_MS);
+        let mut events = activate_skill_cast(&mut world, attacker_id, 1, skill.behavior);
         assert!(
             effect_spawned_by(&events, attacker_id, 1),
             "{} should spawn a visible effect",

@@ -19,6 +19,7 @@ func _init() -> void:
 	success = _assert_skill_buttons_only_unlock_next_tiers() and success
 	success = _assert_arena_state_updates_local_combat_slots_and_effects() and success
 	success = _assert_local_skill_labels_and_render_smoothing() and success
+	success = _assert_remote_cast_labels_use_known_roster_skills() and success
 	success = _assert_resource_labels_only_show_for_local_player() and success
 	success = _assert_fog_rounds_only_on_visibility_boundary() and success
 	quit(0 if success else 1)
@@ -248,6 +249,9 @@ func _assert_arena_state_updates_local_combat_slots_and_effects() -> bool:
 					"primary_cooldown_total_ms": 600,
 					"slot_cooldown_remaining_ms": [0, 250, 0, 0, 0],
 					"slot_cooldown_total_ms": [0, 900, 0, 0, 0],
+					"current_cast_slot": 2,
+					"current_cast_remaining_ms": 300,
+					"current_cast_total_ms": 500,
 				},
 			],
 			"projectiles": [
@@ -264,8 +268,8 @@ func _assert_arena_state_updates_local_combat_slots_and_effects() -> bool:
 	})
 	if not state.can_send_combat_input():
 		return _fail("combat input should unlock once the local arena player is alive in combat")
-	if not state.can_use_combat_slot(3):
-		return _fail("unlocked combat slots should be usable")
+	if state.can_use_combat_slot(3):
+		return _fail("combat slots should remain unavailable while the player is mid-cast")
 	if state.can_use_combat_slot(4):
 		return _fail("locked combat slots should stay unavailable")
 	if state.can_use_primary_attack():
@@ -275,6 +279,8 @@ func _assert_arena_state_updates_local_combat_slots_and_effects() -> bool:
 	if state.arena_projectiles_list().size() != 1:
 		return _fail("arena snapshots should retain projectile state")
 	var cooldown_text := state.cooldown_summary_text()
+	if not cooldown_text.contains("Casting"):
+		return _fail("cooldown summary should include an active cast banner")
 	if not cooldown_text.contains("Melee"):
 		return _fail("cooldown summary should include the primary attack label")
 	if cooldown_text.contains("Melee ready"):
@@ -385,6 +391,9 @@ func _assert_local_skill_labels_and_render_smoothing() -> bool:
 					"primary_cooldown_total_ms": 600,
 					"slot_cooldown_remaining_ms": [0, 250, 0, 0, 0],
 					"slot_cooldown_total_ms": [800, 900, 0, 0, 0],
+					"current_cast_slot": 2,
+					"current_cast_remaining_ms": 220,
+					"current_cast_total_ms": 350,
 				},
 			],
 			"projectiles": [],
@@ -418,6 +427,9 @@ func _assert_local_skill_labels_and_render_smoothing() -> bool:
 					"primary_cooldown_total_ms": 600,
 					"slot_cooldown_remaining_ms": [120, 0, 0, 0, 0],
 					"slot_cooldown_total_ms": [800, 900, 0, 0, 0],
+					"current_cast_slot": 2,
+					"current_cast_remaining_ms": 120,
+					"current_cast_total_ms": 350,
 					"active_statuses": [],
 				},
 			],
@@ -464,6 +476,33 @@ func _assert_resource_labels_only_show_for_local_player() -> bool:
 	return true
 
 
+func _assert_remote_cast_labels_use_known_roster_skills() -> bool:
+	var state := ClientStateScript.new()
+	state.local_player_id = 11
+	state.apply_server_event({
+		"type": "JoinedCentralLobby",
+		"player_id": 22,
+		"player_name": "Other",
+	})
+	state.apply_server_event({
+		"type": "SkillChosen",
+		"player_id": 22,
+		"tree": "Mage",
+		"tier": 2,
+	})
+	var arena_view = ArenaViewScript.new()
+	arena_view.set_client_state(state)
+	var expected_label := state.skill_name_for("Mage", 2)
+	var label := arena_view._cast_label_for_player({
+		"player_id": 22,
+		"current_cast_slot": 2,
+	})
+	arena_view.free()
+	if label != expected_label:
+		return _fail("remote cast bars should use known roster skill names when available")
+	return true
+
+
 func _assert_fog_rounds_only_on_visibility_boundary() -> bool:
 	var state := ClientStateScript.new()
 	state.arena_width = 300
@@ -472,12 +511,12 @@ func _assert_fog_rounds_only_on_visibility_boundary() -> bool:
 	state.visible_tiles = _mask_with_visible_tiles(5, 5, [Vector2i(2, 2)])
 	var arena_view = ArenaViewScript.new()
 	arena_view.set_client_state(state)
-	if not arena_view._is_fog_boundary_tile(2, 1):
-		return _fail("fog tiles adjacent to visible tiles should render rounded boundaries")
-	if arena_view._is_fog_boundary_tile(0, 0):
+	if not arena_view._has_fog_edge(2, 1, Vector2i.DOWN):
+		return _fail("fog tiles adjacent to visible tiles should render soft edge transitions")
+	if arena_view._has_fog_edge(0, 0, Vector2i.RIGHT):
 		return _fail("fog tiles away from visibility edges should remain solid")
-	if arena_view._is_fog_boundary_tile(2, 2):
-		return _fail("visible tiles should not be treated as fog boundaries")
+	if arena_view._has_fog_edge(2, 2, Vector2i.DOWN):
+		return _fail("visible tiles should not be treated as fog edges")
 	arena_view.free()
 	return true
 

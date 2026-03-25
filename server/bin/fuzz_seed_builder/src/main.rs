@@ -108,6 +108,9 @@ fn sample_arena_players() -> Result<Vec<ArenaPlayerSnapshot>, Box<dyn Error>> {
             primary_cooldown_total_ms: 650,
             slot_cooldown_remaining_ms: [100, 0, 900, 0, 0],
             slot_cooldown_total_ms: [700, 1700, 2200, 0, 0],
+            current_cast_slot: Some(2),
+            current_cast_remaining_ms: 300,
+            current_cast_total_ms: 500,
             active_statuses: vec![ArenaStatusSnapshot {
                 source: player_id(8)?,
                 slot: 1,
@@ -134,6 +137,9 @@ fn sample_arena_players() -> Result<Vec<ArenaPlayerSnapshot>, Box<dyn Error>> {
             primary_cooldown_total_ms: 450,
             slot_cooldown_remaining_ms: [0, 0, 0, 0, 0],
             slot_cooldown_total_ms: [650, 1500, 1900, 0, 0],
+            current_cast_slot: None,
+            current_cast_remaining_ms: 0,
+            current_cast_total_ms: 0,
             active_statuses: vec![ArenaStatusSnapshot {
                 source: player_id(7)?,
                 slot: 2,
@@ -242,6 +248,9 @@ fn sample_arena_delta_snapshot() -> Result<ArenaDeltaSnapshot, Box<dyn Error>> {
             primary_cooldown_total_ms: 650,
             slot_cooldown_remaining_ms: [0, 0, 700, 0, 0],
             slot_cooldown_total_ms: [700, 1700, 2200, 0, 0],
+            current_cast_slot: None,
+            current_cast_remaining_ms: 0,
+            current_cast_total_ms: 0,
             active_statuses: vec![ArenaStatusSnapshot {
                 source: player_id(8)?,
                 slot: 1,

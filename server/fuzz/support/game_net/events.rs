@@ -146,6 +146,9 @@ struct FuzzArenaPlayerSnapshot {
     primary_cooldown_total_ms: u16,
     slot_cooldown_remaining_ms: [u16; 5],
     slot_cooldown_total_ms: [u16; 5],
+    current_cast_slot: Option<u8>,
+    current_cast_remaining_ms: u16,
+    current_cast_total_ms: u16,
     active_statuses: Vec<FuzzArenaStatusSnapshot>,
 }
 
@@ -174,6 +177,11 @@ impl FuzzArenaPlayerSnapshot {
                 self.slot_cooldown_remaining_ms,
                 self.slot_cooldown_total_ms,
             ),
+            current_cast_slot: self.current_cast_slot.filter(|slot| (1..=5).contains(slot)),
+            current_cast_remaining_ms: self.current_cast_remaining_ms,
+            current_cast_total_ms: self
+                .current_cast_total_ms
+                .max(self.current_cast_remaining_ms),
             active_statuses: take_vec(self.active_statuses, MAX_STATUSES)
                 .into_iter()
                 .map(FuzzArenaStatusSnapshot::into_real)

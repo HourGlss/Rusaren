@@ -23,7 +23,7 @@ pub use input::{SequenceTracker, ValidatedInputFrame};
 pub use packet_types::{ChannelId, PacketKind};
 
 pub const PACKET_MAGIC: u16 = 0x5241;
-pub const PROTOCOL_VERSION: u8 = 2;
+pub const PROTOCOL_VERSION: u8 = 3;
 pub const HEADER_LEN: usize = 16;
 pub const INPUT_PAYLOAD_LEN: usize = 16;
 pub const INPUT_PAYLOAD_LEN_U16: u16 = 16;
