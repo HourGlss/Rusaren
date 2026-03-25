@@ -64,6 +64,7 @@ skills:
       kind: nova
       effect: nova
       cooldown_ms: 2300
+      cast_time_ms: 400
       mana_cost: 34
       radius: 160
       payload:
@@ -83,6 +84,7 @@ skills:
       kind: beam
       effect: beam
       cooldown_ms: 2800
+      cast_time_ms: 550
       mana_cost: 46
       range: 760
       radius: 24
