@@ -2,10 +2,14 @@ use super::{
     point_distance_sq, point_distance_units, round_f32_to_i32, saturating_i16, segment_distance_sq,
     travel_distance_units, truncate_line_to_obstacles, ArenaEffect, ArenaEffectKind,
     CombatValueKind, MovementIntent, PlayerId, ProjectileState, SimulationEvent, SimulationWorld,
-    StatusDefinition, StatusInstance, StatusKind,
+    StatusDefinition, StatusInstance, StatusKind, PLAYER_RADIUS_UNITS,
 };
 
 impl SimulationWorld {
+    fn player_overlap_radius(radius: u16) -> u16 {
+        radius.saturating_add(PLAYER_RADIUS_UNITS)
+    }
+
     pub(super) fn advance_projectiles(&mut self, delta_ms: u16, events: &mut Vec<SimulationEvent>) {
         let mut next_projectiles = Vec::new();
         let projectiles = std::mem::take(&mut self.projectiles);
@@ -264,7 +268,8 @@ impl SimulationWorld {
         point: (i16, i16),
         radius: u16,
     ) -> Option<PlayerId> {
-        let max_distance_sq = i32::from(radius) * i32::from(radius);
+        let effective_radius = i32::from(Self::player_overlap_radius(radius));
+        let max_distance_sq = effective_radius * effective_radius;
         self.players
             .iter()
             .filter(|(player_id, player)| **player_id != attacker && player.alive)
@@ -283,7 +288,8 @@ impl SimulationWorld {
         end: (i16, i16),
         radius: u16,
     ) -> Option<PlayerId> {
-        let threshold_sq = f32::from(radius) * f32::from(radius);
+        let effective_radius = Self::player_overlap_radius(radius);
+        let threshold_sq = f32::from(effective_radius) * f32::from(effective_radius);
         self.players
             .iter()
             .filter(|(player_id, player)| **player_id != attacker && player.alive)
@@ -303,7 +309,8 @@ impl SimulationWorld {
         radius: u16,
         exclude: Option<PlayerId>,
     ) -> Vec<PlayerId> {
-        let max_distance_sq = i32::from(radius) * i32::from(radius);
+        let effective_radius = i32::from(Self::player_overlap_radius(radius));
+        let max_distance_sq = effective_radius * effective_radius;
         self.players
             .iter()
             .filter(|(player_id, player)| Some(**player_id) != exclude && player.alive)

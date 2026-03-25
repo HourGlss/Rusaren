@@ -308,7 +308,25 @@ func _draw_visibility_overlay(arena_rect: Rect2) -> void:
 				if app_state.is_tile_explored(column, row)
 				else Color(0.03, 0.04, 0.05, 0.96)
 			)
-			draw_circle(rect.get_center(), maxf(rect.size.x, rect.size.y) * FOG_CIRCLE_OVERDRAW, fog_color)
+			draw_rect(rect, fog_color)
+			if _is_fog_boundary_tile(column, row):
+				draw_circle(
+					rect.get_center(),
+					maxf(rect.size.x, rect.size.y) * FOG_CIRCLE_OVERDRAW,
+					fog_color
+				)
+
+
+func _is_fog_boundary_tile(column: int, row: int) -> bool:
+	if app_state == null or app_state.is_tile_visible(column, row):
+		return false
+	for row_offset in range(-1, 2):
+		for column_offset in range(-1, 2):
+			if row_offset == 0 and column_offset == 0:
+				continue
+			if app_state.is_tile_visible(column + column_offset, row + row_offset):
+				return true
+	return false
 
 
 func _draw_centered_text(rect: Rect2, text: String) -> void:

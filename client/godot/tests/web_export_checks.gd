@@ -20,6 +20,7 @@ func _init() -> void:
 	success = _assert_arena_state_updates_local_combat_slots_and_effects() and success
 	success = _assert_local_skill_labels_and_render_smoothing() and success
 	success = _assert_resource_labels_only_show_for_local_player() and success
+	success = _assert_fog_rounds_only_on_visibility_boundary() and success
 	quit(0 if success else 1)
 
 
@@ -463,6 +464,24 @@ func _assert_resource_labels_only_show_for_local_player() -> bool:
 	return true
 
 
+func _assert_fog_rounds_only_on_visibility_boundary() -> bool:
+	var state := ClientStateScript.new()
+	state.arena_width = 300
+	state.arena_height = 300
+	state.arena_tile_units = 60
+	state.visible_tiles = _mask_with_visible_tiles(5, 5, [Vector2i(2, 2)])
+	var arena_view = ArenaViewScript.new()
+	arena_view.set_client_state(state)
+	if not arena_view._is_fog_boundary_tile(2, 1):
+		return _fail("fog tiles adjacent to visible tiles should render rounded boundaries")
+	if arena_view._is_fog_boundary_tile(0, 0):
+		return _fail("fog tiles away from visibility edges should remain solid")
+	if arena_view._is_fog_boundary_tile(2, 2):
+		return _fail("visible tiles should not be treated as fog boundaries")
+	arena_view.free()
+	return true
+
+
 func _expect_equal(actual: String, expected: String, context: String) -> bool:
 	if actual != expected:
 		return _fail("%s: expected \"%s\" but received \"%s\"" % [context, expected, actual])
@@ -472,3 +491,15 @@ func _expect_equal(actual: String, expected: String, context: String) -> bool:
 func _fail(message: String) -> bool:
 	printerr(message)
 	return false
+
+
+func _mask_with_visible_tiles(tile_width: int, tile_height: int, visible_tiles: Array[Vector2i]) -> PackedByteArray:
+	var mask := PackedByteArray()
+	var bit_count := tile_width * tile_height
+	mask.resize(int(ceili(float(bit_count) / 8.0)))
+	for tile in visible_tiles:
+		var index := tile.y * tile_width + tile.x
+		var byte_index := int(index / 8)
+		var bit_index := int(index % 8)
+		mask[byte_index] = int(mask[byte_index]) | (1 << bit_index)
+	return mask

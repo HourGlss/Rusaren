@@ -91,6 +91,76 @@ fn projectiles_hit_and_miss_based_on_geometry() {
 }
 
 #[test]
+fn projectile_overlap_with_player_body_counts_as_a_hit() {
+    let content = content();
+    let skill = content
+        .skills()
+        .resolve(&choice(SkillTree::Mage, 1))
+        .expect("mage tier one should exist");
+    let (radius, speed, range) = match skill.behavior {
+        SkillBehavior::Projectile {
+            radius,
+            speed,
+            range,
+            ..
+        } => (radius, speed, range),
+        _ => panic!("mage tier one should remain a projectile"),
+    };
+
+    let mut world = world(
+        &content,
+        vec![
+            seed(
+                &content,
+                1,
+                "Alice",
+                TeamSide::TeamA,
+                SkillTree::Mage,
+                [Some(choice(SkillTree::Mage, 1)), None, None, None, None],
+            ),
+            seed(
+                &content,
+                2,
+                "Bob",
+                TeamSide::TeamB,
+                SkillTree::Warrior,
+                [Some(choice(SkillTree::Warrior, 1)), None, None, None, None],
+            ),
+        ],
+    );
+    let overlap_offset =
+        i16::try_from(u32::from(radius) + u32::from(PLAYER_RADIUS_UNITS) - 2).unwrap_or(i16::MAX);
+    set_player_pose(
+        &mut world,
+        player_id(1),
+        TEST_ATTACKER_X,
+        TEST_OPEN_LANE_Y,
+        TEST_AIM_X,
+        TEST_AIM_Y,
+    );
+    set_player_pose(
+        &mut world,
+        player_id(2),
+        TEST_ATTACKER_X + i16::try_from(range.min(220)).unwrap_or(220),
+        TEST_OPEN_LANE_Y + overlap_offset,
+        -TEST_AIM_X,
+        TEST_AIM_Y,
+    );
+
+    world.queue_cast(player_id(1), 1).expect("cast");
+    let mut events = world.tick(COMBAT_FRAME_MS);
+    events.extend(collect_ticks(
+        &mut world,
+        projectile_frame_budget(speed, range),
+    ));
+
+    assert!(
+        damage_to(&events, player_id(2)).is_some(),
+        "projectiles should hit once their radius overlaps the player's collision body"
+    );
+}
+
+#[test]
 fn healing_can_affect_enemy_players_and_caps_at_max_hp() {
     let content = content();
     let mut world = world(
