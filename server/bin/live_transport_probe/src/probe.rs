@@ -127,6 +127,7 @@ struct ProbeClientState {
     current_skill_exercised: bool,
     observed_effects_this_round: usize,
     transport_broken: Option<String>,
+    signal_detach_allowed: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -144,6 +145,14 @@ enum PhaseState {
 enum CombatDriveOutcome {
     RoundFinished,
     ProbeLimited,
+}
+
+fn notice_breaks_transport(category: &str, signal_detach_allowed: bool) -> bool {
+    match category {
+        "signal_closed" | "signal_read_error" | "signal_apply_error" => !signal_detach_allowed,
+        "peer_state_failed" | "peer_state_disconnected" => true,
+        _ => false,
+    }
 }
 
 impl ProbeClientState {
@@ -166,6 +175,7 @@ impl ProbeClientState {
             current_skill_exercised: false,
             observed_effects_this_round: 0,
             transport_broken: None,
+            signal_detach_allowed: false,
         }
     }
 
@@ -197,12 +207,11 @@ impl ProbeClientState {
         )?;
         if matches!(
             category,
-            "signal_closed"
-                | "signal_read_error"
-                | "signal_apply_error"
-                | "peer_state_failed"
-                | "peer_state_disconnected"
+            "data_channel_open_control" | "peer_state_connected"
         ) {
+            self.signal_detach_allowed = true;
+        }
+        if notice_breaks_transport(category, self.signal_detach_allowed) {
             self.transport_broken = Some(format!("{category}: {detail}"));
         }
         Ok(())
@@ -242,6 +251,7 @@ impl ProbeClientState {
         self.player_id = Some(*player_id);
         self.skill_catalog.clone_from(skill_catalog);
         self.current_phase = PhaseState::Central;
+        self.signal_detach_allowed = true;
         logger.info(
             "client_connected",
             json!({
@@ -888,6 +898,21 @@ impl ProbeClientState {
             )?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::notice_breaks_transport;
+
+    #[test]
+    fn signaling_socket_notices_stop_being_fatal_after_transport_establishes() {
+        assert!(notice_breaks_transport("signal_closed", false));
+        assert!(!notice_breaks_transport("signal_closed", true));
+        assert!(notice_breaks_transport("signal_read_error", false));
+        assert!(!notice_breaks_transport("signal_apply_error", true));
+        assert!(notice_breaks_transport("peer_state_disconnected", true));
+        assert!(notice_breaks_transport("peer_state_failed", false));
     }
 }
 

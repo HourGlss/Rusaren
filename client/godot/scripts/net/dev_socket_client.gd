@@ -138,7 +138,11 @@ func _poll_signal_socket() -> void:
 					failure_reason = close_reason
 				elif _signal_socket.get_close_code() != -1:
 					failure_reason = "signaling websocket closed with code %d" % _signal_socket.get_close_code()
-				_fail_transport(failure_reason)
+				if should_detach_signaling_socket(_control_channel_state(), _opened_emitted):
+					print("signaling websocket closed after WebRTC setup; continuing over data channels: %s" % failure_reason)
+					_signal_socket = null
+				else:
+					_fail_transport(failure_reason)
 			return
 
 	while _signal_socket.get_available_packet_count() > 0:
@@ -359,6 +363,16 @@ func _send_signal_message(message: Dictionary) -> void:
 
 func _channel_is_open(channel: WebRTCDataChannel) -> bool:
 	return channel != null and channel.get_ready_state() == WebRTCDataChannel.STATE_OPEN
+
+
+func _control_channel_state() -> int:
+	if _control_channel == null:
+		return WebRTCDataChannel.STATE_CLOSED
+	return _control_channel.get_ready_state()
+
+
+static func should_detach_signaling_socket(control_channel_state: int, opened_emitted: bool) -> bool:
+	return opened_emitted or control_channel_state == WebRTCDataChannel.STATE_OPEN
 
 
 func _configure_data_channel(channel: WebRTCDataChannel) -> void:

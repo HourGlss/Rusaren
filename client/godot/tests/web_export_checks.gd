@@ -2,6 +2,7 @@ extends SceneTree
 
 const ClientStateScript := preload("res://scripts/state/client_state.gd")
 const ArenaViewScript := preload("res://scripts/arena/arena_view.gd")
+const DevSocketClientScript := preload("res://scripts/net/dev_socket_client.gd")
 const WebSocketConfigScript := preload("res://scripts/net/websocket_config.gd")
 
 
@@ -13,6 +14,7 @@ func _init() -> void:
 	success = _assert_bootstrap_url_derivation() and success
 	success = _assert_session_token_append() and success
 	success = _assert_blank_origin_falls_back_to_local_default() and success
+	success = _assert_signaling_socket_detaches_after_control_channel_open() and success
 	success = _assert_directory_bbcode_exposes_join_links_for_open_lobbies() and success
 	success = _assert_skill_buttons_only_unlock_next_tiers() and success
 	success = _assert_arena_state_updates_local_combat_slots_and_effects() and success
@@ -83,6 +85,16 @@ func _assert_blank_origin_falls_back_to_local_default() -> bool:
 		helper.DEFAULT_LOCAL_URL,
 		"blank origin should fall back to the local default"
 	)
+
+
+func _assert_signaling_socket_detaches_after_control_channel_open() -> bool:
+	if not DevSocketClientScript.should_detach_signaling_socket(WebRTCDataChannel.STATE_OPEN, false):
+		return _fail("signaling websocket closure should be tolerated once the control data channel is open")
+	if not DevSocketClientScript.should_detach_signaling_socket(WebRTCDataChannel.STATE_CLOSED, true):
+		return _fail("signaling websocket closure should be tolerated once the transport has emitted open")
+	if DevSocketClientScript.should_detach_signaling_socket(WebRTCDataChannel.STATE_CLOSED, false):
+		return _fail("signaling websocket closure should remain fatal before WebRTC setup completes")
+	return true
 
 
 func _assert_directory_bbcode_exposes_join_links_for_open_lobbies() -> bool:

@@ -14,6 +14,20 @@ use transport::{
     install_webrtc_callbacks,
 };
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SignalingLoopExit {
+    Fatal(String),
+    SocketClosed(String),
+}
+
+fn should_keep_bound_session_after_signaling_exit(
+    exit: &SignalingLoopExit,
+    bound_player: Option<PlayerId>,
+    disconnected: bool,
+) -> bool {
+    matches!(exit, SignalingLoopExit::SocketClosed(_)) && bound_player.is_some() && !disconnected
+}
+
 fn spawn_signaling_writer(
     mut sender: futures_util::stream::SplitSink<WebSocket, Message>,
     mut signal_rx: mpsc::UnboundedReceiver<ServerSignalMessage>,
@@ -84,7 +98,7 @@ pub(super) async fn handle_signaling_socket(state: DevServerState, socket: WebSo
         );
     }
 
-    let close_reason = run_signaling_socket_loop(
+    let exit = run_signaling_socket_loop(
         &state,
         connection_id,
         &signal_tx,
@@ -94,16 +108,58 @@ pub(super) async fn handle_signaling_socket(state: DevServerState, socket: WebSo
     )
     .await;
 
-    disconnect_bound_session(
-        &state,
-        connection_id,
-        &transport.binding_state,
-        "WebRTC",
-        &close_reason,
-    )
-    .await;
-    let _ = transport.peer.close().await;
+    match &exit {
+        SignalingLoopExit::Fatal(reason) => {
+            disconnect_bound_session(
+                &state,
+                connection_id,
+                &transport.binding_state,
+                "WebRTC",
+                reason,
+            )
+            .await;
+            let _ = transport.peer.close().await;
+        }
+        SignalingLoopExit::SocketClosed(reason) => {
+            let keep_session_alive = {
+                let binding = transport.binding_state.lock().await;
+                should_keep_bound_session_after_signaling_exit(
+                    &exit,
+                    binding.bound_player,
+                    binding.disconnected,
+                )
+            };
+            if keep_session_alive {
+                info!(
+                    connection_id = connection_id.get(),
+                    reason,
+                    "WebRTC signaling websocket closed after session binding; keeping data channels alive"
+                );
+                if let Some(observability) = &state.observability {
+                    observability.record_diagnostic(
+                        "signaling",
+                        Some(connection_id.get()),
+                        None,
+                        format!(
+                            "signaling websocket ended after transport binding; keeping WebRTC session alive: {reason}"
+                        ),
+                    );
+                }
+            } else {
+                disconnect_bound_session(
+                    &state,
+                    connection_id,
+                    &transport.binding_state,
+                    "WebRTC",
+                    reason,
+                )
+                .await;
+                let _ = transport.peer.close().await;
+            }
+        }
+    }
     drop(signal_tx);
+    writer.abort();
     let _ = writer.await;
     info!(
         connection_id = connection_id.get(),
@@ -114,7 +170,11 @@ pub(super) async fn handle_signaling_socket(state: DevServerState, socket: WebSo
             "signaling",
             Some(connection_id.get()),
             None,
-            format!("WebRTC signaling websocket closed: {close_reason}"),
+            match exit {
+                SignalingLoopExit::Fatal(reason) | SignalingLoopExit::SocketClosed(reason) => {
+                    format!("WebRTC signaling websocket closed: {reason}")
+                }
+            },
         );
     }
 }
@@ -198,7 +258,7 @@ async fn run_signaling_socket_loop(
     peer: &Arc<RTCPeerConnection>,
     negotiation_state: &Arc<Mutex<WebRtcNegotiationState>>,
     receiver: &mut futures_util::stream::SplitStream<WebSocket>,
-) -> String {
+) -> SignalingLoopExit {
     let mut close_reason = String::from("signaling websocket loop ended");
     while let Some(message_result) = receiver.next().await {
         let message = match message_result {
@@ -217,11 +277,13 @@ async fn run_signaling_socket_loop(
                         format!("signaling websocket ended with an error: {error}"),
                     );
                 }
-                return format!("signaling websocket read error: {error}");
+                return SignalingLoopExit::SocketClosed(format!(
+                    "signaling websocket read error: {error}"
+                ));
             }
         };
 
-        let keep_open = process_signaling_websocket_message(
+        let Some(exit) = process_signaling_websocket_message(
             state,
             connection_id,
             signal_tx,
@@ -229,14 +291,20 @@ async fn run_signaling_socket_loop(
             negotiation_state,
             message,
         )
-        .await;
+        .await
+        else {
+            continue;
+        };
 
-        if !keep_open {
-            close_reason = String::from("signaling message handler closed the session");
-            break;
+        match exit {
+            SignalingLoopExit::SocketClosed(reason) => {
+                close_reason = reason;
+                break;
+            }
+            SignalingLoopExit::Fatal(reason) => return SignalingLoopExit::Fatal(reason),
         }
     }
-    close_reason
+    SignalingLoopExit::SocketClosed(close_reason)
 }
 
 async fn run_websocket_dev_loop(
@@ -326,7 +394,7 @@ async fn process_signaling_websocket_message(
     peer: &Arc<RTCPeerConnection>,
     negotiation_state: &Arc<Mutex<WebRtcNegotiationState>>,
     message: Message,
-) -> bool {
+) -> Option<SignalingLoopExit> {
     match message {
         Message::Text(text) => {
             handle_signaling_message(
@@ -351,21 +419,23 @@ async fn process_signaling_websocket_message(
             let _ = signal_tx.send(ServerSignalMessage::Error {
                 message: String::from("binary websocket messages are not accepted on /ws"),
             });
-            false
+            Some(SignalingLoopExit::Fatal(String::from(
+                "client sent an unexpected binary websocket frame on /ws",
+            )))
         }
         Message::Close(frame) => {
+            let detail = signaling_close_detail(frame.as_ref());
             if let Some(observability) = &state.observability {
-                let detail = signaling_close_detail(frame.as_ref());
                 observability.record_diagnostic(
                     "signaling",
                     Some(connection_id.get()),
                     None,
-                    detail,
+                    detail.clone(),
                 );
             }
-            false
+            Some(SignalingLoopExit::SocketClosed(detail))
         }
-        Message::Ping(_) | Message::Pong(_) => true,
+        Message::Ping(_) | Message::Pong(_) => None,
     }
 }
 
@@ -387,7 +457,7 @@ async fn handle_signaling_message(
     peer: &Arc<RTCPeerConnection>,
     negotiation_state: &Arc<Mutex<WebRtcNegotiationState>>,
     message_text: &str,
-) -> bool {
+) -> Option<SignalingLoopExit> {
     let message = match decode_client_signal_message(message_text) {
         Ok(message) => message,
         Err(message) => {
@@ -401,13 +471,15 @@ async fn handle_signaling_message(
             }
             let _ = signal_tx.send(ServerSignalMessage::Error { message });
             let _ = peer.close().await;
-            return false;
+            return Some(SignalingLoopExit::Fatal(String::from(
+                "signaling message handler rejected the session",
+            )));
         }
     };
 
     match message {
         ClientSignalMessage::SessionDescription { description } => {
-            accept_webrtc_offer(
+            if accept_webrtc_offer(
                 state,
                 connection_id,
                 signal_tx,
@@ -416,9 +488,16 @@ async fn handle_signaling_message(
                 description,
             )
             .await
+            {
+                None
+            } else {
+                Some(SignalingLoopExit::Fatal(String::from(
+                    "signaling message handler rejected the session",
+                )))
+            }
         }
         ClientSignalMessage::IceCandidate { candidate } => {
-            add_remote_ice_candidate(
+            if add_remote_ice_candidate(
                 state,
                 connection_id,
                 signal_tx,
@@ -427,7 +506,45 @@ async fn handle_signaling_message(
                 candidate,
             )
             .await
+            {
+                None
+            } else {
+                Some(SignalingLoopExit::Fatal(String::from(
+                    "signaling message handler rejected the session",
+                )))
+            }
         }
-        ClientSignalMessage::Bye => false,
+        ClientSignalMessage::Bye => Some(SignalingLoopExit::Fatal(String::from(
+            "client requested signaling shutdown",
+        ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bound_sessions_survive_nonfatal_signaling_socket_closure() {
+        assert!(should_keep_bound_session_after_signaling_exit(
+            &SignalingLoopExit::SocketClosed(String::from("socket reset")),
+            Some(PlayerId::new(7).expect("player id should be valid")),
+            false,
+        ));
+        assert!(!should_keep_bound_session_after_signaling_exit(
+            &SignalingLoopExit::SocketClosed(String::from("socket reset")),
+            None,
+            false,
+        ));
+        assert!(!should_keep_bound_session_after_signaling_exit(
+            &SignalingLoopExit::Fatal(String::from("client requested shutdown")),
+            Some(PlayerId::new(7).expect("player id should be valid")),
+            false,
+        ));
+        assert!(!should_keep_bound_session_after_signaling_exit(
+            &SignalingLoopExit::SocketClosed(String::from("socket reset")),
+            Some(PlayerId::new(7).expect("player id should be valid")),
+            true,
+        ));
     }
 }
