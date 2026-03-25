@@ -3,6 +3,12 @@ class_name ArenaView
 
 const PADDING := 22.0
 const GRID_STEP_UNITS := 60.0
+const PLAYER_RADIUS_UNITS := 28.0
+const FOG_CIRCLE_OVERDRAW := 0.78
+const DEBUG_TEXT_COLOR := Color(0.96, 0.96, 0.98, 0.96)
+const DEBUG_RENDER_COLOR := Color(0.42, 0.98, 0.72, 0.92)
+const DEBUG_AUTH_COLOR := Color(0.98, 0.34, 0.88, 0.92)
+const DEBUG_LINK_COLOR := Color(1.0, 0.95, 0.62, 0.9)
 
 var app_state: ClientState = null
 
@@ -60,6 +66,7 @@ func _draw() -> void:
 	_draw_effects(arena_rect)
 	_draw_projectiles(arena_rect)
 	_draw_players(arena_rect)
+	_draw_debug_overlay(arena_rect)
 	_draw_border(arena_rect)
 
 
@@ -147,20 +154,20 @@ func _draw_effects(arena_rect: Rect2) -> void:
 				var direction := (target - start).normalized()
 				if direction == Vector2.ZERO:
 					direction = Vector2.RIGHT
-				var angle := direction.angle()
 				var tangent := Vector2(-direction.y, direction.x)
-				var tip := start + direction * maxf(radius * 1.5, 18.0)
-				var left := start + direction * maxf(radius * 0.45, 12.0) + tangent * maxf(radius * 0.95, 12.0)
-				var right := start + direction * maxf(radius * 0.45, 12.0) - tangent * maxf(radius * 0.95, 12.0)
+				var impact_radius := maxf(radius, 12.0)
+				var left := target + tangent * maxf(impact_radius * 0.9, 10.0)
+				var right := target - tangent * maxf(impact_radius * 0.9, 10.0)
 				draw_colored_polygon(
-					PackedVector2Array([start, left, tip, right]),
+					PackedVector2Array([start, left, target, right]),
 					Color(color.r, color.g, color.b, alpha * 0.32)
 				)
-				draw_circle(tip, maxf(radius * 0.55, 8.0), Color(color.r, color.g, color.b, alpha * 0.5))
-				draw_arc(start, radius * 1.2, angle - 0.9, angle + 0.9, 20, color, 4.0)
-				draw_line(start, tip, Color(color.r, color.g, color.b, alpha * 0.6), 3.0)
+				draw_line(start, target, Color(color.r, color.g, color.b, alpha * 0.55), 3.0)
+				draw_circle(target, impact_radius, Color(color.r, color.g, color.b, alpha * 0.16))
+				draw_arc(target, impact_radius, 0.0, TAU, 24, color, 2.5)
 			"SkillShot":
 				draw_line(start, target, color, 4.0)
+				draw_circle(target, maxf(radius, 8.0), Color(color.r, color.g, color.b, alpha * 0.18))
 			"Beam":
 				draw_line(start, target, color, 7.0)
 				var progress := 1.0 - clampf(ttl / ttl_max, 0.0, 1.0)
@@ -194,6 +201,7 @@ func _draw_projectiles(arena_rect: Rect2) -> void:
 func _draw_players(arena_rect: Rect2) -> void:
 	var font := ThemeDB.fallback_font
 	for player in app_state.arena_players_list():
+		var is_local_player := int(player.get("player_id", 0)) == app_state.local_player_id
 		var canvas_pos := _world_to_canvas(
 			arena_rect,
 			Vector2(float(player.get("x", 0)), float(player.get("y", 0)))
@@ -207,11 +215,12 @@ func _draw_players(arena_rect: Rect2) -> void:
 		)
 		var alive := bool(player.get("alive", false))
 		var body_color: Color = _team_color(String(player.get("team", "")), alive)
-		var radius: float = _world_radius_to_canvas(arena_rect, 28.0)
-		var outline: Color = Color.WHITE if int(player.get("player_id", 0)) == app_state.local_player_id else Color8(34, 34, 42)
+		var radius: float = _world_radius_to_canvas(arena_rect, PLAYER_RADIUS_UNITS)
+		var outline: Color = Color.WHITE if is_local_player else Color8(34, 34, 42)
 
-		if int(player.get("player_id", 0)) == app_state.local_player_id:
+		if is_local_player:
 			draw_line(canvas_pos, aim_end, Color(body_color, 0.35), 2.0)
+		draw_circle(canvas_pos, radius + 9.0, Color(body_color.r, body_color.g, body_color.b, 0.14))
 		draw_circle(canvas_pos, radius + 4.0, outline)
 		draw_circle(canvas_pos, radius, body_color)
 
@@ -229,12 +238,28 @@ func _draw_players(arena_rect: Rect2) -> void:
 		draw_rect(Rect2(mana_origin, Vector2(hp_width * mana_ratio, 4.0)), Color8(89, 163, 255))
 
 		if font != null:
-			var label: String = "%s  [%d/%d]" % [
-				String(player.get("player_name", "Player")),
-				int(player.get("hit_points", 0)),
-				int(player.get("mana", 0)),
-			]
-			draw_string(font, canvas_pos + Vector2(-radius * 0.7, -radius - 10.0), label, HORIZONTAL_ALIGNMENT_LEFT, -1.0, 14, Color8(26, 28, 34))
+			var name_label := _player_name_label(player)
+			var name_position := canvas_pos + Vector2(-radius * 0.85, -radius - 12.0)
+			draw_string(
+				font,
+				name_position,
+				name_label,
+				HORIZONTAL_ALIGNMENT_LEFT,
+				-1.0,
+				14,
+				Color8(26, 28, 34)
+			)
+			var resource_label := _player_resource_label(player)
+			if resource_label != "":
+				draw_string(
+					font,
+					canvas_pos + Vector2(-radius * 0.85, -radius - 28.0),
+					resource_label,
+					HORIZONTAL_ALIGNMENT_LEFT,
+					-1.0,
+					13,
+					Color8(12, 18, 28)
+				)
 			var status_tokens: Array[String] = []
 			for status in player.get("active_statuses", []):
 				var status_data := status as Dictionary
@@ -243,9 +268,10 @@ func _draw_players(arena_rect: Rect2) -> void:
 					int(status_data.get("stacks", 0)),
 				])
 			if not status_tokens.is_empty():
+				var status_y_offset := -44.0 if resource_label != "" else -28.0
 				draw_string(
 					font,
-					canvas_pos + Vector2(-radius * 0.7, -radius - 26.0),
+					canvas_pos + Vector2(-radius * 0.85, -radius + status_y_offset),
 					" ".join(status_tokens),
 					HORIZONTAL_ALIGNMENT_LEFT,
 					-1.0,
@@ -282,7 +308,7 @@ func _draw_visibility_overlay(arena_rect: Rect2) -> void:
 				if app_state.is_tile_explored(column, row)
 				else Color(0.03, 0.04, 0.05, 0.96)
 			)
-			draw_rect(rect, fog_color)
+			draw_circle(rect.get_center(), maxf(rect.size.x, rect.size.y) * FOG_CIRCLE_OVERDRAW, fog_color)
 
 
 func _draw_centered_text(rect: Rect2, text: String) -> void:
@@ -295,6 +321,163 @@ func _draw_centered_text(rect: Rect2, text: String) -> void:
 	draw_string(font, baseline, text, HORIZONTAL_ALIGNMENT_LEFT, -1.0, size_px, Color8(58, 61, 68))
 
 
+func _draw_debug_overlay(arena_rect: Rect2) -> void:
+	if app_state == null or not app_state.debug_overlay_enabled():
+		return
+	_draw_debug_summary(arena_rect)
+	if app_state.debug_shows_render():
+		_draw_render_debug_overlay(arena_rect)
+	if app_state.debug_shows_auth():
+		_draw_auth_debug_overlay(arena_rect)
+
+
+func _draw_debug_summary(arena_rect: Rect2) -> void:
+	var font := ThemeDB.fallback_font
+	if font == null:
+		return
+	var lines := app_state.debug_summary_lines()
+	var y := arena_rect.position.y + 18.0
+	for line in lines:
+		draw_string(
+			font,
+			Vector2(arena_rect.position.x + 16.0, y),
+			line,
+			HORIZONTAL_ALIGNMENT_LEFT,
+			-1.0,
+			14,
+			DEBUG_TEXT_COLOR
+		)
+		y += 16.0
+
+
+func _draw_render_debug_overlay(arena_rect: Rect2) -> void:
+	var font := ThemeDB.fallback_font
+	for player in app_state.arena_players_list():
+		var player_id := int(player.get("player_id", 0))
+		var position := _world_to_canvas(
+			arena_rect,
+			Vector2(float(player.get("x", 0)), float(player.get("y", 0)))
+		)
+		var radius := _world_radius_to_canvas(arena_rect, PLAYER_RADIUS_UNITS)
+		draw_arc(position, radius + 12.0, 0.0, TAU, 24, DEBUG_RENDER_COLOR, 1.5)
+		if font != null:
+			var label := "R (%d,%d)" % [int(round(float(player.get("x", 0)))), int(round(float(player.get("y", 0))))]
+			var last_spell := app_state.debug_last_spell_for_player(player_id)
+			if last_spell != "":
+				label = "%s %s" % [label, last_spell]
+			draw_string(
+				font,
+				position + Vector2(radius + 8.0, -radius - 4.0),
+				label,
+				HORIZONTAL_ALIGNMENT_LEFT,
+				-1.0,
+				12,
+				DEBUG_RENDER_COLOR
+			)
+
+	for projectile in app_state.arena_projectiles_list():
+		var position := _world_to_canvas(
+			arena_rect,
+			Vector2(float(projectile.get("x", 0)), float(projectile.get("y", 0)))
+		)
+		var radius := _world_radius_to_canvas(arena_rect, float(projectile.get("radius", 0)))
+		draw_arc(position, radius + 5.0, 0.0, TAU, 20, DEBUG_RENDER_COLOR, 1.5)
+		if font != null:
+			draw_string(
+				font,
+				position + Vector2(radius + 6.0, -4.0),
+				app_state.debug_label_for_projectile(projectile),
+				HORIZONTAL_ALIGNMENT_LEFT,
+				-1.0,
+				11,
+				DEBUG_RENDER_COLOR
+			)
+
+
+func _draw_auth_debug_overlay(arena_rect: Rect2) -> void:
+	var font := ThemeDB.fallback_font
+	for player in app_state.authoritative_arena_players_list():
+		var player_id := int(player.get("player_id", 0))
+		var auth_position := _world_to_canvas(
+			arena_rect,
+			Vector2(float(player.get("x", 0)), float(player.get("y", 0)))
+		)
+		var radius := _world_radius_to_canvas(arena_rect, PLAYER_RADIUS_UNITS)
+		draw_arc(auth_position, radius + 18.0, 0.0, TAU, 28, DEBUG_AUTH_COLOR, 2.0)
+
+		var movement_vector := app_state.debug_movement_vector_for(player_id)
+		if movement_vector != Vector2.ZERO:
+			draw_line(
+				auth_position,
+				auth_position + _world_vector_to_canvas(arena_rect, movement_vector),
+				DEBUG_AUTH_COLOR,
+				2.0
+			)
+
+		if app_state.debug_mode == "both":
+			var render_player := app_state.rendered_arena_player(player_id)
+			if not render_player.is_empty():
+				var render_position := _world_to_canvas(
+					arena_rect,
+					Vector2(float(render_player.get("x", 0)), float(render_player.get("y", 0)))
+				)
+				draw_line(render_position, auth_position, DEBUG_LINK_COLOR, 1.5)
+
+		if font != null:
+			var label := "A (%d,%d) hp=%d mana=%d" % [
+				int(player.get("x", 0)),
+				int(player.get("y", 0)),
+				int(player.get("hit_points", 0)),
+				int(player.get("mana", 0)),
+			]
+			draw_string(
+				font,
+				auth_position + Vector2(radius + 8.0, radius + 14.0),
+				label,
+				HORIZONTAL_ALIGNMENT_LEFT,
+				-1.0,
+				12,
+				DEBUG_AUTH_COLOR
+			)
+
+	for projectile in app_state.authoritative_arena_projectiles_list():
+		var position := _world_to_canvas(
+			arena_rect,
+			Vector2(float(projectile.get("x", 0)), float(projectile.get("y", 0)))
+		)
+		var radius := _world_radius_to_canvas(arena_rect, float(projectile.get("radius", 0)))
+		draw_arc(position, radius + 10.0, 0.0, TAU, 20, DEBUG_AUTH_COLOR, 1.6)
+		if font != null:
+			var auth_label := "%s r=%d" % [
+				app_state.debug_label_for_projectile(projectile),
+				int(projectile.get("radius", 0)),
+			]
+			draw_string(
+				font,
+				position + Vector2(radius + 6.0, 14.0),
+				auth_label,
+				HORIZONTAL_ALIGNMENT_LEFT,
+				-1.0,
+				11,
+				DEBUG_AUTH_COLOR
+			)
+
+
+func _player_name_label(player: Dictionary) -> String:
+	return String(player.get("player_name", "Player"))
+
+
+func _player_resource_label(player: Dictionary) -> String:
+	if app_state == null:
+		return ""
+	if int(player.get("player_id", 0)) != app_state.local_player_id:
+		return ""
+	return "HP %d  Mana %d" % [
+		int(player.get("hit_points", 0)),
+		int(player.get("mana", 0)),
+	]
+
+
 func _world_to_canvas(arena_rect: Rect2, world_point: Vector2) -> Vector2:
 	var normalized := Vector2(
 		(world_point.x / float(app_state.arena_width)) + 0.5,
@@ -303,6 +486,13 @@ func _world_to_canvas(arena_rect: Rect2, world_point: Vector2) -> Vector2:
 	return arena_rect.position + Vector2(
 		normalized.x * arena_rect.size.x,
 		normalized.y * arena_rect.size.y
+	)
+
+
+func _world_vector_to_canvas(arena_rect: Rect2, world_vector: Vector2) -> Vector2:
+	return Vector2(
+		world_vector.x * (arena_rect.size.x / float(app_state.arena_width)),
+		world_vector.y * (arena_rect.size.y / float(app_state.arena_height))
 	)
 
 

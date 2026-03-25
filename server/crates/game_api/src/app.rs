@@ -58,6 +58,36 @@ enum PlayerLocation {
     Results(MatchId),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub(super) enum DebugOverlayMode {
+    #[default]
+    Off,
+    Render,
+    Auth,
+    Both,
+}
+
+impl DebugOverlayMode {
+    fn from_raw(raw: u8) -> Result<Self, &'static str> {
+        match raw {
+            0 => Ok(Self::Off),
+            1 => Ok(Self::Render),
+            2 => Ok(Self::Auth),
+            3 => Ok(Self::Both),
+            _ => Err("debug mode must be 0 (off), 1 (render), 2 (auth), or 3 (both)"),
+        }
+    }
+
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Render => "render",
+            Self::Auth => "auth",
+            Self::Both => "both",
+        }
+    }
+}
+
 #[derive(Debug)]
 struct ConnectedPlayer {
     player_name: PlayerName,
@@ -67,6 +97,7 @@ struct ConnectedPlayer {
     inbound_input: SequenceTracker,
     newest_client_input_tick: Option<u32>,
     next_outbound_seq: u32,
+    debug_overlay_mode: DebugOverlayMode,
 }
 
 impl ConnectedPlayer {

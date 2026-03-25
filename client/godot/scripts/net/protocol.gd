@@ -445,6 +445,22 @@ static func encode_client_command(
 			body.append(tier)
 		"QuitToCentralLobby":
 			body.append(8)
+		"SetDebugMode":
+			var mode_name := String(payload.get("mode", "off")).to_lower()
+			var mode_code := -1
+			match mode_name:
+				"off":
+					mode_code = 0
+				"render":
+					mode_code = 1
+				"auth":
+					mode_code = 2
+				"both":
+					mode_code = 3
+			if mode_code == -1:
+				return _error("debug mode must be off, render, auth, or both")
+			body.append(9)
+			body.append(mode_code)
 		_:
 			return _error("unsupported client control command %s" % command_type)
 

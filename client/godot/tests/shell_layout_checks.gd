@@ -14,6 +14,8 @@ func _run() -> void:
 	success = await _assert_joined_shell_hides_setup_chrome() and success
 	success = await _assert_lobby_panel_shows_roster_team_and_ready_state() and success
 	success = await _assert_skill_pick_layout_prioritizes_skill_buttons() and success
+	success = await _assert_combat_hud_surfaces_local_skill_names() and success
+	success = await _assert_hidden_backtick_cycles_debug_modes() and success
 	success = await _assert_disconnect_resets_back_to_central_shell() and success
 	quit(0 if success else 1)
 
@@ -200,6 +202,133 @@ func _assert_skill_pick_layout_prioritizes_skill_buttons() -> bool:
 		success = _fail("skill pick phase should expose at least one enabled skill choice") and success
 	if shell.skill_buttons.is_empty() or not shell.skill_buttons[0].text.contains("Magic Missile"):
 		success = _fail("skill buttons should render backend-authored skill names") and success
+
+	await _despawn_shell(shell)
+	return success
+
+
+func _assert_combat_hud_surfaces_local_skill_names() -> bool:
+	var shell = await _spawn_shell()
+	shell.app_state.mark_transport_state("open")
+	shell.app_state.local_player_id = 11
+	shell.app_state.local_player_name = "Alice"
+	shell.app_state.apply_server_event({
+		"type": "Connected",
+		"player_id": 11,
+		"player_name": "Alice",
+		"record": {
+			"wins": 0,
+			"losses": 0,
+			"no_contests": 0,
+		},
+		"skill_catalog": [
+			{
+				"tree": "Mage",
+				"tier": 1,
+				"skill_id": "mage_t1_missile",
+				"skill_name": "Magic Missile",
+			},
+			{
+				"tree": "Mage",
+				"tier": 2,
+				"skill_id": "mage_t2_ice_lance",
+				"skill_name": "Ice Lance",
+			},
+		],
+	})
+	shell.app_state.apply_server_event({
+		"type": "MatchStarted",
+		"match_id": 3,
+		"round": 1,
+		"skill_pick_seconds": 25,
+	})
+	shell.app_state.apply_server_event({
+		"type": "SkillChosen",
+		"player_id": 11,
+		"tree": "Mage",
+		"tier": 1,
+	})
+	shell.app_state.local_round_skill_locked = false
+	shell.app_state.apply_server_event({
+		"type": "RoundWon",
+		"round": 1,
+		"winning_team": "Team A",
+		"score_a": 1,
+		"score_b": 0,
+	})
+	shell.app_state.apply_server_event({
+		"type": "SkillChosen",
+		"player_id": 11,
+		"tree": "Mage",
+		"tier": 2,
+	})
+	shell.app_state.apply_server_event({
+		"type": "CombatStarted",
+	})
+	shell.app_state.apply_server_event({
+		"type": "ArenaStateSnapshot",
+		"snapshot": {
+			"width": 1800,
+			"height": 1200,
+			"players": [
+				{
+					"player_id": 11,
+					"player_name": "Alice",
+					"team": "Team A",
+					"x": -640,
+					"y": 220,
+					"aim_x": 120,
+					"aim_y": 0,
+					"hit_points": 100,
+					"max_hit_points": 100,
+					"mana": 80,
+					"max_mana": 100,
+					"alive": true,
+					"unlocked_skill_slots": 2,
+					"primary_cooldown_remaining_ms": 0,
+					"primary_cooldown_total_ms": 600,
+					"slot_cooldown_remaining_ms": [0, 250, 0, 0, 0],
+					"slot_cooldown_total_ms": [800, 900, 0, 0, 0],
+					"active_statuses": [],
+				},
+			],
+			"projectiles": [],
+		},
+	})
+	shell._refresh_ui()
+
+	var success := true
+	if shell.cooldown_summary_label == null:
+		success = _fail("combat panel should expose a cooldown summary label") and success
+	elif not shell.cooldown_summary_label.text.contains("Magic Missile") or not shell.cooldown_summary_label.text.contains("Ice Lance"):
+		success = _fail("combat panel should show local skill names alongside slot cooldowns") and success
+
+	await _despawn_shell(shell)
+	return success
+
+
+func _assert_hidden_backtick_cycles_debug_modes() -> bool:
+	var shell = await _spawn_shell()
+	var success := true
+	var key_event := InputEventKey.new()
+	key_event.pressed = true
+	key_event.keycode = KEY_QUOTELEFT
+
+	shell._input(key_event)
+	if shell.app_state.debug_mode != "render":
+		success = _fail("first hidden backtick toggle should enable render debug mode") and success
+
+	shell._input(key_event)
+	if shell.app_state.debug_mode != "auth":
+		success = _fail("second hidden backtick toggle should enable auth debug mode") and success
+
+	shell._input(key_event)
+	if shell.app_state.debug_mode != "both":
+		success = _fail("third hidden backtick toggle should enable combined debug mode") and success
+
+	shell._input(key_event)
+	if shell.app_state.debug_mode != "off":
+		success = _fail("fourth hidden backtick toggle should return debug mode to off") and success
 
 	await _despawn_shell(shell)
 	return success

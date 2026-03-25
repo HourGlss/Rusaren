@@ -77,6 +77,7 @@ fn client_control_command_round_trips_all_variants() {
             tier: 1,
         },
         ClientControlCommand::QuitToCentralLobby,
+        ClientControlCommand::SetDebugMode { mode: 3 },
     ];
 
     for (offset, command) in commands.into_iter().enumerate() {

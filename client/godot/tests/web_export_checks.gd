@@ -1,6 +1,7 @@
 extends SceneTree
 
 const ClientStateScript := preload("res://scripts/state/client_state.gd")
+const ArenaViewScript := preload("res://scripts/arena/arena_view.gd")
 const WebSocketConfigScript := preload("res://scripts/net/websocket_config.gd")
 
 
@@ -15,6 +16,8 @@ func _init() -> void:
 	success = _assert_directory_bbcode_exposes_join_links_for_open_lobbies() and success
 	success = _assert_skill_buttons_only_unlock_next_tiers() and success
 	success = _assert_arena_state_updates_local_combat_slots_and_effects() and success
+	success = _assert_local_skill_labels_and_render_smoothing() and success
+	success = _assert_resource_labels_only_show_for_local_player() and success
 	quit(0 if success else 1)
 
 
@@ -284,6 +287,167 @@ func _assert_arena_state_updates_local_combat_slots_and_effects() -> bool:
 	state.advance_visuals(1.0)
 	if not state.arena_effects.is_empty():
 		return _fail("expired arena effects should be trimmed during visual advancement")
+	return true
+
+
+func _assert_local_skill_labels_and_render_smoothing() -> bool:
+	var state := ClientStateScript.new()
+	state.mark_transport_state("open")
+	state.local_player_id = 11
+	state.local_player_name = "Alice"
+	state.apply_server_event({
+		"type": "Connected",
+		"player_id": 11,
+		"player_name": "Alice",
+		"record": {
+			"wins": 0,
+			"losses": 0,
+			"no_contests": 0,
+		},
+		"skill_catalog": [
+			{
+				"tree": "Mage",
+				"tier": 1,
+				"skill_id": "mage_t1_missile",
+				"skill_name": "Magic Missile",
+			},
+			{
+				"tree": "Mage",
+				"tier": 2,
+				"skill_id": "mage_t2_ice_lance",
+				"skill_name": "Ice Lance",
+			},
+		],
+	})
+	state.apply_server_event({
+		"type": "MatchStarted",
+		"match_id": 8,
+		"round": 3,
+		"skill_pick_seconds": 25,
+	})
+	state.apply_server_event({
+		"type": "SkillChosen",
+		"player_id": 11,
+		"tree": "Mage",
+		"tier": 1,
+	})
+	state.local_round_skill_locked = false
+	state.apply_server_event({
+		"type": "RoundWon",
+		"round": 3,
+		"winning_team": "Team A",
+		"score_a": 1,
+		"score_b": 0,
+	})
+	state.apply_server_event({
+		"type": "SkillChosen",
+		"player_id": 11,
+		"tree": "Mage",
+		"tier": 2,
+	})
+	state.apply_server_event({
+		"type": "CombatStarted",
+	})
+	state.apply_server_event({
+		"type": "ArenaStateSnapshot",
+		"snapshot": {
+			"width": 1800,
+			"height": 1200,
+			"players": [
+				{
+					"player_id": 11,
+					"player_name": "Alice",
+					"team": "Team A",
+					"x": -640,
+					"y": 220,
+					"aim_x": 120,
+					"aim_y": 0,
+					"hit_points": 100,
+					"max_hit_points": 100,
+					"mana": 80,
+					"max_mana": 100,
+					"alive": true,
+					"unlocked_skill_slots": 2,
+					"primary_cooldown_remaining_ms": 0,
+					"primary_cooldown_total_ms": 600,
+					"slot_cooldown_remaining_ms": [0, 250, 0, 0, 0],
+					"slot_cooldown_total_ms": [800, 900, 0, 0, 0],
+				},
+			],
+			"projectiles": [],
+		},
+	})
+	var cooldown_text := state.cooldown_summary_text()
+	if not cooldown_text.contains("Magic Missile"):
+		return _fail("cooldown summary should include the local player's first chosen skill name")
+	if not cooldown_text.contains("Ice Lance"):
+		return _fail("cooldown summary should include the local player's second chosen skill name")
+
+	state.apply_server_event({
+		"type": "ArenaDeltaSnapshot",
+		"snapshot": {
+			"players": [
+				{
+					"player_id": 11,
+					"player_name": "Alice",
+					"team": "Team A",
+					"x": -420,
+					"y": 220,
+					"aim_x": 180,
+					"aim_y": 30,
+					"hit_points": 94,
+					"max_hit_points": 100,
+					"mana": 72,
+					"max_mana": 100,
+					"alive": true,
+					"unlocked_skill_slots": 2,
+					"primary_cooldown_remaining_ms": 0,
+					"primary_cooldown_total_ms": 600,
+					"slot_cooldown_remaining_ms": [120, 0, 0, 0, 0],
+					"slot_cooldown_total_ms": [800, 900, 0, 0, 0],
+					"active_statuses": [],
+				},
+			],
+			"projectiles": [],
+		},
+	})
+	if int(state.local_arena_player().get("x", 0)) != -420:
+		return _fail("authoritative local arena state should snap to the latest x position")
+	var render_players := state.arena_players_list()
+	if render_players.is_empty():
+		return _fail("arena render list should retain players for drawing")
+	if int(render_players[0].get("x", 0)) != -640:
+		return _fail("rendered arena players should preserve the previous position until smoothing runs")
+
+	state.advance_visuals(0.03)
+	var smoothed_x := float(state.arena_players_list()[0].get("x", -640))
+	if smoothed_x <= -640.0 or smoothed_x >= -420.0:
+		return _fail("render smoothing should move player positions toward the new authoritative location")
+	return true
+
+
+func _assert_resource_labels_only_show_for_local_player() -> bool:
+	var state := ClientStateScript.new()
+	state.local_player_id = 11
+	var arena_view = ArenaViewScript.new()
+	arena_view.set_client_state(state)
+
+	var local_label := arena_view._player_resource_label({
+		"player_id": 11,
+		"hit_points": 93,
+		"mana": 41,
+	})
+	if local_label != "HP 93  Mana 41":
+		return _fail("arena view should expose numeric health and mana for the local player only")
+
+	var remote_label := arena_view._player_resource_label({
+		"player_id": 22,
+		"hit_points": 88,
+		"mana": 77,
+	})
+	arena_view.free()
+	if remote_label != "":
+		return _fail("arena view should not expose numeric health and mana labels for remote players")
 	return true
 
 

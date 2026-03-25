@@ -109,6 +109,10 @@ func _process(delta: float) -> void:
 
 
 func _input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_QUOTELEFT:
+		_toggle_debug_mode()
+		return
+
 	if not app_state.can_send_combat_input():
 		return
 
@@ -1055,7 +1059,10 @@ func _on_bootstrap_request_completed(
 
 
 func _on_packet_received(decoded_event: Dictionary) -> void:
-	app_state.apply_server_event(decoded_event.get("event", {}))
+	var event_data: Dictionary = decoded_event.get("event", {})
+	app_state.apply_server_event(event_data)
+	if String(event_data.get("type", "")) == "Connected" and app_state.debug_overlay_enabled():
+		_sync_debug_mode_with_backend()
 	_refresh_ui()
 
 
@@ -1246,10 +1253,24 @@ func _drive_combat_input() -> void:
 		payload["ability_or_context"] = _pending_cast_slot
 
 	if transport.send_input_frame(payload):
+		app_state.mark_debug_input(move_x, move_y, aim, _pending_primary_attack, _pending_cast_slot)
 		_next_client_input_tick += 1
 		_last_sent_aim = aim
 		_pending_primary_attack = false
 		_pending_cast_slot = 0
+
+
+func _toggle_debug_mode() -> void:
+	app_state.cycle_debug_mode()
+	_sync_debug_mode_with_backend()
+	_refresh_ui()
+
+
+func _sync_debug_mode_with_backend() -> void:
+	if not transport.is_open() or app_state.local_player_id <= 0:
+		return
+	if not transport.send_control_command("SetDebugMode", {"mode": app_state.debug_mode}):
+		app_state.mark_transport_error("Failed to update backend debug mode.")
 
 
 func _current_aim_vector() -> Vector2i:

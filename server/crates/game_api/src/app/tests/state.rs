@@ -74,9 +74,15 @@ fn app_error_display_and_connected_player_sequences_are_precise() {
         inbound_input: SequenceTracker::new(),
         newest_client_input_tick: None,
         next_outbound_seq: 0,
+        debug_overlay_mode: DebugOverlayMode::Off,
     };
     assert_eq!(connected.next_outbound_seq(), 1);
     assert_eq!(connected.next_outbound_seq(), 2);
+    assert_eq!(DebugOverlayMode::from_raw(0), Ok(DebugOverlayMode::Off));
+    assert_eq!(DebugOverlayMode::from_raw(1), Ok(DebugOverlayMode::Render));
+    assert_eq!(DebugOverlayMode::from_raw(2), Ok(DebugOverlayMode::Auth));
+    assert_eq!(DebugOverlayMode::from_raw(3), Ok(DebugOverlayMode::Both));
+    assert!(DebugOverlayMode::from_raw(9).is_err());
 }
 
 #[test]
