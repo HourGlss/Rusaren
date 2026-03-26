@@ -365,10 +365,24 @@ function Get-PreferredMutationScratchRoot {
     return $null
 }
 
+function Resolve-MutationOutputRoot {
+    $defaultOutputRoot = Join-Path $serverRoot "target\reports\mutants"
+    if ([string]::IsNullOrWhiteSpace($env:RARENA_MUTANTS_OUTPUT_DIR)) {
+        return $defaultOutputRoot
+    }
+
+    $candidate = $env:RARENA_MUTANTS_OUTPUT_DIR
+    if (-not [System.IO.Path]::IsPathRooted($candidate)) {
+        $candidate = Join-Path $repoRoot $candidate
+    }
+
+    return [System.IO.Path]::GetFullPath($candidate)
+}
+
 function Invoke-MutationTesting {
     param([bool]$HasNextest)
 
-    $outputRoot = Join-Path $serverRoot "target\reports\mutants"
+    $outputRoot = Resolve-MutationOutputRoot
     $logPath = Join-Path $outputRoot "mutants.log"
     $status = "passed"
     $errorMessage = $null

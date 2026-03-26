@@ -44,52 +44,54 @@ skills:
           duration_ms: 600
           magnitude: 0
   - tier: 3
-    id: paladin_sanctified_ring
-    name: Sanctified Ring
-    description: A nearby pulse that steadies allies or accidentally blesses enemies caught inside.
+    id: paladin_bulwark_prayer
+    name: Bulwark Prayer
+    description: A close aura that repeatedly layers holy shielding while the paladin holds ground.
     behavior:
-      kind: nova
+      kind: aura
       effect: nova
-      cooldown_ms: 2100
+      cooldown_ms: 2200
       mana_cost: 28
-      radius: 145
+      radius: 18
+      duration_ms: 3500
+      tick_interval_ms: 1000
       payload:
         kind: heal
-        amount: 10
+        amount: 0
         status:
-          kind: haste
-          duration_ms: 1800
-          magnitude: 1200
-          max_stacks: 1
+          kind: shield
+          duration_ms: 1200
+          magnitude: 8
+          max_stacks: 5
   - tier: 4
-    id: paladin_rebuke_burst
-    name: Rebuke Burst
-    description: A targeted holy burst that silences clustered casters.
+    id: paladin_oathwall
+    name: Oathwall
+    description: Calls down a stout line-breaker that turns a lane into a brawl on the paladin's terms.
     behavior:
-      kind: burst
+      kind: barrier
       effect: burst
-      cooldown_ms: 2300
+      cooldown_ms: 2400
       mana_cost: 32
-      range: 240
-      radius: 92
-      payload:
-        kind: damage
-        amount: 12
-        status:
-          kind: silence
-          duration_ms: 1000
-          magnitude: 0
+      distance: 180
+      radius: 56
+      duration_ms: 2600
+      hit_points: 90
   - tier: 5
-    id: paladin_final_verdict
-    name: Final Verdict
-    description: A crushing execution beam for decisive frontline trades.
+    id: paladin_sentinel_standard
+    name: Sentinel Standard
+    description: Plants a radiant standard that fights for nearby ground with repeated holy bolts.
     behavior:
-      kind: beam
-      effect: beam
-      cooldown_ms: 3100
-      mana_cost: 44
-      range: 240
-      radius: 48
+      kind: summon
+      effect: skill_shot
+      cooldown_ms: 3200
+      cast_time_ms: 500
+      mana_cost: 46
+      distance: 240
+      radius: 34
+      duration_ms: 7000
+      hit_points: 85
+      range: 420
+      tick_interval_ms: 1000
       payload:
         kind: damage
-        amount: 32
+        amount: 14

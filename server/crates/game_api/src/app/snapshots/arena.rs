@@ -1,12 +1,12 @@
 use game_content::{ArenaMapDefinition, GameContent};
-use game_domain::{MatchId, PlayerId, TeamAssignment};
+use game_domain::{MatchId, PlayerId, TeamAssignment, TeamSide};
 use game_match::{MatchPhase, MatchSession};
 use game_net::{
-    ArenaEffectKind, ArenaEffectSnapshot, ArenaMatchPhase, ArenaObstacleKind,
-    ArenaObstacleSnapshot, ArenaPlayerSnapshot, ArenaProjectileSnapshot, ArenaStatusKind,
-    ArenaStatusSnapshot, SkillCatalogEntry,
+    ArenaDeployableKind, ArenaDeployableSnapshot, ArenaEffectKind, ArenaEffectSnapshot,
+    ArenaMatchPhase, ArenaObstacleKind, ArenaObstacleSnapshot, ArenaPlayerSnapshot,
+    ArenaProjectileSnapshot, ArenaStatusKind, ArenaStatusSnapshot, SkillCatalogEntry,
 };
-use game_sim::{ArenaEffect, ArenaObstacle, SimulationEvent, SimulationWorld};
+use game_sim::{ArenaDeployable, ArenaEffect, ArenaObstacle, SimulationEvent, SimulationWorld};
 
 use super::super::{MatchRuntime, ServerApp};
 
@@ -18,6 +18,7 @@ impl ServerApp {
             kind: match obstacle.kind {
                 game_sim::ArenaObstacleKind::Pillar => ArenaObstacleKind::Pillar,
                 game_sim::ArenaObstacleKind::Shrub => ArenaObstacleKind::Shrub,
+                game_sim::ArenaObstacleKind::Barrier => ArenaObstacleKind::Barrier,
             },
             center_x: obstacle.center_x,
             center_y: obstacle.center_y,
@@ -81,6 +82,7 @@ impl ServerApp {
         visible_tiles: &[u8],
     ) -> Vec<ArenaPlayerSnapshot> {
         let unlocked_skill_slots = runtime.session.current_round().get();
+        let viewer_team = runtime.world.player_state(viewer_id).map(|state| state.team);
         runtime
             .roster
             .iter()
@@ -89,8 +91,15 @@ impl ServerApp {
                     .world
                     .player_state(assignment.player_id)
                     .filter(|state| {
-                        assignment.player_id == viewer_id
-                            || Self::mask_contains_point(map, visible_tiles, state.x, state.y)
+                        let visible = assignment.player_id == viewer_id
+                            || Self::mask_contains_point(map, visible_tiles, state.x, state.y);
+                        visible
+                            && !Self::player_hidden_from_viewer(
+                                &runtime.world,
+                                viewer_id,
+                                viewer_team,
+                                assignment.player_id,
+                            )
                     })
                     .map(|state| {
                         Self::arena_player_snapshot(
@@ -101,6 +110,72 @@ impl ServerApp {
                         )
                     })
             })
+            .collect()
+    }
+
+    fn player_hidden_from_viewer(
+        world: &SimulationWorld,
+        viewer_id: PlayerId,
+        viewer_team: Option<TeamSide>,
+        target_id: PlayerId,
+    ) -> bool {
+        if viewer_id == target_id {
+            return false;
+        }
+        let Some(target_state) = world.player_state(target_id) else {
+            return true;
+        };
+        if viewer_team.is_some_and(|team| team == target_state.team) {
+            return false;
+        }
+        let statuses = world.statuses_for(target_id).unwrap_or_default();
+        let stealthed = statuses
+            .iter()
+            .any(|status| status.kind == game_content::StatusKind::Stealth);
+        let revealed = statuses
+            .iter()
+            .any(|status| status.kind == game_content::StatusKind::Reveal);
+        stealthed && !revealed
+    }
+
+    pub(in super::super) fn arena_deployable_snapshot(
+        deployable: ArenaDeployable,
+    ) -> ArenaDeployableSnapshot {
+        ArenaDeployableSnapshot {
+            id: deployable.id,
+            owner: deployable.owner,
+            team: deployable.team,
+            kind: match deployable.kind {
+                game_sim::ArenaDeployableKind::Summon => ArenaDeployableKind::Summon,
+                game_sim::ArenaDeployableKind::Ward => ArenaDeployableKind::Ward,
+                game_sim::ArenaDeployableKind::Trap => ArenaDeployableKind::Trap,
+                game_sim::ArenaDeployableKind::Barrier => ArenaDeployableKind::Barrier,
+                game_sim::ArenaDeployableKind::Aura => ArenaDeployableKind::Aura,
+            },
+            x: deployable.x,
+            y: deployable.y,
+            radius: deployable.radius,
+            hit_points: deployable.hit_points,
+            max_hit_points: deployable.max_hit_points,
+            remaining_ms: deployable.remaining_ms,
+        }
+    }
+
+    pub(in super::super) fn arena_deployables_snapshot(
+        runtime: &MatchRuntime,
+        viewer_id: PlayerId,
+        map: &ArenaMapDefinition,
+        visible_tiles: &[u8],
+    ) -> Vec<ArenaDeployableSnapshot> {
+        runtime
+            .world
+            .deployables()
+            .into_iter()
+            .filter(|deployable| {
+                deployable.owner == viewer_id
+                    || Self::mask_contains_point(map, visible_tiles, deployable.x, deployable.y)
+            })
+            .map(Self::arena_deployable_snapshot)
             .collect()
     }
 
@@ -193,6 +268,11 @@ impl ServerApp {
                 game_content::StatusKind::Haste => ArenaStatusKind::Haste,
                 game_content::StatusKind::Silence => ArenaStatusKind::Silence,
                 game_content::StatusKind::Stun => ArenaStatusKind::Stun,
+                game_content::StatusKind::Sleep => ArenaStatusKind::Sleep,
+                game_content::StatusKind::Shield => ArenaStatusKind::Shield,
+                game_content::StatusKind::Stealth => ArenaStatusKind::Stealth,
+                game_content::StatusKind::Reveal => ArenaStatusKind::Reveal,
+                game_content::StatusKind::Fear => ArenaStatusKind::Fear,
             },
             stacks: status.stacks,
             remaining_ms: status.remaining_ms,

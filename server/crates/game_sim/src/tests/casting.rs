@@ -8,7 +8,8 @@ fn cast_time_delays_skill_resolution_until_the_windup_finishes() {
         .resolve(&choice(SkillTree::Warrior, 3))
         .expect("warrior tier three should exist")
         .clone();
-    assert_eq!(skill.behavior.cast_time_ms(), 250);
+    let cast_time_ms = skill.behavior.cast_time_ms();
+    assert!(cast_time_ms > 0);
 
     let mut world = world(
         &content,
@@ -42,7 +43,7 @@ fn cast_time_delays_skill_resolution_until_the_windup_finishes() {
     set_player_pose(
         &mut world,
         player_id(2),
-        TEST_ATTACKER_X + 220,
+        TEST_ATTACKER_X + 100,
         TEST_OPEN_LANE_Y,
         -TEST_AIM_X,
         TEST_AIM_Y,
@@ -57,20 +58,26 @@ fn cast_time_delays_skill_resolution_until_the_windup_finishes() {
     );
     let start_state = world.player_state(player_id(1)).expect("attacker state");
     assert_eq!(start_state.current_cast_slot, Some(1));
-    assert_eq!(start_state.current_cast_remaining_ms, 250);
+    assert_eq!(start_state.current_cast_remaining_ms, cast_time_ms);
 
-    let second_tick = world.tick(COMBAT_FRAME_MS);
-    assert!(damage_to(&second_tick, player_id(2)).is_none());
-    assert_eq!(
-        world
-            .player_state(player_id(1))
-            .expect("attacker state")
-            .current_cast_remaining_ms,
-        150
-    );
-
-    let third_tick = world.tick(COMBAT_FRAME_MS);
-    assert!(damage_to(&third_tick, player_id(2)).is_none());
+    let ticks_until_resolution = usize::from(cast_time_ms.div_ceil(COMBAT_FRAME_MS));
+    for elapsed_ticks in 1..ticks_until_resolution {
+        let tick_events = world.tick(COMBAT_FRAME_MS);
+        assert!(
+            damage_to(&tick_events, player_id(2)).is_none(),
+            "casts should not resolve before the final windup tick"
+        );
+        let expected_remaining = cast_time_ms.saturating_sub(
+            u16::try_from(elapsed_ticks).unwrap_or(u16::MAX) * COMBAT_FRAME_MS,
+        );
+        assert_eq!(
+            world
+                .player_state(player_id(1))
+                .expect("attacker state")
+                .current_cast_remaining_ms,
+            expected_remaining
+        );
+    }
 
     let fourth_tick = world.tick(COMBAT_FRAME_MS);
     assert!(
@@ -127,7 +134,7 @@ fn movement_input_cancels_active_casts_before_the_skill_fires() {
     set_player_pose(
         &mut world,
         player_id(2),
-        TEST_ATTACKER_X + 220,
+        TEST_ATTACKER_X + 100,
         TEST_OPEN_LANE_Y,
         -TEST_AIM_X,
         TEST_AIM_Y,

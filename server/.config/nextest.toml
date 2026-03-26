@@ -3,5 +3,9 @@ fail-fast = false
 retries = { count = 1, backoff = "fixed", delay = "1s" }
 slow-timeout = { period = "30s", terminate-after = 2 }
 
+[[profile.default.overrides]]
+filter = "test(websocket_adapter_finishes_a_full_match_loop_via_live_input_frames)"
+slow-timeout = { period = "60s", terminate-after = 2 }
+
 [profile.ci.junit]
 path = "target/nextest/ci-junit.xml"

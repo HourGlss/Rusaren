@@ -29,17 +29,17 @@ skills:
   - tier: 2
     id: mage_blink_step
     name: Blink Step
-    description: A short repositioning dash.
+    description: A short teleport that skips through pillars and clamps to safe ground.
     behavior:
-      kind: dash
+      kind: teleport
       effect: dash_trail
       cooldown_ms: 1700
       mana_cost: 24
-      distance: 190
+      distance: 210
   - tier: 3
     id: mage_frost_burst
     name: Frost Burst
-    description: A chilling explosion at medium range.
+    description: A chilling explosion at medium range that can root overextended targets after repeated hits.
     behavior:
       kind: burst
       effect: burst
@@ -57,37 +57,32 @@ skills:
           max_stacks: 3
           trigger_duration_ms: 700
   - tier: 4
-    id: mage_crystal_nova
-    name: Crystal Nova
-    description: An expanding ring of ice around the caster.
+    id: mage_scrying_field
+    name: Scrying Field
+    description: A placed arcane field that repeatedly reveals anything trying to hide inside it.
     behavior:
-      kind: nova
+      kind: aura
       effect: nova
-      cooldown_ms: 2300
-      cast_time_ms: 400
-      mana_cost: 34
-      radius: 160
+      cooldown_ms: 2600
+      mana_cost: 36
+      distance: 280
+      radius: 120
+      duration_ms: 5000
+      hit_points: 40
+      tick_interval_ms: 1000
       payload:
         kind: damage
-        amount: 10
+        amount: 4
         status:
-          kind: chill
-          duration_ms: 1800
-          magnitude: 900
-          max_stacks: 3
-          trigger_duration_ms: 600
+          kind: reveal
+          duration_ms: 1200
+          magnitude: 0
   - tier: 5
-    id: mage_prism_beam
-    name: Prism Beam
-    description: A precise beam that punishes exposed targets.
+    id: mage_leyline_focus
+    name: Leyline Focus
+    description: A passive focus that accelerates spells and drives projectiles harder through the lane.
     behavior:
-      kind: beam
-      effect: beam
-      cooldown_ms: 2800
-      cast_time_ms: 550
-      mana_cost: 46
-      range: 760
-      radius: 24
-      payload:
-        kind: damage
-        amount: 28
+      kind: passive
+      effect: nova
+      projectile_speed_bps: 2200
+      cast_time_bps: 1800

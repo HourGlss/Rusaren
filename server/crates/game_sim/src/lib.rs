@@ -74,6 +74,7 @@ impl MovementIntent {
 pub enum ArenaObstacleKind {
     Pillar,
     Shrub,
+    Barrier,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -116,6 +117,29 @@ pub struct ArenaProjectile {
     pub x: i16,
     pub y: i16,
     pub radius: u16,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ArenaDeployableKind {
+    Summon,
+    Ward,
+    Trap,
+    Barrier,
+    Aura,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ArenaDeployable {
+    pub id: u32,
+    pub owner: PlayerId,
+    pub team: TeamSide,
+    pub kind: ArenaDeployableKind,
+    pub x: i16,
+    pub y: i16,
+    pub radius: u16,
+    pub hit_points: u16,
+    pub max_hit_points: u16,
+    pub remaining_ms: u16,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -189,6 +213,21 @@ pub enum SimulationEvent {
         stacks: u8,
         remaining_ms: u16,
     },
+    DeployableSpawned {
+        deployable_id: u32,
+        owner: PlayerId,
+        kind: ArenaDeployableKind,
+        x: i16,
+        y: i16,
+        radius: u16,
+    },
+    DeployableDamaged {
+        attacker: PlayerId,
+        deployable_id: u32,
+        amount: u16,
+        remaining_hit_points: u16,
+        destroyed: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -256,6 +295,8 @@ pub struct SimulationWorld {
     obstacles: Vec<ArenaObstacle>,
     players: BTreeMap<PlayerId, SimPlayer>,
     projectiles: Vec<ProjectileState>,
+    deployables: Vec<DeployableState>,
+    next_deployable_id: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -295,6 +336,7 @@ struct StatusInstance {
     magnitude: u16,
     max_stacks: u8,
     trigger_duration_ms: Option<u16>,
+    shield_remaining: u16,
 }
 
 #[derive(Clone, Debug)]
@@ -319,6 +361,60 @@ struct ProjectileState {
     remaining_range_units: i32,
     radius: u16,
     payload: game_content::EffectPayload,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TargetEntity {
+    Player(PlayerId),
+    Deployable(u32),
+}
+
+#[derive(Clone, Debug)]
+struct DeployableState {
+    id: u32,
+    owner: PlayerId,
+    team: TeamSide,
+    kind: ArenaDeployableKind,
+    x: i16,
+    y: i16,
+    radius: u16,
+    hit_points: u16,
+    max_hit_points: u16,
+    remaining_ms: u16,
+    blocks_movement: bool,
+    blocks_projectiles: bool,
+    behavior: DeployableBehavior,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum DeployableBehavior {
+    Summon {
+        range: u16,
+        tick_interval_ms: u16,
+        tick_progress_ms: u16,
+        effect_kind: ArenaEffectKind,
+        payload: game_content::EffectPayload,
+    },
+    Ward,
+    Trap {
+        payload: game_content::EffectPayload,
+    },
+    Barrier,
+    Aura {
+        tick_interval_ms: u16,
+        tick_progress_ms: u16,
+        effect_kind: ArenaEffectKind,
+        payload: game_content::EffectPayload,
+        anchor_player: Option<PlayerId>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct PassiveModifiers {
+    player_speed: u16,
+    projectile_speed: u16,
+    cooldown: u16,
+    cast_time: u16,
 }
 
 impl SimulationWorld {
@@ -398,6 +494,8 @@ impl SimulationWorld {
                 .collect(),
             players: world_players,
             projectiles: Vec::new(),
+            deployables: Vec::new(),
+            next_deployable_id: 1,
         })
     }
 
@@ -485,6 +583,7 @@ impl SimulationWorld {
         self.resolve_queued_actions(&mut events);
         self.advance_projectiles(delta_ms, &mut events);
         self.advance_active_casts(delta_ms, &mut events);
+        self.advance_deployables(delta_ms, &mut events);
         events
     }
 
@@ -495,7 +594,11 @@ impl SimulationWorld {
                 player
                     .skills
                     .get(index)
-                    .and_then(|skill| skill.as_ref().map(|value| value.behavior.cooldown_ms()))
+                    .and_then(|skill| {
+                        skill.as_ref().map(|value| {
+                            self.effective_skill_cooldown_ms(player_id, value.behavior.cooldown_ms())
+                        })
+                    })
                     .unwrap_or(0)
             });
             SimPlayerState {
@@ -512,7 +615,8 @@ impl SimulationWorld {
                 alive: player.alive,
                 moving: player.moving,
                 primary_cooldown_remaining_ms: player.primary_cooldown_remaining_ms,
-                primary_cooldown_total_ms: player.melee.cooldown_ms,
+                primary_cooldown_total_ms: self
+                    .effective_primary_cooldown_ms(player_id, player.melee.cooldown_ms),
                 slot_cooldown_remaining_ms: player.slot_cooldown_remaining_ms,
                 slot_cooldown_total_ms,
                 current_cast_slot: player.active_cast.as_ref().map(|cast| cast.slot),
@@ -582,11 +686,188 @@ impl SimulationWorld {
     }
 
     #[must_use]
+    pub fn deployables(&self) -> Vec<ArenaDeployable> {
+        self.deployables
+            .iter()
+            .map(|deployable| ArenaDeployable {
+                id: deployable.id,
+                owner: deployable.owner,
+                team: deployable.team,
+                kind: deployable.kind,
+                x: deployable.x,
+                y: deployable.y,
+                radius: deployable.radius,
+                hit_points: deployable.hit_points,
+                max_hit_points: deployable.max_hit_points,
+                remaining_ms: deployable.remaining_ms,
+            })
+            .collect()
+    }
+
+    #[must_use]
     pub fn is_team_defeated(&self, team: TeamSide) -> bool {
         self.players
             .values()
             .filter(|player| player.team == team)
             .all(|player| !player.alive)
+    }
+
+    fn passive_modifiers_for(&self, player_id: PlayerId) -> PassiveModifiers {
+        let Some(player) = self.players.get(&player_id) else {
+            return PassiveModifiers::default();
+        };
+        let mut modifiers = PassiveModifiers::default();
+        for skill in player.skills.iter().flatten() {
+            if let SkillBehavior::Passive {
+                player_speed_bps,
+                projectile_speed_bps,
+                cooldown_bps,
+                cast_time_bps,
+            } = skill.behavior
+            {
+                modifiers.player_speed = modifiers
+                    .player_speed
+                    .saturating_add(player_speed_bps)
+                    .min(9_000);
+                modifiers.projectile_speed = modifiers
+                    .projectile_speed
+                    .saturating_add(projectile_speed_bps)
+                    .min(9_000);
+                modifiers.cooldown = modifiers.cooldown.saturating_add(cooldown_bps).min(9_000);
+                modifiers.cast_time = modifiers.cast_time.saturating_add(cast_time_bps).min(9_500);
+            }
+        }
+        modifiers
+    }
+
+    fn scale_duration_ms(base_ms: u16, reduction_bps: u16) -> u16 {
+        let scale_bps = 10_000_u32.saturating_sub(u32::from(reduction_bps));
+        let scaled = u32::from(base_ms).saturating_mul(scale_bps) / 10_000;
+        u16::try_from(scaled).unwrap_or(u16::MAX)
+    }
+
+    fn scale_speed_units(base_speed: u16, bonus_bps: u16) -> u16 {
+        let scaled = u32::from(base_speed).saturating_mul(10_000_u32 + u32::from(bonus_bps)) / 10_000;
+        u16::try_from(scaled).unwrap_or(u16::MAX)
+    }
+
+    fn effective_primary_cooldown_ms(&self, player_id: PlayerId, base_ms: u16) -> u16 {
+        Self::scale_duration_ms(base_ms, self.passive_modifiers_for(player_id).cooldown)
+    }
+
+    fn effective_skill_cooldown_ms(&self, player_id: PlayerId, base_ms: u16) -> u16 {
+        Self::scale_duration_ms(base_ms, self.passive_modifiers_for(player_id).cooldown)
+    }
+
+    fn effective_cast_time_ms(&self, player_id: PlayerId, base_ms: u16) -> u16 {
+        Self::scale_duration_ms(base_ms, self.passive_modifiers_for(player_id).cast_time)
+    }
+
+    fn effective_projectile_speed(&self, player_id: PlayerId, base_speed: u16) -> u16 {
+        Self::scale_speed_units(base_speed, self.passive_modifiers_for(player_id).projectile_speed)
+    }
+
+    fn effective_move_modifier_bps(&self, player_id: PlayerId, statuses: &[StatusInstance]) -> i16 {
+        let status_modifier = total_move_modifier_bps(statuses);
+        let passive_bonus = i16::try_from(self.passive_modifiers_for(player_id).player_speed)
+            .unwrap_or(i16::MAX);
+        status_modifier.saturating_add(passive_bonus).clamp(-8_000, 9_000)
+    }
+
+    fn combat_obstacles(&self) -> Vec<ArenaObstacle> {
+        let mut obstacles = self.obstacles.clone();
+        for deployable in &self.deployables {
+            if deployable.blocks_movement || deployable.blocks_projectiles {
+                obstacles.push(ArenaObstacle {
+                    kind: ArenaObstacleKind::Barrier,
+                    center_x: deployable.x,
+                    center_y: deployable.y,
+                    half_width: deployable.radius,
+                    half_height: deployable.radius,
+                });
+            }
+        }
+        obstacles
+    }
+
+    fn is_walkable_position(&self, x: i16, y: i16) -> bool {
+        let min_x = -i32::from(self.arena_width_units / 2) + i32::from(PLAYER_RADIUS_UNITS);
+        let max_x = i32::from(self.arena_width_units / 2) - i32::from(PLAYER_RADIUS_UNITS);
+        let min_y = -i32::from(self.arena_height_units / 2) + i32::from(PLAYER_RADIUS_UNITS);
+        let max_y = i32::from(self.arena_height_units / 2) - i32::from(PLAYER_RADIUS_UNITS);
+        let x_i32 = i32::from(x);
+        let y_i32 = i32::from(y);
+        if x_i32 < min_x || x_i32 > max_x || y_i32 < min_y || y_i32 > max_y {
+            return false;
+        }
+        !self
+            .combat_obstacles()
+            .iter()
+            .filter(|obstacle| obstacle_blocks_movement(obstacle))
+            .any(|obstacle| obstacle_contains_point(x, y, obstacle))
+    }
+
+    fn resolve_teleport_destination(
+        &self,
+        start_x: i16,
+        start_y: i16,
+        desired_x: i16,
+        desired_y: i16,
+    ) -> (i16, i16) {
+        if self.is_walkable_position(desired_x, desired_y) {
+            return (desired_x, desired_y);
+        }
+        for step in 1_u16..=48 {
+            let t = f32::from(step) / 48.0;
+            let sample_x = saturating_i16(round_f32_to_i32(
+                f32::from(desired_x) + (f32::from(start_x) - f32::from(desired_x)) * t,
+            ));
+            let sample_y = saturating_i16(round_f32_to_i32(
+                f32::from(desired_y) + (f32::from(start_y) - f32::from(desired_y)) * t,
+            ));
+            if self.is_walkable_position(sample_x, sample_y) {
+                return (sample_x, sample_y);
+            }
+        }
+        (start_x, start_y)
+    }
+
+    fn break_stealth(&mut self, player_id: PlayerId) {
+        let Some(player) = self.players.get_mut(&player_id) else {
+            return;
+        };
+        player
+            .statuses
+            .retain(|status| status.kind != StatusKind::Stealth);
+    }
+
+    fn player_has_status(&self, player_id: PlayerId, kind: StatusKind) -> bool {
+        self.players
+            .get(&player_id)
+            .is_some_and(|player| player.statuses.iter().any(|status| status.kind == kind))
+    }
+
+    fn can_enemy_target_player(&self, attacker: PlayerId, target: PlayerId) -> bool {
+        let Some(attacker_player) = self.players.get(&attacker) else {
+            return false;
+        };
+        let Some(target_player) = self.players.get(&target) else {
+            return false;
+        };
+        if !target_player.alive {
+            return false;
+        }
+        if attacker_player.team == target_player.team {
+            return true;
+        }
+        !self.player_has_status(target, StatusKind::Stealth)
+            || self.player_has_status(target, StatusKind::Reveal)
+    }
+
+    fn next_deployable_id(&mut self) -> u32 {
+        let id = self.next_deployable_id;
+        self.next_deployable_id = self.next_deployable_id.saturating_add(1);
+        id
     }
 }
 

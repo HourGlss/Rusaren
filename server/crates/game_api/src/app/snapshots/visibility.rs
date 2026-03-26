@@ -16,6 +16,14 @@ impl ServerApp {
         let viewer_state = runtime.world.player_state(viewer_id)?;
         let mut visible_tiles = Self::blank_visibility_mask(map);
         let viewer_position = (viewer_state.x, viewer_state.y);
+        let mut vision_sources = vec![(viewer_position, VISION_RADIUS_UNITS)];
+        for deployable in runtime.world.deployables() {
+            if deployable.team == viewer_state.team
+                && deployable.kind == game_sim::ArenaDeployableKind::Ward
+            {
+                vision_sources.push(((deployable.x, deployable.y), deployable.radius));
+            }
+        }
         if let Some(tile_index) = Self::tile_index_for_point(map, viewer_state.x, viewer_state.y) {
             Self::set_mask_bit(&mut visible_tiles, tile_index);
         }
@@ -23,11 +31,14 @@ impl ServerApp {
         for row in 0..usize::from(map.height_tiles) {
             for column in 0..usize::from(map.width_tiles) {
                 let tile_center = Self::tile_center_units(map, column, row);
-                if Self::point_is_visible_to_viewer(
-                    viewer_position,
-                    tile_center,
-                    runtime.world.obstacles(),
-                ) {
+                if vision_sources.iter().any(|(source_position, vision_radius)| {
+                    Self::point_is_visible_from_source(
+                        *source_position,
+                        tile_center,
+                        runtime.world.obstacles(),
+                        *vision_radius,
+                    )
+                }) {
                     let tile_index = row * usize::from(map.width_tiles) + column;
                     Self::set_mask_bit(&mut visible_tiles, tile_index);
                 }
@@ -48,14 +59,15 @@ impl ServerApp {
         Some((visible_tiles, explored_tiles.clone()))
     }
 
-    pub(in super::super) fn point_is_visible_to_viewer(
+    fn point_is_visible_from_source(
         viewer_position: (i16, i16),
         target_position: (i16, i16),
         obstacles: &[ArenaObstacle],
+        vision_radius_units: u16,
     ) -> bool {
         let delta_x = i32::from(target_position.0) - i32::from(viewer_position.0);
         let delta_y = i32::from(target_position.1) - i32::from(viewer_position.1);
-        let radius_sq = i32::from(VISION_RADIUS_UNITS) * i32::from(VISION_RADIUS_UNITS);
+        let radius_sq = i32::from(vision_radius_units) * i32::from(vision_radius_units);
         if delta_x.saturating_mul(delta_x) + delta_y.saturating_mul(delta_y) > radius_sq {
             return false;
         }
@@ -82,6 +94,20 @@ impl ServerApp {
         }
 
         true
+    }
+
+    #[cfg(test)]
+    pub(in super::super) fn point_is_visible_to_viewer(
+        viewer_position: (i16, i16),
+        target_position: (i16, i16),
+        obstacles: &[ArenaObstacle],
+    ) -> bool {
+        Self::point_is_visible_from_source(
+            viewer_position,
+            target_position,
+            obstacles,
+            VISION_RADIUS_UNITS,
+        )
     }
 
     pub(in super::super) fn containing_shrub(

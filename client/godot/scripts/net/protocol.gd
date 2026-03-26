@@ -272,8 +272,29 @@ class ByteCursor:
 				return "Pillar"
 			2:
 				return "Shrub"
+			3:
+				return "Barrier"
 			_:
 				error_message = "encoded arena obstacle kind %d is invalid" % raw
+				return null
+
+	func read_arena_deployable_kind() -> Variant:
+		var raw = read_u8()
+		if has_error():
+			return null
+		match raw:
+			1:
+				return "Summon"
+			2:
+				return "Ward"
+			3:
+				return "Trap"
+			4:
+				return "Barrier"
+			5:
+				return "Aura"
+			_:
+				error_message = "encoded arena deployable kind %d is invalid" % raw
 				return null
 
 	func read_arena_effect_kind() -> Variant:
@@ -335,6 +356,16 @@ class ByteCursor:
 				return "Silence"
 			7:
 				return "Stun"
+			8:
+				return "Sleep"
+			9:
+				return "Shield"
+			10:
+				return "Stealth"
+			11:
+				return "Reveal"
+			12:
+				return "Fear"
 			_:
 				error_message = "encoded arena status kind %d is invalid" % raw
 				return null
@@ -849,6 +880,35 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 					"half_width": half_width,
 					"half_height": half_height,
 				})
+			var deployable_count = cursor.read_u16()
+			if cursor.has_error():
+				return _error(cursor.error_message)
+			var deployables: Array[Dictionary] = []
+			for _deployable_index in range(int(deployable_count)):
+				var deployable_id = cursor.read_u32()
+				var deployable_owner = cursor.read_player_id()
+				var deployable_team = cursor.read_team_label()
+				var deployable_kind = cursor.read_arena_deployable_kind()
+				var deployable_x = cursor.read_i16()
+				var deployable_y = cursor.read_i16()
+				var deployable_radius = cursor.read_u16()
+				var deployable_hit_points = cursor.read_u16()
+				var deployable_max_hit_points = cursor.read_u16()
+				var deployable_remaining_ms = cursor.read_u16()
+				if cursor.has_error():
+					return _error(cursor.error_message)
+				deployables.append({
+					"id": deployable_id,
+					"owner": deployable_owner,
+					"team": deployable_team,
+					"kind": deployable_kind,
+					"x": deployable_x,
+					"y": deployable_y,
+					"radius": deployable_radius,
+					"hit_points": deployable_hit_points,
+					"max_hit_points": deployable_max_hit_points,
+					"remaining_ms": deployable_remaining_ms,
+				})
 			var player_count = cursor.read_u16()
 			if cursor.has_error():
 				return _error(cursor.error_message)
@@ -952,6 +1012,7 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 					"visible_tiles": visible_tiles,
 					"explored_tiles": explored_tiles,
 					"obstacles": obstacles,
+					"deployables": deployables,
 					"players": players,
 					"projectiles": projectiles,
 				},
@@ -980,6 +1041,35 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 					"center_y": delta_center_y,
 					"half_width": delta_half_width,
 					"half_height": delta_half_height,
+				})
+			var delta_deployable_count = cursor.read_u16()
+			if cursor.has_error():
+				return _error(cursor.error_message)
+			var delta_deployables: Array[Dictionary] = []
+			for _delta_deployable_index in range(int(delta_deployable_count)):
+				var delta_deployable_id = cursor.read_u32()
+				var delta_deployable_owner = cursor.read_player_id()
+				var delta_deployable_team = cursor.read_team_label()
+				var delta_deployable_kind = cursor.read_arena_deployable_kind()
+				var delta_deployable_x = cursor.read_i16()
+				var delta_deployable_y = cursor.read_i16()
+				var delta_deployable_radius = cursor.read_u16()
+				var delta_deployable_hit_points = cursor.read_u16()
+				var delta_deployable_max_hit_points = cursor.read_u16()
+				var delta_deployable_remaining_ms = cursor.read_u16()
+				if cursor.has_error():
+					return _error(cursor.error_message)
+				delta_deployables.append({
+					"id": delta_deployable_id,
+					"owner": delta_deployable_owner,
+					"team": delta_deployable_team,
+					"kind": delta_deployable_kind,
+					"x": delta_deployable_x,
+					"y": delta_deployable_y,
+					"radius": delta_deployable_radius,
+					"hit_points": delta_deployable_hit_points,
+					"max_hit_points": delta_deployable_max_hit_points,
+					"remaining_ms": delta_deployable_remaining_ms,
 				})
 			var delta_player_count = cursor.read_u16()
 			if cursor.has_error():
@@ -1082,6 +1172,7 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 					"visible_tiles": delta_visible_tiles,
 					"explored_tiles": delta_explored_tiles,
 					"obstacles": delta_obstacles,
+					"deployables": delta_deployables,
 					"players": delta_players,
 					"projectiles": delta_projectiles,
 				},

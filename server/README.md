@@ -14,6 +14,7 @@ Use the structure notes below to find the right file or subfolder quickly.
 - `scripts/`: backend automation scripts for exports, quality gates, reports, Docker smoke checks, and local play.
 - `static/`: checked-in static asset stubs and the landing place for the exported web client bundle.
 - `target/`: ignored local build artifacts and generated reports for the backend workspace.
+- `target/reports/mutants-campaigns/`: ignored long-running mutation-test campaign output planned and summarized by the helper scripts.
 - `tools/`: ignored repo-local tool caches installed by the workspace scripts.
 - `var/`: ignored local runtime state such as player records and other writable backend data.
 - `verus/`: Verus models that specify and check the backend's protocol and ingress invariants.
@@ -25,3 +26,15 @@ Use the structure notes below to find the right file or subfolder quickly.
 - `clippy.toml`: Clippy configuration that tunes lint thresholds and allowed patterns for the backend workspace.
 - `deny.toml`: cargo-deny policy file for dependency and license checks.
 - `rust-toolchain.toml`: Pinned Rust toolchain configuration for the backend workspace.
+
+## Mutation Campaigns
+Use the helper scripts when a full cargo-mutants run would take hours and needs to be split into manual shards.
+
+1. Create a campaign plan:
+   `pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/plan-mutants.ps1 -RunId cast-passives -ShardCount 8`
+2. Run one shard at a time:
+   `pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/run-mutants-shard.ps1 -RunId cast-passives -Shard 1/8`
+3. Rebuild the aggregate summary at any time:
+   `pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/summarize-mutants.ps1 -RunId cast-passives`
+
+Each campaign writes isolated shard output plus a merged `summary.md`, `summary.json`, `missed.txt`, and `timeout.txt` under `target/reports/mutants-campaigns/<run-id>/`.

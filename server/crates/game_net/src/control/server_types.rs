@@ -128,6 +128,7 @@ pub enum LobbySnapshotPhase {
 pub enum ArenaObstacleKind {
     Pillar,
     Shrub,
+    Barrier,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -147,6 +148,11 @@ pub enum ArenaStatusKind {
     Haste,
     Silence,
     Stun,
+    Sleep,
+    Shield,
+    Stealth,
+    Reveal,
+    Fear,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -165,6 +171,29 @@ pub struct ArenaObstacleSnapshot {
     pub center_y: i16,
     pub half_width: u16,
     pub half_height: u16,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ArenaDeployableKind {
+    Summon,
+    Ward,
+    Trap,
+    Barrier,
+    Aura,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ArenaDeployableSnapshot {
+    pub id: u32,
+    pub owner: PlayerId,
+    pub team: TeamSide,
+    pub kind: ArenaDeployableKind,
+    pub x: i16,
+    pub y: i16,
+    pub radius: u16,
+    pub hit_points: u16,
+    pub max_hit_points: u16,
+    pub remaining_ms: u16,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -235,6 +264,7 @@ pub struct ArenaStateSnapshot {
     pub visible_tiles: Vec<u8>,
     pub explored_tiles: Vec<u8>,
     pub obstacles: Vec<ArenaObstacleSnapshot>,
+    pub deployables: Vec<ArenaDeployableSnapshot>,
     pub players: Vec<ArenaPlayerSnapshot>,
     pub projectiles: Vec<ArenaProjectileSnapshot>,
 }
@@ -247,6 +277,7 @@ pub struct ArenaDeltaSnapshot {
     pub visible_tiles: Vec<u8>,
     pub explored_tiles: Vec<u8>,
     pub obstacles: Vec<ArenaObstacleSnapshot>,
+    pub deployables: Vec<ArenaDeployableSnapshot>,
     pub players: Vec<ArenaPlayerSnapshot>,
     pub projectiles: Vec<ArenaProjectileSnapshot>,
 }

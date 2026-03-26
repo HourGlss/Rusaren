@@ -97,14 +97,14 @@ fn projectile_overlap_with_player_body_counts_as_a_hit() {
         .skills()
         .resolve(&choice(SkillTree::Mage, 1))
         .expect("mage tier one should exist");
-    let (radius, speed, range) = match skill.behavior {
-        SkillBehavior::Projectile {
-            radius,
-            speed,
-            range,
-            ..
-        } => (radius, speed, range),
-        _ => panic!("mage tier one should remain a projectile"),
+    let SkillBehavior::Projectile {
+        radius,
+        speed,
+        range,
+        ..
+    } = skill.behavior
+    else {
+        panic!("mage tier one should remain a projectile");
     };
 
     let mut world = world(
@@ -350,6 +350,9 @@ fn every_authored_skill_hits_with_valid_geometry_and_resources() {
     let content = content();
 
     for skill in content.skills().all() {
+        if matches!(skill.behavior, SkillBehavior::Passive { .. }) {
+            continue;
+        }
         let mut world = world(
             &content,
             vec![
@@ -424,8 +427,10 @@ fn every_authored_skill_hits_with_valid_geometry_and_resources() {
                     TEST_AIM_Y,
                 );
             }
-            SkillBehavior::Dash { distance, .. } => {
-                let dash_end = project_from_aim(
+            SkillBehavior::Dash { distance, .. }
+            | SkillBehavior::Summon { distance, .. }
+            | SkillBehavior::Trap { distance, .. } => {
+                let target_point = project_from_aim(
                     TEST_ATTACKER_X,
                     TEST_OPEN_LANE_Y,
                     TEST_AIM_X,
@@ -435,12 +440,48 @@ fn every_authored_skill_hits_with_valid_geometry_and_resources() {
                 set_player_pose(
                     &mut world,
                     target_id,
-                    dash_end.0,
-                    dash_end.1,
+                    target_point.0,
+                    target_point.1,
                     -TEST_AIM_X,
                     TEST_AIM_Y,
                 );
             }
+            SkillBehavior::Teleport { .. } | SkillBehavior::Ward { .. } | SkillBehavior::Barrier { .. } => {}
+            SkillBehavior::Aura {
+                distance,
+                hit_points,
+                radius,
+                ..
+            } => {
+                if hit_points.is_some() {
+                    let aura_point = project_from_aim(
+                        TEST_ATTACKER_X,
+                        TEST_OPEN_LANE_Y,
+                        TEST_AIM_X,
+                        TEST_AIM_Y,
+                        distance,
+                    );
+                    set_player_pose(
+                        &mut world,
+                        target_id,
+                        aura_point.0,
+                        aura_point.1,
+                        -TEST_AIM_X,
+                        TEST_AIM_Y,
+                    );
+                } else {
+                    let radius_offset = i16::try_from((radius / 2).max(40)).unwrap_or(40);
+                    set_player_pose(
+                        &mut world,
+                        target_id,
+                        TEST_ATTACKER_X + radius_offset,
+                        TEST_OPEN_LANE_Y,
+                        -TEST_AIM_X,
+                        TEST_AIM_Y,
+                    );
+                }
+            }
+            SkillBehavior::Passive { .. } => unreachable!("passives are skipped above"),
         }
 
         if let Some(payload) = payload {
@@ -486,6 +527,48 @@ fn every_authored_skill_hits_with_valid_geometry_and_resources() {
                 projectile_frame_budget(speed, range),
             ));
         }
+        if let SkillBehavior::Summon {
+            tick_interval_ms,
+            range: summon_range,
+            ..
+        } = skill.behavior
+        {
+            let _ = summon_range;
+            events.extend(collect_ticks(
+                &mut world,
+                usize::from(tick_interval_ms / COMBAT_FRAME_MS + 2),
+            ));
+        }
+        if let SkillBehavior::Trap { .. } = skill.behavior {
+            events.extend(collect_ticks(&mut world, 3));
+        }
+        if let SkillBehavior::Aura { tick_interval_ms, .. } = skill.behavior {
+            events.extend(collect_ticks(
+                &mut world,
+                usize::from(tick_interval_ms / COMBAT_FRAME_MS + 2),
+            ));
+        }
+
+        if matches!(
+            skill.behavior,
+            SkillBehavior::Summon { .. }
+                | SkillBehavior::Ward { .. }
+                | SkillBehavior::Trap { .. }
+                | SkillBehavior::Barrier { .. }
+                | SkillBehavior::Aura { .. }
+        ) {
+            assert!(
+                events.iter().any(|event| matches!(
+                    event,
+                    SimulationEvent::DeployableSpawned {
+                        owner,
+                        ..
+                    } if *owner == attacker_id
+                )),
+                "{} should spawn a deployable",
+                skill.id
+            );
+        }
 
         if let Some(payload) = payload {
             match payload.kind {
@@ -494,11 +577,15 @@ fn every_authored_skill_hits_with_valid_geometry_and_resources() {
                     "{} should damage a target inside its geometry",
                     skill.id
                 ),
-                CombatValueKind::Heal => assert!(
-                    healing_to(&events, target_id).is_some(),
-                    "{} should heal a target inside its geometry",
-                    skill.id
-                ),
+                CombatValueKind::Heal => {
+                    if payload.amount > 0 {
+                        assert!(
+                            healing_to(&events, target_id).is_some(),
+                            "{} should heal a target inside its geometry",
+                            skill.id
+                        );
+                    }
+                }
             }
 
             if let Some(status) = payload.status {
@@ -510,7 +597,10 @@ fn every_authored_skill_hits_with_valid_geometry_and_resources() {
             }
         }
 
-        if matches!(skill.behavior, SkillBehavior::Dash { .. }) {
+        if matches!(
+            skill.behavior,
+            SkillBehavior::Dash { .. } | SkillBehavior::Teleport { .. }
+        ) {
             let moved = moved_player(&events, attacker_id)
                 .unwrap_or_else(|| panic!("{} should move the caster", skill.id));
             assert_ne!(
@@ -528,6 +618,18 @@ fn every_authored_skill_misses_targets_outside_its_effective_geometry() {
     let content = content();
 
     for skill in content.skills().all() {
+        if matches!(
+            skill.behavior,
+            SkillBehavior::Teleport { .. }
+                | SkillBehavior::Passive { .. }
+                | SkillBehavior::Summon { .. }
+                | SkillBehavior::Ward { .. }
+                | SkillBehavior::Trap { .. }
+                | SkillBehavior::Barrier { .. }
+                | SkillBehavior::Aura { .. }
+        ) {
+            continue;
+        }
         let mut world = world(
             &content,
             vec![
@@ -634,6 +736,13 @@ fn every_authored_skill_misses_targets_outside_its_effective_geometry() {
                     TEST_AIM_Y,
                 );
             }
+            SkillBehavior::Teleport { .. }
+            | SkillBehavior::Passive { .. }
+            | SkillBehavior::Summon { .. }
+            | SkillBehavior::Ward { .. }
+            | SkillBehavior::Trap { .. }
+            | SkillBehavior::Barrier { .. }
+            | SkillBehavior::Aura { .. } => unreachable!("non-combat utility skills are skipped above"),
         }
 
         world.queue_cast(attacker_id, 1).expect("cast should queue");

@@ -49,6 +49,7 @@ fn spawn_signaling_writer(
     })
 }
 
+#[allow(clippy::too_many_lines)]
 pub(super) async fn handle_signaling_socket(state: DevServerState, socket: WebSocket) {
     let (sender, mut receiver) = socket.split();
     let (signal_tx, signal_rx) = mpsc::unbounded_channel::<ServerSignalMessage>();

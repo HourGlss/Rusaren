@@ -75,6 +75,11 @@ pub enum StatusKind {
     Haste,
     Silence,
     Stun,
+    Sleep,
+    Shield,
+    Stealth,
+    Reveal,
+    Fear,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -92,6 +97,7 @@ pub struct EffectPayload {
     pub kind: CombatValueKind,
     pub amount: u16,
     pub status: Option<StatusDefinition>,
+    pub interrupt_silence_duration_ms: Option<u16>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -154,6 +160,75 @@ pub enum SkillBehavior {
         effect: SkillEffectKind,
         payload: EffectPayload,
     },
+    Teleport {
+        cooldown_ms: u16,
+        cast_time_ms: u16,
+        mana_cost: u16,
+        distance: u16,
+        effect: SkillEffectKind,
+    },
+    Passive {
+        player_speed_bps: u16,
+        projectile_speed_bps: u16,
+        cooldown_bps: u16,
+        cast_time_bps: u16,
+    },
+    Summon {
+        cooldown_ms: u16,
+        cast_time_ms: u16,
+        mana_cost: u16,
+        distance: u16,
+        radius: u16,
+        duration_ms: u16,
+        hit_points: u16,
+        range: u16,
+        tick_interval_ms: u16,
+        effect: SkillEffectKind,
+        payload: EffectPayload,
+    },
+    Ward {
+        cooldown_ms: u16,
+        cast_time_ms: u16,
+        mana_cost: u16,
+        distance: u16,
+        radius: u16,
+        duration_ms: u16,
+        hit_points: u16,
+        effect: SkillEffectKind,
+    },
+    Trap {
+        cooldown_ms: u16,
+        cast_time_ms: u16,
+        mana_cost: u16,
+        distance: u16,
+        radius: u16,
+        duration_ms: u16,
+        hit_points: u16,
+        effect: SkillEffectKind,
+        payload: EffectPayload,
+    },
+    Barrier {
+        cooldown_ms: u16,
+        cast_time_ms: u16,
+        mana_cost: u16,
+        distance: u16,
+        radius: u16,
+        duration_ms: u16,
+        hit_points: u16,
+        effect: SkillEffectKind,
+    },
+    Aura {
+        cooldown_ms: u16,
+        cast_time_ms: u16,
+        mana_cost: u16,
+        distance: u16,
+        radius: u16,
+        duration_ms: u16,
+        hit_points: Option<u16>,
+        tick_interval_ms: u16,
+        effect: SkillEffectKind,
+        payload: EffectPayload,
+    },
 }
 
 impl SkillBehavior {
@@ -164,7 +239,14 @@ impl SkillBehavior {
             | Self::Beam { cooldown_ms, .. }
             | Self::Dash { cooldown_ms, .. }
             | Self::Burst { cooldown_ms, .. }
-            | Self::Nova { cooldown_ms, .. } => cooldown_ms,
+            | Self::Nova { cooldown_ms, .. }
+            | Self::Teleport { cooldown_ms, .. }
+            | Self::Summon { cooldown_ms, .. }
+            | Self::Ward { cooldown_ms, .. }
+            | Self::Trap { cooldown_ms, .. }
+            | Self::Barrier { cooldown_ms, .. }
+            | Self::Aura { cooldown_ms, .. } => cooldown_ms,
+            Self::Passive { .. } => 0,
         }
     }
 
@@ -175,7 +257,14 @@ impl SkillBehavior {
             | Self::Beam { cast_time_ms, .. }
             | Self::Dash { cast_time_ms, .. }
             | Self::Burst { cast_time_ms, .. }
-            | Self::Nova { cast_time_ms, .. } => cast_time_ms,
+            | Self::Nova { cast_time_ms, .. }
+            | Self::Teleport { cast_time_ms, .. }
+            | Self::Summon { cast_time_ms, .. }
+            | Self::Ward { cast_time_ms, .. }
+            | Self::Trap { cast_time_ms, .. }
+            | Self::Barrier { cast_time_ms, .. }
+            | Self::Aura { cast_time_ms, .. } => cast_time_ms,
+            Self::Passive { .. } => 0,
         }
     }
 
@@ -186,7 +275,14 @@ impl SkillBehavior {
             | Self::Beam { mana_cost, .. }
             | Self::Dash { mana_cost, .. }
             | Self::Burst { mana_cost, .. }
-            | Self::Nova { mana_cost, .. } => mana_cost,
+            | Self::Nova { mana_cost, .. }
+            | Self::Teleport { mana_cost, .. }
+            | Self::Summon { mana_cost, .. }
+            | Self::Ward { mana_cost, .. }
+            | Self::Trap { mana_cost, .. }
+            | Self::Barrier { mana_cost, .. }
+            | Self::Aura { mana_cost, .. } => mana_cost,
+            Self::Passive { .. } => 0,
         }
     }
 }

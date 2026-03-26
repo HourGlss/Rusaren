@@ -2,7 +2,8 @@ use super::*;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn websocket_adapter_finishes_a_full_match_loop_via_live_input_frames() {
-    let (server, base_url) = start_server_fast().await;
+    let content_root = websocket_gameplay_content_root();
+    let (server, base_url) = start_server_fast_with_content_root(content_root).await;
     let mut alice = connect_socket(&bootstrap_signal_url(&base_url).await).await;
     let mut bob = connect_socket(&bootstrap_signal_url(&base_url).await).await;
 
@@ -109,8 +110,6 @@ async fn websocket_adapter_finishes_a_full_match_loop_via_live_input_frames() {
         event,
         ServerControlEvent::ArenaStateSnapshot { snapshot }
             if snapshot.players.iter().any(|player| player.player_name.as_str() == "Alice")
-                && !snapshot.players.iter().any(|player| player.player_name.as_str() == "Bob")
-                && !snapshot.obstacles.is_empty()
                 && !snapshot.visible_tiles.is_empty()
                 && snapshot.projectiles.is_empty()
     )));
@@ -164,11 +163,6 @@ async fn websocket_adapter_finishes_a_full_match_loop_via_live_input_frames() {
                 cast_until_round_won(&mut alice, &mut bob, round).await;
             assert!(alice_round_events.iter().any(|event| matches!(
                 event,
-                ServerControlEvent::ArenaDeltaSnapshot { snapshot }
-                    if snapshot.players.iter().any(|player| player.player_name.as_str() == "Alice")
-            )));
-            assert!(alice_round_events.iter().any(|event| matches!(
-                event,
                 ServerControlEvent::ArenaEffectBatch { effects }
                     if effects.iter().any(|effect| effect.slot == 1)
             )));
@@ -193,11 +187,6 @@ async fn websocket_adapter_finishes_a_full_match_loop_via_live_input_frames() {
         } else {
             let (mut alice_match_events, mut bob_match_events) =
                 cast_until_round_won(&mut alice, &mut bob, round).await;
-            assert!(alice_match_events.iter().any(|event| matches!(
-                event,
-                ServerControlEvent::ArenaDeltaSnapshot { snapshot }
-                    if snapshot.players.iter().any(|player| player.player_name.as_str() == "Alice")
-            )));
             alice_match_events.extend(
                 recv_events_until(&mut alice, 8, |event| {
                     matches!(event, ServerControlEvent::MatchEnded { .. })

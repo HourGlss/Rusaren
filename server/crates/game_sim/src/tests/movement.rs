@@ -42,8 +42,9 @@ fn movement_passes_through_shrubs_but_stops_on_pillars() {
     let pillar = *world
         .obstacles()
         .iter()
-        .find(|obstacle| obstacle.kind == ArenaObstacleKind::Pillar)
-        .expect("pillar exists");
+        .filter(|obstacle| obstacle.kind == ArenaObstacleKind::Pillar && obstacle.center_x < 0)
+        .max_by_key(|obstacle| obstacle.center_x)
+        .expect("a right-edge pillar should exist on the left side of the map");
     {
         let player = world.players.get_mut(&player_id(1)).expect("player");
         player.x = pillar.center_x
@@ -226,6 +227,7 @@ fn movement_ticks_update_vertical_position_only_when_resolution_changes() {
             magnitude: 0,
             max_stacks: 1,
             trigger_duration_ms: None,
+            shield_remaining: 0,
         });
     world
         .submit_input(player_id(1), MovementIntent::new(0, 1).expect("intent"))
@@ -461,4 +463,224 @@ fn spawn_positions_and_obstacle_blocking_rules_stay_stable() {
     assert!(obstacle_blocks_movement(&mapped));
     assert!(obstacle_blocks_projectiles(&mapped));
     assert!(obstacle_blocks_vision(&mapped));
+}
+
+#[test]
+fn teleport_passes_through_pillars_and_clamps_to_valid_space() {
+    let content = content();
+    let teleport_skill = content
+        .skills()
+        .resolve(&choice(SkillTree::Mage, 2))
+        .expect("mage teleport should exist")
+        .clone();
+    let mut world = world(
+        &content,
+        vec![seed_with_slot_one_skill(
+            &content,
+            1,
+            "Alice",
+            TeamSide::TeamA,
+            SkillTree::Mage,
+            &teleport_skill,
+        )],
+    );
+    world.obstacles = vec![ArenaObstacle {
+        kind: ArenaObstacleKind::Pillar,
+        center_x: -240,
+        center_y: TEST_OPEN_LANE_Y,
+        half_width: 25,
+        half_height: 25,
+    }];
+    let pillar = world.obstacles[0];
+
+    let SkillBehavior::Teleport { distance, .. } = teleport_skill.behavior else {
+        panic!("mage tier two should remain a teleport");
+    };
+    let desired_x = pillar.center_x
+        + i16::try_from(pillar.half_width).expect("fits")
+        + i16::try_from(PLAYER_RADIUS_UNITS).expect("fits")
+        + 40;
+    set_player_pose(
+        &mut world,
+        player_id(1),
+        desired_x - i16::try_from(distance).expect("fits"),
+        pillar.center_y,
+        TEST_AIM_X,
+        TEST_AIM_Y,
+    );
+    let teleport_events = resolve_skill_cast(&mut world, player_id(1), 1, teleport_skill.behavior);
+    let teleported = world.player_state(player_id(1)).expect("alice");
+    assert!(
+        teleported.x > pillar.center_x + i16::try_from(pillar.half_width).expect("fits"),
+        "teleports should pass through intervening pillars when the destination is valid"
+    );
+    assert!(moved_player(&teleport_events, player_id(1)).is_some());
+
+    let arena_edge_x = i16::try_from(world.arena_width_units() / 2).unwrap_or(i16::MAX)
+        - i16::try_from(PLAYER_RADIUS_UNITS).expect("fits");
+    set_player_pose(
+        &mut world,
+        player_id(1),
+        arena_edge_x - 30,
+        TEST_OPEN_LANE_Y,
+        TEST_AIM_X,
+        TEST_AIM_Y,
+    );
+    let _ = collect_ticks(&mut world, 17);
+    let _ = resolve_skill_cast(&mut world, player_id(1), 1, teleport_skill.behavior);
+    let clamped = world.player_state(player_id(1)).expect("alice");
+    assert!(
+        clamped.x <= arena_edge_x,
+        "teleports should clamp to the nearest valid in-bounds destination"
+    );
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn barriers_block_movement_and_projectiles() {
+    let content = content();
+    let barrier_skill = content
+        .skills()
+        .resolve(&choice(SkillTree::Warrior, 2))
+        .expect("warrior barrier should exist")
+        .clone();
+    let mut movement_world = world(
+        &content,
+        vec![
+            seed_with_slot_one_skill(
+                &content,
+                1,
+                "Alice",
+                TeamSide::TeamA,
+                SkillTree::Warrior,
+                &barrier_skill,
+            ),
+            seed(
+                &content,
+                2,
+                "Bob",
+                TeamSide::TeamB,
+                SkillTree::Mage,
+                [None, None, None, None, None],
+            ),
+        ],
+    );
+    set_player_pose(
+        &mut movement_world,
+        player_id(1),
+        -300,
+        TEST_OPEN_LANE_Y,
+        TEST_AIM_X,
+        TEST_AIM_Y,
+    );
+    let barrier_events =
+        resolve_skill_cast(&mut movement_world, player_id(1), 1, barrier_skill.behavior);
+    let barrier = movement_world
+        .deployables()
+        .into_iter()
+        .find(|deployable| deployable.kind == ArenaDeployableKind::Barrier)
+        .expect("barrier should spawn");
+    assert!(barrier_events.iter().any(|event| matches!(
+        event,
+        SimulationEvent::DeployableSpawned { deployable_id, .. } if *deployable_id == barrier.id
+    )));
+
+    let blocker_x = barrier.x
+        - i16::try_from(barrier.radius).expect("fits")
+        - i16::try_from(PLAYER_RADIUS_UNITS).expect("fits");
+    set_player_pose(
+        &mut movement_world,
+        player_id(2),
+        blocker_x - 20,
+        barrier.y,
+        TEST_AIM_X,
+        TEST_AIM_Y,
+    );
+    movement_world
+        .submit_input(player_id(2), MovementIntent::new(1, 0).expect("intent"))
+        .expect("movement");
+    for _ in 0..8 {
+        let _ = movement_world.tick(COMBAT_FRAME_MS);
+    }
+    let moved = movement_world.player_state(player_id(2)).expect("bob");
+    assert!(
+        moved.x <= blocker_x,
+        "barriers should block player movement like a temporary obstacle"
+    );
+
+    let projectile_skill = content
+        .skills()
+        .resolve(&choice(SkillTree::Mage, 1))
+        .expect("mage projectile should exist")
+        .clone();
+    let mut projectile_world = world(
+        &content,
+        vec![
+            seed_with_slot_one_skill(
+                &content,
+                1,
+                "Alice",
+                TeamSide::TeamA,
+                SkillTree::Warrior,
+                &barrier_skill,
+            ),
+            seed_with_slot_one_skill(
+                &content,
+                2,
+                "Mage",
+                TeamSide::TeamB,
+                SkillTree::Mage,
+                &projectile_skill,
+            ),
+            seed(
+                &content,
+                3,
+                "Target",
+                TeamSide::TeamA,
+                SkillTree::Warrior,
+                [None, None, None, None, None],
+            ),
+        ],
+    );
+    set_player_pose(
+        &mut projectile_world,
+        player_id(1),
+        -300,
+        TEST_OPEN_LANE_Y,
+        TEST_AIM_X,
+        TEST_AIM_Y,
+    );
+    let _ = resolve_skill_cast(&mut projectile_world, player_id(1), 1, barrier_skill.behavior);
+    let barrier = projectile_world
+        .deployables()
+        .into_iter()
+        .find(|deployable| deployable.kind == ArenaDeployableKind::Barrier)
+        .expect("barrier should spawn");
+    set_player_pose(
+        &mut projectile_world,
+        player_id(2),
+        barrier.x - 180,
+        barrier.y,
+        TEST_AIM_X,
+        TEST_AIM_Y,
+    );
+    set_player_pose(
+        &mut projectile_world,
+        player_id(3),
+        barrier.x + 180,
+        barrier.y,
+        -TEST_AIM_X,
+        TEST_AIM_Y,
+    );
+
+    let projectile_events =
+        resolve_skill_cast(&mut projectile_world, player_id(2), 1, projectile_skill.behavior);
+    assert!(
+        damage_to(&projectile_events, player_id(3)).is_none(),
+        "barriers should block projectiles fired through them"
+    );
+    assert!(
+        projectile_world.projectiles.is_empty(),
+        "blocked projectiles should be consumed by the barrier lane"
+    );
 }

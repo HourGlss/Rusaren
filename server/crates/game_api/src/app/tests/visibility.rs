@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::BTreeMap;
 
 #[test]
 fn shrubs_block_vision_for_outside_observers() {
@@ -431,4 +432,294 @@ fn snapshot_filters_include_visible_non_owned_entities_and_repair_explored_masks
         (effect.x, effect.y) == hidden_position
             && (effect.target_x, effect.target_y) == alice_position
     }));
+}
+
+fn manual_player_id(raw: u32) -> PlayerId {
+    PlayerId::new(raw).expect("valid player id")
+}
+
+fn manual_assignment(raw_id: u32, raw_name: &str, team: TeamSide) -> TeamAssignment {
+    TeamAssignment {
+        player_id: manual_player_id(raw_id),
+        player_name: player_name(raw_name),
+        record: PlayerRecord::new(),
+        team,
+    }
+}
+
+#[allow(clippy::needless_pass_by_value)]
+fn manual_seed(
+    content: &GameContent,
+    raw_id: u32,
+    raw_name: &str,
+    team: TeamSide,
+    primary_tree: SkillTree,
+    choices: [Option<SkillChoice>; 5],
+) -> game_sim::SimPlayerSeed {
+    game_sim::SimPlayerSeed {
+        assignment: manual_assignment(raw_id, raw_name, team),
+        hit_points: 100,
+        melee: content
+            .skills()
+            .melee_for(&primary_tree)
+            .expect("melee should exist")
+            .clone(),
+        skills: choices.map(|choice| {
+            choice.and_then(|picked| content.skills().resolve(&picked).cloned())
+        }),
+    }
+}
+
+fn manual_runtime(content: &GameContent, seeds: Vec<game_sim::SimPlayerSeed>) -> MatchRuntime {
+    let roster = seeds
+        .iter()
+        .map(|seed| seed.assignment.clone())
+        .collect::<Vec<_>>();
+    let participants = roster.iter().map(|assignment| assignment.player_id).collect();
+    let session = MatchSession::new(
+        MatchId::new(1).expect("match id"),
+        roster.clone(),
+        game_match::MatchConfig::v1(),
+    )
+    .expect("match session");
+    let world = game_sim::SimulationWorld::new(seeds, content.map()).expect("world");
+    MatchRuntime {
+        roster,
+        participants,
+        session,
+        world,
+        explored_tiles: BTreeMap::new(),
+    }
+}
+
+fn test_visibility_map() -> &'static str {
+    "....................\n\
+....................\n\
+.....A.........B....\n\
+....................\n\
+....................\n"
+}
+
+fn content_with_map(label: &str, map_text: &str) -> (GameContent, std::path::PathBuf) {
+    let root = temp_dir(label);
+    remove_dir_if_exists(&root);
+    copy_dir_all(&workspace_content_root(), &root);
+    fs::write(root.join("maps").join("prototype_arena.txt"), map_text).expect("map override");
+    let content = GameContent::load_from_root(&root).expect("custom content");
+    (content, root)
+}
+
+fn content_with_reveal_only_field(
+    label: &str,
+    map_text: &str,
+) -> (GameContent, std::path::PathBuf) {
+    let root = temp_dir(label);
+    remove_dir_if_exists(&root);
+    copy_dir_all(&workspace_content_root(), &root);
+    fs::write(root.join("maps").join("prototype_arena.txt"), map_text).expect("map override");
+    let mage_path = root.join("skills").join("mage.yaml");
+    let mage_yaml = fs::read_to_string(&mage_path).expect("mage yaml");
+    let patched = mage_yaml.replace(
+        "amount: 4\n        status:",
+        "amount: 0\n        status:",
+    );
+    assert_ne!(patched, mage_yaml, "test mage reveal field patch should apply");
+    fs::write(&mage_path, patched).expect("patched mage yaml");
+    let content = GameContent::load_from_root(&root).expect("custom content");
+    (content, root)
+}
+
+fn advance_world(world: &mut game_sim::SimulationWorld, frames: usize) {
+    for _ in 0..frames {
+        let _ = world.tick(COMBAT_FRAME_MS);
+    }
+}
+
+#[test]
+fn allied_wards_extend_visibility_masks_and_enemy_snapshots() {
+    let (content, root) = content_with_map("ward-visibility", test_visibility_map());
+    let alice_id = manual_player_id(1);
+    let bob_id = manual_player_id(2);
+    let ranger_tree = SkillTree::new("Ranger").expect("ranger tree");
+    let map = content.map().clone();
+    let mut runtime = manual_runtime(
+        &content,
+        vec![
+            manual_seed(
+                &content,
+                1,
+                "Alice",
+                TeamSide::TeamA,
+                ranger_tree.clone(),
+                [None, None, None, Some(skill(ranger_tree.clone(), 4)), None],
+            ),
+            manual_seed(
+                &content,
+                2,
+                "Bob",
+                TeamSide::TeamB,
+                SkillTree::Mage,
+                [Some(skill(SkillTree::Mage, 1)), None, None, None, None],
+            ),
+        ],
+    );
+
+    let bob_state = runtime.world.player_state(bob_id).expect("bob state");
+    let (visible_before, _) =
+        ServerApp::build_visibility_masks(&mut runtime, alice_id, &map).expect("mask");
+    assert!(
+        !ServerApp::mask_contains_point(&map, &visible_before, bob_state.x, bob_state.y),
+        "bob should begin outside alice's base vision radius on the custom map"
+    );
+    assert!(
+        ServerApp::arena_players_snapshot(&runtime, alice_id, &map, &visible_before)
+            .iter()
+            .all(|player| player.player_id != bob_id),
+        "enemy players outside the visibility mask should not appear in snapshots"
+    );
+
+    runtime
+        .world
+        .update_aim(alice_id, 1, 0)
+        .expect("ward aim should update");
+    runtime
+        .world
+        .queue_cast(alice_id, 4)
+        .expect("ward should queue");
+    let _ = runtime.world.tick(COMBAT_FRAME_MS);
+    assert!(
+        runtime
+            .world
+            .deployables()
+            .into_iter()
+            .any(|deployable| {
+                deployable.owner == alice_id
+                    && deployable.kind == game_sim::ArenaDeployableKind::Ward
+            }),
+        "the ward cast should create a deployable vision source"
+    );
+
+    let (visible_after, _) =
+        ServerApp::build_visibility_masks(&mut runtime, alice_id, &map).expect("mask");
+    assert!(
+        ServerApp::mask_contains_point(&map, &visible_after, bob_state.x, bob_state.y),
+        "the allied ward should extend visibility to bob's location"
+    );
+    assert!(
+        ServerApp::arena_players_snapshot(&runtime, alice_id, &map, &visible_after)
+            .iter()
+            .any(|player| player.player_id == bob_id),
+        "once a ward sees bob, the enemy should appear in the arena player snapshot"
+    );
+
+    remove_dir_if_exists(&root);
+}
+
+#[test]
+fn stealthed_players_stay_hidden_until_a_reveal_effect_lands() {
+    let (content, root) =
+        content_with_reveal_only_field("stealth-reveal-visibility", test_visibility_map());
+    let alice_id = manual_player_id(1);
+    let bob_id = manual_player_id(2);
+    let map = content.map().clone();
+    let mut runtime = manual_runtime(
+        &content,
+        vec![
+            manual_seed(
+                &content,
+                1,
+                "Alice",
+                TeamSide::TeamA,
+                SkillTree::Rogue,
+                [None, None, None, Some(skill(SkillTree::Rogue, 4)), None],
+            ),
+            manual_seed(
+                &content,
+                2,
+                "Bob",
+                TeamSide::TeamB,
+                SkillTree::Mage,
+                [None, None, None, Some(skill(SkillTree::Mage, 4)), None],
+            ),
+        ],
+    );
+
+    runtime
+        .world
+        .queue_cast(alice_id, 4)
+        .expect("stealth aura should queue");
+    let _ = runtime.world.tick(COMBAT_FRAME_MS);
+    advance_world(&mut runtime.world, 10);
+    assert!(
+        runtime
+            .world
+            .statuses_for(alice_id)
+            .unwrap_or_default()
+            .iter()
+            .any(|status| status.kind == game_content::StatusKind::Stealth),
+        "the rogue should gain stealth after the aura pulses"
+    );
+
+    runtime
+        .world
+        .update_aim(bob_id, -1, 0)
+        .expect("bob aim");
+    runtime
+        .world
+        .submit_input(
+            bob_id,
+            game_sim::MovementIntent::new(-1, 0).expect("movement intent"),
+        )
+        .expect("bob movement");
+    advance_world(&mut runtime.world, 5);
+    runtime
+        .world
+        .submit_input(bob_id, game_sim::MovementIntent::zero())
+        .expect("stop movement");
+
+    let alice_state = runtime.world.player_state(alice_id).expect("alice state");
+    let (visible_while_stealthed, _) =
+        ServerApp::build_visibility_masks(&mut runtime, bob_id, &map).expect("mask");
+    assert!(
+        ServerApp::mask_contains_point(
+            &map,
+            &visible_while_stealthed,
+            alice_state.x,
+            alice_state.y,
+        ),
+        "bob should have ordinary line-of-sight to alice by now, so stealth is the reason she is hidden"
+    );
+    assert!(
+        ServerApp::arena_players_snapshot(&runtime, bob_id, &map, &visible_while_stealthed)
+            .iter()
+            .all(|player| player.player_id != alice_id),
+        "stealth should hide alice from enemy snapshots even when she is otherwise visible"
+    );
+
+    runtime
+        .world
+        .queue_cast(bob_id, 4)
+        .expect("reveal field should queue");
+    let _ = runtime.world.tick(COMBAT_FRAME_MS);
+    advance_world(&mut runtime.world, 10);
+    assert!(
+        runtime
+            .world
+            .statuses_for(alice_id)
+            .unwrap_or_default()
+            .iter()
+            .any(|status| status.kind == game_content::StatusKind::Reveal),
+        "the reveal field should apply reveal without relying on damage to break stealth in this test"
+    );
+
+    let (visible_after_reveal, _) =
+        ServerApp::build_visibility_masks(&mut runtime, bob_id, &map).expect("mask");
+    assert!(
+        ServerApp::arena_players_snapshot(&runtime, bob_id, &map, &visible_after_reveal)
+            .iter()
+            .any(|player| player.player_id == alice_id),
+        "revealed stealthed players should reappear in enemy arena snapshots"
+    );
+
+    remove_dir_if_exists(&root);
 }

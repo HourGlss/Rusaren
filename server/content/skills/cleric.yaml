@@ -27,73 +27,71 @@ skills:
         kind: heal
         amount: 18
   - tier: 2
-    id: cleric_sanctify
-    name: Sanctify
-    description: A targeted healing burst that hastes allies caught in the radius.
+    id: cleric_lantern_ward
+    name: Lantern Ward
+    description: Plants a fragile lantern that grants a fresh pocket of vision through darkness.
     behavior:
-      kind: burst
-      effect: burst
-      cooldown_ms: 1700
-      mana_cost: 24
-      range: 240
-      radius: 100
-      payload:
-        kind: heal
-        amount: 12
-        status:
-          kind: haste
-          duration_ms: 2200
-          magnitude: 1800
-          max_stacks: 1
+      kind: ward
+      effect: nova
+      cooldown_ms: 1600
+      mana_cost: 22
+      distance: 260
+      radius: 220
+      duration_ms: 9000
+      hit_points: 45
   - tier: 3
-    id: cleric_renewing_aura
-    name: Renewing Aura
-    description: A healing pulse that also applies a heal-over-time effect.
+    id: cleric_aegis_prayer
+    name: Aegis Prayer
+    description: A close-held prayer that wraps the cleric in stacked holy shielding.
     behavior:
       kind: nova
       effect: nova
-      cooldown_ms: 2200
-      cast_time_ms: 350
-      mana_cost: 30
-      radius: 150
+      cooldown_ms: 2000
+      cast_time_ms: 300
+      mana_cost: 28
+      radius: 12
       payload:
         kind: heal
-        amount: 6
+        amount: 0
         status:
-          kind: hot
-          duration_ms: 3000
-          tick_interval_ms: 1000
-          magnitude: 6
-          max_stacks: 1
+          kind: shield
+          duration_ms: 2500
+          magnitude: 16
+          max_stacks: 5
   - tier: 4
-    id: cleric_solar_lance
-    name: Solar Lance
-    description: A radiant projectile that gives the cleric a ranged damage option.
+    id: cleric_truth_lance
+    name: Truth Lance
+    description: A straight burst of revelation that strips concealment from anyone it touches.
     behavior:
-      kind: projectile
-      effect: skill_shot
-      cooldown_ms: 1800
-      mana_cost: 32
-      speed: 280
-      range: 1500
-      radius: 16
+      kind: beam
+      effect: beam
+      cooldown_ms: 2200
+      mana_cost: 30
+      range: 420
+      radius: 24
       payload:
         kind: damage
-        amount: 16
+        amount: 10
+        status:
+          kind: reveal
+          duration_ms: 1600
+          magnitude: 0
   - tier: 5
-    id: cleric_divine_intervention
-    name: Divine Intervention
-    description: A wide emergency heal across nearby players.
+    id: cleric_sanctuary_hymn
+    name: Sanctuary Hymn
+    description: A sustained hymn that heals nearby allies and leaves a lingering renewal on them.
     behavior:
-      kind: nova
+      kind: aura
       effect: nova
       cooldown_ms: 3200
       cast_time_ms: 700
       mana_cost: 45
-      radius: 180
+      radius: 145
+      duration_ms: 5000
+      tick_interval_ms: 1000
       payload:
         kind: heal
-        amount: 22
+        amount: 6
         status:
           kind: hot
           duration_ms: 3000

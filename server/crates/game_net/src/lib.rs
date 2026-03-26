@@ -11,10 +11,11 @@ mod input;
 mod packet_types;
 
 pub use control::{
-    ArenaDeltaSnapshot, ArenaEffectKind, ArenaEffectSnapshot, ArenaMatchPhase, ArenaObstacleKind,
-    ArenaObstacleSnapshot, ArenaPlayerSnapshot, ArenaProjectileSnapshot, ArenaStateSnapshot,
-    ArenaStatusKind, ArenaStatusSnapshot, ClientControlCommand, LobbyDirectoryEntry,
-    LobbySnapshotPhase, LobbySnapshotPlayer, ServerControlEvent, SkillCatalogEntry,
+    ArenaDeltaSnapshot, ArenaDeployableKind, ArenaDeployableSnapshot, ArenaEffectKind,
+    ArenaEffectSnapshot, ArenaMatchPhase, ArenaObstacleKind, ArenaObstacleSnapshot,
+    ArenaPlayerSnapshot, ArenaProjectileSnapshot, ArenaStateSnapshot, ArenaStatusKind,
+    ArenaStatusSnapshot, ClientControlCommand, LobbyDirectoryEntry, LobbySnapshotPhase,
+    LobbySnapshotPlayer, ServerControlEvent, SkillCatalogEntry,
 };
 pub use error::PacketError;
 pub use header::PacketHeader;

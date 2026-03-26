@@ -853,6 +853,33 @@ impl ProbeClientState {
                     max: i32::from(distance) + impact_radius + 24,
                 }
             }
+            SkillBehavior::Teleport { distance, .. } => AttackWindow {
+                min: (i32::from(distance) - 36).max(0),
+                ideal: i32::from(distance).saturating_sub(16),
+                max: i32::from(distance) + 24,
+            },
+            SkillBehavior::Passive { .. } => AttackWindow {
+                min: 0,
+                ideal: 0,
+                max: i32::from(u16::MAX),
+            },
+            SkillBehavior::Summon { distance, radius, .. }
+            | SkillBehavior::Ward {
+                distance, radius, ..
+            }
+            | SkillBehavior::Trap {
+                distance, radius, ..
+            }
+            | SkillBehavior::Barrier {
+                distance, radius, ..
+            }
+            | SkillBehavior::Aura {
+                distance, radius, ..
+            } => AttackWindow {
+                min: (i32::from(distance) - i32::from(radius) - 24).max(0),
+                ideal: i32::from(distance),
+                max: i32::from(distance) + i32::from(radius) + 24,
+            },
         }
     }
 
@@ -1008,6 +1035,19 @@ fn skill_role(behavior: SkillBehavior) -> SkillRole {
                 SkillRole::Support
             }
         }),
+        SkillBehavior::Teleport { .. } => SkillRole::Engage,
+        SkillBehavior::Passive { .. } | SkillBehavior::Ward { .. } | SkillBehavior::Barrier { .. } => {
+            SkillRole::Support
+        }
+        SkillBehavior::Summon { payload, .. }
+        | SkillBehavior::Trap { payload, .. }
+        | SkillBehavior::Aura { payload, .. } => {
+            if payload.kind == CombatValueKind::Damage {
+                SkillRole::Damage
+            } else {
+                SkillRole::Support
+            }
+        }
     }
 }
 

@@ -1,8 +1,9 @@
 use super::{
     point_distance_sq, point_distance_units, round_f32_to_i32, saturating_i16, segment_distance_sq,
     travel_distance_units, truncate_line_to_obstacles, ArenaEffect, ArenaEffectKind,
-    CombatValueKind, MovementIntent, PlayerId, ProjectileState, SimulationEvent, SimulationWorld,
-    StatusDefinition, StatusInstance, StatusKind, PLAYER_RADIUS_UNITS,
+    CombatValueKind, MovementIntent, PlayerId, ProjectileState, SimulationEvent,
+    SimulationWorld, StatusDefinition, StatusInstance, StatusKind, TargetEntity,
+    PLAYER_RADIUS_UNITS,
 };
 
 impl SimulationWorld {
@@ -10,8 +11,13 @@ impl SimulationWorld {
         radius.saturating_add(PLAYER_RADIUS_UNITS)
     }
 
+    fn deployable_overlap_radius(radius: u16, deployable_radius: u16) -> u16 {
+        radius.saturating_add(deployable_radius)
+    }
+
     pub(super) fn advance_projectiles(&mut self, delta_ms: u16, events: &mut Vec<SimulationEvent>) {
         let mut next_projectiles = Vec::new();
+        let combat_obstacles = self.combat_obstacles();
         let projectiles = std::mem::take(&mut self.projectiles);
         for projectile in projectiles {
             let step_distance = travel_distance_units(projectile.speed_units_per_second, delta_ms);
@@ -31,13 +37,14 @@ impl SimulationWorld {
             let clipped_end = truncate_line_to_obstacles(
                 (projectile.x, projectile.y),
                 desired_end,
-                &self.obstacles,
+                &combat_obstacles,
             );
-            let target = self.find_first_player_on_segment(
+            let target = self.find_first_target_on_segment(
                 projectile.owner,
                 (projectile.x, projectile.y),
                 clipped_end,
                 projectile.radius,
+                projectile.payload.kind == CombatValueKind::Damage,
             );
             if let Some(target) = target {
                 events.extend(self.apply_payload(
@@ -99,7 +106,7 @@ impl SimulationWorld {
         &mut self,
         source: PlayerId,
         slot: u8,
-        targets: &[PlayerId],
+        targets: &[TargetEntity],
         payload: game_content::EffectPayload,
     ) -> Vec<SimulationEvent> {
         if targets.is_empty() {
@@ -111,9 +118,44 @@ impl SimulationWorld {
             CombatValueKind::Heal => self.apply_healing_internal(source, targets, payload.amount),
         };
 
+        if let Some(silence_duration_ms) = payload.interrupt_silence_duration_ms {
+            for target in targets {
+                let TargetEntity::Player(target_player_id) = *target else {
+                    continue;
+                };
+                if self
+                    .players
+                    .get(&target_player_id)
+                    .is_some_and(|player| player.active_cast.is_some())
+                {
+                    if let Some(player) = self.players.get_mut(&target_player_id) {
+                        player.active_cast = None;
+                    }
+                    if let Some(event) = self.apply_status(
+                        source,
+                        target_player_id,
+                        slot,
+                        StatusDefinition {
+                            kind: StatusKind::Silence,
+                            duration_ms: silence_duration_ms,
+                            tick_interval_ms: None,
+                            magnitude: 0,
+                            max_stacks: 1,
+                            trigger_duration_ms: None,
+                        },
+                    ) {
+                        events.push(event);
+                    }
+                }
+            }
+        }
+
         if let Some(status) = payload.status {
             for target in targets {
-                if let Some(event) = self.apply_status(source, *target, slot, status) {
+                let TargetEntity::Player(target_player_id) = *target else {
+                    continue;
+                };
+                if let Some(event) = self.apply_status(source, target_player_id, slot, status) {
                     events.push(event);
                 }
             }
@@ -125,7 +167,7 @@ impl SimulationWorld {
     pub(super) fn apply_damage_internal(
         &mut self,
         attacker: PlayerId,
-        targets: &[PlayerId],
+        targets: &[TargetEntity],
         amount: u16,
     ) -> Vec<SimulationEvent> {
         if amount == 0 {
@@ -133,40 +175,111 @@ impl SimulationWorld {
         }
 
         let mut events = Vec::new();
+        let mut destroyed_deployables = Vec::new();
         for target in targets {
-            let Some(player) = self.players.get_mut(target) else {
-                continue;
-            };
-            if !player.alive {
-                continue;
-            }
+            match *target {
+                TargetEntity::Player(player_id) => {
+                    let Some(player) = self.players.get_mut(&player_id) else {
+                        continue;
+                    };
+                    if !player.alive {
+                        continue;
+                    }
 
-            let damage = amount.min(player.hit_points);
-            player.hit_points = player.hit_points.saturating_sub(damage);
-            let defeated = player.hit_points == 0;
-            if defeated {
-                player.alive = false;
-                player.moving = false;
-                player.movement_intent = MovementIntent::zero();
-                player.statuses.clear();
-            }
+                    player
+                        .statuses
+                        .retain(|status| status.kind != StatusKind::Sleep && status.kind != StatusKind::Stealth);
+                    let damage = self.consume_shields(player_id, amount);
+                    if damage == 0 {
+                        continue;
+                    }
+                    let Some(player) = self.players.get_mut(&player_id) else {
+                        continue;
+                    };
+                    let applied_damage = damage.min(player.hit_points);
+                    player.hit_points = player.hit_points.saturating_sub(applied_damage);
+                    let defeated = player.hit_points == 0;
+                    if defeated {
+                        player.alive = false;
+                        player.moving = false;
+                        player.movement_intent = MovementIntent::zero();
+                        player.active_cast = None;
+                        player.statuses.clear();
+                    }
 
-            events.push(SimulationEvent::DamageApplied {
-                attacker,
-                target: *target,
-                amount: damage,
-                remaining_hit_points: player.hit_points,
-                defeated,
-            });
+                    events.push(SimulationEvent::DamageApplied {
+                        attacker,
+                        target: player_id,
+                        amount: applied_damage,
+                        remaining_hit_points: player.hit_points,
+                        defeated,
+                    });
+                }
+                TargetEntity::Deployable(deployable_id) => {
+                    let Some(deployable) = self
+                        .deployables
+                        .iter_mut()
+                        .find(|deployable| deployable.id == deployable_id)
+                    else {
+                        continue;
+                    };
+                    let applied_damage = amount.min(deployable.hit_points);
+                    deployable.hit_points = deployable.hit_points.saturating_sub(applied_damage);
+                    let destroyed = deployable.hit_points == 0;
+                    events.push(SimulationEvent::DeployableDamaged {
+                        attacker,
+                        deployable_id,
+                        amount: applied_damage,
+                        remaining_hit_points: deployable.hit_points,
+                        destroyed,
+                    });
+                    if destroyed {
+                        destroyed_deployables.push(deployable_id);
+                    }
+                }
+            }
+        }
+
+        if !destroyed_deployables.is_empty() {
+            self.deployables
+                .retain(|deployable| !destroyed_deployables.contains(&deployable.id));
         }
 
         events
     }
 
+    fn consume_shields(&mut self, player_id: PlayerId, amount: u16) -> u16 {
+        let Some(player) = self.players.get_mut(&player_id) else {
+            return amount;
+        };
+        let mut remaining_damage = amount;
+        for shield in player
+            .statuses
+            .iter_mut()
+            .filter(|status| status.kind == StatusKind::Shield && status.shield_remaining > 0)
+        {
+            if remaining_damage == 0 {
+                break;
+            }
+            let absorbed = remaining_damage.min(shield.shield_remaining);
+            shield.shield_remaining = shield.shield_remaining.saturating_sub(absorbed);
+            remaining_damage = remaining_damage.saturating_sub(absorbed);
+            if shield.magnitude > 0 {
+                let stacks = u16::from(shield.stacks);
+                let consumed_stacks = shield.shield_remaining.div_ceil(shield.magnitude);
+                shield.stacks = u8::try_from(consumed_stacks.min(stacks)).unwrap_or(shield.stacks);
+            }
+        }
+        player
+            .statuses
+            .retain(|status| status.kind != StatusKind::Shield || status.shield_remaining > 0);
+        remaining_damage
+    }
+
     pub(super) fn apply_healing_internal(
         &mut self,
         source: PlayerId,
-        targets: &[PlayerId],
+        targets: &[TargetEntity],
         amount: u16,
     ) -> Vec<SimulationEvent> {
         if amount == 0 {
@@ -175,7 +288,10 @@ impl SimulationWorld {
 
         let mut events = Vec::new();
         for target in targets {
-            let Some(player) = self.players.get_mut(target) else {
+            let TargetEntity::Player(player_id) = *target else {
+                continue;
+            };
+            let Some(player) = self.players.get_mut(&player_id) else {
                 continue;
             };
             if !player.alive {
@@ -187,7 +303,7 @@ impl SimulationWorld {
             player.hit_points = player.hit_points.saturating_add(healed);
             events.push(SimulationEvent::HealingApplied {
                 source,
-                target: *target,
+                target: player_id,
                 amount: healed,
                 resulting_hit_points: player.hit_points,
             });
@@ -216,6 +332,10 @@ impl SimulationWorld {
             existing.tick_progress_ms = 0;
             existing.magnitude = definition.magnitude;
             existing.trigger_duration_ms = definition.trigger_duration_ms;
+            if definition.kind == StatusKind::Shield {
+                existing.shield_remaining =
+                    existing.shield_remaining.saturating_add(definition.magnitude);
+            }
             stacks_after = existing.stacks;
         } else {
             player.statuses.push(StatusInstance {
@@ -229,6 +349,11 @@ impl SimulationWorld {
                 magnitude: definition.magnitude,
                 max_stacks: definition.max_stacks,
                 trigger_duration_ms: definition.trigger_duration_ms,
+                shield_remaining: if definition.kind == StatusKind::Shield {
+                    definition.magnitude
+                } else {
+                    0
+                },
             });
         }
 
@@ -237,7 +362,7 @@ impl SimulationWorld {
             && definition.trigger_duration_ms.is_some()
         {
             let root_duration = definition.trigger_duration_ms.unwrap_or(0);
-            self.apply_status(
+            let _ = self.apply_status(
                 source,
                 target,
                 slot,
@@ -262,25 +387,139 @@ impl SimulationWorld {
         })
     }
 
+    pub(super) fn find_closest_target_near_point(
+        &self,
+        attacker: PlayerId,
+        point: (i16, i16),
+        radius: u16,
+        include_deployables: bool,
+    ) -> Option<TargetEntity> {
+        let mut candidates = Vec::new();
+        let effective_radius = i32::from(Self::player_overlap_radius(radius));
+        let max_distance_sq = effective_radius * effective_radius;
+        for (player_id, player) in &self.players {
+            if *player_id == attacker || !player.alive {
+                continue;
+            }
+            if !self.can_enemy_target_player(attacker, *player_id) {
+                continue;
+            }
+            let distance_sq = point_distance_sq(point, (player.x, player.y));
+            if distance_sq <= max_distance_sq {
+                candidates.push((TargetEntity::Player(*player_id), distance_sq));
+            }
+        }
+        if include_deployables {
+            for deployable in &self.deployables {
+                let effective_radius =
+                    i32::from(Self::deployable_overlap_radius(radius, deployable.radius));
+                let distance_sq = point_distance_sq(point, (deployable.x, deployable.y));
+                if distance_sq <= effective_radius * effective_radius {
+                    candidates.push((TargetEntity::Deployable(deployable.id), distance_sq));
+                }
+            }
+        }
+        candidates
+            .into_iter()
+            .min_by_key(|(_, distance_sq)| *distance_sq)
+            .map(|(target, _)| target)
+    }
+
+    pub(super) fn find_first_target_on_segment(
+        &self,
+        attacker: PlayerId,
+        start: (i16, i16),
+        end: (i16, i16),
+        radius: u16,
+        include_deployables: bool,
+    ) -> Option<TargetEntity> {
+        let mut candidates = Vec::new();
+        let threshold_sq = {
+            let overlap = Self::player_overlap_radius(radius);
+            f32::from(overlap) * f32::from(overlap)
+        };
+        for (player_id, player) in &self.players {
+            if *player_id == attacker || !player.alive {
+                continue;
+            }
+            if !self.can_enemy_target_player(attacker, *player_id) {
+                continue;
+            }
+            let point = (player.x, player.y);
+            let distance_sq = segment_distance_sq(start, end, point);
+            if distance_sq <= threshold_sq {
+                candidates.push((TargetEntity::Player(*player_id), point_distance_sq(start, point)));
+            }
+        }
+        if include_deployables {
+            for deployable in &self.deployables {
+                let overlap = Self::deployable_overlap_radius(radius, deployable.radius);
+                let distance_sq = segment_distance_sq(start, end, (deployable.x, deployable.y));
+                if distance_sq <= f32::from(overlap) * f32::from(overlap) {
+                    candidates.push((
+                        TargetEntity::Deployable(deployable.id),
+                        point_distance_sq(start, (deployable.x, deployable.y)),
+                    ));
+                }
+            }
+        }
+        candidates
+            .into_iter()
+            .min_by_key(|(_, distance_sq)| *distance_sq)
+            .map(|(target, _)| target)
+    }
+
+    pub(super) fn find_targets_in_radius(
+        &self,
+        center: (i16, i16),
+        radius: u16,
+        exclude: Option<PlayerId>,
+        include_deployables: bool,
+    ) -> Vec<TargetEntity> {
+        let mut targets = Vec::new();
+        let effective_radius = i32::from(Self::player_overlap_radius(radius));
+        let max_distance_sq = effective_radius * effective_radius;
+        for (player_id, player) in &self.players {
+            if Some(*player_id) == exclude || !player.alive {
+                continue;
+            }
+            if let Some(excluding_player) = exclude {
+                if !self.can_enemy_target_player(excluding_player, *player_id) {
+                    continue;
+                }
+            }
+            let distance_sq = point_distance_sq(center, (player.x, player.y));
+            if distance_sq <= max_distance_sq {
+                targets.push(TargetEntity::Player(*player_id));
+            }
+        }
+        if include_deployables {
+            for deployable in &self.deployables {
+                let effective_radius =
+                    i32::from(Self::deployable_overlap_radius(radius, deployable.radius));
+                let distance_sq = point_distance_sq(center, (deployable.x, deployable.y));
+                if distance_sq <= effective_radius * effective_radius {
+                    targets.push(TargetEntity::Deployable(deployable.id));
+                }
+            }
+        }
+        targets
+    }
+
+    #[cfg(test)]
     pub(super) fn find_closest_player_near_point(
         &self,
         attacker: PlayerId,
         point: (i16, i16),
         radius: u16,
     ) -> Option<PlayerId> {
-        let effective_radius = i32::from(Self::player_overlap_radius(radius));
-        let max_distance_sq = effective_radius * effective_radius;
-        self.players
-            .iter()
-            .filter(|(player_id, player)| **player_id != attacker && player.alive)
-            .filter_map(|(player_id, player)| {
-                let distance_sq = point_distance_sq(point, (player.x, player.y));
-                (distance_sq <= max_distance_sq).then_some((*player_id, distance_sq))
-            })
-            .min_by_key(|(_, distance_sq)| *distance_sq)
-            .map(|(player_id, _)| player_id)
+        match self.find_closest_target_near_point(attacker, point, radius, false) {
+            Some(TargetEntity::Player(player_id)) => Some(player_id),
+            _ => None,
+        }
     }
 
+    #[cfg(test)]
     pub(super) fn find_first_player_on_segment(
         &self,
         attacker: PlayerId,
@@ -288,35 +527,24 @@ impl SimulationWorld {
         end: (i16, i16),
         radius: u16,
     ) -> Option<PlayerId> {
-        let effective_radius = Self::player_overlap_radius(radius);
-        let threshold_sq = f32::from(effective_radius) * f32::from(effective_radius);
-        self.players
-            .iter()
-            .filter(|(player_id, player)| **player_id != attacker && player.alive)
-            .filter_map(|(player_id, player)| {
-                let point = (player.x, player.y);
-                let distance_sq = segment_distance_sq(start, end, point);
-                (distance_sq <= threshold_sq)
-                    .then_some((*player_id, point_distance_sq(start, point)))
-            })
-            .min_by_key(|(_, distance_sq)| *distance_sq)
-            .map(|(player_id, _)| player_id)
+        match self.find_first_target_on_segment(attacker, start, end, radius, false) {
+            Some(TargetEntity::Player(player_id)) => Some(player_id),
+            _ => None,
+        }
     }
 
+    #[cfg(test)]
     pub(super) fn find_players_in_radius(
         &self,
         center: (i16, i16),
         radius: u16,
         exclude: Option<PlayerId>,
     ) -> Vec<PlayerId> {
-        let effective_radius = i32::from(Self::player_overlap_radius(radius));
-        let max_distance_sq = effective_radius * effective_radius;
-        self.players
-            .iter()
-            .filter(|(player_id, player)| Some(**player_id) != exclude && player.alive)
-            .filter_map(|(player_id, player)| {
-                let distance_sq = point_distance_sq(center, (player.x, player.y));
-                (distance_sq <= max_distance_sq).then_some(*player_id)
+        self.find_targets_in_radius(center, radius, exclude, false)
+            .into_iter()
+            .filter_map(|target| match target {
+                TargetEntity::Player(player_id) => Some(player_id),
+                TargetEntity::Deployable(_) => None,
             })
             .collect()
     }

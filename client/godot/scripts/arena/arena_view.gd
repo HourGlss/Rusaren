@@ -13,6 +13,7 @@ const DEBUG_LINK_COLOR := Color(1.0, 0.95, 0.62, 0.9)
 const PLAYER_SHADOW_COLOR := Color(0.03, 0.05, 0.08, 0.26)
 const PROJECTILE_SHADOW_COLOR := Color(0.03, 0.05, 0.08, 0.18)
 const OBSTACLE_SHADOW_COLOR := Color(0.03, 0.04, 0.06, 0.16)
+const DEPLOYABLE_SHADOW_COLOR := Color(0.03, 0.05, 0.08, 0.22)
 
 var app_state: ClientState = null
 
@@ -68,6 +69,7 @@ func _draw() -> void:
 	_draw_obstacles(arena_rect)
 	_draw_visibility_overlay(arena_rect)
 	_draw_effects(arena_rect)
+	_draw_deployables(arena_rect)
 	_draw_projectiles(arena_rect)
 	_draw_players(arena_rect)
 	_draw_debug_overlay(arena_rect)
@@ -208,6 +210,66 @@ func _draw_projectiles(arena_rect: Rect2) -> void:
 		draw_circle(position, radius + 3.0, Color(0.08, 0.1, 0.12, 0.85))
 		draw_circle(position, radius, color)
 		draw_circle(position, maxf(radius * 0.42, 3.0), Color(1.0, 1.0, 1.0, 0.45))
+
+
+func _draw_deployables(arena_rect: Rect2) -> void:
+	var font := ThemeDB.fallback_font
+	for deployable in app_state.arena_deployables_list():
+		var position := _world_to_canvas(
+			arena_rect,
+			Vector2(float(deployable.get("x", 0)), float(deployable.get("y", 0)))
+		)
+		var radius := _world_radius_to_canvas(arena_rect, float(deployable.get("radius", 0)))
+		var team_color := _team_color(String(deployable.get("team", "")), true)
+		var kind_name := String(deployable.get("kind", ""))
+		draw_circle(
+			position + Vector2(0.0, radius * 0.76),
+			maxf(radius * 0.94, 5.0),
+			DEPLOYABLE_SHADOW_COLOR
+		)
+		match kind_name:
+			"Barrier":
+				var rect := Rect2(position - Vector2(radius, radius), Vector2(radius * 2.0, radius * 2.0))
+				draw_rect(rect, Color(team_color.r, team_color.g, team_color.b, 0.26))
+				draw_rect(rect.grow(-maxf(radius * 0.18, 3.0)), Color(0.18, 0.2, 0.24, 0.9))
+				draw_rect(rect, team_color, false, 2.0)
+			"Ward":
+				draw_circle(position, radius + 5.0, Color(team_color.r, team_color.g, team_color.b, 0.16))
+				draw_circle(position, radius, Color(0.14, 0.16, 0.2, 0.92))
+				draw_arc(position, radius, 0.0, TAU, 24, team_color, 2.0)
+				draw_circle(position, maxf(radius * 0.34, 3.0), team_color)
+			"Trap":
+				draw_circle(position, radius, Color(0.18, 0.13, 0.14, 0.96))
+				draw_arc(position, radius, 0.0, TAU, 20, team_color, 2.0)
+				draw_line(position + Vector2(-radius * 0.6, -radius * 0.6), position + Vector2(radius * 0.6, radius * 0.6), team_color, 2.0)
+				draw_line(position + Vector2(-radius * 0.6, radius * 0.6), position + Vector2(radius * 0.6, -radius * 0.6), team_color, 2.0)
+			"Aura":
+				draw_circle(position, radius, Color(team_color.r, team_color.g, team_color.b, 0.12))
+				draw_arc(position, radius, 0.0, TAU, 32, team_color, 2.0)
+				draw_circle(position, maxf(radius * 0.32, 4.0), Color(team_color.r, team_color.g, team_color.b, 0.75))
+			_:
+				draw_circle(position, radius + 5.0, Color(team_color.r, team_color.g, team_color.b, 0.14))
+				draw_circle(position, radius, Color(0.18, 0.2, 0.24, 0.94))
+				draw_circle(position, maxf(radius * 0.48, 4.0), team_color)
+
+		var hp_width := radius * 1.8
+		var hp_origin := position + Vector2(-hp_width * 0.5, radius + 8.0)
+		var hp_ratio := 0.0
+		var max_hp := maxf(1.0, float(deployable.get("max_hit_points", 1)))
+		hp_ratio = clampf(float(deployable.get("hit_points", 0)) / max_hp, 0.0, 1.0)
+		draw_rect(Rect2(hp_origin, Vector2(hp_width, 4.0)), Color8(65, 34, 34))
+		draw_rect(Rect2(hp_origin, Vector2(hp_width * hp_ratio, 4.0)), Color8(86, 198, 125))
+
+		if font != null:
+			draw_string(
+				font,
+				position + Vector2(-radius * 0.9, -radius - 8.0),
+				kind_name,
+				HORIZONTAL_ALIGNMENT_LEFT,
+				-1.0,
+				12,
+				Color8(34, 38, 46)
+			)
 
 
 func _draw_players(arena_rect: Rect2) -> void:

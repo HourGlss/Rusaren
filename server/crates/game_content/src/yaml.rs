@@ -97,6 +97,7 @@ pub(super) struct EffectPayloadYaml {
     pub(super) kind: String,
     pub(super) amount: Option<u16>,
     pub(super) status: Option<StatusYaml>,
+    pub(super) interrupt_silence_duration_ms: Option<u16>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -123,5 +124,12 @@ pub(super) struct SkillBehaviorYaml {
     pub(super) distance: Option<u16>,
     pub(super) speed: Option<u16>,
     pub(super) impact_radius: Option<u16>,
+    pub(super) duration_ms: Option<u16>,
+    pub(super) hit_points: Option<u16>,
+    pub(super) tick_interval_ms: Option<u16>,
+    pub(super) player_speed_bps: Option<u16>,
+    pub(super) projectile_speed_bps: Option<u16>,
+    pub(super) cooldown_bps: Option<u16>,
+    pub(super) cast_time_bps: Option<u16>,
     pub(super) payload: Option<EffectPayloadYaml>,
 }

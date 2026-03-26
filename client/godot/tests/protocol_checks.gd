@@ -180,6 +180,7 @@ func _assert_decode_arena_state_snapshot() -> bool:
 	_push_i16(payload, -150)
 	_push_u16(payload, 70)
 	_push_u16(payload, 70)
+	_push_u16(payload, 0)
 	_push_u16(payload, 1)
 	_push_u32(payload, 11)
 	_push_string(payload, "Alice")
@@ -224,6 +225,7 @@ func _assert_decode_arena_state_snapshot() -> bool:
 	var snapshot: Dictionary = event.get("snapshot", {})
 	var players: Array = snapshot.get("players", [])
 	var projectiles: Array = snapshot.get("projectiles", [])
+	var deployables: Array = snapshot.get("deployables", [])
 	if String(event.get("type", "")) != "ArenaStateSnapshot":
 		return _fail("arena state snapshot should use the ArenaStateSnapshot event type")
 	if players.size() != 1:
@@ -235,6 +237,8 @@ func _assert_decode_arena_state_snapshot() -> bool:
 	var visible_tiles: PackedByteArray = snapshot.get("visible_tiles", PackedByteArray())
 	if visible_tiles.size() != 2 or int(visible_tiles[0]) != 0x3F:
 		return _fail("arena state snapshot should decode visible tile masks")
+	if deployables.size() != 0:
+		return _fail("arena state snapshot should decode deployable arrays")
 	if int(players[0].get("unlocked_skill_slots", 0)) != 3:
 		return _fail("arena state snapshot should preserve unlocked combat slots")
 	if int(players[0].get("mana", 0)) != 72:
@@ -270,6 +274,7 @@ func _assert_decode_arena_delta_snapshot() -> bool:
 	_push_i16(payload, -150)
 	_push_u16(payload, 92)
 	_push_u16(payload, 92)
+	_push_u16(payload, 0)
 	_push_u16(payload, 1)
 	_push_u32(payload, 11)
 	_push_string(payload, "Alice")

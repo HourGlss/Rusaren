@@ -27,32 +27,42 @@ skills:
         kind: damage
         amount: 15
   - tier: 2
-    id: druid_feral_step
-    name: Feral Step
-    description: A short pounce to cross cover and pressure vulnerable targets.
+    id: druid_thornbark_treant
+    name: Thornbark Treant
+    description: Calls up a rooted treant that swats at nearby enemies and snares anything it catches.
     behavior:
-      kind: dash
-      effect: dash_trail
-      cooldown_ms: 1500
-      mana_cost: 20
-      distance: 210
-      impact_radius: 36
+      kind: summon
+      effect: skill_shot
+      cooldown_ms: 1800
+      mana_cost: 24
+      distance: 220
+      radius: 32
+      duration_ms: 6500
+      hit_points: 70
+      range: 260
+      tick_interval_ms: 1000
       payload:
         kind: damage
-        amount: 8
+        amount: 10
+        status:
+          kind: root
+          duration_ms: 700
+          magnitude: 0
   - tier: 3
-    id: druid_bloom
-    name: Bloom
-    description: A healing pulse that leaves a lingering regeneration effect.
+    id: druid_blooming_ring
+    name: Blooming Ring
+    description: A living circle that restores nearby allies and leaves them slowly mending afterward.
     behavior:
-      kind: nova
+      kind: aura
       effect: nova
       cooldown_ms: 2200
       mana_cost: 30
-      radius: 145
+      radius: 135
+      duration_ms: 4500
+      tick_interval_ms: 1000
       payload:
         kind: heal
-        amount: 8
+        amount: 6
         status:
           kind: hot
           duration_ms: 3000
@@ -78,22 +88,21 @@ skills:
           duration_ms: 900
           magnitude: 0
   - tier: 5
-    id: druid_moonfire_lance
-    name: Moonfire Lance
-    description: A lunar beam that chills anything it burns through.
+    id: druid_dreamseed
+    name: Dreamseed
+    description: A hypnotic bloom that puts clustered enemies to sleep if they linger in its blast.
     behavior:
-      kind: beam
-      effect: beam
-      cooldown_ms: 3000
+      kind: burst
+      effect: burst
+      cooldown_ms: 3200
+      cast_time_ms: 550
       mana_cost: 42
-      range: 700
-      radius: 24
+      range: 220
+      radius: 110
       payload:
         kind: damage
-        amount: 24
+        amount: 8
         status:
-          kind: chill
-          duration_ms: 1600
-          magnitude: 800
-          max_stacks: 3
-          trigger_duration_ms: 600
+          kind: sleep
+          duration_ms: 1300
+          magnitude: 0

@@ -3,14 +3,15 @@ use game_domain::{LobbyId, PlayerRecord};
 use crate::PacketError;
 
 use super::codec::{
-    encode_arena_effect_kind, encode_arena_match_phase, encode_arena_obstacle_kind,
-    encode_arena_status_kind, encode_bytes, encode_lobby_snapshot_phase, encode_optional_team,
-    encode_optional_u8, encode_ready_state, encode_team, push_len_prefixed_string,
+    encode_arena_deployable_kind, encode_arena_effect_kind, encode_arena_match_phase,
+    encode_arena_obstacle_kind, encode_arena_status_kind, encode_bytes,
+    encode_lobby_snapshot_phase, encode_optional_team, encode_optional_u8, encode_ready_state,
+    encode_team, push_len_prefixed_string,
 };
 use super::server_types::{
-    ArenaDeltaSnapshot, ArenaEffectSnapshot, ArenaObstacleSnapshot, ArenaPlayerSnapshot,
-    ArenaProjectileSnapshot, ArenaStateSnapshot, LobbyDirectoryEntry, LobbySnapshotPhase,
-    LobbySnapshotPlayer, SkillCatalogEntry,
+    ArenaDeltaSnapshot, ArenaDeployableSnapshot, ArenaEffectSnapshot, ArenaObstacleSnapshot,
+    ArenaPlayerSnapshot, ArenaProjectileSnapshot, ArenaStateSnapshot, LobbyDirectoryEntry,
+    LobbySnapshotPhase, LobbySnapshotPlayer, SkillCatalogEntry,
 };
 use super::{MAX_SKILL_ID_BYTES, MAX_SKILL_NAME_BYTES, MAX_SKILL_TREE_NAME_BYTES};
 
@@ -125,6 +126,7 @@ pub(super) fn encode_arena_state_snapshot(
         payload.extend_from_slice(&obstacle.half_height.to_le_bytes());
     }
 
+    encode_arena_deployables(payload, &snapshot.deployables)?;
     encode_arena_players(payload, &snapshot.players)?;
     encode_arena_projectiles(payload, &snapshot.projectiles)?;
 
@@ -141,6 +143,7 @@ pub(super) fn encode_arena_delta_snapshot(
     encode_bytes(payload, "visible_tiles", &snapshot.visible_tiles)?;
     encode_bytes(payload, "explored_tiles", &snapshot.explored_tiles)?;
     encode_arena_obstacles(payload, &snapshot.obstacles)?;
+    encode_arena_deployables(payload, &snapshot.deployables)?;
     encode_arena_players(payload, &snapshot.players)?;
     encode_arena_projectiles(payload, &snapshot.projectiles)?;
     Ok(())
@@ -177,6 +180,31 @@ pub(super) fn encode_arena_players(
     payload.extend_from_slice(&player_count.to_le_bytes());
     for player in players {
         encode_arena_player(payload, player)?;
+    }
+    Ok(())
+}
+
+pub(super) fn encode_arena_deployables(
+    payload: &mut Vec<u8>,
+    deployables: &[ArenaDeployableSnapshot],
+) -> Result<(), PacketError> {
+    let deployable_count =
+        u16::try_from(deployables.len()).map_err(|_| PacketError::PayloadTooLarge {
+            actual: deployables.len(),
+            maximum: usize::from(u16::MAX),
+        })?;
+    payload.extend_from_slice(&deployable_count.to_le_bytes());
+    for deployable in deployables {
+        payload.extend_from_slice(&deployable.id.to_le_bytes());
+        payload.extend_from_slice(&deployable.owner.get().to_le_bytes());
+        payload.push(encode_team(deployable.team));
+        payload.push(encode_arena_deployable_kind(deployable.kind));
+        payload.extend_from_slice(&deployable.x.to_le_bytes());
+        payload.extend_from_slice(&deployable.y.to_le_bytes());
+        payload.extend_from_slice(&deployable.radius.to_le_bytes());
+        payload.extend_from_slice(&deployable.hit_points.to_le_bytes());
+        payload.extend_from_slice(&deployable.max_hit_points.to_le_bytes());
+        payload.extend_from_slice(&deployable.remaining_ms.to_le_bytes());
     }
     Ok(())
 }

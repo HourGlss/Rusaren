@@ -50,6 +50,7 @@ var arena_width := 0
 var arena_height := 0
 var arena_tile_units := 0
 var arena_obstacles: Array[Dictionary] = []
+var arena_deployables: Array[Dictionary] = []
 var arena_players := {}
 var render_players := {}
 var arena_projectiles: Array[Dictionary] = []
@@ -324,6 +325,9 @@ func apply_server_event(event: Dictionary) -> void:
 			arena_obstacles.clear()
 			for obstacle_data in snapshot.get("obstacles", []):
 				arena_obstacles.append((obstacle_data as Dictionary).duplicate(true))
+			arena_deployables.clear()
+			for deployable_data in snapshot.get("deployables", []):
+				arena_deployables.append((deployable_data as Dictionary).duplicate(true))
 			_replace_arena_players(snapshot.get("players", []))
 			_replace_arena_projectiles(snapshot.get("projectiles", []))
 		"ArenaDeltaSnapshot":
@@ -335,6 +339,9 @@ func apply_server_event(event: Dictionary) -> void:
 			arena_obstacles.clear()
 			for obstacle_delta in delta_snapshot.get("obstacles", []):
 				arena_obstacles.append((obstacle_delta as Dictionary).duplicate(true))
+			arena_deployables.clear()
+			for deployable_delta in delta_snapshot.get("deployables", []):
+				arena_deployables.append((deployable_delta as Dictionary).duplicate(true))
 			_replace_arena_players(delta_snapshot.get("players", []))
 			_replace_arena_projectiles(delta_snapshot.get("projectiles", []))
 		"ArenaEffectBatch":
@@ -599,6 +606,13 @@ func arena_projectiles_list() -> Array[Dictionary]:
 	for projectile in render_projectiles:
 		projectiles.append((projectile as Dictionary).duplicate(true))
 	return projectiles
+
+
+func arena_deployables_list() -> Array[Dictionary]:
+	var deployables: Array[Dictionary] = []
+	for deployable in arena_deployables:
+		deployables.append((deployable as Dictionary).duplicate(true))
+	return deployables
 
 
 func authoritative_arena_projectiles_list() -> Array[Dictionary]:
@@ -917,6 +931,7 @@ func _clear_arena_state() -> void:
 	arena_height = 0
 	arena_tile_units = 0
 	arena_obstacles.clear()
+	arena_deployables.clear()
 	arena_players.clear()
 	render_players.clear()
 	debug_motion_vectors.clear()

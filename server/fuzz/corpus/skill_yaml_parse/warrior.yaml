@@ -14,76 +14,72 @@ skills:
   - tier: 1
     id: warrior_sweeping_slash
     name: Sweeping Slash
-    description: A short beam cleave straight through the front lane.
+    description: A short beam cleave that dominates the lane directly in front of the warrior.
     behavior:
       kind: beam
       effect: beam
       cooldown_ms: 1100
       mana_cost: 12
-      range: 160
+      range: 170
       radius: 40
       payload:
         kind: damage
-        amount: 22
+        amount: 20
   - tier: 2
-    id: warrior_shoulder_bash
-    name: Shoulder Bash
-    description: A forward lunge that stuns players clipped at the destination.
+    id: warrior_shield_wall
+    name: Shield Wall
+    description: Drops a temporary wall that blocks movement and projectiles in a choke point.
     behavior:
-      kind: dash
-      effect: dash_trail
-      cooldown_ms: 1800
+      kind: barrier
+      effect: burst
+      cooldown_ms: 1850
       mana_cost: 20
-      distance: 180
-      impact_radius: 44
-      payload:
-        kind: damage
-        amount: 12
-        status:
-          kind: stun
-          duration_ms: 700
-          magnitude: 0
+      distance: 130
+      radius: 48
+      duration_ms: 2200
+      hit_points: 80
   - tier: 3
-    id: warrior_chain_hook
-    name: Chain Hook
-    description: A long direct strike that punishes targets peeking around pillars.
-    behavior:
-      kind: beam
-      effect: skill_shot
-      cooldown_ms: 1700
-      cast_time_ms: 250
-      mana_cost: 24
-      range: 320
-      radius: 28
-      payload:
-        kind: damage
-        amount: 18
-  - tier: 4
-    id: warrior_whirlwind
-    name: Whirlwind
-    description: A spinning cleave around the warrior.
+    id: warrior_terror_roar
+    name: Terror Roar
+    description: A brutal shout that panics nearby enemies and sends them scrambling backward.
     behavior:
       kind: nova
       effect: nova
       cooldown_ms: 2200
       cast_time_ms: 350
-      mana_cost: 30
+      mana_cost: 28
       radius: 150
       payload:
         kind: damage
-        amount: 16
-  - tier: 5
-    id: warrior_earthshatter
-    name: Earthshatter
-    description: A crushing lane attack that reaches beyond normal melee range.
+        amount: 10
+        status:
+          kind: fear
+          duration_ms: 900
+          magnitude: 0
+  - tier: 4
+    id: warrior_spellbreaker_spear
+    name: Spellbreaker Spear
+    description: A disciplined spear throw that punishes exposed casters and locks them out if it lands mid-cast.
     behavior:
-      kind: beam
-      effect: beam
-      cooldown_ms: 3200
-      cast_time_ms: 600
-      mana_cost: 42
-      range: 260
-      radius: 54
+      kind: projectile
+      effect: skill_shot
+      cooldown_ms: 2000
+      cast_time_ms: 200
+      mana_cost: 26
+      speed: 300
+      range: 920
+      radius: 18
       payload:
         kind: damage
-        amount: 30
+        amount: 12
+        interrupt_silence_duration_ms: 1200
+  - tier: 5
+    id: warrior_battle_rhythm
+    name: Battle Rhythm
+    description: A passive discipline that tightens every motion and shortens recovery windows.
+    behavior:
+      kind: passive
+      effect: nova
+      player_speed_bps: 600
+      cooldown_bps: 1200
+      cast_time_bps: 1500

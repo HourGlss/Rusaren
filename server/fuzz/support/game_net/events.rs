@@ -268,6 +268,7 @@ impl FuzzArenaStateSnapshot {
                 .into_iter()
                 .map(FuzzArenaObstacleSnapshot::into_real)
                 .collect(),
+            deployables: vec![],
             players: take_vec(self.players, MAX_ARENA_PLAYERS)
                 .into_iter()
                 .map(FuzzArenaPlayerSnapshot::into_real)
@@ -304,6 +305,7 @@ impl FuzzArenaDeltaSnapshot {
                 .into_iter()
                 .map(FuzzArenaObstacleSnapshot::into_real)
                 .collect(),
+            deployables: vec![],
             players: take_vec(self.players, MAX_ARENA_PLAYERS)
                 .into_iter()
                 .map(FuzzArenaPlayerSnapshot::into_real)

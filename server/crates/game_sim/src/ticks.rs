@@ -1,6 +1,7 @@
 use super::{
-    adjusted_move_speed, movement_delta, resolve_movement, total_move_modifier_bps, MovementIntent,
-    SimulationEvent, SimulationWorld, StatusKind, PLAYER_MANA_REGEN_PER_SECOND,
+    adjusted_move_speed, movement_delta, resolve_movement, ArenaEffect, ArenaEffectKind,
+    CombatValueKind, DeployableBehavior, MovementIntent, PlayerId, SimulationEvent,
+    SimulationWorld, StatusKind, TargetEntity, PLAYER_MANA_REGEN_PER_SECOND,
 };
 
 impl SimulationWorld {
@@ -75,16 +76,29 @@ impl SimulationWorld {
             for (source, kind, amount) in pending_effects {
                 match kind {
                     StatusKind::Poison => {
-                        events.extend(self.apply_damage_internal(source, &[player_id], amount));
+                        events.extend(self.apply_damage_internal(
+                            source,
+                            &[TargetEntity::Player(player_id)],
+                            amount,
+                        ));
                     }
                     StatusKind::Hot => {
-                        events.extend(self.apply_healing_internal(source, &[player_id], amount));
+                        events.extend(self.apply_healing_internal(
+                            source,
+                            &[TargetEntity::Player(player_id)],
+                            amount,
+                        ));
                     }
                     StatusKind::Chill
                     | StatusKind::Root
                     | StatusKind::Haste
                     | StatusKind::Silence
-                    | StatusKind::Stun => {}
+                    | StatusKind::Stun
+                    | StatusKind::Sleep
+                    | StatusKind::Shield
+                    | StatusKind::Stealth
+                    | StatusKind::Reveal
+                    | StatusKind::Fear => {}
                 }
             }
         }
@@ -93,46 +107,77 @@ impl SimulationWorld {
     pub(super) fn move_players(&mut self, delta_ms: u16, events: &mut Vec<SimulationEvent>) {
         let arena_width_units = self.arena_width_units;
         let arena_height_units = self.arena_height_units;
-        let obstacles = self.obstacles.clone();
-
-        for (player_id, player) in &mut self.players {
-            if !player.alive {
+        let obstacles = self.combat_obstacles();
+        let player_ids = self.players.keys().copied().collect::<Vec<_>>();
+        for player_id in player_ids {
+            let Some(player_snapshot) = self.players.get(&player_id) else {
+                continue;
+            };
+            if !player_snapshot.alive {
                 continue;
             }
 
-            let movement_blocked = player
+            let movement_blocked = player_snapshot.statuses.iter().any(|status| {
+                matches!(
+                    status.kind,
+                    StatusKind::Root | StatusKind::Stun | StatusKind::Sleep
+                )
+            });
+            let feared_source_position = player_snapshot
                 .statuses
                 .iter()
-                .any(|status| matches!(status.kind, StatusKind::Root | StatusKind::Stun));
+                .find(|status| status.kind == StatusKind::Fear)
+                .and_then(|status| {
+                    self.players
+                        .get(&status.source)
+                        .map(|source_player| (source_player.x, source_player.y))
+                });
+            let speed_modifier_bps =
+                self.effective_move_modifier_bps(player_id, &player_snapshot.statuses);
+            let origin_x = player_snapshot.x;
+            let origin_y = player_snapshot.y;
+            let had_active_cast = player_snapshot.active_cast.is_some();
+            let base_intent = player_snapshot.movement_intent;
+
             let movement = if movement_blocked {
                 MovementIntent::zero()
+            } else if let Some((source_x, source_y)) = feared_source_position {
+                let away_x = (i32::from(origin_x) - i32::from(source_x)).signum();
+                let away_y = (i32::from(origin_y) - i32::from(source_y)).signum();
+                MovementIntent::new(
+                    i8::try_from(away_x).unwrap_or(0),
+                    i8::try_from(away_y).unwrap_or(0),
+                )
+                .unwrap_or(MovementIntent::zero())
             } else {
-                player.movement_intent
+                base_intent
             };
-            if player.active_cast.is_some() {
-                if movement == MovementIntent::zero() {
-                    player.moving = false;
+
+            if let Some(player) = self.players.get_mut(&player_id) {
+                if had_active_cast {
+                    if movement == MovementIntent::zero() {
+                        player.moving = false;
+                        continue;
+                    }
+                    player.active_cast = None;
+                }
+                player.moving = movement != MovementIntent::zero();
+                if !player.moving {
                     continue;
                 }
-                player.active_cast = None;
-            }
-            player.moving = movement != MovementIntent::zero();
-            if !player.moving {
-                continue;
             }
 
-            let speed_modifier_bps = total_move_modifier_bps(&player.statuses);
             let speed = adjusted_move_speed(delta_ms, speed_modifier_bps);
             if speed == 0 {
                 continue;
             }
 
             let (delta_x, delta_y) = movement_delta(movement, speed);
-            let next_x = i32::from(player.x) + delta_x;
-            let next_y = i32::from(player.y) + delta_y;
+            let next_x = i32::from(origin_x) + delta_x;
+            let next_y = i32::from(origin_y) + delta_y;
             let (resolved_x, resolved_y) = resolve_movement(
-                player.x,
-                player.y,
+                origin_x,
+                origin_y,
                 next_x,
                 next_y,
                 arena_width_units,
@@ -140,15 +185,196 @@ impl SimulationWorld {
                 &obstacles,
             );
 
-            if resolved_x != player.x || resolved_y != player.y {
-                player.x = resolved_x;
-                player.y = resolved_y;
-                events.push(SimulationEvent::PlayerMoved {
-                    player_id: *player_id,
-                    x: player.x,
-                    y: player.y,
-                });
+            if let Some(player) = self.players.get_mut(&player_id) {
+                if resolved_x != origin_x || resolved_y != origin_y {
+                    player.x = resolved_x;
+                    player.y = resolved_y;
+                    events.push(SimulationEvent::PlayerMoved {
+                        player_id,
+                        x: player.x,
+                        y: player.y,
+                    });
+                }
             }
         }
+    }
+
+    #[allow(clippy::too_many_lines)]
+    pub(super) fn advance_deployables(&mut self, delta_ms: u16, events: &mut Vec<SimulationEvent>) {
+        let mut expired = Vec::new();
+        let deployable_ids = self
+            .deployables
+            .iter()
+            .map(|deployable| deployable.id)
+            .collect::<Vec<_>>();
+        for deployable_id in deployable_ids {
+            let Some(index) = self
+                .deployables
+                .iter()
+                .position(|deployable| deployable.id == deployable_id)
+            else {
+                continue;
+            };
+            let mut deployable = self.deployables[index].clone();
+            deployable.remaining_ms = deployable.remaining_ms.saturating_sub(delta_ms);
+            if deployable.remaining_ms == 0 || deployable.hit_points == 0 {
+                expired.push(deployable_id);
+                continue;
+            }
+
+            match &mut deployable.behavior {
+                DeployableBehavior::Summon {
+                    range,
+                    tick_interval_ms,
+                    tick_progress_ms,
+                    effect_kind,
+                    payload,
+                } => {
+                    *tick_progress_ms = tick_progress_ms.saturating_add(delta_ms);
+                    while *tick_progress_ms >= *tick_interval_ms {
+                        *tick_progress_ms = tick_progress_ms.saturating_sub(*tick_interval_ms);
+                        if let Some(target) = self.find_closest_target_near_point(
+                            deployable.owner,
+                            (deployable.x, deployable.y),
+                            *range,
+                            payload.kind == CombatValueKind::Damage,
+                        ) {
+                            let (target_x, target_y) = self.target_position(target);
+                            events.push(SimulationEvent::EffectSpawned {
+                                effect: ArenaEffect {
+                                    kind: *effect_kind,
+                                    owner: deployable.owner,
+                                    slot: 0,
+                                    x: deployable.x,
+                                    y: deployable.y,
+                                    target_x,
+                                    target_y,
+                                    radius: deployable.radius,
+                                },
+                            });
+                            events.extend(self.apply_payload(deployable.owner, 0, &[target], *payload));
+                        }
+                    }
+                }
+                DeployableBehavior::Ward | DeployableBehavior::Barrier => {}
+                DeployableBehavior::Trap { payload } => {
+                    if let Some(target) = self.find_enemy_player_near_point(
+                        deployable.owner,
+                        (deployable.x, deployable.y),
+                        deployable.radius,
+                    ) {
+                        let (target_x, target_y) = self.target_position(TargetEntity::Player(target));
+                        events.push(SimulationEvent::EffectSpawned {
+                            effect: ArenaEffect {
+                                kind: ArenaEffectKind::Burst,
+                                owner: deployable.owner,
+                                slot: 0,
+                                x: deployable.x,
+                                y: deployable.y,
+                                target_x,
+                                target_y,
+                                radius: deployable.radius,
+                            },
+                        });
+                        events.extend(self.apply_payload(
+                            deployable.owner,
+                            0,
+                            &[TargetEntity::Player(target)],
+                            *payload,
+                        ));
+                        expired.push(deployable_id);
+                    }
+                }
+                DeployableBehavior::Aura {
+                    tick_interval_ms,
+                    tick_progress_ms,
+                    effect_kind,
+                    payload,
+                    anchor_player,
+                } => {
+                    if let Some(anchor_player_id) = *anchor_player {
+                        let Some(anchor_state) = self.player_state(anchor_player_id) else {
+                            expired.push(deployable_id);
+                            continue;
+                        };
+                        if !anchor_state.alive {
+                            expired.push(deployable_id);
+                            continue;
+                        }
+                        deployable.x = anchor_state.x;
+                        deployable.y = anchor_state.y;
+                    }
+                    *tick_progress_ms = tick_progress_ms.saturating_add(delta_ms);
+                    while *tick_progress_ms >= *tick_interval_ms {
+                        *tick_progress_ms = tick_progress_ms.saturating_sub(*tick_interval_ms);
+                        events.push(SimulationEvent::EffectSpawned {
+                            effect: ArenaEffect {
+                                kind: *effect_kind,
+                                owner: deployable.owner,
+                                slot: 0,
+                                x: deployable.x,
+                                y: deployable.y,
+                                target_x: deployable.x,
+                                target_y: deployable.y,
+                                radius: deployable.radius,
+                            },
+                        });
+                        let targets = self.find_targets_in_radius(
+                            (deployable.x, deployable.y),
+                            deployable.radius,
+                            None,
+                            payload.kind == CombatValueKind::Damage,
+                        );
+                        events.extend(self.apply_payload(deployable.owner, 0, &targets, *payload));
+                    }
+                }
+            }
+
+            if let Some(state) = self
+                .deployables
+                .iter_mut()
+                .find(|candidate| candidate.id == deployable.id)
+            {
+                *state = deployable;
+            }
+        }
+
+        if !expired.is_empty() {
+            self.deployables
+                .retain(|deployable| !expired.contains(&deployable.id));
+        }
+    }
+
+    fn target_position(&self, target: TargetEntity) -> (i16, i16) {
+        match target {
+            TargetEntity::Player(player_id) => self
+                .players
+                .get(&player_id)
+                .map_or((0, 0), |player| (player.x, player.y)),
+            TargetEntity::Deployable(deployable_id) => self
+                .deployables
+                .iter()
+                .find(|deployable| deployable.id == deployable_id)
+                .map_or((0, 0), |deployable| (deployable.x, deployable.y)),
+        }
+    }
+
+    fn find_enemy_player_near_point(
+        &self,
+        attacker: PlayerId,
+        point: (i16, i16),
+        radius: u16,
+    ) -> Option<PlayerId> {
+        self.players
+            .iter()
+            .filter(|(player_id, player)| **player_id != attacker && player.alive)
+            .filter(|(player_id, _)| self.can_enemy_target_player(attacker, **player_id))
+            .filter_map(|(player_id, player)| {
+                let overlap_radius = i32::from(radius.saturating_add(super::PLAYER_RADIUS_UNITS));
+                let distance_sq = super::point_distance_sq(point, (player.x, player.y));
+                (distance_sq <= overlap_radius * overlap_radius).then_some((*player_id, distance_sq))
+            })
+            .min_by_key(|(_, distance_sq)| *distance_sq)
+            .map(|(player_id, _)| player_id)
     }
 }

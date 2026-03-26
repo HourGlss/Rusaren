@@ -16,6 +16,13 @@ behaviors:
         distance: forbidden
         speed: required
         impact_radius: forbidden
+        duration_ms: forbidden
+        hit_points: forbidden
+        tick_interval_ms: forbidden
+        player_speed_bps: forbidden
+        projectile_speed_bps: forbidden
+        cooldown_bps: forbidden
+        cast_time_bps: forbidden
   - id: beam
     label: Beam
     implemented: true
@@ -33,6 +40,13 @@ behaviors:
         distance: forbidden
         speed: forbidden
         impact_radius: forbidden
+        duration_ms: forbidden
+        hit_points: forbidden
+        tick_interval_ms: forbidden
+        player_speed_bps: forbidden
+        projectile_speed_bps: forbidden
+        cooldown_bps: forbidden
+        cast_time_bps: forbidden
   - id: dash
     label: Dash
     implemented: true
@@ -50,6 +64,13 @@ behaviors:
         distance: required
         speed: forbidden
         impact_radius: optional
+        duration_ms: forbidden
+        hit_points: forbidden
+        tick_interval_ms: forbidden
+        player_speed_bps: forbidden
+        projectile_speed_bps: forbidden
+        cooldown_bps: forbidden
+        cast_time_bps: forbidden
   - id: burst
     label: Burst
     implemented: true
@@ -67,6 +88,13 @@ behaviors:
         distance: forbidden
         speed: forbidden
         impact_radius: forbidden
+        duration_ms: forbidden
+        hit_points: forbidden
+        tick_interval_ms: forbidden
+        player_speed_bps: forbidden
+        projectile_speed_bps: forbidden
+        cooldown_bps: forbidden
+        cast_time_bps: forbidden
   - id: nova
     label: Nova
     implemented: true
@@ -84,41 +112,205 @@ behaviors:
         distance: forbidden
         speed: forbidden
         impact_radius: forbidden
+        duration_ms: forbidden
+        hit_points: forbidden
+        tick_interval_ms: forbidden
+        player_speed_bps: forbidden
+        projectile_speed_bps: forbidden
+        cooldown_bps: forbidden
+        cast_time_bps: forbidden
   - id: interrupt
     label: Interrupt
-    implemented: false
+    implemented: true
     inspiration: "WoW kicks, spell locks, and counter-casts"
-    notes: "A future anti-cast mechanic that stops an active cast and applies a follow-up silence."
+    notes: "Implemented as a payload modifier. A landed interrupt cancels a cast, applies silence, and deals reduced damage."
+    schema:
+      payload: required
+      allowed_effects: [skill_shot, beam, burst, nova, melee_swing]
+      numeric_fields:
+        cooldown_ms: required
+        cast_time_ms: optional
+        mana_cost: optional
+        range: optional
+        radius: optional
+        distance: optional
+        speed: optional
+        impact_radius: optional
+        duration_ms: forbidden
+        hit_points: forbidden
+        tick_interval_ms: forbidden
+        player_speed_bps: forbidden
+        projectile_speed_bps: forbidden
+        cooldown_bps: forbidden
+        cast_time_bps: forbidden
   - id: summon
     label: Summon
-    implemented: false
+    implemented: true
     inspiration: "WoW hunter/warlock pets and League summons"
-    notes: "Spawns a controllable or autonomous ally, pet, turret, or vision companion."
+    notes: "Spawns an allied unit with health, duration, team ownership, and repeated combat output."
+    schema:
+      payload: required
+      allowed_effects: [skill_shot, burst, nova]
+      numeric_fields:
+        cooldown_ms: required
+        cast_time_ms: optional
+        mana_cost: optional
+        range: required
+        radius: required
+        distance: required
+        speed: forbidden
+        impact_radius: forbidden
+        duration_ms: required
+        hit_points: required
+        tick_interval_ms: required
+        player_speed_bps: forbidden
+        projectile_speed_bps: forbidden
+        cooldown_bps: forbidden
+        cast_time_bps: forbidden
   - id: barrier
     label: Barrier
-    implemented: false
+    implemented: true
     inspiration: "League terrain walls and deployable cover"
-    notes: "Creates a temporary obstacle that can block movement, projectiles, and/or vision."
+    notes: "Creates a temporary object with health that blocks movement and projectiles without blocking vision."
+    schema:
+      payload: forbidden
+      allowed_effects: [burst, nova]
+      numeric_fields:
+        cooldown_ms: required
+        cast_time_ms: optional
+        mana_cost: optional
+        range: forbidden
+        radius: required
+        distance: required
+        speed: forbidden
+        impact_radius: forbidden
+        duration_ms: required
+        hit_points: required
+        tick_interval_ms: forbidden
+        player_speed_bps: forbidden
+        projectile_speed_bps: forbidden
+        cooldown_bps: forbidden
+        cast_time_bps: forbidden
   - id: trap
     label: Trap
-    implemented: false
+    implemented: true
     inspiration: "League traps and WoW totems"
     notes: "Creates a persistent armed object that triggers when enemies enter a radius."
+    schema:
+      payload: required
+      allowed_effects: [burst, nova]
+      numeric_fields:
+        cooldown_ms: required
+        cast_time_ms: optional
+        mana_cost: optional
+        range: forbidden
+        radius: required
+        distance: required
+        speed: forbidden
+        impact_radius: forbidden
+        duration_ms: required
+        hit_points: required
+        tick_interval_ms: forbidden
+        player_speed_bps: forbidden
+        projectile_speed_bps: forbidden
+        cooldown_bps: forbidden
+        cast_time_bps: forbidden
   - id: aura
     label: Aura
-    implemented: false
-    inspiration: "Paladin/shaman style auras and proximity buffs"
-    notes: "Applies repeated buffs or debuffs to nearby units while the aura source persists."
+    implemented: true
+    inspiration: "Paladin and shaman style auras plus persistent area control fields"
+    notes: "Applies repeated buffs or debuffs while the source persists. The source can be the caster or a placed entity."
+    schema:
+      payload: required
+      allowed_effects: [nova]
+      numeric_fields:
+        cooldown_ms: required
+        cast_time_ms: optional
+        mana_cost: optional
+        range: forbidden
+        radius: required
+        distance: optional
+        speed: forbidden
+        impact_radius: forbidden
+        duration_ms: required
+        hit_points: optional
+        tick_interval_ms: required
+        player_speed_bps: forbidden
+        projectile_speed_bps: forbidden
+        cooldown_bps: forbidden
+        cast_time_bps: forbidden
   - id: teleport
     label: Teleport
-    implemented: false
+    implemented: true
     inspiration: "Blink, swap, and relocation abilities"
-    notes: "Repositions a unit instantly rather than moving through intervening space."
+    notes: "Repositions a unit instantly, ignores walls, and clamps to the nearest valid landing point."
+    schema:
+      payload: forbidden
+      allowed_effects: [dash_trail]
+      numeric_fields:
+        cooldown_ms: required
+        cast_time_ms: optional
+        mana_cost: optional
+        range: forbidden
+        radius: forbidden
+        distance: required
+        speed: forbidden
+        impact_radius: forbidden
+        duration_ms: forbidden
+        hit_points: forbidden
+        tick_interval_ms: forbidden
+        player_speed_bps: forbidden
+        projectile_speed_bps: forbidden
+        cooldown_bps: forbidden
+        cast_time_bps: forbidden
   - id: ward
     label: Ward
-    implemented: false
+    implemented: true
     inspiration: "League wards and scouting pets"
-    notes: "Places a vision-granting object without direct combat output."
+    notes: "Places a health-bearing vision source without direct combat output."
+    schema:
+      payload: forbidden
+      allowed_effects: [nova]
+      numeric_fields:
+        cooldown_ms: required
+        cast_time_ms: optional
+        mana_cost: optional
+        range: forbidden
+        radius: required
+        distance: required
+        speed: forbidden
+        impact_radius: forbidden
+        duration_ms: required
+        hit_points: required
+        tick_interval_ms: forbidden
+        player_speed_bps: forbidden
+        projectile_speed_bps: forbidden
+        cooldown_bps: forbidden
+        cast_time_bps: forbidden
+  - id: passive
+    label: Passive
+    implemented: true
+    inspiration: "Always-on stat talents and loadout perks"
+    notes: "A non-cast skill slot that modifies player speed, projectile speed, cooldowns, and/or cast times."
+    schema:
+      payload: forbidden
+      allowed_effects: [nova]
+      numeric_fields:
+        cooldown_ms: forbidden
+        cast_time_ms: forbidden
+        mana_cost: forbidden
+        range: forbidden
+        radius: forbidden
+        distance: forbidden
+        speed: forbidden
+        impact_radius: forbidden
+        duration_ms: forbidden
+        hit_points: forbidden
+        tick_interval_ms: forbidden
+        player_speed_bps: optional
+        projectile_speed_bps: optional
+        cooldown_bps: optional
+        cast_time_bps: optional
 
 statuses:
   - id: poison
@@ -149,7 +341,7 @@ statuses:
     label: Chill
     implemented: true
     inspiration: "Mage slows that can escalate into roots"
-    notes: "A stacking slow that can trigger a follow-up crowd control state."
+    notes: "A stacking slow that can trigger a follow-up root."
     schema:
       max_stacks: positive
       numeric_fields:
@@ -207,31 +399,61 @@ statuses:
         trigger_duration_ms: forbidden
   - id: sleep
     label: Sleep
-    implemented: false
-    inspiration: "Sap, polymorph-style crowd control, and break-on-hit disables"
-    notes: "A future breakable hard crowd control that behaves like a stun but is removed by any incoming damage."
+    implemented: true
+    inspiration: "Sap, dream control, and break-on-hit disables"
+    notes: "Behaves like a stun but is removed by any incoming damage from any source."
+    schema:
+      max_stacks: one
+      numeric_fields:
+        duration_ms: required
+        tick_interval_ms: forbidden
+        magnitude: zero
+        trigger_duration_ms: forbidden
   - id: shield
     label: Shield
-    implemented: false
+    implemented: true
     inspiration: "Priest bubbles, barriers, and absorb shields"
-    notes: "Absorbs incoming damage before hit points are reduced."
+    notes: "Absorbs incoming damage before hit points are reduced. Multiple applications stack."
+    schema:
+      max_stacks: positive
+      numeric_fields:
+        duration_ms: required
+        tick_interval_ms: forbidden
+        magnitude: required
+        trigger_duration_ms: forbidden
   - id: stealth
     label: Stealth
-    implemented: false
+    implemented: true
     inspiration: "Rogue invisibility and hidden movement"
-    notes: "Removes the unit from normal visibility until revealed or broken."
+    notes: "Removes the unit from enemy visibility and targeting until the unit takes damage or takes an action."
+    schema:
+      max_stacks: one
+      numeric_fields:
+        duration_ms: required
+        tick_interval_ms: forbidden
+        magnitude: zero
+        trigger_duration_ms: forbidden
   - id: reveal
     label: Reveal
-    implemented: false
+    implemented: true
     inspiration: "Detection, flares, and anti-stealth counters"
-    notes: "Temporarily exposes otherwise hidden units to affected enemies."
-  - id: taunt
-    label: Taunt
-    implemented: false
-    inspiration: "Tank control and compelled targeting"
-    notes: "Forces or biases hostile behavior toward the source for a duration."
+    notes: "Temporarily exposes a stealthed unit to enemies as if it were not stealthed."
+    schema:
+      max_stacks: one
+      numeric_fields:
+        duration_ms: required
+        tick_interval_ms: forbidden
+        magnitude: zero
+        trigger_duration_ms: forbidden
   - id: fear
     label: Fear
-    implemented: false
-    inspiration: "Panic and displacement control"
-    notes: "Forces involuntary movement or disables player-directed movement for a duration."
+    implemented: true
+    inspiration: "Panic and forced retreat control"
+    notes: "Forces movement directly away from the applier and blocks all actions for the duration."
+    schema:
+      max_stacks: one
+      numeric_fields:
+        duration_ms: required
+        tick_interval_ms: forbidden
+        magnitude: zero
+        trigger_duration_ms: forbidden

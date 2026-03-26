@@ -1,5 +1,6 @@
 use super::*;
 use game_domain::{SkillChoice, SkillTree};
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -32,13 +33,18 @@ fn bundled_content_loads_all_classes_and_the_ascii_map() {
         .mechanics()
         .behaviors
         .iter()
-        .any(|mechanic| mechanic.id == "summon" && !mechanic.implemented));
+        .any(|mechanic| mechanic.id == "summon" && mechanic.implemented));
+    assert!(content
+        .mechanics()
+        .behaviors
+        .iter()
+        .any(|mechanic| mechanic.id == "passive" && mechanic.implemented));
     assert_eq!(content.map().team_a_anchor.0, -650);
     assert_eq!(content.map().team_b_anchor.0, 650);
 }
 
 #[test]
-fn bundled_content_exposes_authored_cast_times_and_registry_placeholders() {
+fn bundled_content_exposes_authored_cast_times_and_registry_surface() {
     let content = GameContent::bundled().expect("bundled content should load");
     let cleric_minor_heal = content
         .skills()
@@ -46,22 +52,170 @@ fn bundled_content_exposes_authored_cast_times_and_registry_placeholders() {
         .expect("cleric tier one should exist");
     assert_eq!(cleric_minor_heal.behavior.cast_time_ms(), 250);
 
-    let mage_prism_beam = content
+    let druid_dreamseed = content
         .skills()
-        .resolve(&SkillChoice::new(SkillTree::Mage, 5).expect("choice"))
-        .expect("mage tier five should exist");
-    assert_eq!(mage_prism_beam.behavior.cast_time_ms(), 550);
+        .resolve(&SkillChoice::new(SkillTree::new("Druid").expect("tree"), 5).expect("choice"))
+        .expect("druid tier five should exist");
+    assert_eq!(druid_dreamseed.behavior.cast_time_ms(), 550);
 
     assert!(content
         .mechanics()
         .behaviors
         .iter()
-        .any(|mechanic| mechanic.id == "interrupt" && !mechanic.implemented));
+        .any(|mechanic| mechanic.id == "interrupt" && mechanic.implemented));
     assert!(content
         .mechanics()
         .statuses
         .iter()
-        .any(|mechanic| mechanic.id == "sleep" && !mechanic.implemented));
+        .any(|mechanic| mechanic.id == "sleep" && mechanic.implemented));
+    assert!(content
+        .mechanics()
+        .statuses
+        .iter()
+        .any(|mechanic| mechanic.id == "shield" && mechanic.implemented));
+}
+
+#[test]
+fn bundled_content_covers_the_implemented_registry_surface() {
+    let content = GameContent::bundled().expect("bundled content should load");
+    let coverage = collect_authored_registry_surface(&content);
+
+    for mechanic in content.mechanics().behaviors.iter().filter(|mechanic| mechanic.implemented) {
+        assert!(
+            coverage.behaviors.contains(mechanic.id.as_str()),
+            "implemented behavior {} should appear in authored skills",
+            mechanic.id
+        );
+    }
+    for mechanic in content.mechanics().statuses.iter().filter(|mechanic| mechanic.implemented) {
+        assert!(
+            coverage.statuses.contains(mechanic.id.as_str()),
+            "implemented status {} should appear in authored skills",
+            mechanic.id
+        );
+    }
+
+    assert!(coverage.passive_fields.contains("player_speed_bps"));
+    assert!(coverage.passive_fields.contains("projectile_speed_bps"));
+    assert!(coverage.passive_fields.contains("cooldown_bps"));
+    assert!(coverage.passive_fields.contains("cast_time_bps"));
+}
+
+struct AuthoredRegistryCoverage {
+    behaviors: BTreeSet<&'static str>,
+    statuses: BTreeSet<&'static str>,
+    passive_fields: BTreeSet<&'static str>,
+}
+
+fn collect_authored_registry_surface(content: &GameContent) -> AuthoredRegistryCoverage {
+    let mut coverage = AuthoredRegistryCoverage {
+        behaviors: BTreeSet::new(),
+        statuses: BTreeSet::new(),
+        passive_fields: BTreeSet::new(),
+    };
+
+    for skill in content.skills().all() {
+        collect_behavior_registry_coverage(skill.behavior, &mut coverage);
+    }
+
+    coverage
+}
+
+fn collect_behavior_registry_coverage(
+    behavior: SkillBehavior,
+    coverage: &mut AuthoredRegistryCoverage,
+) {
+    match behavior {
+        SkillBehavior::Projectile { payload, .. } => {
+            coverage.behaviors.insert("projectile");
+            collect_payload_registry_coverage(payload, &mut coverage.behaviors, &mut coverage.statuses);
+        }
+        SkillBehavior::Beam { payload, .. } => {
+            coverage.behaviors.insert("beam");
+            collect_payload_registry_coverage(payload, &mut coverage.behaviors, &mut coverage.statuses);
+        }
+        SkillBehavior::Dash { payload, .. } => {
+            coverage.behaviors.insert("dash");
+            if let Some(payload) = payload {
+                collect_payload_registry_coverage(payload, &mut coverage.behaviors, &mut coverage.statuses);
+            }
+        }
+        SkillBehavior::Burst { payload, .. } => {
+            coverage.behaviors.insert("burst");
+            collect_payload_registry_coverage(payload, &mut coverage.behaviors, &mut coverage.statuses);
+        }
+        SkillBehavior::Nova { payload, .. } => {
+            coverage.behaviors.insert("nova");
+            collect_payload_registry_coverage(payload, &mut coverage.behaviors, &mut coverage.statuses);
+        }
+        SkillBehavior::Teleport { .. } => {
+            coverage.behaviors.insert("teleport");
+        }
+        SkillBehavior::Passive {
+            player_speed_bps,
+            projectile_speed_bps,
+            cooldown_bps,
+            cast_time_bps,
+        } => {
+            coverage.behaviors.insert("passive");
+            if player_speed_bps > 0 {
+                coverage.passive_fields.insert("player_speed_bps");
+            }
+            if projectile_speed_bps > 0 {
+                coverage.passive_fields.insert("projectile_speed_bps");
+            }
+            if cooldown_bps > 0 {
+                coverage.passive_fields.insert("cooldown_bps");
+            }
+            if cast_time_bps > 0 {
+                coverage.passive_fields.insert("cast_time_bps");
+            }
+        }
+        SkillBehavior::Summon { payload, .. } => {
+            coverage.behaviors.insert("summon");
+            collect_payload_registry_coverage(payload, &mut coverage.behaviors, &mut coverage.statuses);
+        }
+        SkillBehavior::Ward { .. } => {
+            coverage.behaviors.insert("ward");
+        }
+        SkillBehavior::Trap { payload, .. } => {
+            coverage.behaviors.insert("trap");
+            collect_payload_registry_coverage(payload, &mut coverage.behaviors, &mut coverage.statuses);
+        }
+        SkillBehavior::Barrier { .. } => {
+            coverage.behaviors.insert("barrier");
+        }
+        SkillBehavior::Aura { payload, .. } => {
+            coverage.behaviors.insert("aura");
+            collect_payload_registry_coverage(payload, &mut coverage.behaviors, &mut coverage.statuses);
+        }
+    }
+}
+
+fn collect_payload_registry_coverage(
+    payload: EffectPayload,
+    behaviors: &mut BTreeSet<&'static str>,
+    statuses: &mut BTreeSet<&'static str>,
+) {
+    if payload.interrupt_silence_duration_ms.is_some() {
+        behaviors.insert("interrupt");
+    }
+    if let Some(status) = payload.status {
+        statuses.insert(match status.kind {
+            StatusKind::Poison => "poison",
+            StatusKind::Hot => "hot",
+            StatusKind::Chill => "chill",
+            StatusKind::Root => "root",
+            StatusKind::Haste => "haste",
+            StatusKind::Silence => "silence",
+            StatusKind::Stun => "stun",
+            StatusKind::Sleep => "sleep",
+            StatusKind::Shield => "shield",
+            StatusKind::Stealth => "stealth",
+            StatusKind::Reveal => "reveal",
+            StatusKind::Fear => "fear",
+        });
+    }
 }
 
 #[test]
@@ -277,8 +431,8 @@ skills:
 
 #[test]
 #[allow(clippy::too_many_lines)]
-fn parse_skill_yaml_rejects_unimplemented_behaviors_unknown_effects_and_invalid_status_rules() {
-    let unimplemented = r"
+fn parse_skill_yaml_accepts_new_behaviors_and_rejects_unknown_effects_and_invalid_status_rules() {
+    let summon = r"
 tree: Mage
 melee:
   id: mage_staff
@@ -295,11 +449,21 @@ skills:
   - tier: 1
     id: mage_summon
     name: Summon
-    description: nope
+    description: summons
     behavior:
       kind: summon
       effect: skill_shot
-      cooldown_ms: 100
+      cooldown_ms: 1000
+      mana_cost: 20
+      distance: 120
+      radius: 24
+      duration_ms: 4000
+      hit_points: 50
+      range: 180
+      tick_interval_ms: 1000
+      payload:
+        kind: damage
+        amount: 4
   - tier: 2
     id: mage_two
     name: Two
@@ -353,13 +517,19 @@ skills:
         kind: damage
         amount: 2
 ";
+    let parsed = parse_skill_yaml("skills/mage.yaml", summon).expect("summon behavior should parse");
     assert!(matches!(
-        parse_skill_yaml("skills/mage.yaml", unimplemented),
-        Err(ContentError::Validation { message, .. })
-            if message == "behavior kind 'summon' is not implemented yet"
+        parsed.skills[0].behavior,
+        SkillBehavior::Summon {
+            duration_ms: 4000,
+            hit_points: 50,
+            range: 180,
+            tick_interval_ms: 1000,
+            ..
+        }
     ));
 
-    let unknown_effect = unimplemented.replace("kind: summon", "kind: projectile");
+    let unknown_effect = summon.replace("kind: summon", "kind: projectile");
     let unknown_effect = unknown_effect.replace("effect: skill_shot", "effect: mystery");
     assert!(matches!(
         parse_skill_yaml("skills/mage.yaml", unknown_effect.as_str()),

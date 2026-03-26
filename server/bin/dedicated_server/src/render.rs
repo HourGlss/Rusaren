@@ -135,5 +135,32 @@ pub(crate) fn render_sim_event(event: &SimulationEvent) -> String {
             stacks,
             remaining_ms
         ),
+        SimulationEvent::DeployableSpawned {
+            deployable_id,
+            owner,
+            kind,
+            x,
+            y,
+            radius,
+        } => format!(
+            "player {} spawned {:?} deployable {} at ({x}, {y}) with radius {}",
+            owner.get(),
+            kind,
+            deployable_id,
+            radius
+        ),
+        SimulationEvent::DeployableDamaged {
+            deployable_id,
+            attacker,
+            remaining_hit_points,
+            destroyed,
+            ..
+        } => format!(
+            "player {} damaged deployable {} (remaining hp {}, destroyed: {})",
+            attacker.get(),
+            deployable_id,
+            remaining_hit_points,
+            destroyed
+        ),
     }
 }

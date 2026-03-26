@@ -22,7 +22,7 @@ const MAX_MAP_DIMENSION_TILES: usize = 128;
 const MAX_SKILL_TEXT_LEN: usize = 120;
 const REQUIRED_TIERS: [u8; 5] = [1, 2, 3, 4, 5];
 const DEFAULT_MECHANICS_REGISTRY: &str = include_str!("../../../content/mechanics/registry.yaml");
-const BEHAVIOR_NUMERIC_FIELDS: [&str; 8] = [
+const BEHAVIOR_NUMERIC_FIELDS: [&str; 15] = [
     "cooldown_ms",
     "cast_time_ms",
     "mana_cost",
@@ -31,6 +31,13 @@ const BEHAVIOR_NUMERIC_FIELDS: [&str; 8] = [
     "distance",
     "speed",
     "impact_radius",
+    "duration_ms",
+    "hit_points",
+    "tick_interval_ms",
+    "player_speed_bps",
+    "projectile_speed_bps",
+    "cooldown_bps",
+    "cast_time_bps",
 ];
 const STATUS_NUMERIC_FIELDS: [&str; 4] = [
     "duration_ms",

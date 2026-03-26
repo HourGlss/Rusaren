@@ -426,6 +426,11 @@ fn arena_status_kinds_round_trip_for_all_runtime_statuses() {
         ArenaStatusKind::Haste,
         ArenaStatusKind::Silence,
         ArenaStatusKind::Stun,
+        ArenaStatusKind::Sleep,
+        ArenaStatusKind::Shield,
+        ArenaStatusKind::Stealth,
+        ArenaStatusKind::Reveal,
+        ArenaStatusKind::Fear,
     ];
 
     for (index, kind) in statuses.into_iter().enumerate() {
@@ -443,6 +448,7 @@ fn arena_status_kinds_round_trip_for_all_runtime_statuses() {
                     half_width: 92,
                     half_height: 92,
                 }],
+                deployables: vec![],
                 players: vec![ArenaPlayerSnapshot {
                     player_id: player_id(7),
                     player_name: player_name("Alice"),
@@ -523,6 +529,7 @@ fn sample_full_arena_snapshot_event() -> ServerControlEvent {
                     half_height: 70,
                 },
             ],
+            deployables: vec![],
             players: vec![ArenaPlayerSnapshot {
                 player_id: player_id(7),
                 player_name: player_name("Alice"),
@@ -572,6 +579,7 @@ fn sample_delta_arena_snapshot_event() -> ServerControlEvent {
                 half_width: 70,
                 half_height: 70,
             }],
+            deployables: vec![],
             players: vec![ArenaPlayerSnapshot {
                 player_id: player_id(7),
                 player_name: player_name("Alice"),
@@ -726,57 +734,22 @@ fn server_control_event_rejects_invalid_delta_snapshot_phase_and_status_values()
         Err(PacketError::InvalidEncodedArenaMatchPhase(9))
     );
 
-    let mut bad_status_payload = vec![20, 3, 0];
-    bad_status_payload.extend_from_slice(&50_u16.to_le_bytes());
-    bad_status_payload.extend_from_slice(&0_u16.to_le_bytes());
-    bad_status_payload.extend_from_slice(&0_u16.to_le_bytes());
-    bad_status_payload.extend_from_slice(&0_u16.to_le_bytes());
-    bad_status_payload.extend_from_slice(&1_u16.to_le_bytes());
-    bad_status_payload.extend_from_slice(&7_u32.to_le_bytes());
-    bad_status_payload.push(5);
-    bad_status_payload.extend_from_slice(b"Alice");
-    bad_status_payload.push(1);
-    bad_status_payload.extend_from_slice(&0_i16.to_le_bytes());
-    bad_status_payload.extend_from_slice(&0_i16.to_le_bytes());
-    bad_status_payload.extend_from_slice(&120_i16.to_le_bytes());
-    bad_status_payload.extend_from_slice(&0_i16.to_le_bytes());
-    bad_status_payload.extend_from_slice(&100_u16.to_le_bytes());
-    bad_status_payload.extend_from_slice(&100_u16.to_le_bytes());
-    bad_status_payload.extend_from_slice(&80_u16.to_le_bytes());
-    bad_status_payload.extend_from_slice(&100_u16.to_le_bytes());
-    bad_status_payload.push(1);
-    bad_status_payload.push(3);
-    bad_status_payload.extend_from_slice(&0_u16.to_le_bytes());
-    bad_status_payload.extend_from_slice(&600_u16.to_le_bytes());
-    for _ in 0..5 {
-        bad_status_payload.extend_from_slice(&0_u16.to_le_bytes());
-    }
-    for _ in 0..5 {
-        bad_status_payload.extend_from_slice(&0_u16.to_le_bytes());
-    }
-    bad_status_payload.push(0);
-    bad_status_payload.extend_from_slice(&0_u16.to_le_bytes());
-    bad_status_payload.extend_from_slice(&0_u16.to_le_bytes());
-    bad_status_payload.push(1);
-    bad_status_payload.extend_from_slice(&8_u32.to_le_bytes());
-    bad_status_payload.push(1);
-    bad_status_payload.push(9);
-    bad_status_payload.push(2);
-    bad_status_payload.extend_from_slice(&1400_u16.to_le_bytes());
-    bad_status_payload.extend_from_slice(&0_u16.to_le_bytes());
-    let header = PacketHeader::new(
-        ChannelId::Snapshot,
-        PacketKind::DeltaSnapshot,
-        0,
-        u16::try_from(bad_status_payload.len()).expect("payload length should fit"),
-        6,
-        1,
-    )
-    .expect("header");
+    let packet = sample_delta_arena_snapshot_event()
+        .encode_packet(6, 1)
+        .expect("packet");
+    let (header, payload) = PacketHeader::decode(&packet).expect("header should decode");
+    let mut bad_status_payload = payload.to_vec();
+    let status_tail = [8, 0, 0, 0, 2, 1, 3, 120, 5];
+    let status_kind_index = bad_status_payload
+        .windows(status_tail.len())
+        .position(|window| window == status_tail)
+        .map(|offset| offset + 5)
+        .expect("sample delta snapshot should contain the expected status tail");
+    bad_status_payload[status_kind_index] = 99;
     let packet = header.encode(&bad_status_payload);
     assert_eq!(
         ServerControlEvent::decode_packet(&packet),
-        Err(PacketError::InvalidEncodedArenaStatusKind(9))
+        Err(PacketError::InvalidEncodedArenaStatusKind(99))
     );
 }
 

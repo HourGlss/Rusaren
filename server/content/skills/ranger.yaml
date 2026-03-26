@@ -37,48 +37,52 @@ skills:
       mana_cost: 18
       distance: 220
   - tier: 3
-    id: ranger_briar_burst
-    name: Briar Burst
-    description: A snaring burst that punishes players pushing through choke points.
+    id: ranger_briar_trap
+    name: Briar Trap
+    description: Plants a thorny snare that roots the first enemy trying to push through it.
     behavior:
-      kind: burst
+      kind: trap
       effect: burst
       cooldown_ms: 1900
       mana_cost: 24
-      range: 280
-      radius: 88
+      distance: 260
+      radius: 52
+      duration_ms: 6000
+      hit_points: 35
+      payload:
+        kind: damage
+        amount: 8
+        status:
+          kind: root
+          duration_ms: 900
+          magnitude: 0
+  - tier: 4
+    id: ranger_scout_ward
+    name: Scout Ward
+    description: A scouting marker that lights up a lane without asking the ranger to stand in it.
+    behavior:
+      kind: ward
+      effect: nova
+      cooldown_ms: 2100
+      mana_cost: 26
+      distance: 320
+      radius: 220
+      duration_ms: 9000
+      hit_points: 40
+  - tier: 5
+    id: ranger_pinning_bolt
+    name: Pinning Bolt
+    description: A disciplined anti-caster shot that punishes greedy windups from a long way out.
+    behavior:
+      kind: projectile
+      effect: skill_shot
+      cooldown_ms: 2600
+      cast_time_ms: 250
+      mana_cost: 38
+      speed: 340
+      range: 1500
+      radius: 18
       payload:
         kind: damage
         amount: 10
-        status:
-          kind: root
-          duration_ms: 800
-          magnitude: 0
-  - tier: 4
-    id: ranger_hawk_barrage
-    name: Hawk Barrage
-    description: A thin arrow lane that threads between pillars.
-    behavior:
-      kind: beam
-      effect: beam
-      cooldown_ms: 2200
-      mana_cost: 30
-      range: 860
-      radius: 20
-      payload:
-        kind: damage
-        amount: 20
-  - tier: 5
-    id: ranger_starfall_volley
-    name: Starfall Volley
-    description: A wide targeted barrage for breaking entrenched teams.
-    behavior:
-      kind: burst
-      effect: burst
-      cooldown_ms: 3200
-      mana_cost: 42
-      range: 340
-      radius: 132
-      payload:
-        kind: damage
-        amount: 24
+        interrupt_silence_duration_ms: 1000

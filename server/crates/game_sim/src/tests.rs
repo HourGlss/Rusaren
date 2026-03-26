@@ -201,8 +201,15 @@ fn behavior_payload(behavior: SkillBehavior) -> Option<game_content::EffectPaylo
         SkillBehavior::Projectile { payload, .. }
         | SkillBehavior::Beam { payload, .. }
         | SkillBehavior::Burst { payload, .. }
-        | SkillBehavior::Nova { payload, .. } => Some(payload),
+        | SkillBehavior::Nova { payload, .. }
+        | SkillBehavior::Summon { payload, .. }
+        | SkillBehavior::Trap { payload, .. }
+        | SkillBehavior::Aura { payload, .. } => Some(payload),
         SkillBehavior::Dash { payload, .. } => payload,
+        SkillBehavior::Teleport { .. }
+        | SkillBehavior::Passive { .. }
+        | SkillBehavior::Ward { .. }
+        | SkillBehavior::Barrier { .. } => None,
     }
 }
 

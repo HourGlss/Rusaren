@@ -187,6 +187,22 @@ async fn start_server_fast() -> (game_api::DevServerHandle, String) {
     .await
 }
 
+async fn start_server_fast_with_content_root(
+    content_root: PathBuf,
+) -> (game_api::DevServerHandle, String) {
+    start_server_with_options(DevServerOptions {
+        tick_interval: Duration::from_millis(10),
+        simulation_step_ms: COMBAT_FRAME_MS,
+        record_store_path: temp_record_store_path(),
+        content_root,
+        web_client_root: temp_web_client_root("fast-default", None),
+        observability: Some(ServerObservability::new("test-fast")),
+        webrtc: WebRtcRuntimeConfig::default(),
+        admin_auth: None,
+    })
+    .await
+}
+
 async fn start_server_with_web_root(
     web_client_root: PathBuf,
 ) -> (game_api::DevServerHandle, String) {
@@ -330,6 +346,208 @@ fn repo_content_root() -> PathBuf {
         .join("..")
         .join("..")
         .join("content")
+}
+
+fn remove_dir_if_exists(path: &std::path::Path) {
+    if path.exists() {
+        fs::remove_dir_all(path).expect("temporary directory should be removable");
+    }
+}
+
+fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) {
+    fs::create_dir_all(dst).expect("destination directory should exist");
+    for entry in fs::read_dir(src).expect("source directory should be readable") {
+        let entry = entry.expect("directory entry");
+        let entry_path = entry.path();
+        let destination_path = dst.join(entry.file_name());
+        if entry.file_type().expect("file type").is_dir() {
+            copy_dir_all(&entry_path, &destination_path);
+        }
+        else {
+            fs::copy(&entry_path, &destination_path).expect("file copy should succeed");
+        }
+    }
+}
+
+fn temp_content_root(prefix: &str) -> PathBuf {
+    let unique = match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(duration) => duration.as_nanos(),
+        Err(error) => panic!("system time should be after the unix epoch: {error}"),
+    };
+    std::env::temp_dir().join(format!("rusaren-content-root-{prefix}-{unique}"))
+}
+
+fn websocket_gameplay_content_root() -> PathBuf {
+    const GAMEPLAY_MAP: &str = ".....\n.....\n.AB..\n.....\n.....\n";
+    const GAMEPLAY_MAGE_YAML: &str = r"tree: Mage
+melee:
+  id: mage_test_staff
+  name: Test Staff
+  description: Reliable melee for websocket integration tests.
+  cooldown_ms: 400
+  range: 84
+  radius: 36
+  effect: melee_swing
+  payload:
+    kind: damage
+    amount: 12
+skills:
+  - tier: 1
+    id: mage_test_burst_1
+    name: Test Burst I
+    description: Deterministic close-range nova for websocket integration tests.
+    behavior:
+      kind: nova
+      effect: nova
+      cooldown_ms: 250
+      mana_cost: 1
+      radius: 180
+      payload:
+        kind: damage
+        amount: 120
+  - tier: 2
+    id: mage_test_burst_2
+    name: Test Burst II
+    description: Deterministic close-range nova for websocket integration tests.
+    behavior:
+      kind: nova
+      effect: nova
+      cooldown_ms: 250
+      mana_cost: 1
+      radius: 180
+      payload:
+        kind: damage
+        amount: 120
+  - tier: 3
+    id: mage_test_burst_3
+    name: Test Burst III
+    description: Deterministic close-range nova for websocket integration tests.
+    behavior:
+      kind: nova
+      effect: nova
+      cooldown_ms: 250
+      mana_cost: 1
+      radius: 180
+      payload:
+        kind: damage
+        amount: 120
+  - tier: 4
+    id: mage_test_burst_4
+    name: Test Burst IV
+    description: Deterministic close-range nova for websocket integration tests.
+    behavior:
+      kind: nova
+      effect: nova
+      cooldown_ms: 250
+      mana_cost: 1
+      radius: 180
+      payload:
+        kind: damage
+        amount: 120
+  - tier: 5
+    id: mage_test_burst_5
+    name: Test Burst V
+    description: Deterministic close-range nova for websocket integration tests.
+    behavior:
+      kind: nova
+      effect: nova
+      cooldown_ms: 250
+      mana_cost: 1
+      radius: 180
+      payload:
+        kind: damage
+        amount: 120
+";
+    const GAMEPLAY_ROGUE_YAML: &str = r"tree: Rogue
+melee:
+  id: rogue_test_daggers
+  name: Test Daggers
+  description: Reliable melee for websocket integration tests.
+  cooldown_ms: 400
+  range: 84
+  radius: 36
+  effect: melee_swing
+  payload:
+    kind: damage
+    amount: 12
+skills:
+  - tier: 1
+    id: rogue_test_burst_1
+    name: Test Burst I
+    description: Deterministic close-range nova for websocket integration tests.
+    behavior:
+      kind: nova
+      effect: nova
+      cooldown_ms: 250
+      mana_cost: 1
+      radius: 180
+      payload:
+        kind: damage
+        amount: 120
+  - tier: 2
+    id: rogue_test_burst_2
+    name: Test Burst II
+    description: Deterministic close-range nova for websocket integration tests.
+    behavior:
+      kind: nova
+      effect: nova
+      cooldown_ms: 250
+      mana_cost: 1
+      radius: 180
+      payload:
+        kind: damage
+        amount: 120
+  - tier: 3
+    id: rogue_test_burst_3
+    name: Test Burst III
+    description: Deterministic close-range nova for websocket integration tests.
+    behavior:
+      kind: nova
+      effect: nova
+      cooldown_ms: 250
+      mana_cost: 1
+      radius: 180
+      payload:
+        kind: damage
+        amount: 120
+  - tier: 4
+    id: rogue_test_burst_4
+    name: Test Burst IV
+    description: Deterministic close-range nova for websocket integration tests.
+    behavior:
+      kind: nova
+      effect: nova
+      cooldown_ms: 250
+      mana_cost: 1
+      radius: 180
+      payload:
+        kind: damage
+        amount: 120
+  - tier: 5
+    id: rogue_test_burst_5
+    name: Test Burst V
+    description: Deterministic close-range nova for websocket integration tests.
+    behavior:
+      kind: nova
+      effect: nova
+      cooldown_ms: 250
+      mana_cost: 1
+      radius: 180
+      payload:
+        kind: damage
+        amount: 120
+";
+
+    let root = temp_content_root("realtime-websocket-gameplay");
+    remove_dir_if_exists(&root);
+    copy_dir_all(&repo_content_root(), &root);
+    fs::write(root.join("maps").join("prototype_arena.txt"), GAMEPLAY_MAP)
+        .expect("test map should be written");
+    fs::write(root.join("skills").join("mage.yaml"), GAMEPLAY_MAGE_YAML)
+        .expect("mage test skill file should be written");
+    fs::write(root.join("skills").join("rogue.yaml"), GAMEPLAY_ROGUE_YAML)
+        .expect("rogue test skill file should be written");
+    root
 }
 
 fn temp_web_client_root(prefix: &str, index_html: Option<&str>) -> PathBuf {

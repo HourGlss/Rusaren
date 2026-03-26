@@ -1,8 +1,9 @@
 use super::{
     arena_effect_kind, normalize_aim, project_from_aim, resolve_movement, round_f32_to_i32,
-    saturating_i16, truncate_line_to_obstacles, ArenaEffect, ArenaEffectKind, PendingCast,
-    PlayerId, ProjectileState, SimPlayerState, SimulationEvent, SimulationWorld, SkillBehavior,
-    StatusKind, PLAYER_RADIUS_UNITS,
+    saturating_i16, truncate_line_to_obstacles, ArenaDeployableKind, ArenaEffect,
+    ArenaEffectKind, DeployableBehavior, DeployableState, PendingCast, PlayerId, ProjectileState,
+    SimPlayerState, SimulationEvent, SimulationWorld, SkillBehavior, StatusKind,
+    PLAYER_RADIUS_UNITS,
 };
 
 impl SimulationWorld {
@@ -21,12 +22,25 @@ impl SimulationWorld {
                     .map_or((false, false), |player| {
                         (
                             player.statuses.iter().any(|status| {
-                                matches!(status.kind, StatusKind::Silence | StatusKind::Stun)
+                                matches!(
+                                    status.kind,
+                                    StatusKind::Silence
+                                        | StatusKind::Stun
+                                        | StatusKind::Sleep
+                                        | StatusKind::Fear
+                                )
                             }),
                             player
                                 .statuses
                                 .iter()
-                                .any(|status| status.kind == StatusKind::Stun),
+                                .any(|status| {
+                                    matches!(
+                                        status.kind,
+                                        StatusKind::Stun
+                                            | StatusKind::Sleep
+                                            | StatusKind::Fear
+                                    )
+                                }),
                         )
                     });
 
@@ -68,6 +82,7 @@ impl SimulationWorld {
         }
 
         let melee = player.melee.clone();
+        let effective_cooldown_ms = self.effective_primary_cooldown_ms(attacker, melee.cooldown_ms);
         let target_point = project_from_aim(
             attacker_state.x,
             attacker_state.y,
@@ -88,12 +103,16 @@ impl SimulationWorld {
             },
         }];
 
+        self.break_stealth(attacker);
         if let Some(player) = self.players.get_mut(&attacker) {
-            player.primary_cooldown_remaining_ms = melee.cooldown_ms;
+            player.primary_cooldown_remaining_ms = effective_cooldown_ms;
         }
-        if let Some(target) =
-            self.find_closest_player_near_point(attacker, target_point, melee.radius)
-        {
+        if let Some(target) = self.find_closest_target_near_point(
+            attacker,
+            target_point,
+            melee.radius,
+            melee.payload.kind == game_content::CombatValueKind::Damage,
+        ) {
             events.extend(self.apply_payload(attacker, 0, &[target], melee.payload));
         }
 
@@ -118,7 +137,10 @@ impl SimulationWorld {
         let Some(skill) = player.skills[slot_index].clone() else {
             return Vec::new();
         };
-        if skill.behavior.cast_time_ms() > 0 {
+        if matches!(skill.behavior, SkillBehavior::Passive { .. }) {
+            return Vec::new();
+        }
+        if self.effective_cast_time_ms(attacker, skill.behavior.cast_time_ms()) > 0 {
             if self.start_pending_cast(attacker, attacker_state, slot, slot_index, skill.behavior) {
                 return Vec::new();
             }
@@ -140,7 +162,7 @@ impl SimulationWorld {
             return false;
         }
         let mana_cost = behavior.mana_cost();
-        let cast_time_ms = behavior.cast_time_ms();
+        let cast_time_ms = self.effective_cast_time_ms(attacker, behavior.cast_time_ms());
         let Some(player) = self.players.get_mut(&attacker) else {
             return false;
         };
@@ -154,6 +176,7 @@ impl SimulationWorld {
             total_ms: cast_time_ms,
             just_started: true,
         });
+        self.break_stealth(attacker);
         true
     }
 
@@ -267,6 +290,145 @@ impl SimulationWorld {
                 effect,
                 payload,
             ),
+            SkillBehavior::Teleport {
+                cooldown_ms,
+                cast_time_ms: _,
+                mana_cost,
+                distance,
+                effect,
+            } => self.resolve_teleport_cast(
+                attacker,
+                attacker_state,
+                slot,
+                slot_index,
+                cooldown_ms,
+                mana_cost,
+                distance,
+                effect,
+            ),
+            SkillBehavior::Passive { .. } => Vec::new(),
+            SkillBehavior::Summon {
+                cooldown_ms,
+                cast_time_ms: _,
+                mana_cost,
+                distance,
+                radius,
+                duration_ms,
+                hit_points,
+                range,
+                tick_interval_ms,
+                effect,
+                payload,
+            } => self.resolve_summon_cast(
+                attacker,
+                attacker_state,
+                slot,
+                slot_index,
+                cooldown_ms,
+                mana_cost,
+                distance,
+                radius,
+                duration_ms,
+                hit_points,
+                range,
+                tick_interval_ms,
+                effect,
+                payload,
+            ),
+            SkillBehavior::Ward {
+                cooldown_ms,
+                cast_time_ms: _,
+                mana_cost,
+                distance,
+                radius,
+                duration_ms,
+                hit_points,
+                effect,
+            } => self.resolve_ward_cast(
+                attacker,
+                attacker_state,
+                slot,
+                slot_index,
+                cooldown_ms,
+                mana_cost,
+                distance,
+                radius,
+                duration_ms,
+                hit_points,
+                effect,
+            ),
+            SkillBehavior::Trap {
+                cooldown_ms,
+                cast_time_ms: _,
+                mana_cost,
+                distance,
+                radius,
+                duration_ms,
+                hit_points,
+                effect,
+                payload,
+            } => self.resolve_trap_cast(
+                attacker,
+                attacker_state,
+                slot,
+                slot_index,
+                cooldown_ms,
+                mana_cost,
+                distance,
+                radius,
+                duration_ms,
+                hit_points,
+                effect,
+                payload,
+            ),
+            SkillBehavior::Barrier {
+                cooldown_ms,
+                cast_time_ms: _,
+                mana_cost,
+                distance,
+                radius,
+                duration_ms,
+                hit_points,
+                effect,
+            } => self.resolve_barrier_cast(
+                attacker,
+                attacker_state,
+                slot,
+                slot_index,
+                cooldown_ms,
+                mana_cost,
+                distance,
+                radius,
+                duration_ms,
+                hit_points,
+                effect,
+            ),
+            SkillBehavior::Aura {
+                cooldown_ms,
+                cast_time_ms: _,
+                mana_cost,
+                distance,
+                radius,
+                duration_ms,
+                hit_points,
+                tick_interval_ms,
+                effect,
+                payload,
+            } => self.resolve_aura_cast(
+                attacker,
+                attacker_state,
+                slot,
+                slot_index,
+                cooldown_ms,
+                mana_cost,
+                distance,
+                radius,
+                duration_ms,
+                hit_points,
+                tick_interval_ms,
+                effect,
+                payload,
+            ),
         }
     }
 
@@ -280,8 +442,10 @@ impl SimulationWorld {
         if !self.consume_skill_mana(attacker, mana_cost) {
             return false;
         }
+        self.break_stealth(attacker);
+        let effective_cooldown_ms = self.effective_skill_cooldown_ms(attacker, cooldown_ms);
         if let Some(player) = self.players.get_mut(&attacker) {
-            player.slot_cooldown_remaining_ms[slot_index] = cooldown_ms;
+            player.slot_cooldown_remaining_ms[slot_index] = effective_cooldown_ms;
         }
         true
     }
@@ -469,7 +633,15 @@ impl SimulationWorld {
                     && player
                         .statuses
                         .iter()
-                        .any(|status| matches!(status.kind, StatusKind::Silence | StatusKind::Stun))
+                        .any(|status| {
+                            matches!(
+                                status.kind,
+                                StatusKind::Silence
+                                    | StatusKind::Stun
+                                    | StatusKind::Sleep
+                                    | StatusKind::Fear
+                            )
+                        })
             });
             if should_cancel {
                 if let Some(player) = self.players.get_mut(&player_id) {
@@ -539,7 +711,7 @@ impl SimulationWorld {
             y: start_y,
             direction_x: direction.0,
             direction_y: direction.1,
-            speed_units_per_second: speed,
+            speed_units_per_second: self.effective_projectile_speed(attacker, speed),
             remaining_range_units: i32::from(range),
             radius,
             payload,
@@ -569,6 +741,7 @@ impl SimulationWorld {
         effect_kind: ArenaEffectKind,
         payload: game_content::EffectPayload,
     ) -> Vec<SimulationEvent> {
+        let combat_obstacles = self.combat_obstacles();
         let desired_end = project_from_aim(
             attacker_state.x,
             attacker_state.y,
@@ -579,7 +752,7 @@ impl SimulationWorld {
         let end = truncate_line_to_obstacles(
             (attacker_state.x, attacker_state.y),
             desired_end,
-            &self.obstacles,
+            &combat_obstacles,
         );
         let mut events = vec![SimulationEvent::EffectSpawned {
             effect: ArenaEffect {
@@ -594,11 +767,12 @@ impl SimulationWorld {
             },
         }];
 
-        if let Some(target) = self.find_first_player_on_segment(
+        if let Some(target) = self.find_first_target_on_segment(
             attacker,
             (attacker_state.x, attacker_state.y),
             end,
             radius,
+            payload.kind == game_content::CombatValueKind::Damage,
         ) {
             events.extend(self.apply_payload(attacker, slot, &[target], payload));
         }
@@ -615,6 +789,7 @@ impl SimulationWorld {
         impact_radius: Option<u16>,
         payload: Option<game_content::EffectPayload>,
     ) -> Vec<SimulationEvent> {
+        let combat_obstacles = self.combat_obstacles();
         let desired = project_from_aim(
             attacker_state.x,
             attacker_state.y,
@@ -629,7 +804,7 @@ impl SimulationWorld {
             i32::from(desired.1),
             self.arena_width_units,
             self.arena_height_units,
-            &self.obstacles,
+            &combat_obstacles,
         );
         if let Some(player) = self.players.get_mut(&attacker) {
             player.x = resolved_x;
@@ -658,8 +833,12 @@ impl SimulationWorld {
         ];
 
         if let (Some(radius), Some(payload)) = (impact_radius, payload) {
-            let targets =
-                self.find_players_in_radius((resolved_x, resolved_y), radius, Some(attacker));
+            let targets = self.find_targets_in_radius(
+                (resolved_x, resolved_y),
+                radius,
+                Some(attacker),
+                payload.kind == game_content::CombatValueKind::Damage,
+            );
             events.extend(self.apply_payload(attacker, slot, &targets, payload));
         }
 
@@ -676,6 +855,7 @@ impl SimulationWorld {
         effect_kind: ArenaEffectKind,
         payload: game_content::EffectPayload,
     ) -> Vec<SimulationEvent> {
+        let combat_obstacles = self.combat_obstacles();
         let desired_center = project_from_aim(
             attacker_state.x,
             attacker_state.y,
@@ -686,7 +866,7 @@ impl SimulationWorld {
         let center = truncate_line_to_obstacles(
             (attacker_state.x, attacker_state.y),
             desired_center,
-            &self.obstacles,
+            &combat_obstacles,
         );
         let mut events = vec![SimulationEvent::EffectSpawned {
             effect: ArenaEffect {
@@ -700,7 +880,12 @@ impl SimulationWorld {
                 radius,
             },
         }];
-        let targets = self.find_players_in_radius(center, radius, None);
+        let targets = self.find_targets_in_radius(
+            center,
+            radius,
+            None,
+            payload.kind == game_content::CombatValueKind::Damage,
+        );
         events.extend(self.apply_payload(attacker, slot, &targets, payload));
         events
     }
@@ -727,8 +912,374 @@ impl SimulationWorld {
                 radius,
             },
         }];
-        let targets = self.find_players_in_radius(center, radius, None);
+        let targets = self.find_targets_in_radius(
+            center,
+            radius,
+            None,
+            payload.kind == game_content::CombatValueKind::Damage,
+        );
         events.extend(self.apply_payload(attacker, slot, &targets, payload));
         events
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn resolve_teleport_cast(
+        &mut self,
+        attacker: PlayerId,
+        attacker_state: SimPlayerState,
+        slot: u8,
+        slot_index: usize,
+        cooldown_ms: u16,
+        mana_cost: u16,
+        distance: u16,
+        effect: game_content::SkillEffectKind,
+    ) -> Vec<SimulationEvent> {
+        if !self.commit_skill_cast(attacker, slot_index, cooldown_ms, mana_cost) {
+            return Vec::new();
+        }
+
+        let desired = project_from_aim(
+            attacker_state.x,
+            attacker_state.y,
+            attacker_state.aim_x,
+            attacker_state.aim_y,
+            distance,
+        );
+        let (resolved_x, resolved_y) = self.resolve_teleport_destination(
+            attacker_state.x,
+            attacker_state.y,
+            desired.0,
+            desired.1,
+        );
+        if let Some(player) = self.players.get_mut(&attacker) {
+            player.x = resolved_x;
+            player.y = resolved_y;
+            player.moving = false;
+        }
+
+        vec![
+            SimulationEvent::EffectSpawned {
+                effect: ArenaEffect {
+                    kind: arena_effect_kind(effect),
+                    owner: attacker,
+                    slot,
+                    x: attacker_state.x,
+                    y: attacker_state.y,
+                    target_x: resolved_x,
+                    target_y: resolved_y,
+                    radius: PLAYER_RADIUS_UNITS,
+                },
+            },
+            SimulationEvent::PlayerMoved {
+                player_id: attacker,
+                x: resolved_x,
+                y: resolved_y,
+            },
+        ]
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn resolve_summon_cast(
+        &mut self,
+        attacker: PlayerId,
+        attacker_state: SimPlayerState,
+        slot: u8,
+        slot_index: usize,
+        cooldown_ms: u16,
+        mana_cost: u16,
+        distance: u16,
+        radius: u16,
+        duration_ms: u16,
+        hit_points: u16,
+        range: u16,
+        tick_interval_ms: u16,
+        effect: game_content::SkillEffectKind,
+        payload: game_content::EffectPayload,
+    ) -> Vec<SimulationEvent> {
+        if !self.commit_skill_cast(attacker, slot_index, cooldown_ms, mana_cost) {
+            return Vec::new();
+        }
+        let deployable_id = self.spawn_deployable_entity(
+            attacker,
+            attacker_state,
+            slot,
+            distance,
+            radius,
+            duration_ms,
+            hit_points,
+            ArenaDeployableKind::Summon,
+            false,
+            false,
+            DeployableBehavior::Summon {
+                range,
+                tick_interval_ms,
+                tick_progress_ms: 0,
+                effect_kind: arena_effect_kind(effect),
+                payload,
+            },
+        );
+        self.spawn_deployable_events(attacker, slot, attacker_state, deployable_id)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn resolve_ward_cast(
+        &mut self,
+        attacker: PlayerId,
+        attacker_state: SimPlayerState,
+        slot: u8,
+        slot_index: usize,
+        cooldown_ms: u16,
+        mana_cost: u16,
+        distance: u16,
+        radius: u16,
+        duration_ms: u16,
+        hit_points: u16,
+        _effect: game_content::SkillEffectKind,
+    ) -> Vec<SimulationEvent> {
+        if !self.commit_skill_cast(attacker, slot_index, cooldown_ms, mana_cost) {
+            return Vec::new();
+        }
+        let deployable_id = self.spawn_deployable_entity(
+            attacker,
+            attacker_state,
+            slot,
+            distance,
+            radius,
+            duration_ms,
+            hit_points,
+            ArenaDeployableKind::Ward,
+            false,
+            false,
+            DeployableBehavior::Ward,
+        );
+        self.spawn_deployable_events(attacker, slot, attacker_state, deployable_id)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn resolve_trap_cast(
+        &mut self,
+        attacker: PlayerId,
+        attacker_state: SimPlayerState,
+        slot: u8,
+        slot_index: usize,
+        cooldown_ms: u16,
+        mana_cost: u16,
+        distance: u16,
+        radius: u16,
+        duration_ms: u16,
+        hit_points: u16,
+        _effect: game_content::SkillEffectKind,
+        payload: game_content::EffectPayload,
+    ) -> Vec<SimulationEvent> {
+        if !self.commit_skill_cast(attacker, slot_index, cooldown_ms, mana_cost) {
+            return Vec::new();
+        }
+        let deployable_id = self.spawn_deployable_entity(
+            attacker,
+            attacker_state,
+            slot,
+            distance,
+            radius,
+            duration_ms,
+            hit_points,
+            ArenaDeployableKind::Trap,
+            false,
+            false,
+            DeployableBehavior::Trap { payload },
+        );
+        self.spawn_deployable_events(attacker, slot, attacker_state, deployable_id)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn resolve_barrier_cast(
+        &mut self,
+        attacker: PlayerId,
+        attacker_state: SimPlayerState,
+        slot: u8,
+        slot_index: usize,
+        cooldown_ms: u16,
+        mana_cost: u16,
+        distance: u16,
+        radius: u16,
+        duration_ms: u16,
+        hit_points: u16,
+        _effect: game_content::SkillEffectKind,
+    ) -> Vec<SimulationEvent> {
+        if !self.commit_skill_cast(attacker, slot_index, cooldown_ms, mana_cost) {
+            return Vec::new();
+        }
+        let deployable_id = self.spawn_deployable_entity(
+            attacker,
+            attacker_state,
+            slot,
+            distance,
+            radius,
+            duration_ms,
+            hit_points,
+            ArenaDeployableKind::Barrier,
+            true,
+            true,
+            DeployableBehavior::Barrier,
+        );
+        self.spawn_deployable_events(attacker, slot, attacker_state, deployable_id)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn resolve_aura_cast(
+        &mut self,
+        attacker: PlayerId,
+        attacker_state: SimPlayerState,
+        slot: u8,
+        slot_index: usize,
+        cooldown_ms: u16,
+        mana_cost: u16,
+        distance: u16,
+        radius: u16,
+        duration_ms: u16,
+        hit_points: Option<u16>,
+        tick_interval_ms: u16,
+        effect: game_content::SkillEffectKind,
+        payload: game_content::EffectPayload,
+    ) -> Vec<SimulationEvent> {
+        if !self.commit_skill_cast(attacker, slot_index, cooldown_ms, mana_cost) {
+            return Vec::new();
+        }
+
+        if let Some(hit_points) = hit_points {
+            let deployable_id = self.spawn_deployable_entity(
+                attacker,
+                attacker_state,
+                slot,
+                distance,
+                radius,
+                duration_ms,
+                hit_points,
+                ArenaDeployableKind::Aura,
+                false,
+                false,
+                DeployableBehavior::Aura {
+                    tick_interval_ms,
+                    tick_progress_ms: 0,
+                    effect_kind: arena_effect_kind(effect),
+                    payload,
+                    anchor_player: None,
+                },
+            );
+            return self.spawn_deployable_events(attacker, slot, attacker_state, deployable_id);
+        }
+
+        let deployable_id = self.next_deployable_id();
+        self.deployables.push(DeployableState {
+            id: deployable_id,
+            owner: attacker,
+            team: attacker_state.team,
+            kind: ArenaDeployableKind::Aura,
+            x: attacker_state.x,
+            y: attacker_state.y,
+            radius,
+            hit_points: 1,
+            max_hit_points: 1,
+            remaining_ms: duration_ms,
+            blocks_movement: false,
+            blocks_projectiles: false,
+            behavior: DeployableBehavior::Aura {
+                tick_interval_ms,
+                tick_progress_ms: 0,
+                effect_kind: arena_effect_kind(effect),
+                payload,
+                anchor_player: Some(attacker),
+            },
+        });
+        self.spawn_deployable_events(attacker, slot, attacker_state, deployable_id)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn spawn_deployable_entity(
+        &mut self,
+        attacker: PlayerId,
+        attacker_state: SimPlayerState,
+        _slot: u8,
+        distance: u16,
+        radius: u16,
+        duration_ms: u16,
+        hit_points: u16,
+        kind: ArenaDeployableKind,
+        blocks_movement: bool,
+        blocks_projectiles: bool,
+        behavior: DeployableBehavior,
+    ) -> u32 {
+        let desired = project_from_aim(
+            attacker_state.x,
+            attacker_state.y,
+            attacker_state.aim_x,
+            attacker_state.aim_y,
+            distance,
+        );
+        let (resolved_x, resolved_y) = self.resolve_teleport_destination(
+            attacker_state.x,
+            attacker_state.y,
+            desired.0,
+            desired.1,
+        );
+        let deployable_id = self.next_deployable_id();
+        self.deployables.push(DeployableState {
+            id: deployable_id,
+            owner: attacker,
+            team: attacker_state.team,
+            kind,
+            x: resolved_x,
+            y: resolved_y,
+            radius,
+            hit_points,
+            max_hit_points: hit_points,
+            remaining_ms: duration_ms,
+            blocks_movement,
+            blocks_projectiles,
+            behavior,
+        });
+        deployable_id
+    }
+
+    fn spawn_deployable_events(
+        &self,
+        attacker: PlayerId,
+        slot: u8,
+        attacker_state: SimPlayerState,
+        deployable_id: u32,
+    ) -> Vec<SimulationEvent> {
+        let Some(deployable) = self.deployables.iter().find(|deployable| deployable.id == deployable_id)
+        else {
+            return Vec::new();
+        };
+        vec![
+            SimulationEvent::EffectSpawned {
+                effect: ArenaEffect {
+                    kind: match deployable.kind {
+                        ArenaDeployableKind::Summon => ArenaEffectKind::SkillShot,
+                        ArenaDeployableKind::Ward | ArenaDeployableKind::Aura => {
+                            ArenaEffectKind::Nova
+                        }
+                        ArenaDeployableKind::Trap | ArenaDeployableKind::Barrier => {
+                            ArenaEffectKind::Burst
+                        }
+                    },
+                    owner: attacker,
+                    slot,
+                    x: attacker_state.x,
+                    y: attacker_state.y,
+                    target_x: deployable.x,
+                    target_y: deployable.y,
+                    radius: deployable.radius,
+                },
+            },
+            SimulationEvent::DeployableSpawned {
+                deployable_id,
+                owner: attacker,
+                kind: deployable.kind,
+                x: deployable.x,
+                y: deployable.y,
+                radius: deployable.radius,
+            },
+        ]
     }
 }

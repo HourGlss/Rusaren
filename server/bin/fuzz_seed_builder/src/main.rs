@@ -13,9 +13,10 @@ use game_domain::{
     TeamSide,
 };
 use game_net::{
-    ArenaDeltaSnapshot, ArenaEffectKind, ArenaEffectSnapshot, ArenaMatchPhase, ArenaObstacleKind,
-    ArenaObstacleSnapshot, ArenaPlayerSnapshot, ArenaProjectileSnapshot, ArenaStateSnapshot,
-    ArenaStatusKind, ArenaStatusSnapshot, ChannelId, ClientControlCommand, LobbyDirectoryEntry,
+    ArenaDeltaSnapshot, ArenaDeployableKind, ArenaDeployableSnapshot, ArenaEffectKind,
+    ArenaEffectSnapshot, ArenaMatchPhase, ArenaObstacleKind, ArenaObstacleSnapshot,
+    ArenaPlayerSnapshot, ArenaProjectileSnapshot, ArenaStateSnapshot, ArenaStatusKind,
+    ArenaStatusSnapshot, ChannelId, ClientControlCommand, LobbyDirectoryEntry,
     LobbySnapshotPhase, LobbySnapshotPlayer, PacketHeader, PacketKind, ServerControlEvent,
     SkillCatalogEntry, ValidatedInputFrame, BUTTON_CAST, BUTTON_PRIMARY,
 };
@@ -172,6 +173,35 @@ fn sample_arena_projectiles() -> Result<Vec<ArenaProjectileSnapshot>, Box<dyn Er
     ])
 }
 
+fn sample_arena_deployables() -> Result<Vec<ArenaDeployableSnapshot>, Box<dyn Error>> {
+    Ok(vec![
+        ArenaDeployableSnapshot {
+            id: 11,
+            owner: player_id(7)?,
+            team: TeamSide::TeamA,
+            kind: ArenaDeployableKind::Ward,
+            x: -180,
+            y: 140,
+            radius: 160,
+            hit_points: 32,
+            max_hit_points: 40,
+            remaining_ms: 4200,
+        },
+        ArenaDeployableSnapshot {
+            id: 12,
+            owner: player_id(8)?,
+            team: TeamSide::TeamB,
+            kind: ArenaDeployableKind::Barrier,
+            x: 140,
+            y: 120,
+            radius: 48,
+            hit_points: 60,
+            max_hit_points: 80,
+            remaining_ms: 1800,
+        },
+    ])
+}
+
 fn sample_arena_state_snapshot() -> Result<ArenaStateSnapshot, Box<dyn Error>> {
     Ok(ArenaStateSnapshot {
         phase: ArenaMatchPhase::Combat,
@@ -184,6 +214,7 @@ fn sample_arena_state_snapshot() -> Result<ArenaStateSnapshot, Box<dyn Error>> {
         obstacles: sample_arena_obstacles(),
         players: sample_arena_players()?,
         projectiles: sample_arena_projectiles()?,
+        deployables: sample_arena_deployables()?,
     })
 }
 
@@ -266,6 +297,18 @@ fn sample_arena_delta_snapshot() -> Result<ArenaDeltaSnapshot, Box<dyn Error>> {
             x: -150,
             y: 180,
             radius: 24,
+        }],
+        deployables: vec![ArenaDeployableSnapshot {
+            id: 21,
+            owner: player_id(7)?,
+            team: TeamSide::TeamA,
+            kind: ArenaDeployableKind::Summon,
+            x: -200,
+            y: 170,
+            radius: 36,
+            hit_points: 24,
+            max_hit_points: 24,
+            remaining_ms: 2600,
         }],
     })
 }

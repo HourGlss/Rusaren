@@ -6,8 +6,9 @@ use game_domain::{
 use crate::PacketError;
 
 use super::{
-    ArenaEffectKind, ArenaMatchPhase, ArenaObstacleKind, ArenaStatusKind, LobbySnapshotPhase,
-    SkillCatalogEntry, MAX_SKILL_ID_BYTES, MAX_SKILL_NAME_BYTES, MAX_SKILL_TREE_NAME_BYTES,
+    ArenaDeployableKind, ArenaEffectKind, ArenaMatchPhase, ArenaObstacleKind, ArenaStatusKind,
+    LobbySnapshotPhase, SkillCatalogEntry, MAX_SKILL_ID_BYTES, MAX_SKILL_NAME_BYTES,
+    MAX_SKILL_TREE_NAME_BYTES,
 };
 
 pub(super) fn encode_bytes(
@@ -322,6 +323,11 @@ pub(super) fn read_arena_status_kind(
         5 => Ok(ArenaStatusKind::Haste),
         6 => Ok(ArenaStatusKind::Silence),
         7 => Ok(ArenaStatusKind::Stun),
+        8 => Ok(ArenaStatusKind::Sleep),
+        9 => Ok(ArenaStatusKind::Shield),
+        10 => Ok(ArenaStatusKind::Stealth),
+        11 => Ok(ArenaStatusKind::Reveal),
+        12 => Ok(ArenaStatusKind::Fear),
         other => Err(PacketError::InvalidEncodedArenaStatusKind(other)),
     }
 }
@@ -360,6 +366,7 @@ pub(super) fn encode_arena_obstacle_kind(kind: ArenaObstacleKind) -> u8 {
     match kind {
         ArenaObstacleKind::Pillar => 1,
         ArenaObstacleKind::Shrub => 2,
+        ArenaObstacleKind::Barrier => 3,
     }
 }
 
@@ -381,6 +388,21 @@ pub(super) fn encode_arena_status_kind(kind: ArenaStatusKind) -> u8 {
         ArenaStatusKind::Haste => 5,
         ArenaStatusKind::Silence => 6,
         ArenaStatusKind::Stun => 7,
+        ArenaStatusKind::Sleep => 8,
+        ArenaStatusKind::Shield => 9,
+        ArenaStatusKind::Stealth => 10,
+        ArenaStatusKind::Reveal => 11,
+        ArenaStatusKind::Fear => 12,
+    }
+}
+
+pub(super) fn encode_arena_deployable_kind(kind: ArenaDeployableKind) -> u8 {
+    match kind {
+        ArenaDeployableKind::Summon => 1,
+        ArenaDeployableKind::Ward => 2,
+        ArenaDeployableKind::Trap => 3,
+        ArenaDeployableKind::Barrier => 4,
+        ArenaDeployableKind::Aura => 5,
     }
 }
 
@@ -404,7 +426,23 @@ pub(super) fn read_arena_obstacle_kind(
     match read_u8(payload, index, kind)? {
         1 => Ok(ArenaObstacleKind::Pillar),
         2 => Ok(ArenaObstacleKind::Shrub),
+        3 => Ok(ArenaObstacleKind::Barrier),
         other => Err(PacketError::InvalidEncodedArenaObstacleKind(other)),
+    }
+}
+
+pub(super) fn read_arena_deployable_kind(
+    payload: &[u8],
+    index: &mut usize,
+    kind: &'static str,
+) -> Result<ArenaDeployableKind, PacketError> {
+    match read_u8(payload, index, kind)? {
+        1 => Ok(ArenaDeployableKind::Summon),
+        2 => Ok(ArenaDeployableKind::Ward),
+        3 => Ok(ArenaDeployableKind::Trap),
+        4 => Ok(ArenaDeployableKind::Barrier),
+        5 => Ok(ArenaDeployableKind::Aura),
+        other => Err(PacketError::InvalidEncodedArenaEffectKind(other)),
     }
 }
 

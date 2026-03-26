@@ -27,34 +27,15 @@ skills:
         kind: damage
         amount: 14
   - tier: 2
-    id: bard_quickstep
-    name: Quickstep
-    description: A performance dash that repositions the bard around the fight.
+    id: bard_rallying_tempo
+    name: Rallying Tempo
+    description: A passive cadence that makes every step and follow-up come a little sooner.
     behavior:
-      kind: dash
-      effect: dash_trail
-      cooldown_ms: 1450
-      mana_cost: 20
-      distance: 210
-  - tier: 3
-    id: bard_rallying_chorus
-    name: Rallying Chorus
-    description: A nearby anthem that accelerates everyone it reaches.
-    behavior:
-      kind: nova
+      kind: passive
       effect: nova
-      cooldown_ms: 2100
-      mana_cost: 28
-      radius: 150
-      payload:
-        kind: heal
-        amount: 6
-        status:
-          kind: haste
-          duration_ms: 2200
-          magnitude: 1600
-          max_stacks: 1
-  - tier: 4
+      player_speed_bps: 1200
+      cooldown_bps: 700
+  - tier: 3
     id: bard_dissonant_verse
     name: Dissonant Verse
     description: A cutting refrain that silences players caught in the line.
@@ -72,21 +53,43 @@ skills:
           kind: silence
           duration_ms: 1100
           magnitude: 0
-  - tier: 5
-    id: bard_grand_crescendo
-    name: Grand Crescendo
-    description: A crashing aria that briefly stuns players packed around the target point.
+  - tier: 4
+    id: bard_chorus_burst
+    name: Chorus Burst
+    description: A bright chorus that patches nearby allies and leaves them briefly quickened.
     behavior:
       kind: burst
       effect: burst
-      cooldown_ms: 3100
-      mana_cost: 44
-      range: 260
-      radius: 124
+      cooldown_ms: 2100
+      mana_cost: 28
+      range: 240
+      radius: 100
+      payload:
+        kind: heal
+        amount: 8
+        status:
+          kind: haste
+          duration_ms: 1800
+          magnitude: 1600
+          max_stacks: 1
+  - tier: 5
+    id: bard_panic_refrain
+    name: Panic Refrain
+    description: Sets a sonic locus that repeatedly drives enemies away from the stage.
+    behavior:
+      kind: aura
+      effect: nova
+      cooldown_ms: 3000
+      mana_cost: 40
+      distance: 230
+      radius: 110
+      duration_ms: 4500
+      hit_points: 45
+      tick_interval_ms: 1000
       payload:
         kind: damage
-        amount: 16
+        amount: 4
         status:
-          kind: stun
-          duration_ms: 700
+          kind: fear
+          duration_ms: 900
           magnitude: 0

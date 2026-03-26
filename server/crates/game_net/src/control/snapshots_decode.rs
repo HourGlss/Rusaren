@@ -3,15 +3,16 @@ use game_domain::{PlayerId, PlayerName, TeamSide};
 use crate::PacketError;
 
 use super::codec::{
-    decode_bytes, read_arena_effect_kind, read_arena_match_phase, read_arena_obstacle_kind,
-    read_arena_status_kind, read_bool, read_i16, read_lobby_id, read_lobby_snapshot_phase,
-    read_optional_team, read_optional_u8, read_player_id, read_player_name, read_player_record,
-    read_ready_state, read_team, read_u16, read_u8,
+    decode_bytes, read_arena_deployable_kind, read_arena_effect_kind, read_arena_match_phase,
+    read_arena_obstacle_kind, read_arena_status_kind, read_bool, read_i16, read_lobby_id,
+    read_lobby_snapshot_phase, read_optional_team, read_optional_u8, read_player_id,
+    read_player_name, read_player_record, read_ready_state, read_team, read_u16, read_u32,
+    read_u8,
 };
 use super::server_types::{
-    ArenaDeltaSnapshot, ArenaEffectSnapshot, ArenaObstacleSnapshot, ArenaPlayerSnapshot,
-    ArenaProjectileSnapshot, ArenaStateSnapshot, ArenaStatusSnapshot, LobbyDirectoryEntry,
-    LobbySnapshotPlayer, ServerControlEvent,
+    ArenaDeltaSnapshot, ArenaDeployableSnapshot, ArenaEffectSnapshot, ArenaObstacleSnapshot,
+    ArenaPlayerSnapshot, ArenaProjectileSnapshot, ArenaStateSnapshot, ArenaStatusSnapshot,
+    LobbyDirectoryEntry, LobbySnapshotPlayer, ServerControlEvent,
 };
 
 pub(super) fn decode_lobby_directory_snapshot(
@@ -71,6 +72,7 @@ pub(super) fn decode_arena_state_snapshot(
     let visible_tiles = decode_bytes(payload, index, "ArenaStateSnapshot", "visible_tiles")?;
     let explored_tiles = decode_bytes(payload, index, "ArenaStateSnapshot", "explored_tiles")?;
     let obstacles = decode_arena_obstacles(payload, index, "ArenaStateSnapshot")?;
+    let deployables = decode_arena_deployables(payload, index, "ArenaStateSnapshot")?;
     let players = decode_arena_players(payload, index, "ArenaStateSnapshot")?;
     let projectiles = decode_arena_projectiles(payload, index, "ArenaStateSnapshot")?;
 
@@ -84,6 +86,7 @@ pub(super) fn decode_arena_state_snapshot(
             visible_tiles,
             explored_tiles,
             obstacles,
+            deployables,
             players,
             projectiles,
         },
@@ -100,6 +103,7 @@ pub(super) fn decode_arena_delta_snapshot(
     let visible_tiles = decode_bytes(payload, index, "ArenaDeltaSnapshot", "visible_tiles")?;
     let explored_tiles = decode_bytes(payload, index, "ArenaDeltaSnapshot", "explored_tiles")?;
     let obstacles = decode_arena_obstacles(payload, index, "ArenaDeltaSnapshot")?;
+    let deployables = decode_arena_deployables(payload, index, "ArenaDeltaSnapshot")?;
     let players = decode_arena_players(payload, index, "ArenaDeltaSnapshot")?;
     let projectiles = decode_arena_projectiles(payload, index, "ArenaDeltaSnapshot")?;
 
@@ -111,6 +115,7 @@ pub(super) fn decode_arena_delta_snapshot(
             visible_tiles,
             explored_tiles,
             obstacles,
+            deployables,
             players,
             projectiles,
         },
@@ -147,6 +152,30 @@ pub(super) fn decode_arena_players(
         players.push(decode_arena_player(payload, index, kind)?);
     }
     Ok(players)
+}
+
+pub(super) fn decode_arena_deployables(
+    payload: &[u8],
+    index: &mut usize,
+    kind: &'static str,
+) -> Result<Vec<ArenaDeployableSnapshot>, PacketError> {
+    let deployable_count = usize::from(read_u16(payload, index, kind)?);
+    let mut deployables = Vec::with_capacity(deployable_count);
+    for _ in 0..deployable_count {
+        deployables.push(ArenaDeployableSnapshot {
+            id: read_u32(payload, index, kind)?,
+            owner: read_player_id(payload, index, kind)?,
+            team: read_team(payload, index, kind)?,
+            kind: read_arena_deployable_kind(payload, index, kind)?,
+            x: read_i16(payload, index, kind)?,
+            y: read_i16(payload, index, kind)?,
+            radius: read_u16(payload, index, kind)?,
+            hit_points: read_u16(payload, index, kind)?,
+            max_hit_points: read_u16(payload, index, kind)?,
+            remaining_ms: read_u16(payload, index, kind)?,
+        });
+    }
+    Ok(deployables)
 }
 
 fn decode_arena_player(
