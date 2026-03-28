@@ -18,7 +18,10 @@ func _init() -> void:
 	success = _assert_directory_bbcode_exposes_join_links_for_open_lobbies() and success
 	success = _assert_skill_buttons_only_unlock_next_tiers() and success
 	success = _assert_arena_state_updates_local_combat_slots_and_effects() and success
+	success = _assert_aura_deployables_stay_hidden_from_client_render_state() and success
 	success = _assert_local_skill_labels_and_render_smoothing() and success
+	success = _assert_round_and_match_summaries_and_combat_text() and success
+	success = _assert_player_token_palette_and_team_rings() and success
 	success = _assert_remote_cast_labels_use_known_roster_skills() and success
 	success = _assert_resource_labels_only_show_for_local_player() and success
 	success = _assert_fog_rounds_only_on_visibility_boundary() and success
@@ -309,6 +312,52 @@ func _assert_arena_state_updates_local_combat_slots_and_effects() -> bool:
 	return true
 
 
+func _assert_aura_deployables_stay_hidden_from_client_render_state() -> bool:
+	var state := ClientStateScript.new()
+	state.local_player_id = 11
+	state.apply_server_event({
+		"type": "ArenaStateSnapshot",
+		"snapshot": {
+			"width": 1800,
+			"height": 1200,
+			"deployables": [
+				{
+					"id": 1,
+					"owner": 11,
+					"team": "Team A",
+					"kind": "Aura",
+					"x": 0,
+					"y": 0,
+					"radius": 120,
+					"hit_points": 1,
+					"max_hit_points": 1,
+					"remaining_ms": 2000,
+				},
+				{
+					"id": 2,
+					"owner": 11,
+					"team": "Team A",
+					"kind": "Ward",
+					"x": 60,
+					"y": 0,
+					"radius": 60,
+					"hit_points": 20,
+					"max_hit_points": 20,
+					"remaining_ms": 2000,
+				},
+			],
+			"players": [],
+			"projectiles": [],
+		},
+	})
+	var deployables := state.arena_deployables_list()
+	if deployables.size() != 1:
+		return _fail("client render state should omit aura deployables entirely")
+	if String(deployables[0].get("kind", "")) != "Ward":
+		return _fail("non-aura deployables should still remain visible to the client")
+	return true
+
+
 func _assert_local_skill_labels_and_render_smoothing() -> bool:
 	var state := ClientStateScript.new()
 	state.mark_transport_state("open")
@@ -448,6 +497,160 @@ func _assert_local_skill_labels_and_render_smoothing() -> bool:
 	var smoothed_x := float(state.arena_players_list()[0].get("x", -640))
 	if smoothed_x <= -640.0 or smoothed_x >= -420.0:
 		return _fail("render smoothing should move player positions toward the new authoritative location")
+	return true
+
+
+func _assert_round_and_match_summaries_and_combat_text() -> bool:
+	var state := ClientStateScript.new()
+	state.mark_transport_state("open")
+	state.local_player_id = 11
+	state.local_player_name = "Alice"
+	state.apply_server_event({
+		"type": "RoundSummary",
+		"summary": {
+			"round": 2,
+			"round_totals": [
+				{
+					"player_id": 11,
+					"player_name": "Alice",
+					"team": "Team A",
+					"damage_done": 120,
+					"healing_to_allies": 35,
+					"healing_to_enemies": 0,
+					"cc_used": 3,
+					"cc_hits": 2,
+				},
+			],
+			"running_totals": [
+				{
+					"player_id": 11,
+					"player_name": "Alice",
+					"team": "Team A",
+					"damage_done": 240,
+					"healing_to_allies": 50,
+					"healing_to_enemies": 4,
+					"cc_used": 5,
+					"cc_hits": 3,
+				},
+			],
+		},
+	})
+	var round_text := state.round_summary_text()
+	if not round_text.contains("Round 2"):
+		return _fail("round summaries should include the round number")
+	if not round_text.contains("Running total"):
+		return _fail("round summaries should include the running-total section")
+	if not round_text.contains("Alice  |  Team A  |  dmg 240"):
+		return _fail("round summaries should include formatted running totals for each player")
+
+	state.apply_server_event({
+		"type": "MatchSummary",
+		"summary": {
+			"rounds_played": 3,
+			"totals": [
+				{
+					"player_id": 11,
+					"player_name": "Alice",
+					"team": "Team A",
+					"damage_done": 410,
+					"healing_to_allies": 88,
+					"healing_to_enemies": 9,
+					"cc_used": 6,
+					"cc_hits": 4,
+				},
+			],
+		},
+	})
+	var match_text := state.match_summary_text()
+	if not match_text.contains("Rounds played: 3"):
+		return _fail("match summaries should include the total rounds played")
+	if not match_text.contains("heal+ 88"):
+		return _fail("match summaries should include ally-healing totals")
+
+	state.apply_server_event({
+		"type": "ArenaCombatTextBatch",
+		"entries": [
+			{
+				"x": -120,
+				"y": 45,
+				"text": "-42",
+				"style": "DamageIncoming",
+			},
+		],
+	})
+	var entries := state.local_combat_text_entries()
+	if entries.size() != 1:
+		return _fail("combat text batches should queue local-only scrolling text entries")
+	if String(entries[0].get("style", "")) != "DamageIncoming":
+		return _fail("combat text entries should preserve their authored style")
+
+	state.advance_visuals(1.3)
+	if not state.local_combat_text_entries().is_empty():
+		return _fail("local combat text should expire after its configured lifetime")
+	return true
+
+
+func _assert_player_token_palette_and_team_rings() -> bool:
+	var state := ClientStateScript.new()
+	state.local_player_id = 11
+	state.local_player_name = "Alice"
+	state.apply_server_event({
+		"type": "ArenaStateSnapshot",
+		"snapshot": {
+			"width": 1800,
+			"height": 1200,
+			"players": [
+				{
+					"player_id": 11,
+					"player_name": "Alice",
+					"team": "Team A",
+					"x": 0,
+					"y": 0,
+					"aim_x": 0,
+					"aim_y": 0,
+					"hit_points": 100,
+					"max_hit_points": 100,
+					"mana": 100,
+					"max_mana": 100,
+					"alive": true,
+					"unlocked_skill_slots": 3,
+					"equipped_skill_trees": ["Mage", "Rogue", "Bard", null, null],
+					"active_statuses": [
+						{
+							"kind": "Shield",
+							"remaining_duration_ms": 800,
+						},
+						{
+							"kind": "Silence",
+							"remaining_duration_ms": 500,
+						},
+					],
+				},
+			],
+			"projectiles": [],
+		},
+	})
+	var arena_view := ArenaViewScript.new()
+	arena_view.set_client_state(state)
+
+	if arena_view._skill_tree_color("Mage", true).to_html() != Color8(105, 204, 240).to_html():
+		return _fail("mage rings should use the WoW mage color")
+	if arena_view._skill_tree_color("Bard", true).to_html() != Color8(140, 59, 255).to_html():
+		return _fail("bard rings should use the reserved Glasbey palette color")
+	if arena_view._player_team_border_color("Team A", true).to_html() != Color8(27, 58, 128).to_html():
+		return _fail("friendly team borders should render dark blue")
+	if arena_view._player_team_border_color("Team B", true).to_html() != Color8(196, 61, 50).to_html():
+		return _fail("enemy team borders should render red")
+	if not arena_view._is_positive_status("Shield"):
+		return _fail("shield should render on the positive status halo")
+	if arena_view._is_positive_status("Silence"):
+		return _fail("silence should render on the negative status halo")
+	if arena_view._status_color("Shield", true).to_html() != Color8(147, 202, 255).to_html():
+		return _fail("shield should use the expected positive halo color")
+	if arena_view._status_color("Silence", true).to_html() != Color8(129, 116, 209).to_html():
+		return _fail("silence should use the expected negative halo color")
+
+	arena_view.free()
 	return true
 
 

@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -13,13 +14,18 @@ use crate::planner::build_match_plans;
 use crate::{run_probe, ProbeConfig, ProbeMechanicObservation};
 
 fn temp_path(label: &str, suffix: &str) -> PathBuf {
+    static TEMP_PATH_COUNTER: AtomicU64 = AtomicU64::new(0);
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system time should be after the unix epoch")
         .as_nanos();
+    let counter = TEMP_PATH_COUNTER.fetch_add(1, Ordering::Relaxed);
     let path = std::env::temp_dir()
         .join("rusaren-live-transport-probe")
-        .join(format!("{label}-{unique}.{suffix}"));
+        .join(format!(
+            "{label}-{}-{unique}-{counter}.{suffix}",
+            std::process::id()
+        ));
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).expect("temp parent directory should exist");
     }
@@ -28,6 +34,10 @@ fn temp_path(label: &str, suffix: &str) -> PathBuf {
 
 fn temp_record_store_path() -> PathBuf {
     temp_path("records", "tsv")
+}
+
+fn temp_combat_log_path() -> PathBuf {
+    temp_path("combat-log", "sqlite")
 }
 
 fn repo_content_root() -> PathBuf {
@@ -62,6 +72,7 @@ async fn start_server_fast() -> (game_api::DevServerHandle, String) {
             tick_interval: Duration::from_millis(10),
             simulation_step_ms: game_sim::COMBAT_FRAME_MS,
             record_store_path: temp_record_store_path(),
+            combat_log_path: temp_combat_log_path(),
             content_root: repo_content_root(),
             web_client_root: temp_web_client_root(),
             observability: None,

@@ -1,10 +1,7 @@
 use game_domain::{PlayerId, PlayerName};
 use game_net::{ClientControlCommand, SequenceTracker, ServerControlEvent, ValidatedInputFrame};
-use tracing::info;
 
-use super::{
-    AppTransport, ConnectedPlayer, ConnectionId, DebugOverlayMode, PlayerLocation, ServerApp,
-};
+use super::{AppTransport, ConnectedPlayer, ConnectionId, PlayerLocation, ServerApp};
 
 mod lobby;
 mod match_flow;
@@ -180,9 +177,6 @@ impl ServerApp {
             ClientControlCommand::QuitToCentralLobby => {
                 self.handle_quit_to_central_lobby(transport, sender_id);
             }
-            ClientControlCommand::SetDebugMode { mode } => {
-                self.handle_set_debug_mode(transport, sender_id, mode);
-            }
         }
     }
 
@@ -231,7 +225,6 @@ impl ServerApp {
                 inbound_input: SequenceTracker::new(),
                 newest_client_input_tick: None,
                 next_outbound_seq: 0,
-                debug_overlay_mode: DebugOverlayMode::Off,
             },
         );
 
@@ -248,24 +241,4 @@ impl ServerApp {
         self.send_lobby_directory_snapshot(transport, player_id);
     }
 
-    pub(super) fn handle_set_debug_mode<T: AppTransport>(
-        &mut self,
-        _transport: &mut T,
-        sender_id: PlayerId,
-        raw_mode: u8,
-    ) {
-        let Ok(mode) = DebugOverlayMode::from_raw(raw_mode) else {
-            return;
-        };
-        let Some(player) = self.players.get_mut(&sender_id) else {
-            return;
-        };
-        player.debug_overlay_mode = mode;
-        info!(
-            player_id = sender_id.get(),
-            player_name = player.player_name.as_str(),
-            debug_mode = mode.as_str(),
-            "player updated debug overlay mode"
-        );
-    }
 }

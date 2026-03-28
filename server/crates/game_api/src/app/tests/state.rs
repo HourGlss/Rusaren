@@ -1,4 +1,13 @@
 use super::*;
+use crate::combat_log::{
+    CombatLogCastCancelReason, CombatLogCastMode, CombatLogEvent, CombatLogMissReason,
+    CombatLogStatusRemovedReason, CombatLogTargetKind, CombatLogTriggerReason,
+};
+use game_content::{CombatValueKind, DispelScope, StatusKind};
+use game_sim::{
+    SimCastCancelReason, SimCastMode, SimMissReason, SimRemovedStatus, SimStatusRemovedReason,
+    SimTargetKind, SimTriggerReason, SimulationEvent,
+};
 
 #[test]
 fn central_lobby_receives_directory_snapshots_as_lobbies_change() {
@@ -74,23 +83,13 @@ fn app_error_display_and_connected_player_sequences_are_precise() {
         inbound_input: SequenceTracker::new(),
         newest_client_input_tick: None,
         next_outbound_seq: 0,
-        debug_overlay_mode: DebugOverlayMode::Off,
     };
     assert_eq!(connected.next_outbound_seq(), 1);
     assert_eq!(connected.next_outbound_seq(), 2);
-    assert_eq!(DebugOverlayMode::from_raw(0), Ok(DebugOverlayMode::Off));
-    assert_eq!(DebugOverlayMode::from_raw(1), Ok(DebugOverlayMode::Render));
-    assert_eq!(DebugOverlayMode::from_raw(2), Ok(DebugOverlayMode::Auth));
-    assert_eq!(DebugOverlayMode::from_raw(3), Ok(DebugOverlayMode::Both));
-    assert!(DebugOverlayMode::from_raw(9).is_err());
-    assert_eq!(DebugOverlayMode::Off.as_str(), "off");
-    assert_eq!(DebugOverlayMode::Render.as_str(), "render");
-    assert_eq!(DebugOverlayMode::Auth.as_str(), "auth");
-    assert_eq!(DebugOverlayMode::Both.as_str(), "both");
 }
 
 #[test]
-fn debug_overlay_labels_and_population_counts_track_runtime_state() {
+fn population_counts_track_runtime_state() {
     let mut server = ServerApp::new();
     let mut transport = InMemoryTransport::new();
     assert_eq!(server.connected_player_count(), 0);
@@ -700,4 +699,245 @@ fn persistent_player_records_survive_reconnect() {
     )));
 
     remove_if_exists(&path);
+}
+
+#[test]
+fn durable_combat_logs_capture_advanced_mechanics_event_detail() {
+    let path = temp_path("server-app-advanced-combat-log");
+    let combat_log_path = companion_combat_log_path(&path);
+    remove_if_exists(&path);
+    remove_if_exists(&combat_log_path);
+
+    let mut server = ServerApp::new_persistent(&path).expect("persistent server should start");
+    let mut transport = InMemoryTransport::new();
+    let (mut alice, mut bob) = connect_pair(&mut server, &mut transport);
+    let match_id = enter_combat(
+        &mut server,
+        &mut transport,
+        &mut alice,
+        &mut bob,
+        skill(SkillTree::Warrior, 1),
+        skill(SkillTree::Cleric, 1),
+    );
+    let alice_id = alice.player_id().expect("alice id");
+    let bob_id = bob.player_id().expect("bob id");
+    let base_len = server
+        .combat_log_entries(match_id)
+        .expect("baseline log query should succeed")
+        .len();
+
+    server
+        .matches
+        .get_mut(&match_id)
+        .expect("match runtime should exist")
+        .combat_frame_index = 7;
+
+    let synthetic_events = vec![
+        SimulationEvent::CastStarted {
+            player_id: alice_id,
+            slot: 5,
+            behavior: "channel",
+            mode: SimCastMode::Channel,
+            total_ms: 2400,
+        },
+        SimulationEvent::ChannelTick {
+            player_id: alice_id,
+            slot: 5,
+            tick_index: 2,
+            behavior: "channel",
+        },
+        SimulationEvent::CastCanceled {
+            player_id: alice_id,
+            slot: 5,
+            reason: SimCastCancelReason::Manual,
+        },
+        SimulationEvent::DispelCast {
+            source: bob_id,
+            slot: 4,
+            scope: DispelScope::Negative,
+            max_statuses: 1,
+        },
+        SimulationEvent::StatusApplied {
+            source: alice_id,
+            target: bob_id,
+            slot: 3,
+            kind: StatusKind::Hot,
+            stacks: 3,
+            stack_delta: 2,
+            remaining_ms: 1800,
+        },
+        SimulationEvent::DispelResult {
+            source: bob_id,
+            slot: 4,
+            target: alice_id,
+            removed_statuses: vec![SimRemovedStatus {
+                source: alice_id,
+                slot: 3,
+                kind: StatusKind::Hot,
+                stacks: 3,
+                remaining_ms: 600,
+            }],
+            triggered_payload_count: 1,
+        },
+        SimulationEvent::StatusRemoved {
+            source: alice_id,
+            target: bob_id,
+            slot: 3,
+            kind: StatusKind::Hot,
+            stacks: 3,
+            remaining_ms: 600,
+            reason: SimStatusRemovedReason::Dispelled,
+        },
+        SimulationEvent::TriggerResolved {
+            source: alice_id,
+            slot: 3,
+            status_kind: StatusKind::Hot,
+            trigger: SimTriggerReason::Dispel,
+            target_kind: SimTargetKind::Player,
+            target_id: bob_id.get(),
+            payload_kind: CombatValueKind::Heal,
+            amount: 12,
+        },
+        SimulationEvent::ImpactHit {
+            source: alice_id,
+            slot: 5,
+            target_kind: SimTargetKind::Player,
+            target_id: bob_id.get(),
+        },
+        SimulationEvent::ImpactMiss {
+            source: bob_id,
+            slot: 4,
+            reason: SimMissReason::Blocked,
+        },
+        SimulationEvent::Defeat {
+            attacker: Some(alice_id),
+            target: bob_id,
+        },
+    ];
+
+    server
+        .append_simulation_logs(match_id, &synthetic_events)
+        .expect("synthetic simulation logs should persist");
+
+    let entries = server
+        .combat_log_entries(match_id)
+        .expect("combat logs should be queryable");
+    let suffix = &entries[base_len..];
+    assert_eq!(suffix.len(), synthetic_events.len());
+    assert!(
+        suffix
+            .iter()
+            .all(|entry| entry.frame_index == 7 && entry.round == 1),
+        "all appended rows should keep the combat frame and round metadata from the current runtime"
+    );
+
+    let expected_events = vec![
+        CombatLogEvent::CastStarted {
+            player_id: alice_id.get(),
+            slot: 5,
+            behavior: String::from("channel"),
+            mode: CombatLogCastMode::Channel,
+            total_ms: 2400,
+        },
+        CombatLogEvent::ChannelTick {
+            player_id: alice_id.get(),
+            slot: 5,
+            tick_index: 2,
+            behavior: String::from("channel"),
+        },
+        CombatLogEvent::CastCanceled {
+            player_id: alice_id.get(),
+            slot: 5,
+            reason: CombatLogCastCancelReason::Manual,
+        },
+        CombatLogEvent::DispelCast {
+            source_player_id: bob_id.get(),
+            slot: 4,
+            scope: String::from("negative"),
+            max_statuses: 1,
+        },
+        CombatLogEvent::StatusApplied {
+            source_player_id: alice_id.get(),
+            target_player_id: bob_id.get(),
+            slot: 3,
+            status_kind: String::from("hot"),
+            stacks: 3,
+            stack_delta: 2,
+            remaining_ms: 1800,
+        },
+        CombatLogEvent::DispelResult {
+            source_player_id: bob_id.get(),
+            slot: 4,
+            target_player_id: alice_id.get(),
+            removed_statuses: vec![crate::combat_log::CombatLogRemovedStatus {
+                source_player_id: alice_id.get(),
+                slot: 3,
+                status_kind: String::from("hot"),
+                stacks: 3,
+                remaining_ms: 600,
+            }],
+            triggered_payload_count: 1,
+        },
+        CombatLogEvent::StatusRemoved {
+            source_player_id: alice_id.get(),
+            target_player_id: bob_id.get(),
+            slot: 3,
+            status_kind: String::from("hot"),
+            stacks: 3,
+            remaining_ms: 600,
+            reason: CombatLogStatusRemovedReason::Dispelled,
+        },
+        CombatLogEvent::TriggerResolved {
+            source_player_id: alice_id.get(),
+            target_kind: CombatLogTargetKind::Player,
+            target_id: bob_id.get(),
+            slot: 3,
+            status_kind: String::from("hot"),
+            trigger: CombatLogTriggerReason::Dispel,
+            payload_kind: String::from("heal"),
+            amount: 12,
+        },
+        CombatLogEvent::ImpactHit {
+            source_player_id: alice_id.get(),
+            slot: 5,
+            target_kind: CombatLogTargetKind::Player,
+            target_id: bob_id.get(),
+        },
+        CombatLogEvent::ImpactMiss {
+            source_player_id: bob_id.get(),
+            slot: 4,
+            reason: CombatLogMissReason::Blocked,
+        },
+        CombatLogEvent::Defeat {
+            source_player_id: Some(alice_id.get()),
+            target_player_id: bob_id.get(),
+        },
+    ];
+
+    assert_eq!(
+        suffix
+            .iter()
+            .map(|entry| &entry.event)
+            .collect::<Vec<_>>(),
+        expected_events.iter().collect::<Vec<_>>(),
+        "the durable combat log should preserve the advanced event payloads exactly for later UI and admin consumers"
+    );
+
+    let reloaded = ServerApp::new_persistent(&path).expect("persistent server should reload");
+    let reloaded_entries = reloaded
+        .combat_log_entries(match_id)
+        .expect("reloaded combat logs should be queryable");
+    assert_eq!(
+        reloaded_entries[base_len..]
+            .iter()
+            .map(|entry| &entry.event)
+            .collect::<Vec<_>>(),
+        expected_events.iter().collect::<Vec<_>>(),
+        "advanced combat event detail should survive process reload"
+    );
+
+    drop(reloaded);
+    drop(server);
+    remove_if_exists(&path);
+    remove_if_exists(&combat_log_path);
 }

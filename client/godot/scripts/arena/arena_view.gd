@@ -6,14 +6,12 @@ const GRID_STEP_UNITS := 60.0
 const PLAYER_RADIUS_UNITS := 28.0
 const FOG_EDGE_EXTENSION_RATIO := 0.52
 const FOG_EDGE_ALPHA_SCALE := 0.58
-const DEBUG_TEXT_COLOR := Color(0.96, 0.96, 0.98, 0.96)
-const DEBUG_RENDER_COLOR := Color(0.42, 0.98, 0.72, 0.92)
-const DEBUG_AUTH_COLOR := Color(0.98, 0.34, 0.88, 0.92)
-const DEBUG_LINK_COLOR := Color(1.0, 0.95, 0.62, 0.9)
 const PLAYER_SHADOW_COLOR := Color(0.03, 0.05, 0.08, 0.26)
 const PROJECTILE_SHADOW_COLOR := Color(0.03, 0.05, 0.08, 0.18)
 const OBSTACLE_SHADOW_COLOR := Color(0.03, 0.04, 0.06, 0.16)
 const DEPLOYABLE_SHADOW_COLOR := Color(0.03, 0.05, 0.08, 0.22)
+const FRIENDLY_TEAM_COLOR := Color8(27, 58, 128)
+const ENEMY_TEAM_COLOR := Color8(196, 61, 50)
 
 var app_state: ClientState = null
 
@@ -72,7 +70,7 @@ func _draw() -> void:
 	_draw_deployables(arena_rect)
 	_draw_projectiles(arena_rect)
 	_draw_players(arena_rect)
-	_draw_debug_overlay(arena_rect)
+	_draw_local_combat_texts(arena_rect)
 	_draw_border(arena_rect)
 
 
@@ -222,6 +220,8 @@ func _draw_deployables(arena_rect: Rect2) -> void:
 		var radius := _world_radius_to_canvas(arena_rect, float(deployable.get("radius", 0)))
 		var team_color := _team_color(String(deployable.get("team", "")), true)
 		var kind_name := String(deployable.get("kind", ""))
+		if kind_name == "Aura":
+			continue
 		draw_circle(
 			position + Vector2(0.0, radius * 0.76),
 			maxf(radius * 0.94, 5.0),
@@ -288,20 +288,19 @@ func _draw_players(arena_rect: Rect2) -> void:
 			)
 		)
 		var alive := bool(player.get("alive", false))
-		var body_color: Color = _team_color(String(player.get("team", "")), alive)
 		var radius: float = _world_radius_to_canvas(arena_rect, PLAYER_RADIUS_UNITS)
-		var outline: Color = Color.WHITE if is_local_player else Color8(34, 34, 42)
+		var team_border := _player_team_border_color(String(player.get("team", "")), alive)
+		var outline: Color = Color.WHITE if is_local_player else Color8(28, 30, 36)
 
 		if is_local_player:
-			draw_line(canvas_pos, aim_end, Color(body_color, 0.35), 2.0)
+			draw_line(canvas_pos, aim_end, Color(team_border, 0.42), 2.0)
 		draw_circle(
 			canvas_pos + Vector2(0.0, radius * 0.82),
 			radius * 0.96,
 			PLAYER_SHADOW_COLOR
 		)
-		draw_circle(canvas_pos, radius + 9.0, Color(body_color.r, body_color.g, body_color.b, 0.14))
-		draw_circle(canvas_pos, radius + 4.0, outline)
-		draw_circle(canvas_pos, radius, body_color)
+		_draw_player_token(player, canvas_pos, radius, team_border, outline, alive)
+		_draw_status_halo(player, canvas_pos, radius, alive)
 
 		var hp_ratio: float = 0.0
 		var max_hp: float = maxf(1.0, float(player.get("max_hit_points", 1)))
@@ -339,24 +338,6 @@ func _draw_players(arena_rect: Rect2) -> void:
 					-1.0,
 					13,
 					Color8(12, 18, 28)
-				)
-			var status_tokens: Array[String] = []
-			for status in player.get("active_statuses", []):
-				var status_data := status as Dictionary
-				status_tokens.append("%s x%d" % [
-					String(status_data.get("kind", "")),
-					int(status_data.get("stacks", 0)),
-				])
-			if not status_tokens.is_empty():
-				var status_y_offset := -44.0 if resource_label != "" else -28.0
-				draw_string(
-					font,
-					canvas_pos + Vector2(-radius * 0.85, -radius + status_y_offset),
-					" ".join(status_tokens),
-					HORIZONTAL_ALIGNMENT_LEFT,
-					-1.0,
-					12,
-					Color8(52, 66, 78)
 				)
 
 
@@ -561,152 +542,113 @@ func _draw_centered_text(rect: Rect2, text: String) -> void:
 	draw_string(font, baseline, text, HORIZONTAL_ALIGNMENT_LEFT, -1.0, size_px, Color8(58, 61, 68))
 
 
-func _draw_debug_overlay(arena_rect: Rect2) -> void:
-	if app_state == null or not app_state.debug_overlay_enabled():
+func _draw_player_token(
+	player: Dictionary,
+	canvas_pos: Vector2,
+	radius: float,
+	team_border: Color,
+	outline: Color,
+	alive: bool
+) -> void:
+	draw_circle(
+		canvas_pos,
+		radius + 8.0,
+		Color(team_border.r, team_border.g, team_border.b, 0.13)
+	)
+	draw_circle(canvas_pos, radius + 5.0, team_border)
+	draw_circle(canvas_pos, radius + 2.3, Color(0.08, 0.09, 0.11, 0.96))
+	var tree_names: Array = player.get("equipped_skill_trees", [])
+	for slot in range(5, 0, -1):
+		var band_radius := radius * (float(slot) / 5.0)
+		var tree_name := ""
+		if tree_names.size() >= slot:
+			tree_name = String(tree_names[slot - 1])
+		var band_color := _skill_tree_color(tree_name, alive)
+		draw_circle(canvas_pos, band_radius, band_color)
+	draw_circle(canvas_pos, maxf(radius * 0.18, 4.0), Color(1.0, 1.0, 1.0, 0.15))
+	draw_arc(canvas_pos, radius + 1.6, 0.0, TAU, 28, outline, 1.4, true)
+
+
+func _draw_status_halo(player: Dictionary, canvas_pos: Vector2, radius: float, alive: bool) -> void:
+	var statuses: Array = player.get("active_statuses", [])
+	if statuses.is_empty():
 		return
-	_draw_debug_summary(arena_rect)
-	if app_state.debug_shows_render():
-		_draw_render_debug_overlay(arena_rect)
-	if app_state.debug_shows_auth():
-		_draw_auth_debug_overlay(arena_rect)
+	var positives: Array[Dictionary] = []
+	var negatives: Array[Dictionary] = []
+	for status_variant in statuses:
+		var status := (status_variant as Dictionary).duplicate(true)
+		if _is_positive_status(String(status.get("kind", ""))):
+			positives.append(status)
+		else:
+			negatives.append(status)
+	positives.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		return int(a.get("remaining_ms", 0)) > int(b.get("remaining_ms", 0))
+	)
+	negatives.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		return int(a.get("remaining_ms", 0)) > int(b.get("remaining_ms", 0))
+	)
+	var halo_radius := radius + 11.0
+	var halo_width := maxf(radius * 0.16, 3.0)
+	_draw_status_arc_stack(canvas_pos, halo_radius, halo_width, positives, -PI / 3.0, PI / 3.0, alive)
+	_draw_status_arc_stack(canvas_pos, halo_radius, halo_width, negatives, PI * 2.0 / 3.0, PI * 4.0 / 3.0, alive)
 
 
-func _draw_debug_summary(arena_rect: Rect2) -> void:
+func _draw_status_arc_stack(
+	canvas_pos: Vector2,
+	halo_radius: float,
+	halo_width: float,
+	statuses: Array[Dictionary],
+	start_angle: float,
+	end_angle: float,
+	alive: bool
+) -> void:
+	if statuses.is_empty():
+		return
+	var span := (end_angle - start_angle) / float(statuses.size())
+	for index in range(statuses.size()):
+		var status: Dictionary = statuses[index]
+		var from := start_angle + float(index) * span
+		var to := from + span
+		var color := _status_color(String(status.get("kind", "")), alive)
+		draw_arc(canvas_pos, halo_radius, from, to, 10, color, halo_width, true)
+
+
+func _draw_local_combat_texts(arena_rect: Rect2) -> void:
+	if app_state == null:
+		return
 	var font := ThemeDB.fallback_font
 	if font == null:
 		return
-	var lines := app_state.debug_summary_lines()
-	var y := arena_rect.position.y + 18.0
-	for line in lines:
+	for entry in app_state.local_combat_text_entries():
+		var ttl_max := maxf(0.01, float(entry.get("ttl_max", 0.01)))
+		var ttl := clampf(float(entry.get("ttl", 0.0)), 0.0, ttl_max)
+		var life_ratio := clampf(1.0 - (ttl / ttl_max), 0.0, 1.0)
+		var position := _world_to_canvas(
+			arena_rect,
+			Vector2(float(entry.get("x", 0)), float(entry.get("y", 0)))
+		)
+		position += Vector2(float(entry.get("jitter_x", 0.0)), -28.0 - life_ratio * 26.0)
+		var text := String(entry.get("text", ""))
+		var color := _combat_text_color(String(entry.get("style", "")))
+		color.a = clampf(ttl / ttl_max, 0.1, 1.0)
 		draw_string(
 			font,
-			Vector2(arena_rect.position.x + 16.0, y),
-			line,
+			position + Vector2(1.0, 1.0),
+			text,
 			HORIZONTAL_ALIGNMENT_LEFT,
 			-1.0,
-			14,
-			DEBUG_TEXT_COLOR
+			16,
+			Color(0.03, 0.03, 0.04, color.a * 0.8)
 		)
-		y += 16.0
-
-
-func _draw_render_debug_overlay(arena_rect: Rect2) -> void:
-	var font := ThemeDB.fallback_font
-	for player in app_state.arena_players_list():
-		var player_id := int(player.get("player_id", 0))
-		var position := _world_to_canvas(
-			arena_rect,
-			Vector2(float(player.get("x", 0)), float(player.get("y", 0)))
+		draw_string(
+			font,
+			position,
+			text,
+			HORIZONTAL_ALIGNMENT_LEFT,
+			-1.0,
+			16,
+			color
 		)
-		var radius := _world_radius_to_canvas(arena_rect, PLAYER_RADIUS_UNITS)
-		draw_arc(position, radius + 12.0, 0.0, TAU, 24, DEBUG_RENDER_COLOR, 1.5)
-		if font != null:
-			var label := "R (%d,%d)" % [int(round(float(player.get("x", 0)))), int(round(float(player.get("y", 0))))]
-			var last_spell := app_state.debug_last_spell_for_player(player_id)
-			if last_spell != "":
-				label = "%s %s" % [label, last_spell]
-			var current_cast_slot := int(player.get("current_cast_slot", 0))
-			if current_cast_slot > 0:
-				label = "%s cast=%s" % [label, _cast_label_for_player(player)]
-			draw_string(
-				font,
-				position + Vector2(radius + 8.0, -radius - 4.0),
-				label,
-				HORIZONTAL_ALIGNMENT_LEFT,
-				-1.0,
-				12,
-				DEBUG_RENDER_COLOR
-			)
-
-	for projectile in app_state.arena_projectiles_list():
-		var position := _world_to_canvas(
-			arena_rect,
-			Vector2(float(projectile.get("x", 0)), float(projectile.get("y", 0)))
-		)
-		var radius := _world_radius_to_canvas(arena_rect, float(projectile.get("radius", 0)))
-		draw_arc(position, radius + 5.0, 0.0, TAU, 20, DEBUG_RENDER_COLOR, 1.5)
-		if font != null:
-			draw_string(
-				font,
-				position + Vector2(radius + 6.0, -4.0),
-				app_state.debug_label_for_projectile(projectile),
-				HORIZONTAL_ALIGNMENT_LEFT,
-				-1.0,
-				11,
-				DEBUG_RENDER_COLOR
-			)
-
-
-func _draw_auth_debug_overlay(arena_rect: Rect2) -> void:
-	var font := ThemeDB.fallback_font
-	for player in app_state.authoritative_arena_players_list():
-		var player_id := int(player.get("player_id", 0))
-		var auth_position := _world_to_canvas(
-			arena_rect,
-			Vector2(float(player.get("x", 0)), float(player.get("y", 0)))
-		)
-		var radius := _world_radius_to_canvas(arena_rect, PLAYER_RADIUS_UNITS)
-		draw_arc(auth_position, radius + 18.0, 0.0, TAU, 28, DEBUG_AUTH_COLOR, 2.0)
-
-		var movement_vector := app_state.debug_movement_vector_for(player_id)
-		if movement_vector != Vector2.ZERO:
-			draw_line(
-				auth_position,
-				auth_position + _world_vector_to_canvas(arena_rect, movement_vector),
-				DEBUG_AUTH_COLOR,
-				2.0
-			)
-
-		if app_state.debug_mode == "both":
-			var render_player := app_state.rendered_arena_player(player_id)
-			if not render_player.is_empty():
-				var render_position := _world_to_canvas(
-					arena_rect,
-					Vector2(float(render_player.get("x", 0)), float(render_player.get("y", 0)))
-				)
-				draw_line(render_position, auth_position, DEBUG_LINK_COLOR, 1.5)
-
-		if font != null:
-			var label := "A (%d,%d) hp=%d mana=%d" % [
-				int(player.get("x", 0)),
-				int(player.get("y", 0)),
-				int(player.get("hit_points", 0)),
-				int(player.get("mana", 0)),
-			]
-			var current_cast_slot := int(player.get("current_cast_slot", 0))
-			if current_cast_slot > 0:
-				label = "%s cast=%s" % [label, _cast_label_for_player(player)]
-			draw_string(
-				font,
-				auth_position + Vector2(radius + 8.0, radius + 14.0),
-				label,
-				HORIZONTAL_ALIGNMENT_LEFT,
-				-1.0,
-				12,
-				DEBUG_AUTH_COLOR
-			)
-
-	for projectile in app_state.authoritative_arena_projectiles_list():
-		var position := _world_to_canvas(
-			arena_rect,
-			Vector2(float(projectile.get("x", 0)), float(projectile.get("y", 0)))
-		)
-		var radius := _world_radius_to_canvas(arena_rect, float(projectile.get("radius", 0)))
-		draw_arc(position, radius + 10.0, 0.0, TAU, 20, DEBUG_AUTH_COLOR, 1.6)
-		if font != null:
-			var auth_label := "%s r=%d" % [
-				app_state.debug_label_for_projectile(projectile),
-				int(projectile.get("radius", 0)),
-			]
-			draw_string(
-				font,
-				position + Vector2(radius + 6.0, 14.0),
-				auth_label,
-				HORIZONTAL_ALIGNMENT_LEFT,
-				-1.0,
-				11,
-				DEBUG_AUTH_COLOR
-			)
 
 
 func _player_name_label(player: Dictionary) -> String:
@@ -736,8 +678,6 @@ func _cast_label_for_player(player: Dictionary) -> String:
 func _cast_bar_origin(player: Dictionary, canvas_pos: Vector2, radius: float, bar_width: float) -> Vector2:
 	var line_count := 1
 	if _player_resource_label(player) != "":
-		line_count += 1
-	if not Array(player.get("active_statuses", [])).is_empty():
 		line_count += 1
 	var top_offset := radius + 44.0 + float(max(0, line_count - 1)) * 16.0
 	return canvas_pos + Vector2(-bar_width * 0.5, -top_offset)
@@ -824,9 +764,107 @@ func _world_radius_to_canvas(arena_rect: Rect2, radius_units: float) -> float:
 	return radius_units * minf(scale_x, scale_y)
 
 
+func _friendly_team_name() -> String:
+	if app_state == null:
+		return ""
+	var local_player := app_state.local_arena_player()
+	if not local_player.is_empty():
+		return String(local_player.get("team", ""))
+	var self_entry := app_state.self_entry()
+	if not self_entry.is_empty():
+		return String(self_entry.get("team", ""))
+	return ""
+
+
+func _player_team_border_color(team_name: String, alive: bool) -> Color:
+	var color := FRIENDLY_TEAM_COLOR if team_name == _friendly_team_name() else ENEMY_TEAM_COLOR
+	return color if alive else color.darkened(0.45)
+
+
 func _team_color(team_name: String, alive: bool) -> Color:
 	var color := Color8(237, 103, 69) if team_name == "Team A" else Color8(96, 197, 224)
 	return color if alive else color.darkened(0.45)
+
+
+func _skill_tree_color(tree_name: String, alive: bool) -> Color:
+	var normalized := tree_name.strip_edges().to_lower()
+	var color := Color8(0, 0, 0)
+	match normalized:
+		"warrior":
+			color = Color8(199, 156, 110)
+		"mage":
+			color = Color8(105, 204, 240)
+		"rogue":
+			color = Color8(255, 245, 105)
+		"paladin":
+			color = Color8(245, 140, 186)
+		"druid":
+			color = Color8(255, 125, 10)
+		"ranger":
+			color = Color8(171, 212, 115)
+		"cleric":
+			color = Color8(255, 255, 255)
+		"bard":
+			color = Color8(140, 59, 255)
+		"necromancer":
+			color = Color8(107, 0, 79)
+		_:
+			color = Color8(0, 0, 0)
+	return color if alive else color.darkened(0.5)
+
+
+func _is_positive_status(status_kind: String) -> bool:
+	return status_kind in ["Hot", "Haste", "Shield", "Stealth"]
+
+
+func _status_color(status_kind: String, alive: bool) -> Color:
+	var color := Color8(196, 196, 196)
+	match status_kind:
+		"Poison":
+			color = Color8(88, 192, 74)
+		"Hot":
+			color = Color8(91, 224, 160)
+		"Chill":
+			color = Color8(104, 198, 255)
+		"Root":
+			color = Color8(168, 142, 74)
+		"Haste":
+			color = Color8(255, 214, 99)
+		"Silence":
+			color = Color8(129, 116, 209)
+		"Stun":
+			color = Color8(255, 170, 64)
+		"Sleep":
+			color = Color8(176, 149, 255)
+		"Shield":
+			color = Color8(147, 202, 255)
+		"Stealth":
+			color = Color8(112, 120, 132)
+		"Reveal":
+			color = Color8(255, 94, 166)
+		"Fear":
+			color = Color8(198, 58, 74)
+		_:
+			color = Color8(196, 196, 196)
+	return color if alive else color.darkened(0.48)
+
+
+func _combat_text_color(style_name: String) -> Color:
+	match style_name:
+		"DamageOutgoing":
+			return Color8(255, 220, 117)
+		"DamageIncoming":
+			return Color8(255, 122, 122)
+		"HealOutgoing":
+			return Color8(138, 255, 168)
+		"HealIncoming":
+			return Color8(112, 242, 146)
+		"PositiveStatus":
+			return Color8(143, 224, 255)
+		"NegativeStatus":
+			return Color8(255, 150, 213)
+		_:
+			return Color8(224, 231, 240)
 
 
 func _effect_color(kind_name: String, alpha: float) -> Color:

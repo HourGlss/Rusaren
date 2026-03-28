@@ -2,7 +2,7 @@ tree: Ranger
 melee:
   id: ranger_hatchet_cut
   name: Hatchet Cut
-  description: A quick hatchet slash when the fight gets too close.
+  description: Short melee hit.
   cooldown_ms: 500
   range: 84
   radius: 36
@@ -14,7 +14,7 @@ skills:
   - tier: 1
     id: ranger_longshot
     name: Longshot
-    description: A fast arrow for winning open-map sightlines.
+    description: Fast projectile damage.
     behavior:
       kind: projectile
       effect: skill_shot
@@ -29,7 +29,7 @@ skills:
   - tier: 2
     id: ranger_disengage
     name: Disengage
-    description: A backward roll that creates breathing room without losing pressure.
+    description: Dash backward without losing aim.
     behavior:
       kind: dash
       effect: dash_trail
@@ -39,7 +39,7 @@ skills:
   - tier: 3
     id: ranger_briar_trap
     name: Briar Trap
-    description: Plants a thorny snare that roots the first enemy trying to push through it.
+    description: Place a trap that roots the first enemy that enters.
     behavior:
       kind: trap
       effect: burst
@@ -59,7 +59,7 @@ skills:
   - tier: 4
     id: ranger_scout_ward
     name: Scout Ward
-    description: A scouting marker that lights up a lane without asking the ranger to stand in it.
+    description: Place a ward that reveals an area.
     behavior:
       kind: ward
       effect: nova
@@ -72,7 +72,7 @@ skills:
   - tier: 5
     id: ranger_pinning_bolt
     name: Pinning Bolt
-    description: A disciplined anti-caster shot that punishes greedy windups from a long way out.
+    description: Long-range shot that interrupts a casting target.
     behavior:
       kind: projectile
       effect: skill_shot

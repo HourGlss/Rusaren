@@ -67,6 +67,7 @@ pub enum PacketError {
     InvalidEncodedArenaMatchPhase(u8),
     InvalidEncodedArenaObstacleKind(u8),
     InvalidEncodedArenaEffectKind(u8),
+    InvalidEncodedArenaCombatTextStyle(u8),
     InvalidEncodedArenaStatusKind(u8),
     InvalidEncodedBoolean(u8),
     InvalidEncodedPlayerName(DomainError),
@@ -200,6 +201,7 @@ impl PacketError {
             | Self::InvalidEncodedArenaMatchPhase(_)
             | Self::InvalidEncodedArenaObstacleKind(_)
             | Self::InvalidEncodedArenaEffectKind(_)
+            | Self::InvalidEncodedArenaCombatTextStyle(_)
             | Self::InvalidEncodedArenaStatusKind(_)
             | Self::InvalidEncodedBoolean(_) => self.fmt_encoded_variant_error(f),
             Self::InvalidEncodedSkillTree(error) | Self::InvalidEncodedPlayerName(error) => {
@@ -249,6 +251,10 @@ impl PacketError {
             Self::InvalidEncodedArenaEffectKind(raw) => {
                 Some(write!(f, "encoded arena effect kind {raw} is invalid"))
             }
+            Self::InvalidEncodedArenaCombatTextStyle(raw) => Some(write!(
+                f,
+                "encoded arena combat text style {raw} is invalid"
+            )),
             Self::InvalidEncodedArenaStatusKind(raw) => {
                 Some(write!(f, "encoded arena status kind {raw} is invalid"))
             }

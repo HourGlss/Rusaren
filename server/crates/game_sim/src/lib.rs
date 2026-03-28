@@ -182,6 +182,58 @@ pub struct SimStatusState {
     pub remaining_ms: u16,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SimCastMode {
+    Windup,
+    Channel,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SimCastCancelReason {
+    Manual,
+    Movement,
+    ControlLoss,
+    Defeat,
+    Interrupt,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SimMissReason {
+    NoTarget,
+    Blocked,
+    Expired,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SimTargetKind {
+    Player,
+    Deployable,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SimStatusRemovedReason {
+    Expired,
+    Dispelled,
+    DamageBroken,
+    Defeat,
+    ShieldConsumed,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SimTriggerReason {
+    Expire,
+    Dispel,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SimRemovedStatus {
+    pub source: PlayerId,
+    pub slot: u8,
+    pub kind: StatusKind,
+    pub stacks: u8,
+    pub remaining_ms: u16,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SimulationEvent {
     PlayerMoved {
@@ -195,15 +247,21 @@ pub enum SimulationEvent {
     DamageApplied {
         attacker: PlayerId,
         target: PlayerId,
+        slot: u8,
         amount: u16,
         remaining_hit_points: u16,
         defeated: bool,
+        status_kind: Option<StatusKind>,
+        trigger: Option<SimTriggerReason>,
     },
     HealingApplied {
         source: PlayerId,
         target: PlayerId,
+        slot: u8,
         amount: u16,
         resulting_hit_points: u16,
+        status_kind: Option<StatusKind>,
+        trigger: Option<SimTriggerReason>,
     },
     StatusApplied {
         source: PlayerId,
@@ -211,7 +269,78 @@ pub enum SimulationEvent {
         slot: u8,
         kind: StatusKind,
         stacks: u8,
+        stack_delta: u8,
         remaining_ms: u16,
+    },
+    StatusRemoved {
+        source: PlayerId,
+        target: PlayerId,
+        slot: u8,
+        kind: StatusKind,
+        stacks: u8,
+        remaining_ms: u16,
+        reason: SimStatusRemovedReason,
+    },
+    CastStarted {
+        player_id: PlayerId,
+        slot: u8,
+        behavior: &'static str,
+        mode: SimCastMode,
+        total_ms: u16,
+    },
+    CastCompleted {
+        player_id: PlayerId,
+        slot: u8,
+        behavior: &'static str,
+    },
+    CastCanceled {
+        player_id: PlayerId,
+        slot: u8,
+        reason: SimCastCancelReason,
+    },
+    ChannelTick {
+        player_id: PlayerId,
+        slot: u8,
+        tick_index: u16,
+        behavior: &'static str,
+    },
+    ImpactHit {
+        source: PlayerId,
+        slot: u8,
+        target_kind: SimTargetKind,
+        target_id: u32,
+    },
+    ImpactMiss {
+        source: PlayerId,
+        slot: u8,
+        reason: SimMissReason,
+    },
+    DispelCast {
+        source: PlayerId,
+        slot: u8,
+        scope: DispelScope,
+        max_statuses: u8,
+    },
+    DispelResult {
+        source: PlayerId,
+        slot: u8,
+        target: PlayerId,
+        removed_statuses: Vec<SimRemovedStatus>,
+        triggered_payload_count: u8,
+    },
+    TriggerResolved {
+        source: PlayerId,
+        slot: u8,
+        status_kind: StatusKind,
+        trigger: SimTriggerReason,
+        target_kind: SimTargetKind,
+        target_id: u32,
+        payload_kind: CombatValueKind,
+        amount: u16,
+    },
+    Defeat {
+        attacker: Option<PlayerId>,
+        target: PlayerId,
     },
     DeployableSpawned {
         deployable_id: u32,

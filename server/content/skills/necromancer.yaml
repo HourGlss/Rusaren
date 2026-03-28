@@ -2,7 +2,7 @@ tree: Necromancer
 melee:
   id: necromancer_bone_knife
   name: Bone Knife
-  description: A short ritual blade for desperate close fights.
+  description: Short melee hit.
   cooldown_ms: 540
   range: 82
   radius: 36
@@ -14,7 +14,7 @@ skills:
   - tier: 1
     id: necromancer_grave_bolt
     name: Grave Bolt
-    description: A cursed projectile that starts the attrition game immediately.
+    description: Projectile damage that applies poison.
     behavior:
       kind: projectile
       effect: skill_shot
@@ -35,7 +35,7 @@ skills:
   - tier: 2
     id: necromancer_panic_hex
     name: Panic Hex
-    description: A dark sigil that sends enemies fleeing when it detonates under them.
+    description: Burst damage that applies fear.
     behavior:
       kind: burst
       effect: burst
@@ -53,7 +53,7 @@ skills:
   - tier: 3
     id: necromancer_wailing_line
     name: Wailing Line
-    description: A scream-thin beam that silences anyone caught in it.
+    description: Beam damage that silences.
     behavior:
       kind: beam
       effect: beam
@@ -71,7 +71,7 @@ skills:
   - tier: 4
     id: necromancer_grave_servant
     name: Grave Servant
-    description: Raises a shambling servant that peppers nearby enemies with plague-soaked bone shards.
+    description: Summon a servant that attacks and applies poison.
     behavior:
       kind: summon
       effect: skill_shot
@@ -96,7 +96,7 @@ skills:
   - tier: 5
     id: necromancer_nightmare_bloom
     name: Nightmare Bloom
-    description: An expanding death-bloom that drags nearby enemies into a brittle nightmare sleep.
+    description: Area damage that applies sleep.
     behavior:
       kind: nova
       effect: nova

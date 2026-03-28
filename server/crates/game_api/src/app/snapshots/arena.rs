@@ -1,4 +1,7 @@
-use game_content::{ArenaMapDefinition, GameContent};
+use game_content::{
+    ArenaMapDefinition, CombatValueKind, DispelScope, EffectPayload, GameContent, SkillBehavior,
+    SkillDefinition, StatusDefinition, StatusKind,
+};
 use game_domain::{MatchId, PlayerId, TeamAssignment, TeamSide};
 use game_match::{MatchPhase, MatchSession};
 use game_net::{
@@ -41,6 +44,7 @@ impl ServerApp {
 
     pub(in super::super) fn arena_player_snapshot(
         world: &SimulationWorld,
+        runtime: &MatchRuntime,
         assignment: &TeamAssignment,
         state: game_sim::SimPlayerState,
         unlocked_skill_slots: u8,
@@ -63,6 +67,12 @@ impl ServerApp {
             primary_cooldown_total_ms: state.primary_cooldown_total_ms,
             slot_cooldown_remaining_ms: state.slot_cooldown_remaining_ms,
             slot_cooldown_total_ms: state.slot_cooldown_total_ms,
+            equipped_skill_trees: std::array::from_fn(|index| {
+                runtime
+                    .session
+                    .equipped_choice(assignment.player_id, u8::try_from(index + 1).ok()?)
+                    .map(|choice| choice.tree)
+            }),
             current_cast_slot: state.current_cast_slot,
             current_cast_remaining_ms: state.current_cast_remaining_ms,
             current_cast_total_ms: state.current_cast_total_ms,
@@ -107,6 +117,7 @@ impl ServerApp {
                     .map(|state| {
                         Self::arena_player_snapshot(
                             &runtime.world,
+                            runtime,
                             assignment,
                             state,
                             unlocked_skill_slots,
@@ -175,8 +186,10 @@ impl ServerApp {
             .deployables()
             .into_iter()
             .filter(|deployable| {
-                deployable.owner == viewer_id
+                deployable.kind != game_sim::ArenaDeployableKind::Aura
+                    && (deployable.owner == viewer_id
                     || Self::mask_contains_point(map, visible_tiles, deployable.x, deployable.y)
+                    )
             })
             .map(Self::arena_deployable_snapshot)
             .collect()
@@ -253,6 +266,9 @@ impl ServerApp {
                 tier: skill.tier,
                 skill_id: skill.id.clone(),
                 skill_name: skill.name.clone(),
+                skill_description: skill.description.clone(),
+                skill_summary: build_skill_summary(skill),
+                ui_category: skill_ui_category(skill).to_string(),
             })
             .collect()
     }
@@ -346,4 +362,412 @@ impl ServerApp {
             radius: effect.radius,
         }
     }
+}
+
+fn build_skill_summary(skill: &SkillDefinition) -> String {
+    let mut lines = Vec::new();
+    append_skill_header(&mut lines, skill);
+    append_behavior_lines(&mut lines, &skill.behavior);
+    lines.join("\n")
+}
+
+fn append_skill_header(lines: &mut Vec<String>, skill: &SkillDefinition) {
+    if let SkillBehavior::Passive { .. } = skill.behavior {
+        lines.push(String::from("Passive"));
+        return;
+    }
+
+    let mut parts = vec![format!(
+        "CD {}",
+        format_duration_ms(skill.behavior.cooldown_ms())
+    )];
+    let cast_time_ms = skill.behavior.cast_time_ms();
+    if cast_time_ms == 0 {
+        parts.push(String::from("Cast instant"));
+    } else {
+        parts.push(format!("Cast {}", format_duration_ms(cast_time_ms)));
+    }
+    let mana_cost = skill.behavior.mana_cost();
+    if mana_cost > 0 {
+        parts.push(format!("Mana {mana_cost}"));
+    }
+    lines.push(parts.join(" | "));
+}
+
+fn append_behavior_lines(lines: &mut Vec<String>, behavior: &SkillBehavior) {
+    match behavior {
+        SkillBehavior::Projectile {
+            range,
+            radius,
+            speed,
+            payload,
+            ..
+        } => {
+            lines.push(format!(
+                "Projectile: range {range}, radius {radius}, speed {speed}"
+            ));
+            append_payload_lines(lines, payload);
+        }
+        SkillBehavior::Beam {
+            range,
+            radius,
+            payload,
+            ..
+        } => {
+            lines.push(format!("Beam: range {range}, radius {radius}"));
+            append_payload_lines(lines, payload);
+        }
+        SkillBehavior::Dash {
+            distance,
+            impact_radius,
+            payload,
+            ..
+        } => {
+            let mut line = format!("Dash: distance {distance}");
+            if let Some(radius) = impact_radius {
+                line.push_str(&format!(", impact radius {radius}"));
+            }
+            lines.push(line);
+            if let Some(payload) = payload {
+                append_payload_lines(lines, payload);
+            }
+        }
+        SkillBehavior::Burst {
+            range,
+            radius,
+            payload,
+            ..
+        } => {
+            lines.push(format!("Burst: cast range {range}, radius {radius}"));
+            append_payload_lines(lines, payload);
+        }
+        SkillBehavior::Nova {
+            radius, payload, ..
+        } => {
+            lines.push(format!("Nova: radius {radius}"));
+            append_payload_lines(lines, payload);
+        }
+        SkillBehavior::Teleport { distance, .. } => {
+            lines.push(format!(
+                "Teleport: up to {distance}, ignores walls, lands on the nearest valid point"
+            ));
+        }
+        SkillBehavior::Channel {
+            range,
+            radius,
+            duration_ms,
+            tick_interval_ms,
+            payload,
+            ..
+        } => {
+            let mut line = format!(
+                "Channel: radius {radius}, lasts {}, ticks every {}",
+                format_duration_ms(*duration_ms),
+                format_duration_ms(*tick_interval_ms)
+            );
+            if *range > 0 {
+                line.push_str(&format!(", target range {range}"));
+            }
+            lines.push(line);
+            append_payload_lines(lines, payload);
+        }
+        SkillBehavior::Passive {
+            player_speed_bps,
+            projectile_speed_bps,
+            cooldown_bps,
+            cast_time_bps,
+        } => {
+            let mut parts = Vec::new();
+            if *player_speed_bps > 0 {
+                parts.push(format!("move +{}", format_bps_percent(*player_speed_bps)));
+            }
+            if *projectile_speed_bps > 0 {
+                parts.push(format!(
+                    "projectiles +{}",
+                    format_bps_percent(*projectile_speed_bps)
+                ));
+            }
+            if *cooldown_bps > 0 {
+                parts.push(format!("cooldowns -{}", format_bps_percent(*cooldown_bps)));
+            }
+            if *cast_time_bps > 0 {
+                parts.push(format!("cast time -{}", format_bps_percent(*cast_time_bps)));
+            }
+            lines.push(if parts.is_empty() {
+                String::from("No passive modifiers")
+            } else {
+                parts.join(" | ")
+            });
+        }
+        SkillBehavior::Summon {
+            distance,
+            radius,
+            duration_ms,
+            hit_points,
+            range,
+            tick_interval_ms,
+            payload,
+            ..
+        } => {
+            lines.push(format!(
+                "Summon: place {distance} away, radius {radius}, {hit_points} HP, lasts {}, attacks {range} range every {}",
+                format_duration_ms(*duration_ms),
+                format_duration_ms(*tick_interval_ms)
+            ));
+            append_payload_lines(lines, payload);
+        }
+        SkillBehavior::Ward {
+            distance,
+            radius,
+            duration_ms,
+            hit_points,
+            ..
+        } => {
+            lines.push(format!(
+                "Ward: place {distance} away, vision radius {radius}, {hit_points} HP, lasts {}",
+                format_duration_ms(*duration_ms)
+            ));
+        }
+        SkillBehavior::Trap {
+            distance,
+            radius,
+            duration_ms,
+            hit_points,
+            payload,
+            ..
+        } => {
+            lines.push(format!(
+                "Trap: place {distance} away, trigger radius {radius}, {hit_points} HP, lasts {}",
+                format_duration_ms(*duration_ms)
+            ));
+            append_payload_lines(lines, payload);
+        }
+        SkillBehavior::Barrier {
+            distance,
+            radius,
+            duration_ms,
+            hit_points,
+            ..
+        } => {
+            lines.push(format!(
+                "Barrier: place {distance} away, radius {radius}, {hit_points} HP, lasts {}",
+                format_duration_ms(*duration_ms)
+            ));
+        }
+        SkillBehavior::Aura {
+            distance,
+            radius,
+            duration_ms,
+            hit_points,
+            tick_interval_ms,
+            payload,
+            ..
+        } => {
+            let mut line = format!(
+                "Aura: radius {radius}, lasts {}, ticks every {}",
+                format_duration_ms(*duration_ms),
+                format_duration_ms(*tick_interval_ms)
+            );
+            if *distance > 0 {
+                line.push_str(&format!(", place {distance} away"));
+            }
+            if let Some(hit_points) = hit_points {
+                line.push_str(&format!(", {hit_points} HP"));
+            }
+            lines.push(line);
+            append_payload_lines(lines, payload);
+        }
+    }
+}
+
+fn append_payload_lines(lines: &mut Vec<String>, payload: &EffectPayload) {
+    if payload.amount > 0 {
+        let value_kind = match payload.kind {
+            CombatValueKind::Damage => "damage",
+            CombatValueKind::Heal => "heal",
+        };
+        lines.push(format!("Effect: {} {value_kind}", payload.amount));
+    }
+
+    if let Some(status) = &payload.status {
+        lines.push(format!("Status: {}", format_status_summary(status)));
+    }
+
+    if let Some(duration_ms) = payload.interrupt_silence_duration_ms {
+        lines.push(format!(
+            "Interrupt: cancels a cast and silences for {}",
+            format_duration_ms(duration_ms)
+        ));
+    }
+
+    if let Some(dispel) = payload.dispel {
+        let scope = match dispel.scope {
+            DispelScope::Positive => "positive",
+            DispelScope::Negative => "negative",
+            DispelScope::All => "any",
+        };
+        lines.push(format!(
+            "Dispel: remove up to {} {scope} effect{}",
+            dispel.max_statuses,
+            if dispel.max_statuses == 1 { "" } else { "s" }
+        ));
+    }
+}
+
+fn format_status_summary(status: &StatusDefinition) -> String {
+    let base = match status.kind {
+        StatusKind::Poison => format!(
+            "Poison {} every {} for {} (max {})",
+            status.magnitude,
+            format_duration_ms(status.tick_interval_ms.unwrap_or(0)),
+            format_duration_ms(status.duration_ms),
+            status.max_stacks
+        ),
+        StatusKind::Hot => format!(
+            "Heal over time {} every {} for {} (max {})",
+            status.magnitude,
+            format_duration_ms(status.tick_interval_ms.unwrap_or(0)),
+            format_duration_ms(status.duration_ms),
+            status.max_stacks
+        ),
+        StatusKind::Chill => {
+            let mut text = format!(
+                "Chill {} for {} (max {})",
+                status.magnitude,
+                format_duration_ms(status.duration_ms),
+                status.max_stacks
+            );
+            if let Some(trigger_duration_ms) = status.trigger_duration_ms {
+                text.push_str(&format!(
+                    ", follow-up after {}",
+                    format_duration_ms(trigger_duration_ms)
+                ));
+            }
+            text
+        }
+        StatusKind::Root => format!("Root for {}", format_duration_ms(status.duration_ms)),
+        StatusKind::Haste => format!(
+            "Haste {} for {}",
+            status.magnitude,
+            format_duration_ms(status.duration_ms)
+        ),
+        StatusKind::Silence => format!("Silence for {}", format_duration_ms(status.duration_ms)),
+        StatusKind::Stun => format!("Stun for {}", format_duration_ms(status.duration_ms)),
+        StatusKind::Sleep => format!(
+            "Sleep for {} (breaks on damage)",
+            format_duration_ms(status.duration_ms)
+        ),
+        StatusKind::Shield => format!(
+            "Shield {} for {} (max {})",
+            status.magnitude,
+            format_duration_ms(status.duration_ms),
+            status.max_stacks
+        ),
+        StatusKind::Stealth => format!("Stealth for {}", format_duration_ms(status.duration_ms)),
+        StatusKind::Reveal => format!("Reveal for {}", format_duration_ms(status.duration_ms)),
+        StatusKind::Fear => format!("Fear for {}", format_duration_ms(status.duration_ms)),
+    };
+
+    let mut extras = Vec::new();
+    if status.expire_payload.is_some() {
+        extras.push("blooms on expire");
+    }
+    if status.dispel_payload.is_some() {
+        extras.push("blooms on dispel");
+    }
+    if extras.is_empty() {
+        base
+    } else {
+        format!("{base}; {}", extras.join(", "))
+    }
+}
+
+fn format_duration_ms(duration_ms: u16) -> String {
+    if duration_ms == 0 {
+        return String::from("0s");
+    }
+    if duration_ms % 1000 == 0 {
+        return format!("{}s", duration_ms / 1000);
+    }
+    let seconds = f32::from(duration_ms) / 1000.0;
+    format!("{seconds:.1}s")
+}
+
+fn format_bps_percent(value: u16) -> String {
+    let percent = f32::from(value) / 100.0;
+    if value % 100 == 0 {
+        format!("{percent:.0}%")
+    } else {
+        format!("{percent:.1}%")
+    }
+}
+
+fn skill_ui_category(skill: &SkillDefinition) -> &'static str {
+    if let Some(payload) = primary_payload(&skill.behavior) {
+        if payload.kind == CombatValueKind::Heal || status_kind(payload) == Some(StatusKind::Hot) {
+            return "heal";
+        }
+        if status_kind(payload) == Some(StatusKind::Poison) {
+            return "dot";
+        }
+        if payload.interrupt_silence_duration_ms.is_some()
+            || matches!(
+                status_kind(payload),
+                Some(
+                    StatusKind::Chill
+                        | StatusKind::Root
+                        | StatusKind::Silence
+                        | StatusKind::Stun
+                        | StatusKind::Sleep
+                        | StatusKind::Reveal
+                        | StatusKind::Fear
+                )
+            )
+        {
+            return "control";
+        }
+        if payload.dispel.is_some() {
+            return "utility";
+        }
+        if matches!(
+            status_kind(payload),
+            Some(StatusKind::Shield | StatusKind::Haste | StatusKind::Stealth)
+        ) {
+            return "buff";
+        }
+    }
+
+    match skill.behavior {
+        SkillBehavior::Dash { .. }
+        | SkillBehavior::Teleport { .. }
+        | SkillBehavior::Passive { .. } => "mobility",
+        SkillBehavior::Summon { .. }
+        | SkillBehavior::Ward { .. }
+        | SkillBehavior::Trap { .. }
+        | SkillBehavior::Barrier { .. }
+        | SkillBehavior::Aura { .. } => "utility",
+        _ => "damage",
+    }
+}
+
+fn primary_payload(behavior: &SkillBehavior) -> Option<&EffectPayload> {
+    match behavior {
+        SkillBehavior::Projectile { payload, .. }
+        | SkillBehavior::Beam { payload, .. }
+        | SkillBehavior::Burst { payload, .. }
+        | SkillBehavior::Nova { payload, .. }
+        | SkillBehavior::Channel { payload, .. }
+        | SkillBehavior::Summon { payload, .. }
+        | SkillBehavior::Trap { payload, .. }
+        | SkillBehavior::Aura { payload, .. } => Some(payload),
+        SkillBehavior::Dash { payload, .. } => payload.as_ref(),
+        SkillBehavior::Teleport { .. }
+        | SkillBehavior::Passive { .. }
+        | SkillBehavior::Ward { .. }
+        | SkillBehavior::Barrier { .. } => None,
+    }
+}
+
+fn status_kind(payload: &EffectPayload) -> Option<StatusKind> {
+    payload.status.as_ref().map(|status| status.kind)
 }

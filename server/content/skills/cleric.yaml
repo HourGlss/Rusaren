@@ -2,7 +2,7 @@ tree: Cleric
 melee:
   id: cleric_mace_tap
   name: Mace Tap
-  description: A steady close-range hit from the cleric's mace.
+  description: Short melee hit.
   cooldown_ms: 550
   range: 88
   radius: 40
@@ -14,7 +14,7 @@ skills:
   - tier: 1
     id: cleric_minor_heal
     name: Minor Heal
-    description: A direct beam heal that affects the first player it reaches.
+    description: Beam heal for the first ally hit.
     behavior:
       kind: beam
       effect: beam
@@ -29,7 +29,7 @@ skills:
   - tier: 2
     id: cleric_lantern_ward
     name: Lantern Ward
-    description: Plants a fragile lantern that grants a fresh pocket of vision through darkness.
+    description: Place a vision ward.
     behavior:
       kind: ward
       effect: nova
@@ -42,7 +42,7 @@ skills:
   - tier: 3
     id: cleric_aegis_prayer
     name: Aegis Prayer
-    description: A close-held prayer that wraps the cleric in stacked holy shielding.
+    description: Apply stacking shields to yourself.
     behavior:
       kind: nova
       effect: nova
@@ -61,7 +61,7 @@ skills:
   - tier: 4
     id: cleric_cleanse_prayer
     name: Cleanse Prayer
-    description: A focused blessing that lifts one harmful effect from the first ally it reaches.
+    description: Beam heal that removes 1 negative effect from the first ally hit.
     behavior:
       kind: beam
       effect: beam
@@ -79,7 +79,7 @@ skills:
   - tier: 5
     id: cleric_sanctuary_hymn
     name: Sanctuary Hymn
-    description: A sustained hymn that heals nearby allies and leaves a lingering renewal on them.
+    description: Aura heal that also applies heal over time.
     behavior:
       kind: aura
       effect: nova

@@ -2,7 +2,7 @@ tree: Bard
 melee:
   id: bard_rapier_tap
   name: Rapier Tap
-  description: A quick thrust timed between songs and footwork.
+  description: Short melee hit.
   cooldown_ms: 520
   range: 86
   radius: 36
@@ -14,7 +14,7 @@ skills:
   - tier: 1
     id: bard_sonic_note
     name: Sonic Note
-    description: A resonant projectile that keeps constant tempo on distant targets.
+    description: Projectile damage.
     behavior:
       kind: projectile
       effect: skill_shot
@@ -29,7 +29,7 @@ skills:
   - tier: 2
     id: bard_rallying_tempo
     name: Rallying Tempo
-    description: A passive cadence that makes every step and follow-up come a little sooner.
+    description: Passive move speed and cooldown reduction.
     behavior:
       kind: passive
       effect: nova
@@ -38,7 +38,7 @@ skills:
   - tier: 3
     id: bard_dissonant_verse
     name: Dissonant Verse
-    description: A cutting refrain that silences players caught in the line.
+    description: Beam damage that silences.
     behavior:
       kind: beam
       effect: beam
@@ -56,7 +56,7 @@ skills:
   - tier: 4
     id: bard_chorus_burst
     name: Chorus Burst
-    description: A bright chorus that patches nearby allies and leaves them briefly quickened.
+    description: Nearby heal that also applies haste.
     behavior:
       kind: burst
       effect: burst
@@ -75,7 +75,7 @@ skills:
   - tier: 5
     id: bard_panic_refrain
     name: Panic Refrain
-    description: Sets a sonic locus that repeatedly drives enemies away from the stage.
+    description: Place an aura that repeatedly fears enemies.
     behavior:
       kind: aura
       effect: nova

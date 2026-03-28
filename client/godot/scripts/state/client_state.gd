@@ -2,6 +2,8 @@ extends RefCounted
 class_name ClientState
 
 const MAX_EVENT_LINES := 28
+const MAX_LOCAL_COMBAT_TEXTS := 64
+const COMBAT_TEXT_LIFETIME_SECONDS := 1.18
 const PLAYER_RENDER_LERP_RATE := 11.0
 const PROJECTILE_RENDER_LERP_RATE := 15.0
 const RENDER_SNAP_DISTANCE_UNITS := 220.0
@@ -35,17 +37,8 @@ var skill_catalog: Array[Dictionary] = []
 var local_skill_progress := {}
 var local_skill_loadout: Array[Dictionary] = []
 var local_round_skill_locked := false
-var debug_mode := "off"
-var debug_last_spell_by_player := {}
-var debug_motion_vectors := {}
-var debug_last_sent_input := {
-	"move_x": 0,
-	"move_y": 0,
-	"aim_x": 0,
-	"aim_y": 0,
-	"primary": false,
-	"cast_slot": 0,
-}
+var round_summary := {}
+var match_summary := {}
 var arena_width := 0
 var arena_height := 0
 var arena_tile_units := 0
@@ -56,8 +49,12 @@ var render_players := {}
 var arena_projectiles: Array[Dictionary] = []
 var render_projectiles: Array[Dictionary] = []
 var arena_effects: Array[Dictionary] = []
+var local_combat_texts: Array[Dictionary] = []
 var visible_tiles := PackedByteArray()
 var explored_tiles := PackedByteArray()
+
+func _is_rendered_deployable_kind(kind_name: String) -> bool:
+	return kind_name != "Aura"
 
 
 func prepare_for_connection(player_name: String) -> void:
@@ -83,6 +80,8 @@ func prepare_for_connection(player_name: String) -> void:
 	skill_catalog.clear()
 	_reset_local_skill_progress()
 	local_round_skill_locked = false
+	round_summary.clear()
+	match_summary.clear()
 	_clear_arena_state()
 	_append_event("Connecting as %s." % local_player_name)
 
@@ -146,6 +145,8 @@ func apply_server_event(event: Dictionary) -> void:
 				skill_catalog.append((catalog_entry as Dictionary).duplicate(true))
 			_reset_local_skill_progress()
 			local_round_skill_locked = false
+			round_summary.clear()
+			match_summary.clear()
 			_clear_arena_state()
 			banner_message = "Connected as %s." % local_player_name
 			_append_event("Connected as %s (#%d)." % [local_player_name, local_player_id])
@@ -243,6 +244,8 @@ func apply_server_event(event: Dictionary) -> void:
 			match_phase = "skill_pick"
 			_reset_local_skill_progress()
 			local_round_skill_locked = false
+			round_summary.clear()
+			match_summary.clear()
 			_clear_arena_state()
 			phase_label = "Match #%d, Round %d" % [current_match_id, current_round]
 			countdown_label = "Choose one skill in %ds." % int(event.get("skill_pick_seconds", 0))
@@ -293,6 +296,9 @@ func apply_server_event(event: Dictionary) -> void:
 				score_a,
 				score_b,
 			])
+		"RoundSummary":
+			round_summary = (event.get("summary", {}) as Dictionary).duplicate(true)
+			_append_event("Round %d summary received." % int(round_summary.get("round", current_round)))
 		"MatchEnded":
 			screen = "results"
 			match_phase = "ended"
@@ -306,6 +312,9 @@ func apply_server_event(event: Dictionary) -> void:
 			]
 			banner_message = String(event.get("message", "Match ended."))
 			_append_event(banner_message)
+		"MatchSummary":
+			match_summary = (event.get("summary", {}) as Dictionary).duplicate(true)
+			_append_event("Match summary received.")
 		"ReturnedToCentralLobby":
 			record = event.get("record", record)
 			_reset_to_central()
@@ -327,7 +336,9 @@ func apply_server_event(event: Dictionary) -> void:
 				arena_obstacles.append((obstacle_data as Dictionary).duplicate(true))
 			arena_deployables.clear()
 			for deployable_data in snapshot.get("deployables", []):
-				arena_deployables.append((deployable_data as Dictionary).duplicate(true))
+				var deployable := (deployable_data as Dictionary).duplicate(true)
+				if _is_rendered_deployable_kind(String(deployable.get("kind", ""))):
+					arena_deployables.append(deployable)
 			_replace_arena_players(snapshot.get("players", []))
 			_replace_arena_projectiles(snapshot.get("projectiles", []))
 		"ArenaDeltaSnapshot":
@@ -341,7 +352,9 @@ func apply_server_event(event: Dictionary) -> void:
 				arena_obstacles.append((obstacle_delta as Dictionary).duplicate(true))
 			arena_deployables.clear()
 			for deployable_delta in delta_snapshot.get("deployables", []):
-				arena_deployables.append((deployable_delta as Dictionary).duplicate(true))
+				var deployable := (deployable_delta as Dictionary).duplicate(true)
+				if _is_rendered_deployable_kind(String(deployable.get("kind", ""))):
+					arena_deployables.append(deployable)
 			_replace_arena_players(delta_snapshot.get("players", []))
 			_replace_arena_projectiles(delta_snapshot.get("projectiles", []))
 		"ArenaEffectBatch":
@@ -350,8 +363,10 @@ func apply_server_event(event: Dictionary) -> void:
 				var ttl: float = _effect_ttl_seconds(String(effect.get("kind", "")))
 				effect["ttl"] = ttl
 				effect["ttl_max"] = ttl
-				_record_debug_effect(effect)
 				arena_effects.append(effect)
+		"ArenaCombatTextBatch":
+			for entry_data in event.get("entries", []):
+				_queue_local_combat_text((entry_data as Dictionary).duplicate(true))
 		_:
 			_append_event("Unhandled event: %s" % event_type)
 
@@ -476,6 +491,30 @@ func event_log_text() -> String:
 	return "\n".join(recent_events)
 
 
+func round_summary_text() -> String:
+	if round_summary.is_empty():
+		return ""
+	var round_number := int(round_summary.get("round", current_round))
+	var lines: Array[String] = []
+	lines.append("Round %d" % round_number)
+	lines.append("This round")
+	lines.append_array(_summary_block_lines(round_summary.get("round_totals", [])))
+	lines.append("")
+	lines.append("Running total")
+	lines.append_array(_summary_block_lines(round_summary.get("running_totals", [])))
+	return "\n".join(lines)
+
+
+func match_summary_text() -> String:
+	if match_summary.is_empty():
+		return ""
+	var rounds_played := int(match_summary.get("rounds_played", 0))
+	var lines: Array[String] = []
+	lines.append("Rounds played: %d" % rounds_played)
+	lines.append_array(_summary_block_lines(match_summary.get("totals", [])))
+	return "\n".join(lines)
+
+
 func lobby_note() -> String:
 	return "Click an open lobby in the directory or enter a manual lobby ID. Use Menu for your alias, record, roster, and event views while the backend keeps directory, roster, and arena state authoritative."
 
@@ -546,13 +585,51 @@ func skill_name_for(tree_name: String, tier: int) -> String:
 	return "%s %d" % [tree_name, tier]
 
 
+func skill_description_for(tree_name: String, tier: int) -> String:
+	var entry := _skill_catalog_entry(tree_name, tier)
+	if entry.is_empty():
+		return ""
+	return String(entry.get("skill_description", ""))
+
+
+func skill_summary_for(tree_name: String, tier: int) -> String:
+	var entry := _skill_catalog_entry(tree_name, tier)
+	if entry.is_empty():
+		return ""
+	return String(entry.get("skill_summary", ""))
+
+
+func skill_ui_category_for(tree_name: String, tier: int) -> String:
+	var entry := _skill_catalog_entry(tree_name, tier)
+	if entry.is_empty():
+		return "neutral"
+	return String(entry.get("ui_category", "neutral"))
+
+
+func skill_tooltip_for(tree_name: String, tier: int) -> String:
+	var description := skill_description_for(tree_name, tier)
+	var summary := skill_summary_for(tree_name, tier)
+	var parts: Array[String] = []
+	if description != "":
+		parts.append(description)
+	if summary != "":
+		if not parts.is_empty():
+			parts.append("")
+		parts.append(summary)
+	return "\n".join(parts)
+
+
 func skill_catalog_signature() -> String:
 	var parts: Array[String] = []
 	for entry in skill_catalog:
-		parts.append("%s:%d:%s" % [
+		parts.append("%s:%d:%s:%s:%s:%s:%s" % [
 			String(entry.get("tree", "")),
 			int(entry.get("tier", 0)),
 			String(entry.get("skill_id", "")),
+			String(entry.get("skill_name", "")),
+			String(entry.get("skill_description", "")),
+			String(entry.get("skill_summary", "")),
+			String(entry.get("ui_category", "")),
 		])
 	return "|".join(parts)
 
@@ -611,7 +688,9 @@ func arena_projectiles_list() -> Array[Dictionary]:
 func arena_deployables_list() -> Array[Dictionary]:
 	var deployables: Array[Dictionary] = []
 	for deployable in arena_deployables:
-		deployables.append((deployable as Dictionary).duplicate(true))
+		var copy := (deployable as Dictionary).duplicate(true)
+		if _is_rendered_deployable_kind(String(copy.get("kind", ""))):
+			deployables.append(copy)
 	return deployables
 
 
@@ -641,51 +720,6 @@ func player_skill_name_for_slot(player_id: int, slot: int) -> String:
 		if skill_name != "" and skill_name != "Awaiting next pick" and skill_name != "No skill locked":
 			return skill_name
 	return "Slot %d" % slot
-
-
-func debug_overlay_enabled() -> bool:
-	return debug_mode != "off"
-
-
-func debug_shows_render() -> bool:
-	return debug_mode == "render" or debug_mode == "both"
-
-
-func debug_shows_auth() -> bool:
-	return debug_mode == "auth" or debug_mode == "both"
-
-
-func cycle_debug_mode() -> String:
-	match debug_mode:
-		"off":
-			debug_mode = "render"
-		"render":
-			debug_mode = "auth"
-		"auth":
-			debug_mode = "both"
-		_:
-			debug_mode = "off"
-	return debug_mode
-
-
-func set_debug_mode(mode_name: String) -> void:
-	match mode_name:
-		"off", "render", "auth", "both":
-			debug_mode = mode_name
-		_:
-			debug_mode = "off"
-
-
-func debug_mode_label() -> String:
-	match debug_mode:
-		"render":
-			return "Render"
-		"auth":
-			return "Auth"
-		"both":
-			return "Both"
-		_:
-			return "Off"
 
 
 func cooldown_summary_text() -> String:
@@ -730,6 +764,13 @@ func arena_players_list() -> Array[Dictionary]:
 	for player_id in ids:
 		players.append((render_players[player_id] as Dictionary).duplicate(true))
 	return players
+
+
+func local_combat_text_entries() -> Array[Dictionary]:
+	var entries: Array[Dictionary] = []
+	for entry in local_combat_texts:
+		entries.append((entry as Dictionary).duplicate(true))
+	return entries
 
 
 func authoritative_arena_players_list() -> Array[Dictionary]:
@@ -780,72 +821,13 @@ func advance_visuals(delta: float) -> void:
 		effect["ttl"] = ttl
 		if ttl <= 0.0:
 			arena_effects.remove_at(index)
+	for index in range(local_combat_texts.size() - 1, -1, -1):
+		var entry: Dictionary = local_combat_texts[index]
+		var ttl := maxf(0.0, float(entry.get("ttl", 0.0)) - delta)
+		entry["ttl"] = ttl
+		if ttl <= 0.0:
+			local_combat_texts.remove_at(index)
 	_smooth_render_state(delta)
-
-
-func debug_movement_vector_for(player_id: int) -> Vector2:
-	if debug_motion_vectors.has(player_id):
-		return debug_motion_vectors[player_id]
-	return Vector2.ZERO
-
-
-func debug_last_spell_for_player(player_id: int) -> String:
-	if debug_last_spell_by_player.has(player_id):
-		return String(debug_last_spell_by_player[player_id])
-	return ""
-
-
-func debug_summary_lines() -> Array[String]:
-	var lines: Array[String] = []
-	lines.append("Debug: %s" % debug_mode_label())
-	var last_spell := debug_last_spell_for_player(local_player_id)
-	if last_spell != "":
-		lines.append("Last spell: %s" % last_spell)
-	var input_data: Dictionary = debug_last_sent_input
-	lines.append("Input m(%d,%d) aim(%d,%d) p=%s cast=%d" % [
-		int(input_data.get("move_x", 0)),
-		int(input_data.get("move_y", 0)),
-		int(input_data.get("aim_x", 0)),
-		int(input_data.get("aim_y", 0)),
-		"y" if bool(input_data.get("primary", false)) else "n",
-		int(input_data.get("cast_slot", 0)),
-	])
-	var local_player := local_arena_player()
-	if not local_player.is_empty():
-		lines.append("Local hp=%d mana=%d raw=(%d,%d)" % [
-			int(local_player.get("hit_points", 0)),
-			int(local_player.get("mana", 0)),
-			int(local_player.get("x", 0)),
-			int(local_player.get("y", 0)),
-		])
-		var current_cast_slot := int(local_player.get("current_cast_slot", 0))
-		if current_cast_slot > 0:
-			lines.append("Casting %s %d/%dms" % [
-				local_skill_name_for_slot(current_cast_slot),
-				int(local_player.get("current_cast_remaining_ms", 0)),
-				int(local_player.get("current_cast_total_ms", 0)),
-			])
-	return lines
-
-
-func debug_label_for_projectile(projectile: Dictionary) -> String:
-	var owner_id := int(projectile.get("owner", 0))
-	var slot := int(projectile.get("slot", 0))
-	var label := "P%d %s" % [owner_id, String(projectile.get("kind", ""))]
-	if slot <= 0:
-		return "%s melee" % label
-	return "%s %s" % [label, player_skill_name_for_slot(owner_id, slot)]
-
-
-func mark_debug_input(move_x: int, move_y: int, aim: Vector2i, primary: bool, cast_slot: int) -> void:
-	debug_last_sent_input = {
-		"move_x": move_x,
-		"move_y": move_y,
-		"aim_x": aim.x,
-		"aim_y": aim.y,
-		"primary": primary,
-		"cast_slot": cast_slot,
-	}
 
 
 func _apply_arena_phase(snapshot: Dictionary) -> void:
@@ -883,6 +865,8 @@ func _reset_to_central() -> void:
 	roster.clear()
 	_reset_local_skill_progress()
 	local_round_skill_locked = false
+	round_summary.clear()
+	match_summary.clear()
 	_clear_arena_state()
 
 
@@ -913,6 +897,61 @@ func _append_event(line: String) -> void:
 		recent_events.remove_at(0)
 
 
+func _skill_catalog_entry(tree_name: String, tier: int) -> Dictionary:
+	for entry in skill_catalog:
+		if String(entry.get("tree", "")) == tree_name and int(entry.get("tier", 0)) == tier:
+			return (entry as Dictionary).duplicate(true)
+	return {}
+
+
+func _summary_block_lines(entries: Array) -> Array[String]:
+	var normalized: Array[Dictionary] = []
+	for entry in entries:
+		normalized.append((entry as Dictionary).duplicate(true))
+	normalized.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		var team_a := String(a.get("team", ""))
+		var team_b := String(b.get("team", ""))
+		if team_a != team_b:
+			return team_a < team_b
+		var damage_a := int(a.get("damage_done", 0))
+		var damage_b := int(b.get("damage_done", 0))
+		if damage_a != damage_b:
+			return damage_a > damage_b
+		return String(a.get("player_name", "")) < String(b.get("player_name", ""))
+	)
+	var lines: Array[String] = []
+	for entry in normalized:
+		lines.append("%s  |  %s  |  dmg %d  |  heal+ %d  |  heal- %d  |  cc %d/%d" % [
+			String(entry.get("player_name", "Unknown")),
+			String(entry.get("team", "Unknown")),
+			int(entry.get("damage_done", 0)),
+			int(entry.get("healing_to_allies", 0)),
+			int(entry.get("healing_to_enemies", 0)),
+			int(entry.get("cc_used", 0)),
+			int(entry.get("cc_hits", 0)),
+		])
+	if lines.is_empty():
+		lines.append("No combat events recorded yet.")
+	return lines
+
+
+func _queue_local_combat_text(entry: Dictionary) -> void:
+	var copy := entry.duplicate(true)
+	copy["ttl"] = COMBAT_TEXT_LIFETIME_SECONDS
+	copy["ttl_max"] = COMBAT_TEXT_LIFETIME_SECONDS
+	var basis := "%s|%s|%d|%d|%d" % [
+		String(copy.get("text", "")),
+		String(copy.get("style", "")),
+		int(copy.get("x", 0)),
+		int(copy.get("y", 0)),
+		local_combat_texts.size(),
+	]
+	copy["jitter_x"] = float((basis.hash() % 19) - 9)
+	local_combat_texts.append(copy)
+	while local_combat_texts.size() > MAX_LOCAL_COMBAT_TEXTS:
+		local_combat_texts.remove_at(0)
+
+
 func _clear_round_skills() -> void:
 	for player_id in roster.keys():
 		var member: Dictionary = roster[player_id]
@@ -934,11 +973,10 @@ func _clear_arena_state() -> void:
 	arena_deployables.clear()
 	arena_players.clear()
 	render_players.clear()
-	debug_motion_vectors.clear()
 	arena_projectiles.clear()
 	render_projectiles.clear()
 	arena_effects.clear()
-	debug_last_spell_by_player.clear()
+	local_combat_texts.clear()
 	visible_tiles = PackedByteArray()
 	explored_tiles = PackedByteArray()
 
@@ -956,21 +994,11 @@ func _remember_local_skill_choice(tree_name: String, tier: int, skill_name: Stri
 
 func _replace_arena_players(player_entries: Array) -> void:
 	var previous_render := render_players
-	var previous_auth := arena_players
 	arena_players.clear()
 	render_players = {}
-	debug_motion_vectors.clear()
 	for player_variant in player_entries:
 		var raw_player := (player_variant as Dictionary).duplicate(true)
 		var player_id := int(raw_player.get("player_id", 0))
-		if previous_auth.has(player_id):
-			var prior_player: Dictionary = previous_auth[player_id]
-			debug_motion_vectors[player_id] = Vector2(
-				float(raw_player.get("x", 0)) - float(prior_player.get("x", 0)),
-				float(raw_player.get("y", 0)) - float(prior_player.get("y", 0))
-			)
-		else:
-			debug_motion_vectors[player_id] = Vector2.ZERO
 		arena_players[player_id] = raw_player
 
 		var render_player: Dictionary = raw_player.duplicate(true)
@@ -1053,21 +1081,6 @@ func _smooth_axis(current: float, target: float, step: float) -> float:
 	if absf(target - current) > RENDER_SNAP_DISTANCE_UNITS:
 		return target
 	return lerpf(current, target, step)
-
-
-func _record_debug_effect(effect: Dictionary) -> void:
-	var owner_id := int(effect.get("owner", 0))
-	var slot := int(effect.get("slot", 0))
-	var label := "Melee" if slot <= 0 else "Slot %d" % slot
-	if slot > 0:
-		if owner_id == local_player_id:
-			label = local_skill_name_for_slot(slot)
-		elif roster.has(owner_id):
-			var member: Dictionary = roster[owner_id]
-			var chosen := String(member.get("skill", ""))
-			if chosen != "" and chosen != "Awaiting next pick" and chosen != "No skill locked":
-				label = chosen
-	debug_last_spell_by_player[owner_id] = "%s (%s)" % [label, String(effect.get("kind", ""))]
 
 
 func _mask_has_tile(mask: PackedByteArray, column: int, row: int) -> bool:

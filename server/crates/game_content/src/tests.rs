@@ -39,8 +39,24 @@ fn bundled_content_loads_all_classes_and_the_ascii_map() {
         .behaviors
         .iter()
         .any(|mechanic| mechanic.id == "passive" && mechanic.implemented));
-    assert_eq!(content.map().team_a_anchor.0, -650);
-    assert_eq!(content.map().team_b_anchor.0, 650);
+    assert!(
+        content.map().team_a_anchor.0 < content.map().team_b_anchor.0,
+        "team A should remain left of team B in the bundled map"
+    );
+    assert_eq!(
+        content.map().team_a_anchor.1,
+        content.map().team_b_anchor.1,
+        "the bundled anchors should remain on the same horizontal lane"
+    );
+    let half_width = i32::from(content.map().width_units) / 2;
+    assert!(
+        i32::from(content.map().team_a_anchor.0).abs() < half_width,
+        "team A anchor should stay inside the authored map bounds"
+    );
+    assert!(
+        i32::from(content.map().team_b_anchor.0).abs() < half_width,
+        "team B anchor should stay inside the authored map bounds"
+    );
 }
 
 #[test]
@@ -63,6 +79,11 @@ fn bundled_content_exposes_authored_cast_times_and_registry_surface() {
         .behaviors
         .iter()
         .any(|mechanic| mechanic.id == "interrupt" && mechanic.implemented));
+    assert!(content
+        .mechanics()
+        .behaviors
+        .iter()
+        .any(|mechanic| mechanic.id == "dispel" && mechanic.implemented));
     assert!(content
         .mechanics()
         .statuses

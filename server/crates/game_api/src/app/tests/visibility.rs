@@ -97,18 +97,48 @@ fn visibility_masks_tiles_players_projectiles_and_effects_are_precise() {
         &visible_tiles,
         &far_shrub
     ));
+    let expected_top_left = (
+        i16::try_from(-i32::from(map.width_units) / 2 + i32::from(map.tile_units) / 2)
+            .expect("top-left x fits"),
+        i16::try_from(-i32::from(map.height_units) / 2 + i32::from(map.tile_units) / 2)
+            .expect("top-left y fits"),
+    );
+    let expected_bottom_right = (
+        i16::try_from(i32::from(map.width_units) / 2 - i32::from(map.tile_units) / 2)
+            .expect("bottom-right x fits"),
+        i16::try_from(i32::from(map.height_units) / 2 - i32::from(map.tile_units) / 2)
+            .expect("bottom-right y fits"),
+    );
     assert_eq!(
         ServerApp::tile_center_units(&map, 0, 0),
-        (-750, -450),
-        "top-left tile center should stay stable"
+        expected_top_left,
+        "top-left tile center should track the authored map bounds"
     );
     assert_eq!(
-        ServerApp::tile_center_units(&map, 30, 18),
-        (750, 450),
-        "bottom-right tile center should stay stable"
+        ServerApp::tile_center_units(
+            &map,
+            usize::from(map.width_tiles) - 1,
+            usize::from(map.height_tiles) - 1,
+        ),
+        expected_bottom_right,
+        "bottom-right tile center should track the authored map bounds"
     );
-    assert_eq!(ServerApp::tile_index_for_point(&map, -800, 0), None);
-    assert_eq!(ServerApp::tile_index_for_point(&map, 0, -500), None);
+    assert_eq!(
+        ServerApp::tile_index_for_point(
+            &map,
+            i16::try_from(-i32::from(map.width_units) / 2 - 50).expect("x fits"),
+            0,
+        ),
+        None
+    );
+    assert_eq!(
+        ServerApp::tile_index_for_point(
+            &map,
+            0,
+            i16::try_from(-i32::from(map.height_units) / 2 - 50).expect("y fits"),
+        ),
+        None
+    );
     assert!(ServerApp::containing_shrub(
         runtime.world.obstacles(),
         close_shrub.center_x,
@@ -593,6 +623,60 @@ fn deployable_snapshots_always_include_owned_and_only_visible_foreign_entities()
     );
 }
 
+#[test]
+fn aura_deployables_are_omitted_from_arena_snapshots() {
+    let content = GameContent::bundled().expect("bundled content");
+    let map = content.map().clone();
+    let paladin_tree = SkillTree::new("Paladin").expect("paladin tree");
+    let alice_id = manual_player_id(1);
+    let mut runtime = manual_runtime(
+        &content,
+        vec![
+            manual_seed(
+                &content,
+                1,
+                "Alice",
+                TeamSide::TeamA,
+                paladin_tree.clone(),
+                [None, None, Some(skill(paladin_tree.clone(), 3)), None, None],
+            ),
+            manual_seed(
+                &content,
+                2,
+                "Bob",
+                TeamSide::TeamB,
+                paladin_tree.clone(),
+                [None, None, None, None, None],
+            ),
+        ],
+    );
+
+    runtime.world.queue_cast(alice_id, 3).expect("alice aura");
+    let _ = runtime.world.tick(COMBAT_FRAME_MS);
+
+    assert!(
+        runtime
+            .world
+            .deployables()
+            .into_iter()
+            .any(|deployable| deployable.kind == game_sim::ArenaDeployableKind::Aura),
+        "the authored aura skill should still create an aura deployable in the sim"
+    );
+
+    let snapshot = ServerApp::arena_deployables_snapshot(
+        &runtime,
+        alice_id,
+        &map,
+        &ServerApp::blank_visibility_mask(&map),
+    );
+    assert!(
+        snapshot
+            .iter()
+            .all(|deployable| deployable.kind != game_net::ArenaDeployableKind::Aura),
+        "auras should stay gameplay-only and should not be surfaced as visible arena deployables"
+    );
+}
+
 fn manual_player_id(raw: u32) -> PlayerId {
     PlayerId::new(raw).expect("valid player id")
 }
@@ -650,6 +734,8 @@ fn manual_runtime(content: &GameContent, seeds: Vec<game_sim::SimPlayerSeed>) ->
         session,
         world,
         explored_tiles: BTreeMap::new(),
+        combat_frame_index: 0,
+        feedback: Default::default(),
     }
 }
 
@@ -680,7 +766,9 @@ fn content_with_reveal_only_field(
     fs::write(root.join("maps").join("prototype_arena.txt"), map_text).expect("map override");
     let mage_path = root.join("skills").join("mage.yaml");
     let mage_yaml = fs::read_to_string(&mage_path).expect("mage yaml");
-    let patched = mage_yaml.replace("amount: 4\n        status:", "amount: 0\n        status:");
+    let patched = mage_yaml
+        .replace("amount: 4\r\n        status:", "amount: 0\r\n        status:")
+        .replace("amount: 4\n        status:", "amount: 0\n        status:");
     assert_ne!(
         patched, mage_yaml,
         "test mage reveal field patch should apply"

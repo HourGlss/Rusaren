@@ -1,8 +1,10 @@
 use super::{
     point_distance_sq, point_distance_units, round_f32_to_i32, saturating_i16, segment_distance_sq,
     travel_distance_units, truncate_line_to_obstacles, ArenaEffect, ArenaEffectKind,
-    CombatValueKind, MovementIntent, PlayerId, ProjectileState, SimulationEvent, SimulationWorld,
-    StatusDefinition, StatusInstance, StatusKind, TargetEntity, PLAYER_RADIUS_UNITS,
+    CombatValueKind, MovementIntent, PlayerId, ProjectileState, SimCastCancelReason, SimMissReason,
+    SimRemovedStatus, SimStatusRemovedReason, SimTargetKind, SimTriggerReason, SimulationEvent,
+    SimulationWorld, StatusDefinition, StatusInstance, StatusKind, TargetEntity,
+    PLAYER_RADIUS_UNITS,
 };
 
 impl SimulationWorld {
@@ -17,6 +19,16 @@ impl SimulationWorld {
     #[cfg(test)]
     pub(super) fn test_deployable_overlap_radius(radius: u16, deployable_radius: u16) -> u16 {
         Self::deployable_overlap_radius(radius, deployable_radius)
+    }
+
+    pub(super) fn removed_status(status: &StatusInstance) -> SimRemovedStatus {
+        SimRemovedStatus {
+            source: status.source,
+            slot: status.slot,
+            kind: status.kind,
+            stacks: status.stacks,
+            remaining_ms: status.remaining_ms,
+        }
     }
 
     pub(super) fn advance_projectiles(&mut self, delta_ms: u16, events: &mut Vec<SimulationEvent>) {
@@ -51,6 +63,18 @@ impl SimulationWorld {
                 projectile.payload.kind == CombatValueKind::Damage,
             );
             if let Some(target) = target {
+                let (target_kind, target_id) = match target {
+                    TargetEntity::Player(player_id) => (SimTargetKind::Player, player_id.get()),
+                    TargetEntity::Deployable(deployable_id) => {
+                        (SimTargetKind::Deployable, deployable_id)
+                    }
+                };
+                events.push(SimulationEvent::ImpactHit {
+                    source: projectile.owner,
+                    slot: projectile.slot,
+                    target_kind,
+                    target_id,
+                });
                 events.extend(self.apply_payload(
                     projectile.owner,
                     projectile.slot,
@@ -79,6 +103,11 @@ impl SimulationWorld {
             let blocked = clipped_end != desired_end;
             if remaining_range <= 0 || blocked {
                 if blocked {
+                    events.push(SimulationEvent::ImpactMiss {
+                        source: projectile.owner,
+                        slot: projectile.slot,
+                        reason: SimMissReason::Blocked,
+                    });
                     events.push(SimulationEvent::EffectSpawned {
                         effect: ArenaEffect {
                             kind: ArenaEffectKind::HitSpark,
@@ -90,6 +119,12 @@ impl SimulationWorld {
                             target_y: clipped_end.1,
                             radius: projectile.radius.saturating_mul(2),
                         },
+                    });
+                } else {
+                    events.push(SimulationEvent::ImpactMiss {
+                        source: projectile.owner,
+                        slot: projectile.slot,
+                        reason: SimMissReason::Expired,
                     });
                 }
                 continue;
@@ -118,8 +153,22 @@ impl SimulationWorld {
         }
 
         let mut events = match payload.kind {
-            CombatValueKind::Damage => self.apply_damage_internal(source, targets, payload.amount),
-            CombatValueKind::Heal => self.apply_healing_internal(source, targets, payload.amount),
+            CombatValueKind::Damage => self.apply_damage_internal_with_context(
+                source,
+                slot,
+                targets,
+                payload.amount,
+                None,
+                None,
+            ),
+            CombatValueKind::Heal => self.apply_healing_internal_with_context(
+                source,
+                slot,
+                targets,
+                payload.amount,
+                None,
+                None,
+            ),
         };
 
         if let Some(silence_duration_ms) = payload.interrupt_silence_duration_ms {
@@ -133,7 +182,13 @@ impl SimulationWorld {
                     .is_some_and(|player| player.active_cast.is_some())
                 {
                     if let Some(player) = self.players.get_mut(&target_player_id) {
-                        player.active_cast = None;
+                        if let Some(cast) = player.active_cast.take() {
+                            events.push(SimulationEvent::CastCanceled {
+                                player_id: target_player_id,
+                                slot: cast.slot,
+                                reason: SimCastCancelReason::Interrupt,
+                            });
+                        }
                     }
                     if let Some(event) = self.apply_status(
                         source,
@@ -157,7 +212,13 @@ impl SimulationWorld {
         }
 
         if let Some(dispel) = payload.dispel {
-            events.extend(self.apply_dispel_internal(source, targets, dispel));
+            events.push(SimulationEvent::DispelCast {
+                source,
+                slot,
+                scope: dispel.scope,
+                max_statuses: dispel.max_statuses,
+            });
+            events.extend(self.apply_dispel_internal(source, slot, targets, dispel));
         }
 
         if let Some(status) = payload.status {
@@ -176,11 +237,24 @@ impl SimulationWorld {
         events
     }
 
+    #[cfg(test)]
     pub(super) fn apply_damage_internal(
         &mut self,
         attacker: PlayerId,
         targets: &[TargetEntity],
         amount: u16,
+    ) -> Vec<SimulationEvent> {
+        self.apply_damage_internal_with_context(attacker, 0, targets, amount, None, None)
+    }
+
+    pub(super) fn apply_damage_internal_with_context(
+        &mut self,
+        attacker: PlayerId,
+        slot: u8,
+        targets: &[TargetEntity],
+        amount: u16,
+        status_kind: Option<StatusKind>,
+        trigger: Option<SimTriggerReason>,
     ) -> Vec<SimulationEvent> {
         if amount == 0 {
             return Vec::new();
@@ -198,11 +272,28 @@ impl SimulationWorld {
                         continue;
                     }
 
+                    let mut removed_statuses = Vec::new();
                     player.statuses.retain(|status| {
-                        status.kind != StatusKind::Sleep && status.kind != StatusKind::Stealth
+                        let keep =
+                            status.kind != StatusKind::Sleep && status.kind != StatusKind::Stealth;
+                        if !keep {
+                            removed_statuses.push(Self::removed_status(status));
+                        }
+                        keep
                     });
-                    let damage = self.consume_shields(player_id, amount);
+                    let damage = self.consume_shields(player_id, amount, &mut events);
                     if damage == 0 {
+                        for removed in removed_statuses {
+                            events.push(SimulationEvent::StatusRemoved {
+                                source: removed.source,
+                                target: player_id,
+                                slot: removed.slot,
+                                kind: removed.kind,
+                                stacks: removed.stacks,
+                                remaining_ms: removed.remaining_ms,
+                                reason: SimStatusRemovedReason::DamageBroken,
+                            });
+                        }
                         continue;
                     }
                     let Some(player) = self.players.get_mut(&player_id) else {
@@ -212,20 +303,62 @@ impl SimulationWorld {
                     player.hit_points = player.hit_points.saturating_sub(applied_damage);
                     let defeated = player.hit_points == 0;
                     if defeated {
+                        if let Some(cast) = player.active_cast.take() {
+                            events.push(SimulationEvent::CastCanceled {
+                                player_id,
+                                slot: cast.slot,
+                                reason: SimCastCancelReason::Defeat,
+                            });
+                        }
+                        for removed in player
+                            .statuses
+                            .iter()
+                            .map(Self::removed_status)
+                            .collect::<Vec<_>>()
+                        {
+                            events.push(SimulationEvent::StatusRemoved {
+                                source: removed.source,
+                                target: player_id,
+                                slot: removed.slot,
+                                kind: removed.kind,
+                                stacks: removed.stacks,
+                                remaining_ms: removed.remaining_ms,
+                                reason: SimStatusRemovedReason::Defeat,
+                            });
+                        }
                         player.alive = false;
                         player.moving = false;
                         player.movement_intent = MovementIntent::zero();
-                        player.active_cast = None;
                         player.statuses.clear();
                     }
 
+                    for removed in removed_statuses {
+                        events.push(SimulationEvent::StatusRemoved {
+                            source: removed.source,
+                            target: player_id,
+                            slot: removed.slot,
+                            kind: removed.kind,
+                            stacks: removed.stacks,
+                            remaining_ms: removed.remaining_ms,
+                            reason: SimStatusRemovedReason::DamageBroken,
+                        });
+                    }
                     events.push(SimulationEvent::DamageApplied {
                         attacker,
                         target: player_id,
+                        slot,
                         amount: applied_damage,
                         remaining_hit_points: player.hit_points,
                         defeated,
+                        status_kind,
+                        trigger,
                     });
+                    if defeated {
+                        events.push(SimulationEvent::Defeat {
+                            attacker: Some(attacker),
+                            target: player_id,
+                        });
+                    }
                 }
                 TargetEntity::Deployable(deployable_id) => {
                     let Some(deployable) = self
@@ -260,11 +393,17 @@ impl SimulationWorld {
         events
     }
 
-    fn consume_shields(&mut self, player_id: PlayerId, amount: u16) -> u16 {
+    fn consume_shields(
+        &mut self,
+        player_id: PlayerId,
+        amount: u16,
+        events: &mut Vec<SimulationEvent>,
+    ) -> u16 {
         let Some(player) = self.players.get_mut(&player_id) else {
             return amount;
         };
         let mut remaining_damage = amount;
+        let mut depleted = Vec::new();
         for shield in player
             .statuses
             .iter_mut()
@@ -281,23 +420,50 @@ impl SimulationWorld {
                 let consumed_stacks = shield.shield_remaining.div_ceil(shield.magnitude);
                 shield.stacks = u8::try_from(consumed_stacks.min(stacks)).unwrap_or(shield.stacks);
             }
+            if shield.shield_remaining == 0 {
+                depleted.push(Self::removed_status(shield));
+            }
         }
         player
             .statuses
             .retain(|status| status.kind != StatusKind::Shield || status.shield_remaining > 0);
+        for shield in depleted {
+            events.push(SimulationEvent::StatusRemoved {
+                source: shield.source,
+                target: player_id,
+                slot: shield.slot,
+                kind: shield.kind,
+                stacks: shield.stacks,
+                remaining_ms: shield.remaining_ms,
+                reason: SimStatusRemovedReason::ShieldConsumed,
+            });
+        }
         remaining_damage
     }
 
     #[cfg(test)]
     pub(super) fn test_consume_shields(&mut self, player_id: PlayerId, amount: u16) -> u16 {
-        self.consume_shields(player_id, amount)
+        self.consume_shields(player_id, amount, &mut Vec::new())
     }
 
+    #[cfg(test)]
     pub(super) fn apply_healing_internal(
         &mut self,
         source: PlayerId,
         targets: &[TargetEntity],
         amount: u16,
+    ) -> Vec<SimulationEvent> {
+        self.apply_healing_internal_with_context(source, 0, targets, amount, None, None)
+    }
+
+    pub(super) fn apply_healing_internal_with_context(
+        &mut self,
+        source: PlayerId,
+        slot: u8,
+        targets: &[TargetEntity],
+        amount: u16,
+        status_kind: Option<StatusKind>,
+        trigger: Option<SimTriggerReason>,
     ) -> Vec<SimulationEvent> {
         if amount == 0 {
             return Vec::new();
@@ -321,8 +487,11 @@ impl SimulationWorld {
             events.push(SimulationEvent::HealingApplied {
                 source,
                 target: player_id,
+                slot,
                 amount: healed,
                 resulting_hit_points: player.hit_points,
+                status_kind,
+                trigger,
             });
         }
         events
@@ -330,11 +499,13 @@ impl SimulationWorld {
 
     fn apply_dispel_internal(
         &mut self,
-        _source: PlayerId,
+        source: PlayerId,
+        slot: u8,
         targets: &[TargetEntity],
         dispel: game_content::DispelDefinition,
     ) -> Vec<SimulationEvent> {
         let mut pending_payloads = Vec::new();
+        let mut dispel_results = Vec::new();
         for target in targets {
             let TargetEntity::Player(player_id) = *target else {
                 continue;
@@ -360,24 +531,69 @@ impl SimulationWorld {
                 .map(|(index, _)| index)
                 .collect::<Vec<_>>();
             if remove_indices.is_empty() {
+                dispel_results.push(SimulationEvent::DispelResult {
+                    source,
+                    slot,
+                    target: player_id,
+                    removed_statuses: Vec::new(),
+                    triggered_payload_count: 0,
+                });
                 continue;
             }
 
             let mut retained = Vec::with_capacity(player.statuses.len());
+            let mut removed_statuses = Vec::new();
+            let mut triggered_payload_count = 0_u8;
             for (index, status) in std::mem::take(&mut player.statuses).into_iter().enumerate() {
                 if remove_indices.contains(&index) {
+                    removed_statuses.push(Self::removed_status(&status));
                     if let Some(payload) = status.dispel_payload {
-                        pending_payloads.push((status.source, player_id, status.slot, *payload));
+                        triggered_payload_count = triggered_payload_count.saturating_add(1);
+                        pending_payloads.push((
+                            status.source,
+                            player_id,
+                            status.slot,
+                            status.kind,
+                            *payload,
+                        ));
                     }
                 } else {
                     retained.push(status);
                 }
             }
             player.statuses = retained;
+            for removed in &removed_statuses {
+                dispel_results.push(SimulationEvent::StatusRemoved {
+                    source: removed.source,
+                    target: player_id,
+                    slot: removed.slot,
+                    kind: removed.kind,
+                    stacks: removed.stacks,
+                    remaining_ms: removed.remaining_ms,
+                    reason: SimStatusRemovedReason::Dispelled,
+                });
+            }
+            dispel_results.push(SimulationEvent::DispelResult {
+                source,
+                slot,
+                target: player_id,
+                removed_statuses,
+                triggered_payload_count,
+            });
         }
 
-        let mut events = Vec::new();
-        for (payload_source, target, slot, payload) in pending_payloads {
+        let mut events = dispel_results;
+        for (payload_source, target, slot, status_kind, payload) in pending_payloads {
+            events.push(SimulationEvent::TriggerResolved {
+                source: payload_source,
+                slot,
+                status_kind,
+                trigger: SimTriggerReason::Dispel,
+                target_kind: SimTargetKind::Player,
+                target_id: target.get(),
+                payload_kind: payload.kind,
+                amount: payload.amount,
+            });
             events.extend(self.apply_payload(
                 payload_source,
                 slot,
@@ -402,9 +618,11 @@ impl SimulationWorld {
         }
 
         let mut stacks_after = 1_u8;
+        let mut stack_delta = 1_u8;
         if let Some(existing) = player.statuses.iter_mut().find(|status| {
             status.source == source && status.slot == slot && status.kind == definition.kind
         }) {
+            let before = existing.stacks;
             existing.stacks = existing.stacks.saturating_add(1).min(existing.max_stacks);
             existing.remaining_ms = definition.duration_ms;
             existing.tick_progress_ms = 0;
@@ -422,6 +640,7 @@ impl SimulationWorld {
                     .saturating_add(definition.magnitude);
             }
             stacks_after = existing.stacks;
+            stack_delta = existing.stacks.saturating_sub(before).max(1);
         } else {
             player.statuses.push(StatusInstance {
                 source,
@@ -472,6 +691,7 @@ impl SimulationWorld {
             slot,
             kind: definition.kind,
             stacks: stacks_after,
+            stack_delta,
             remaining_ms: definition.duration_ms,
         })
     }

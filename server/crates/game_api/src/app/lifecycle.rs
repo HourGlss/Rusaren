@@ -4,6 +4,8 @@ use game_match::{MatchConfig, MatchEvent, MatchPhase, MatchSession};
 use game_net::ServerControlEvent;
 use game_sim::COMBAT_FRAME_MS;
 
+use crate::combat_log::CombatLogEvent;
+
 use super::{build_world, AppTransport, MatchRuntime, PlayerLocation, ServerApp};
 
 impl ServerApp {
@@ -29,6 +31,16 @@ impl ServerApp {
             return;
         };
 
+        for (recipient, entries) in self.drain_match_combat_text(match_id) {
+            if entries.is_empty() {
+                continue;
+            }
+            self.send_event(
+                transport,
+                recipient,
+                ServerControlEvent::ArenaCombatTextBatch { entries },
+            );
+        }
         if !effect_batch.is_empty() {
             self.broadcast_arena_effect_batch(transport, match_id, &effect_batch);
         }
@@ -55,12 +67,24 @@ impl ServerApp {
         Vec<MatchEvent>,
         Vec<String>,
     )> {
-        let runtime = self.matches.get_mut(&match_id)?;
-        let simulation_events = runtime.world.tick(COMBAT_FRAME_MS);
-        let effect_batch = Self::collect_effect_batch(&simulation_events);
-        let (match_events, errors) =
-            Self::resolve_match_progress(runtime, &simulation_events, &self.content);
-        Some((effect_batch, match_events, errors))
+        let (simulation_events, effect_batch, match_events, mut combined_errors) = {
+            let runtime = self.matches.get_mut(&match_id)?;
+            runtime.combat_frame_index = runtime.combat_frame_index.saturating_add(1);
+            let simulation_events = runtime.world.tick(COMBAT_FRAME_MS);
+            let effect_batch = Self::collect_effect_batch(&simulation_events);
+            let (match_events, progress_errors) =
+                Self::resolve_match_progress(runtime, &simulation_events, &self.content);
+            (
+                simulation_events,
+                effect_batch,
+                match_events,
+                progress_errors,
+            )
+        };
+        if let Err(error) = self.append_simulation_logs(match_id, &simulation_events) {
+            combined_errors.push(error.to_string());
+        }
+        Some((effect_batch, match_events, combined_errors))
     }
 
     fn resolve_match_progress(
@@ -182,12 +206,29 @@ impl ServerApp {
         match_id: MatchId,
         events: &[MatchEvent],
     ) {
+        let recipients = self.match_recipients(match_id);
         for event in events {
             match event {
                 MatchEvent::SkillChosen { player_id, choice } => {
+                    if let Err(error) = self.append_match_log(
+                        match_id,
+                        CombatLogEvent::SkillPicked {
+                            player_id: player_id.get(),
+                            tree: choice.tree.to_string(),
+                            tier: choice.tier,
+                        },
+                    ) {
+                        self.broadcast_event(
+                            transport,
+                            &recipients,
+                            ServerControlEvent::Error {
+                                message: error.to_string(),
+                            },
+                        );
+                    }
                     self.broadcast_event(
                         transport,
-                        &self.match_recipients(match_id),
+                        &recipients,
                         ServerControlEvent::SkillChosen {
                             player_id: *player_id,
                             tree: choice.tree.clone(),
@@ -196,9 +237,23 @@ impl ServerApp {
                     );
                 }
                 MatchEvent::PreCombatStarted { seconds_remaining } => {
+                    if let Err(error) = self.append_match_log(
+                        match_id,
+                        CombatLogEvent::PreCombatStarted {
+                            seconds_remaining: *seconds_remaining,
+                        },
+                    ) {
+                        self.broadcast_event(
+                            transport,
+                            &recipients,
+                            ServerControlEvent::Error {
+                                message: error.to_string(),
+                            },
+                        );
+                    }
                     self.broadcast_event(
                         transport,
-                        &self.match_recipients(match_id),
+                        &recipients,
                         ServerControlEvent::PreCombatStarted {
                             seconds_remaining: *seconds_remaining,
                         },
@@ -207,21 +262,50 @@ impl ServerApp {
                 MatchEvent::CombatStarted => {
                     if let Some(runtime) = self.matches.get_mut(&match_id) {
                         runtime.rebuild_world(&self.content);
+                        runtime.combat_frame_index = 0;
                     }
-                    self.broadcast_event(
-                        transport,
-                        &self.match_recipients(match_id),
-                        ServerControlEvent::CombatStarted,
-                    );
+                    if let Err(error) =
+                        self.append_match_log(match_id, CombatLogEvent::CombatStarted)
+                    {
+                        self.broadcast_event(
+                            transport,
+                            &recipients,
+                            ServerControlEvent::Error {
+                                message: error.to_string(),
+                            },
+                        );
+                    }
+                    self.broadcast_event(transport, &recipients, ServerControlEvent::CombatStarted);
                 }
                 MatchEvent::RoundWon {
                     round,
                     winning_team,
                     score,
                 } => {
+                    let round_summary = self
+                        .matches
+                        .get_mut(&match_id)
+                        .map(|runtime| runtime.feedback.finalize_round(&runtime.roster, *round));
+                    if let Err(error) = self.append_match_log(
+                        match_id,
+                        CombatLogEvent::RoundWon {
+                            round: round.get(),
+                            winning_team: super::map_team(*winning_team),
+                            score_a: score.team_a,
+                            score_b: score.team_b,
+                        },
+                    ) {
+                        self.broadcast_event(
+                            transport,
+                            &recipients,
+                            ServerControlEvent::Error {
+                                message: error.to_string(),
+                            },
+                        );
+                    }
                     self.broadcast_event(
                         transport,
-                        &self.match_recipients(match_id),
+                        &recipients,
                         ServerControlEvent::RoundWon {
                             round: *round,
                             winning_team: *winning_team,
@@ -229,16 +313,46 @@ impl ServerApp {
                             score_b: score.team_b,
                         },
                     );
+                    if let Some(summary) = round_summary {
+                        self.broadcast_event(
+                            transport,
+                            &recipients,
+                            ServerControlEvent::RoundSummary { summary },
+                        );
+                    }
                 }
                 MatchEvent::MatchEnded {
                     outcome,
                     message,
                     score,
                 } => {
+                    let match_summary = self.matches.get(&match_id).map(|runtime| {
+                        runtime.feedback.build_match_summary(
+                            &runtime.roster,
+                            score.team_a.saturating_add(score.team_b),
+                        )
+                    });
                     self.apply_match_outcome(transport, match_id, *outcome);
+                    if let Err(error) = self.append_match_log(
+                        match_id,
+                        CombatLogEvent::MatchEnded {
+                            outcome: super::map_outcome(*outcome),
+                            score_a: score.team_a,
+                            score_b: score.team_b,
+                            message: message.clone(),
+                        },
+                    ) {
+                        self.broadcast_event(
+                            transport,
+                            &recipients,
+                            ServerControlEvent::Error {
+                                message: error.to_string(),
+                            },
+                        );
+                    }
                     self.broadcast_event(
                         transport,
-                        &self.match_recipients(match_id),
+                        &recipients,
                         ServerControlEvent::MatchEnded {
                             outcome: *outcome,
                             score_a: score.team_a,
@@ -246,11 +360,18 @@ impl ServerApp {
                             message: message.clone(),
                         },
                     );
+                    if let Some(summary) = match_summary {
+                        self.broadcast_event(
+                            transport,
+                            &recipients,
+                            ServerControlEvent::MatchSummary { summary },
+                        );
+                    }
                 }
                 MatchEvent::ManualResolutionRequired { reason } => {
                     self.broadcast_event(
                         transport,
-                        &self.match_recipients(match_id),
+                        &recipients,
                         ServerControlEvent::Error {
                             message: (*reason).to_string(),
                         },
@@ -372,10 +493,30 @@ impl ServerApp {
                     .copied()
                     .map(|player_id| (player_id, Self::blank_visibility_mask(self.content.map())))
                     .collect(),
+                combat_frame_index: 0,
+                feedback: Default::default(),
             },
         );
         self.game_lobbies.remove(&lobby_id);
         self.broadcast_lobby_directory_snapshot(transport);
+
+        if let Err(error) = self.append_match_log(
+            match_id,
+            CombatLogEvent::MatchStarted {
+                participant_player_ids: participants
+                    .iter()
+                    .map(|player_id| player_id.get())
+                    .collect(),
+            },
+        ) {
+            self.broadcast_event(
+                transport,
+                &participants,
+                ServerControlEvent::Error {
+                    message: error.to_string(),
+                },
+            );
+        }
 
         self.broadcast_event(
             transport,
@@ -490,6 +631,39 @@ impl ServerApp {
             .into_iter()
             .filter(|recipient| *recipient != disconnecting_player)
             .collect::<Vec<_>>();
+        if let ServerControlEvent::MatchEnded {
+            outcome,
+            score_a,
+            score_b,
+            message,
+        } = &ended_event
+        {
+            let _ = self.append_match_log(
+                match_id,
+                CombatLogEvent::MatchEnded {
+                    outcome: super::map_outcome(*outcome),
+                    score_a: *score_a,
+                    score_b: *score_b,
+                    message: message.clone(),
+                },
+            );
+        }
         self.broadcast_event(transport, &recipients, ended_event);
+        if let Some(summary) = self.matches.get(&match_id).map(|runtime| {
+            runtime.feedback.build_match_summary(
+                &runtime.roster,
+                runtime
+                    .session
+                    .score()
+                    .team_a
+                    .saturating_add(runtime.session.score().team_b),
+            )
+        }) {
+            self.broadcast_event(
+                transport,
+                &recipients,
+                ServerControlEvent::MatchSummary { summary },
+            );
+        }
     }
 }

@@ -63,8 +63,12 @@ pub async fn spawn_dev_server_with_options(
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let next_connection_id = Arc::new(AtomicU64::new(1));
     let runtime = Arc::new(Mutex::new(RuntimeState {
-        app: ServerApp::new_persistent_with_content(content, options.record_store_path)
-            .map_err(io::Error::other)?,
+        app: ServerApp::new_persistent_with_content_and_log(
+            content,
+            options.record_store_path,
+            options.combat_log_path,
+        )
+        .map_err(io::Error::other)?,
         transport: RealtimeTransport::new(),
         observability: options.observability.clone(),
     }));
@@ -113,6 +117,15 @@ pub(super) fn default_record_store_path() -> PathBuf {
         .join("..")
         .join("var")
         .join("player_records.tsv")
+}
+
+/// Returns the default persistent combat-log path used for local runs.
+pub(super) fn default_combat_log_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("var")
+        .join("combat_events.sqlite")
 }
 
 /// Returns the default runtime content root used for local runs.

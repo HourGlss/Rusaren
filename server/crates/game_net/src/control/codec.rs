@@ -6,9 +6,10 @@ use game_domain::{
 use crate::PacketError;
 
 use super::{
-    ArenaDeployableKind, ArenaEffectKind, ArenaMatchPhase, ArenaObstacleKind, ArenaStatusKind,
-    LobbySnapshotPhase, SkillCatalogEntry, MAX_SKILL_ID_BYTES, MAX_SKILL_NAME_BYTES,
-    MAX_SKILL_TREE_NAME_BYTES,
+    ArenaCombatTextStyle, ArenaDeployableKind, ArenaEffectKind, ArenaMatchPhase, ArenaObstacleKind,
+    ArenaStatusKind, LobbySnapshotPhase, SkillCatalogEntry, MAX_SKILL_DESCRIPTION_BYTES,
+    MAX_SKILL_ID_BYTES, MAX_SKILL_NAME_BYTES, MAX_SKILL_SUMMARY_BYTES, MAX_SKILL_TREE_NAME_BYTES,
+    MAX_SKILL_UI_CATEGORY_BYTES,
 };
 
 pub(super) fn encode_bytes(
@@ -212,6 +213,27 @@ pub(super) fn decode_skill_catalog(
             tier: read_u8(payload, index, kind)?,
             skill_id: read_string(payload, index, kind, "skill_id", MAX_SKILL_ID_BYTES)?,
             skill_name: read_string(payload, index, kind, "skill_name", MAX_SKILL_NAME_BYTES)?,
+            skill_description: read_string(
+                payload,
+                index,
+                kind,
+                "skill_description",
+                MAX_SKILL_DESCRIPTION_BYTES,
+            )?,
+            skill_summary: read_string(
+                payload,
+                index,
+                kind,
+                "skill_summary",
+                MAX_SKILL_SUMMARY_BYTES,
+            )?,
+            ui_category: read_string(
+                payload,
+                index,
+                kind,
+                "ui_category",
+                MAX_SKILL_UI_CATEGORY_BYTES,
+            )?,
         });
     }
     Ok(entries)
@@ -418,6 +440,18 @@ pub(super) fn encode_arena_effect_kind(kind: ArenaEffectKind) -> u8 {
     }
 }
 
+pub(super) fn encode_arena_combat_text_style(style: ArenaCombatTextStyle) -> u8 {
+    match style {
+        ArenaCombatTextStyle::DamageOutgoing => 1,
+        ArenaCombatTextStyle::DamageIncoming => 2,
+        ArenaCombatTextStyle::HealOutgoing => 3,
+        ArenaCombatTextStyle::HealIncoming => 4,
+        ArenaCombatTextStyle::PositiveStatus => 5,
+        ArenaCombatTextStyle::NegativeStatus => 6,
+        ArenaCombatTextStyle::Utility => 7,
+    }
+}
+
 pub(super) fn read_arena_obstacle_kind(
     payload: &[u8],
     index: &mut usize,
@@ -460,6 +494,23 @@ pub(super) fn read_arena_effect_kind(
         6 => Ok(ArenaEffectKind::Beam),
         7 => Ok(ArenaEffectKind::HitSpark),
         other => Err(PacketError::InvalidEncodedArenaEffectKind(other)),
+    }
+}
+
+pub(super) fn read_arena_combat_text_style(
+    payload: &[u8],
+    index: &mut usize,
+    kind: &'static str,
+) -> Result<ArenaCombatTextStyle, PacketError> {
+    match read_u8(payload, index, kind)? {
+        1 => Ok(ArenaCombatTextStyle::DamageOutgoing),
+        2 => Ok(ArenaCombatTextStyle::DamageIncoming),
+        3 => Ok(ArenaCombatTextStyle::HealOutgoing),
+        4 => Ok(ArenaCombatTextStyle::HealIncoming),
+        5 => Ok(ArenaCombatTextStyle::PositiveStatus),
+        6 => Ok(ArenaCombatTextStyle::NegativeStatus),
+        7 => Ok(ArenaCombatTextStyle::Utility),
+        other => Err(PacketError::InvalidEncodedArenaCombatTextStyle(other)),
     }
 }
 

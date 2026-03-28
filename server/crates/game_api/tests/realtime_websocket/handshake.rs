@@ -274,6 +274,7 @@ async fn websocket_adapter_rejects_zero_tick_intervals() {
             tick_interval: Duration::ZERO,
             simulation_step_ms: COMBAT_FRAME_MS,
             record_store_path: temp_record_store_path(),
+            combat_log_path: temp_combat_log_path(),
             content_root: repo_content_root(),
             web_client_root: temp_web_client_root("zero-tick", None),
             observability: Some(ServerObservability::new("test-zero-tick")),

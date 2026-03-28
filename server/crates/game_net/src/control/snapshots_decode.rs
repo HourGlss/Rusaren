@@ -1,18 +1,20 @@
-use game_domain::{PlayerId, PlayerName, TeamSide};
+use game_domain::{PlayerId, PlayerName, SkillTree, TeamSide};
 
 use crate::PacketError;
 
 use super::codec::{
-    decode_bytes, read_arena_deployable_kind, read_arena_effect_kind, read_arena_match_phase,
-    read_arena_obstacle_kind, read_arena_status_kind, read_bool, read_i16, read_lobby_id,
-    read_lobby_snapshot_phase, read_optional_team, read_optional_u8, read_player_id,
-    read_player_name, read_player_record, read_ready_state, read_team, read_u16, read_u32, read_u8,
+    decode_bytes, read_arena_combat_text_style, read_arena_deployable_kind, read_arena_effect_kind,
+    read_arena_match_phase, read_arena_obstacle_kind, read_arena_status_kind, read_bool, read_i16,
+    read_lobby_id, read_lobby_snapshot_phase, read_optional_team, read_optional_u8, read_player_id,
+    read_player_name, read_player_record, read_ready_state, read_skill_tree, read_string,
+    read_team, read_u16, read_u32, read_u8,
 };
 use super::server_types::{
-    ArenaDeltaSnapshot, ArenaDeployableSnapshot, ArenaEffectSnapshot, ArenaObstacleSnapshot,
-    ArenaPlayerSnapshot, ArenaProjectileSnapshot, ArenaStateSnapshot, ArenaStatusSnapshot,
-    LobbyDirectoryEntry, LobbySnapshotPlayer, ServerControlEvent,
+    ArenaCombatTextEntry, ArenaDeltaSnapshot, ArenaDeployableSnapshot, ArenaEffectSnapshot,
+    ArenaObstacleSnapshot, ArenaPlayerSnapshot, ArenaProjectileSnapshot, ArenaStateSnapshot,
+    ArenaStatusSnapshot, LobbyDirectoryEntry, LobbySnapshotPlayer, ServerControlEvent,
 };
+use super::MAX_MESSAGE_BYTES;
 
 pub(super) fn decode_lobby_directory_snapshot(
     payload: &[u8],
@@ -204,6 +206,7 @@ fn decode_arena_player(
         primary_cooldown_total_ms: resources.primary_cooldown_total_ms,
         slot_cooldown_remaining_ms: decode_cooldown_array(payload, index, kind)?,
         slot_cooldown_total_ms: decode_cooldown_array(payload, index, kind)?,
+        equipped_skill_trees: decode_equipped_skill_trees(payload, index, kind)?,
         current_cast_slot: read_optional_u8(payload, index, kind)?,
         current_cast_remaining_ms: read_u16(payload, index, kind)?,
         current_cast_total_ms: read_u16(payload, index, kind)?,
@@ -276,6 +279,22 @@ fn decode_cooldown_array(
     Ok(values)
 }
 
+fn decode_equipped_skill_trees(
+    payload: &[u8],
+    index: &mut usize,
+    kind: &'static str,
+) -> Result<[Option<SkillTree>; 5], PacketError> {
+    let mut values = [None, None, None, None, None];
+    for value in &mut values {
+        *value = if read_bool(payload, index, kind)? {
+            Some(read_skill_tree(payload, index, kind)?)
+        } else {
+            None
+        };
+    }
+    Ok(values)
+}
+
 fn decode_active_statuses(
     payload: &[u8],
     index: &mut usize,
@@ -335,4 +354,28 @@ pub(super) fn decode_arena_effect_batch(
     }
 
     Ok(ServerControlEvent::ArenaEffectBatch { effects })
+}
+
+pub(super) fn decode_arena_combat_text_batch(
+    payload: &[u8],
+    index: &mut usize,
+) -> Result<ServerControlEvent, PacketError> {
+    let entry_count = usize::from(read_u16(payload, index, "ArenaCombatTextBatch")?);
+    let mut entries = Vec::with_capacity(entry_count);
+    for _ in 0..entry_count {
+        entries.push(ArenaCombatTextEntry {
+            x: read_i16(payload, index, "ArenaCombatTextBatch")?,
+            y: read_i16(payload, index, "ArenaCombatTextBatch")?,
+            style: read_arena_combat_text_style(payload, index, "ArenaCombatTextBatch")?,
+            text: read_string(
+                payload,
+                index,
+                "ArenaCombatTextBatch",
+                "text",
+                MAX_MESSAGE_BYTES,
+            )?,
+        });
+    }
+
+    Ok(ServerControlEvent::ArenaCombatTextBatch { entries })
 }

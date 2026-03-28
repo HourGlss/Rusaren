@@ -8,11 +8,14 @@ use crate::{ChannelId, PacketError, PacketHeader, PacketKind};
 use super::codec::{
     encode_match_outcome, encode_ready_state, encode_team, push_len_prefixed_string,
 };
-use super::server_types::{ServerControlEvent, SkillCatalogEntry};
+use super::server_types::{
+    CombatSummaryLine, MatchSummarySnapshot, RoundSummarySnapshot, ServerControlEvent,
+    SkillCatalogEntry,
+};
 use super::snapshots_encode::{
-    encode_arena_delta_snapshot, encode_arena_effect_batch, encode_arena_state_snapshot,
-    encode_game_lobby_snapshot, encode_lobby_directory_snapshot, encode_player_record,
-    encode_skill_catalog,
+    encode_arena_combat_text_batch, encode_arena_delta_snapshot, encode_arena_effect_batch,
+    encode_arena_state_snapshot, encode_game_lobby_snapshot, encode_lobby_directory_snapshot,
+    encode_player_record, encode_skill_catalog,
 };
 use super::{MAX_MESSAGE_BYTES, MAX_SKILL_TREE_NAME_BYTES};
 
@@ -38,6 +41,7 @@ impl ServerControlEvent {
             Self::ArenaStateSnapshot { .. } => (ChannelId::Snapshot, PacketKind::FullSnapshot),
             Self::ArenaDeltaSnapshot { .. } => (ChannelId::Snapshot, PacketKind::DeltaSnapshot),
             Self::ArenaEffectBatch { .. } => (ChannelId::Snapshot, PacketKind::EventBatch),
+            Self::ArenaCombatTextBatch { .. } => (ChannelId::Snapshot, PacketKind::CombatTextBatch),
             _ => (ChannelId::Control, PacketKind::ControlEvent),
         }
     }
@@ -47,6 +51,9 @@ impl ServerControlEvent {
             Self::ArenaStateSnapshot { .. } => 19,
             Self::ArenaDeltaSnapshot { .. } => 20,
             Self::ArenaEffectBatch { .. } => 21,
+            Self::RoundSummary { .. } => 22,
+            Self::MatchSummary { .. } => 23,
+            Self::ArenaCombatTextBatch { .. } => 24,
             _ => control_kind_byte(self),
         }
     }
@@ -55,7 +62,8 @@ impl ServerControlEvent {
         match self {
             Self::ArenaStateSnapshot { .. }
             | Self::ArenaDeltaSnapshot { .. }
-            | Self::ArenaEffectBatch { .. } => encode_snapshot_body(self, payload),
+            | Self::ArenaEffectBatch { .. }
+            | Self::ArenaCombatTextBatch { .. } => encode_snapshot_body(self, payload),
             _ => encode_control_body(self, payload),
         }
     }
@@ -77,13 +85,16 @@ fn control_kind_byte(event: &ServerControlEvent) -> u8 {
         | ServerControlEvent::CombatStarted
         | ServerControlEvent::RoundWon { .. }
         | ServerControlEvent::MatchEnded { .. }
+        | ServerControlEvent::RoundSummary { .. }
+        | ServerControlEvent::MatchSummary { .. }
         | ServerControlEvent::ReturnedToCentralLobby { .. }
         | ServerControlEvent::Error { .. } => match_kind_byte(event),
         ServerControlEvent::LobbyDirectorySnapshot { .. } => 17,
         ServerControlEvent::GameLobbySnapshot { .. } => 18,
         ServerControlEvent::ArenaStateSnapshot { .. }
         | ServerControlEvent::ArenaDeltaSnapshot { .. }
-        | ServerControlEvent::ArenaEffectBatch { .. } => {
+        | ServerControlEvent::ArenaEffectBatch { .. }
+        | ServerControlEvent::ArenaCombatTextBatch { .. } => {
             unreachable!("snapshot variants use direct kind bytes")
         }
     }
@@ -113,6 +124,8 @@ fn match_kind_byte(event: &ServerControlEvent) -> u8 {
         ServerControlEvent::MatchEnded { .. } => 14,
         ServerControlEvent::ReturnedToCentralLobby { .. } => 15,
         ServerControlEvent::Error { .. } => 16,
+        ServerControlEvent::RoundSummary { .. } => 17,
+        ServerControlEvent::MatchSummary { .. } => 18,
         _ => unreachable!("lobby variants should not route through match_kind_byte"),
     }
 }
@@ -136,6 +149,8 @@ fn encode_control_body(
         | ServerControlEvent::CombatStarted
         | ServerControlEvent::RoundWon { .. }
         | ServerControlEvent::MatchEnded { .. }
+        | ServerControlEvent::RoundSummary { .. }
+        | ServerControlEvent::MatchSummary { .. }
         | ServerControlEvent::ReturnedToCentralLobby { .. }
         | ServerControlEvent::Error { .. } => encode_match_body(event, payload),
         ServerControlEvent::LobbyDirectorySnapshot { lobbies } => {
@@ -148,7 +163,8 @@ fn encode_control_body(
         } => encode_game_lobby_snapshot(payload, lobby_id, phase, &players),
         ServerControlEvent::ArenaStateSnapshot { .. }
         | ServerControlEvent::ArenaDeltaSnapshot { .. }
-        | ServerControlEvent::ArenaEffectBatch { .. } => {
+        | ServerControlEvent::ArenaEffectBatch { .. }
+        | ServerControlEvent::ArenaCombatTextBatch { .. } => {
             unreachable!("snapshot variants use encode_snapshot_body")
         }
     }
@@ -243,6 +259,12 @@ fn encode_match_body(event: ServerControlEvent, payload: &mut Vec<u8>) -> Result
             score_b,
             message,
         } => encode_match_ended_event(payload, outcome, score_a, score_b, &message),
+        ServerControlEvent::RoundSummary { summary } => {
+            encode_round_summary_event(payload, &summary)
+        }
+        ServerControlEvent::MatchSummary { summary } => {
+            encode_match_summary_event(payload, &summary)
+        }
         ServerControlEvent::ReturnedToCentralLobby { record } => {
             encode_player_record(payload, record);
             Ok(())
@@ -267,6 +289,9 @@ fn encode_snapshot_body(
         }
         ServerControlEvent::ArenaEffectBatch { effects } => {
             encode_arena_effect_batch(payload, &effects)
+        }
+        ServerControlEvent::ArenaCombatTextBatch { entries } => {
+            encode_arena_combat_text_batch(payload, &entries)
         }
         _ => unreachable!("control variants should not route through encode_snapshot_body"),
     }
@@ -384,4 +409,48 @@ fn encode_match_ended_event(
     payload.push(score_a);
     payload.push(score_b);
     push_len_prefixed_string(payload, "message", message, MAX_MESSAGE_BYTES)
+}
+
+fn encode_round_summary_event(
+    payload: &mut Vec<u8>,
+    summary: &RoundSummarySnapshot,
+) -> Result<(), PacketError> {
+    payload.push(summary.round.get());
+    encode_summary_lines(payload, &summary.round_totals)?;
+    encode_summary_lines(payload, &summary.running_totals)
+}
+
+fn encode_match_summary_event(
+    payload: &mut Vec<u8>,
+    summary: &MatchSummarySnapshot,
+) -> Result<(), PacketError> {
+    payload.push(summary.rounds_played);
+    encode_summary_lines(payload, &summary.totals)
+}
+
+fn encode_summary_lines(
+    payload: &mut Vec<u8>,
+    lines: &[CombatSummaryLine],
+) -> Result<(), PacketError> {
+    let line_count = u16::try_from(lines.len()).map_err(|_| PacketError::PayloadTooLarge {
+        actual: lines.len(),
+        maximum: usize::from(u16::MAX),
+    })?;
+    payload.extend_from_slice(&line_count.to_le_bytes());
+    for line in lines {
+        payload.extend_from_slice(&line.player_id.get().to_le_bytes());
+        push_len_prefixed_string(
+            payload,
+            "player_name",
+            line.player_name.as_str(),
+            game_domain::MAX_PLAYER_NAME_LEN,
+        )?;
+        payload.push(encode_team(line.team));
+        payload.extend_from_slice(&line.damage_done.to_le_bytes());
+        payload.extend_from_slice(&line.healing_to_allies.to_le_bytes());
+        payload.extend_from_slice(&line.healing_to_enemies.to_le_bytes());
+        payload.extend_from_slice(&line.cc_used.to_le_bytes());
+        payload.extend_from_slice(&line.cc_hits.to_le_bytes());
+    }
+    Ok(())
 }

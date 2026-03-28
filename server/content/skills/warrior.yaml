@@ -2,7 +2,7 @@ tree: Warrior
 melee:
   id: warrior_broadswing
   name: Broadswing
-  description: A heavy close-range slash with a long recovery.
+  description: Heavy melee hit.
   cooldown_ms: 650
   range: 92
   radius: 42
@@ -14,7 +14,7 @@ skills:
   - tier: 1
     id: warrior_sweeping_slash
     name: Sweeping Slash
-    description: A short beam cleave that dominates the lane directly in front of the warrior.
+    description: Short beam damage.
     behavior:
       kind: beam
       effect: beam
@@ -28,7 +28,7 @@ skills:
   - tier: 2
     id: warrior_shield_wall
     name: Shield Wall
-    description: Drops a temporary wall that blocks movement and projectiles in a choke point.
+    description: Place a barrier that blocks movement and projectiles.
     behavior:
       kind: barrier
       effect: burst
@@ -41,7 +41,7 @@ skills:
   - tier: 3
     id: warrior_terror_roar
     name: Terror Roar
-    description: A brutal shout that panics nearby enemies and sends them scrambling backward.
+    description: Nearby fear.
     behavior:
       kind: nova
       effect: nova
@@ -59,7 +59,7 @@ skills:
   - tier: 4
     id: warrior_spellbreaker_spear
     name: Spellbreaker Spear
-    description: A disciplined spear throw that punishes exposed casters and locks them out if it lands mid-cast.
+    description: Projectile damage that interrupts a casting target.
     behavior:
       kind: projectile
       effect: skill_shot
@@ -76,7 +76,7 @@ skills:
   - tier: 5
     id: warrior_earthshatter
     name: Earthshatter
-    description: A planted channel that repeatedly hammers the ground, dealing damage and layering chill in a wide ring.
+    description: Channel damage in a wide area and apply chill each tick.
     behavior:
       kind: channel
       effect: nova

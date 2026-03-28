@@ -45,6 +45,7 @@ var combat_hint_label: Label
 var cooldown_summary_label: Label
 var score_label: Label
 var outcome_label: Label
+var match_summary_log: RichTextLabel
 var lobby_label: Label
 var lobby_note_label: Label
 var team_label: Label
@@ -69,6 +70,7 @@ var name_save_button: Button
 var name_randomize_button: Button
 var skill_pick_panel: PanelContainer
 var skill_pick_summary_label: Label
+var round_summary_log: RichTextLabel
 var skill_scroll: ScrollContainer
 var skill_columns: GridContainer
 var combat_panel: VBoxContainer
@@ -109,10 +111,6 @@ func _process(delta: float) -> void:
 
 
 func _input(event: InputEvent) -> void:
-	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_QUOTELEFT:
-		_toggle_debug_mode()
-		return
-
 	if not app_state.can_send_combat_input():
 		return
 
@@ -429,6 +427,18 @@ func _build_match_panel() -> PanelContainer:
 	skill_pick_summary_label.add_theme_color_override("font_color", Color8(222, 210, 192))
 	skill_pick_body.add_child(skill_pick_summary_label)
 
+	var round_summary_title := Label.new()
+	round_summary_title.text = "Round Summary"
+	round_summary_title.add_theme_color_override("font_color", Color8(248, 224, 196))
+	skill_pick_body.add_child(round_summary_title)
+
+	round_summary_log = RichTextLabel.new()
+	round_summary_log.fit_content = true
+	round_summary_log.scroll_active = false
+	round_summary_log.custom_minimum_size = Vector2(0, 136)
+	round_summary_log.add_theme_color_override("default_color", Color8(232, 224, 216))
+	skill_pick_body.add_child(round_summary_log)
+
 	skill_scroll = ScrollContainer.new()
 	skill_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	skill_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
@@ -505,6 +515,13 @@ func _build_results_panel() -> PanelContainer:
 	outcome_label.add_theme_color_override("font_color", Color8(244, 192, 236))
 	outcome_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	body.add_child(outcome_label)
+
+	match_summary_log = RichTextLabel.new()
+	match_summary_log.fit_content = true
+	match_summary_log.scroll_active = true
+	match_summary_log.custom_minimum_size = Vector2(0, 220)
+	match_summary_log.add_theme_color_override("default_color", Color8(236, 225, 238))
+	body.add_child(match_summary_log)
 
 	quit_results_button = _action_button("Quit To Central Lobby", Color8(95, 61, 104))
 	quit_results_button.pressed.connect(_on_quit_results_pressed)
@@ -1061,8 +1078,6 @@ func _on_bootstrap_request_completed(
 func _on_packet_received(decoded_event: Dictionary) -> void:
 	var event_data: Dictionary = decoded_event.get("event", {})
 	app_state.apply_server_event(event_data)
-	if String(event_data.get("type", "")) == "Connected" and app_state.debug_overlay_enabled():
-		_sync_debug_mode_with_backend()
 	_refresh_ui()
 
 
@@ -1103,9 +1118,11 @@ func _refresh_ui() -> void:
 		skill_pick_summary_label.text = "Your pick is locked. Waiting for the round to leave the skill-pick phase."
 	else:
 		skill_pick_summary_label.text = "Skill picks appear here at the start of each round."
+	round_summary_log.text = app_state.round_summary_text()
 	combat_hint_label.text = "WASD move, aim with the mouse, left click for melee, and use 1-5 for combat skills. Unlocked slots: %d. Local state: %s." % [unlocked_slots, alive_state]
 	cooldown_summary_label.text = app_state.cooldown_summary_text()
 	outcome_label.text = result_text
+	match_summary_log.text = app_state.match_summary_text()
 	central_directory_log.text = app_state.lobby_directory_bbcode()
 	roster_log.text = "\n".join(app_state.roster_lines())
 	event_log.text = app_state.event_log_text()
@@ -1127,22 +1144,31 @@ func _refresh_ui() -> void:
 		var tree_name := String(button.get_meta("tree_name", ""))
 		var tier := int(button.get_meta("tier", 0))
 		var selectable := app_state.can_choose_skill_option(tree_name, tier)
+		var skill_name := app_state.skill_name_for(tree_name, tier)
+		var tooltip_text := app_state.skill_tooltip_for(tree_name, tier)
+		var category_color := _skill_button_font_color(app_state.skill_ui_category_for(tree_name, tier))
 		button.disabled = not selectable
-		button.text = "%d. %s" % [tier, app_state.skill_name_for(tree_name, tier)]
+		button.text = "%d. %s" % [tier, skill_name]
+		_apply_skill_button_font_color(button, category_color)
 		if app_state.can_choose_skill():
 			var next_tier := app_state.next_skill_tier_for(tree_name)
 			if next_tier == 0:
-				button.tooltip_text = "%s is fully unlocked." % tree_name
+				button.tooltip_text = _append_tooltip_note(
+					tooltip_text,
+					"%s is fully unlocked." % tree_name
+				)
 			elif tier == next_tier:
-				button.tooltip_text = "Select %s for %s tier %d." % [
-					app_state.skill_name_for(tree_name, tier),
-					tree_name,
-					tier,
-				]
+				button.tooltip_text = _append_tooltip_note(tooltip_text, "Available now.")
 			else:
-				button.tooltip_text = "Only tier %d is currently available for %s." % [next_tier, tree_name]
+				button.tooltip_text = _append_tooltip_note(
+					tooltip_text,
+					"Only tier %d is currently available for %s." % [next_tier, tree_name]
+				)
 		else:
-			button.tooltip_text = "Skill selection is only available during your active skill-pick window."
+			button.tooltip_text = _append_tooltip_note(
+				tooltip_text,
+				"Skill selection is only available during your active skill-pick window."
+			)
 
 	connection_panel.visible = app_state.screen == "central"
 	central_panel.visible = app_state.screen == "central"
@@ -1151,6 +1177,8 @@ func _refresh_ui() -> void:
 	results_panel.visible = app_state.screen == "results"
 	skill_pick_panel.visible = show_skill_pick
 	combat_panel.visible = app_state.screen == "match" and not show_skill_pick
+	round_summary_log.visible = app_state.round_summary_text() != ""
+	match_summary_log.visible = app_state.match_summary_text() != ""
 
 
 func _rebuild_skill_buttons() -> void:
@@ -1211,6 +1239,45 @@ func _rebuild_skill_buttons() -> void:
 			skill_buttons.append(button)
 
 
+func _append_tooltip_note(base_text: String, note: String) -> String:
+	var parts: Array[String] = []
+	if base_text != "":
+		parts.append(base_text)
+	if note != "":
+		if not parts.is_empty():
+			parts.append("")
+		parts.append(note)
+	return "\n".join(parts)
+
+
+func _apply_skill_button_font_color(button: Button, color: Color) -> void:
+	button.add_theme_color_override("font_color", color)
+	button.add_theme_color_override("font_hover_color", color.lightened(0.08))
+	button.add_theme_color_override("font_pressed_color", color)
+	button.add_theme_color_override("font_focus_color", color)
+	button.add_theme_color_override("font_disabled_color", color.darkened(0.45))
+
+
+func _skill_button_font_color(category: String) -> Color:
+	match category:
+		"heal":
+			return Color8(120, 228, 138)
+		"dot":
+			return Color8(188, 120, 255)
+		"control":
+			return Color8(120, 182, 255)
+		"buff":
+			return Color8(122, 236, 230)
+		"mobility":
+			return Color8(255, 194, 112)
+		"utility":
+			return Color8(244, 214, 133)
+		"damage":
+			return Color8(255, 156, 124)
+		_:
+			return Color8(246, 244, 240)
+
+
 func _queue_combat_cast(slot: int) -> void:
 	if not app_state.can_use_combat_slot(slot):
 		app_state.mark_transport_error("Skill slot %d is not currently usable." % slot)
@@ -1253,24 +1320,10 @@ func _drive_combat_input() -> void:
 		payload["ability_or_context"] = _pending_cast_slot
 
 	if transport.send_input_frame(payload):
-		app_state.mark_debug_input(move_x, move_y, aim, _pending_primary_attack, _pending_cast_slot)
 		_next_client_input_tick += 1
 		_last_sent_aim = aim
 		_pending_primary_attack = false
 		_pending_cast_slot = 0
-
-
-func _toggle_debug_mode() -> void:
-	app_state.cycle_debug_mode()
-	_sync_debug_mode_with_backend()
-	_refresh_ui()
-
-
-func _sync_debug_mode_with_backend() -> void:
-	if not transport.is_open() or app_state.local_player_id <= 0:
-		return
-	if not transport.send_control_command("SetDebugMode", {"mode": app_state.debug_mode}):
-		app_state.mark_transport_error("Failed to update backend debug mode.")
 
 
 func _current_aim_vector() -> Vector2i:

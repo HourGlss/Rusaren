@@ -5,12 +5,14 @@ use crate::{ChannelId, PacketError, PacketHeader, PacketKind};
 use super::codec::{
     decode_skill_catalog, ensure_consumed, read_bool, read_lobby_id, read_match_id,
     read_match_outcome, read_player_id, read_player_name, read_player_record, read_ready_state,
-    read_round, read_skill_tree, read_string, read_team, read_u16, read_u8,
+    read_round, read_skill_tree, read_string, read_team, read_u16, read_u32, read_u8,
 };
-use super::server_types::ServerControlEvent;
+use super::server_types::{
+    CombatSummaryLine, MatchSummarySnapshot, RoundSummarySnapshot, ServerControlEvent,
+};
 use super::snapshots_decode::{
-    decode_arena_delta_snapshot, decode_arena_effect_batch, decode_arena_state_snapshot,
-    decode_game_lobby_snapshot, decode_lobby_directory_snapshot,
+    decode_arena_combat_text_batch, decode_arena_delta_snapshot, decode_arena_effect_batch,
+    decode_arena_state_snapshot, decode_game_lobby_snapshot, decode_lobby_directory_snapshot,
 };
 use super::MAX_MESSAGE_BYTES;
 
@@ -21,7 +23,10 @@ impl ServerControlEvent {
             (ChannelId::Control, PacketKind::ControlEvent)
             | (
                 ChannelId::Snapshot,
-                PacketKind::FullSnapshot | PacketKind::DeltaSnapshot | PacketKind::EventBatch,
+                PacketKind::FullSnapshot
+                | PacketKind::DeltaSnapshot
+                | PacketKind::EventBatch
+                | PacketKind::CombatTextBatch,
             ) => {}
             _ => {
                 return Err(PacketError::UnexpectedPacketKind {
@@ -52,6 +57,8 @@ impl ServerControlEvent {
             7..=14 => decode_match_event(kind, payload, index),
             15..=16 => decode_terminal_event(kind, payload, index),
             17..=21 => decode_snapshot_event(kind, payload, index),
+            22..=23 => decode_summary_event(kind, payload, index),
+            24 => decode_snapshot_event(kind, payload, index),
             other => Err(PacketError::UnknownServerEvent(other)),
         }
     }
@@ -128,6 +135,29 @@ fn decode_terminal_event(
     }
 }
 
+fn decode_summary_event(
+    kind: u8,
+    payload: &[u8],
+    index: &mut usize,
+) -> Result<ServerControlEvent, PacketError> {
+    match kind {
+        22 => Ok(ServerControlEvent::RoundSummary {
+            summary: RoundSummarySnapshot {
+                round: read_round(payload, index, "RoundSummary")?,
+                round_totals: decode_summary_lines(payload, index, "RoundSummary")?,
+                running_totals: decode_summary_lines(payload, index, "RoundSummary")?,
+            },
+        }),
+        23 => Ok(ServerControlEvent::MatchSummary {
+            summary: MatchSummarySnapshot {
+                rounds_played: read_u8(payload, index, "MatchSummary")?,
+                totals: decode_summary_lines(payload, index, "MatchSummary")?,
+            },
+        }),
+        _ => Err(PacketError::UnknownServerEvent(kind)),
+    }
+}
+
 fn decode_snapshot_event(
     kind: u8,
     payload: &[u8],
@@ -139,6 +169,7 @@ fn decode_snapshot_event(
         19 => decode_arena_state_snapshot(payload, index),
         20 => decode_arena_delta_snapshot(payload, index),
         21 => decode_arena_effect_batch(payload, index),
+        24 => decode_arena_combat_text_batch(payload, index),
         _ => Err(PacketError::UnknownServerEvent(kind)),
     }
 }
@@ -246,4 +277,26 @@ fn decode_match_ended_event(
         score_b: read_u8(payload, index, "MatchEnded")?,
         message: read_string(payload, index, "MatchEnded", "message", MAX_MESSAGE_BYTES)?,
     })
+}
+
+fn decode_summary_lines(
+    payload: &[u8],
+    index: &mut usize,
+    kind: &'static str,
+) -> Result<Vec<CombatSummaryLine>, PacketError> {
+    let line_count = usize::from(read_u16(payload, index, kind)?);
+    let mut lines = Vec::with_capacity(line_count);
+    for _ in 0..line_count {
+        lines.push(CombatSummaryLine {
+            player_id: read_player_id(payload, index, kind)?,
+            player_name: read_player_name(payload, index, kind)?,
+            team: read_team(payload, index, kind)?,
+            damage_done: read_u32(payload, index, kind)?,
+            healing_to_allies: read_u32(payload, index, kind)?,
+            healing_to_enemies: read_u32(payload, index, kind)?,
+            cc_used: read_u16(payload, index, kind)?,
+            cc_hits: read_u16(payload, index, kind)?,
+        });
+    }
+    Ok(lines)
 }

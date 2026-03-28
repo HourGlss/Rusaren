@@ -2,13 +2,16 @@ extends RefCounted
 class_name RarenaProtocol
 
 const PACKET_MAGIC := 0x5241
-const PROTOCOL_VERSION := 3
+const PROTOCOL_VERSION := 5
 const HEADER_LEN := 16
 const MAX_PLAYER_NAME_LEN := 24
 const MAX_MESSAGE_BYTES := 200
 const MAX_SKILL_TREE_NAME_BYTES := 32
 const MAX_SKILL_ID_BYTES := 64
 const MAX_SKILL_NAME_BYTES := 120
+const MAX_SKILL_DESCRIPTION_BYTES := 160
+const MAX_SKILL_SUMMARY_BYTES := 220
+const MAX_SKILL_UI_CATEGORY_BYTES := 24
 
 const CHANNEL_CONTROL := 0
 const CHANNEL_INPUT := 1
@@ -19,6 +22,7 @@ const PACKET_KIND_INPUT_FRAME := 16
 const PACKET_KIND_FULL_SNAPSHOT := 32
 const PACKET_KIND_DELTA_SNAPSHOT := 33
 const PACKET_KIND_EVENT_BATCH := 34
+const PACKET_KIND_COMBAT_TEXT_BATCH := 35
 const BUTTON_PRIMARY := 1
 const BUTTON_SECONDARY := 1 << 1
 const BUTTON_CAST := 1 << 2
@@ -337,6 +341,29 @@ class ByteCursor:
 				error_message = "encoded arena match phase %d is invalid" % raw
 				return null
 
+	func read_arena_combat_text_style() -> Variant:
+		var raw = read_u8()
+		if has_error():
+			return null
+		match raw:
+			1:
+				return "DamageOutgoing"
+			2:
+				return "DamageIncoming"
+			3:
+				return "HealOutgoing"
+			4:
+				return "HealIncoming"
+			5:
+				return "PositiveStatus"
+			6:
+				return "NegativeStatus"
+			7:
+				return "Utility"
+			_:
+				error_message = "encoded arena combat text style %d is invalid" % raw
+				return null
+
 	func read_arena_status_kind() -> Variant:
 		var raw = read_u8()
 		if has_error():
@@ -476,22 +503,6 @@ static func encode_client_command(
 			body.append(tier)
 		"QuitToCentralLobby":
 			body.append(8)
-		"SetDebugMode":
-			var mode_name := String(payload.get("mode", "off")).to_lower()
-			var mode_code := -1
-			match mode_name:
-				"off":
-					mode_code = 0
-				"render":
-					mode_code = 1
-				"auth":
-					mode_code = 2
-				"both":
-					mode_code = 3
-			if mode_code == -1:
-				return _error("debug mode must be off, render, auth, or both")
-			body.append(9)
-			body.append(mode_code)
 		_:
 			return _error("unsupported client control command %s" % command_type)
 
@@ -606,7 +617,15 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 		channel_id == CHANNEL_SNAPSHOT
 		and packet_kind == PACKET_KIND_EVENT_BATCH
 	)
-	if not is_control_event and not is_full_snapshot and not is_delta_snapshot and not is_event_batch:
+	var is_combat_text_batch := (
+		channel_id == CHANNEL_SNAPSHOT
+		and packet_kind == PACKET_KIND_COMBAT_TEXT_BATCH
+	)
+	if not is_control_event \
+		and not is_full_snapshot \
+		and not is_delta_snapshot \
+		and not is_event_batch \
+		and not is_combat_text_batch:
 		return _error("expected Control/ControlEvent but received %s/%s" % [
 			str(channel_id),
 			str(packet_kind),
@@ -632,6 +651,9 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 				var catalog_tier = cursor.read_u8()
 				var skill_id = cursor.read_string("skill_id", MAX_SKILL_ID_BYTES)
 				var skill_name = cursor.read_string("skill_name", MAX_SKILL_NAME_BYTES)
+				var skill_description = cursor.read_string("skill_description", MAX_SKILL_DESCRIPTION_BYTES)
+				var skill_summary = cursor.read_string("skill_summary", MAX_SKILL_SUMMARY_BYTES)
+				var ui_category = cursor.read_string("ui_category", MAX_SKILL_UI_CATEGORY_BYTES)
 				if cursor.has_error():
 					return _error(cursor.error_message)
 				skill_catalog.append({
@@ -639,6 +661,9 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 					"tier": catalog_tier,
 					"skill_id": skill_id,
 					"skill_name": skill_name,
+					"skill_description": skill_description,
+					"skill_summary": skill_summary,
+					"ui_category": ui_category,
 				})
 			if cursor.has_error():
 				return _error(cursor.error_message)
@@ -912,74 +937,9 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 			var player_count = cursor.read_u16()
 			if cursor.has_error():
 				return _error(cursor.error_message)
-			var players: Array[Dictionary] = []
-			for _player_index in range(int(player_count)):
-				var player_id = cursor.read_player_id()
-				var player_name = cursor.read_string("player_name", MAX_PLAYER_NAME_LEN)
-				var team = cursor.read_team_label()
-				var x = cursor.read_i16()
-				var y = cursor.read_i16()
-				var aim_x = cursor.read_i16()
-				var aim_y = cursor.read_i16()
-				var hit_points = cursor.read_u16()
-				var max_hit_points = cursor.read_u16()
-				var mana = cursor.read_u16()
-				var max_mana = cursor.read_u16()
-				var alive = cursor.read_bool()
-				var unlocked_skill_slots = cursor.read_u8()
-				var primary_cooldown_remaining_ms = cursor.read_u16()
-				var primary_cooldown_total_ms = cursor.read_u16()
-				var slot_cooldown_remaining_ms: Array[int] = []
-				for _cooldown_index in range(5):
-					slot_cooldown_remaining_ms.append(int(cursor.read_u16()))
-				var slot_cooldown_total_ms: Array[int] = []
-				for _cooldown_total_index in range(5):
-					slot_cooldown_total_ms.append(int(cursor.read_u16()))
-				var current_cast_slot = cursor.read_optional_u8()
-				var current_cast_remaining_ms = cursor.read_u16()
-				var current_cast_total_ms = cursor.read_u16()
-				var status_count = cursor.read_u8()
-				var active_statuses: Array[Dictionary] = []
-				for _status_index in range(int(status_count)):
-					var status_source = cursor.read_player_id()
-					var status_slot = cursor.read_u8()
-					var status_kind = cursor.read_arena_status_kind()
-					var status_stacks = cursor.read_u8()
-					var status_remaining_ms = cursor.read_u16()
-					if cursor.has_error():
-						return _error(cursor.error_message)
-					active_statuses.append({
-						"source": status_source,
-						"slot": status_slot,
-						"kind": status_kind,
-						"stacks": status_stacks,
-						"remaining_ms": status_remaining_ms,
-					})
-				if cursor.has_error():
-					return _error(cursor.error_message)
-				players.append({
-					"player_id": player_id,
-					"player_name": player_name,
-					"team": team,
-					"x": x,
-					"y": y,
-					"aim_x": aim_x,
-					"aim_y": aim_y,
-					"hit_points": hit_points,
-					"max_hit_points": max_hit_points,
-					"mana": mana,
-					"max_mana": max_mana,
-					"alive": alive,
-					"unlocked_skill_slots": unlocked_skill_slots,
-					"primary_cooldown_remaining_ms": primary_cooldown_remaining_ms,
-					"primary_cooldown_total_ms": primary_cooldown_total_ms,
-					"slot_cooldown_remaining_ms": slot_cooldown_remaining_ms,
-					"slot_cooldown_total_ms": slot_cooldown_total_ms,
-					"current_cast_slot": 0 if current_cast_slot == null else int(current_cast_slot),
-					"current_cast_remaining_ms": current_cast_remaining_ms,
-					"current_cast_total_ms": current_cast_total_ms,
-					"active_statuses": active_statuses,
-				})
+			var players = _decode_arena_players(cursor, int(player_count))
+			if cursor.has_error():
+				return _error(cursor.error_message)
 			var projectile_count = cursor.read_u16()
 			if cursor.has_error():
 				return _error(cursor.error_message)
@@ -1074,74 +1034,9 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 			var delta_player_count = cursor.read_u16()
 			if cursor.has_error():
 				return _error(cursor.error_message)
-			var delta_players: Array[Dictionary] = []
-			for _delta_player_index in range(int(delta_player_count)):
-				var delta_player_id = cursor.read_player_id()
-				var delta_player_name = cursor.read_string("player_name", MAX_PLAYER_NAME_LEN)
-				var delta_team = cursor.read_team_label()
-				var delta_x = cursor.read_i16()
-				var delta_y = cursor.read_i16()
-				var delta_aim_x = cursor.read_i16()
-				var delta_aim_y = cursor.read_i16()
-				var delta_hit_points = cursor.read_u16()
-				var delta_max_hit_points = cursor.read_u16()
-				var delta_mana = cursor.read_u16()
-				var delta_max_mana = cursor.read_u16()
-				var delta_alive = cursor.read_bool()
-				var delta_unlocked_skill_slots = cursor.read_u8()
-				var delta_primary_remaining = cursor.read_u16()
-				var delta_primary_total = cursor.read_u16()
-				var delta_slot_remaining: Array[int] = []
-				for _delta_remaining_index in range(5):
-					delta_slot_remaining.append(int(cursor.read_u16()))
-				var delta_slot_total: Array[int] = []
-				for _delta_total_index in range(5):
-					delta_slot_total.append(int(cursor.read_u16()))
-				var delta_current_cast_slot = cursor.read_optional_u8()
-				var delta_current_cast_remaining_ms = cursor.read_u16()
-				var delta_current_cast_total_ms = cursor.read_u16()
-				var delta_status_count = cursor.read_u8()
-				var delta_statuses: Array[Dictionary] = []
-				for _delta_status_index in range(int(delta_status_count)):
-					var delta_status_source = cursor.read_player_id()
-					var delta_status_slot = cursor.read_u8()
-					var delta_status_kind = cursor.read_arena_status_kind()
-					var delta_status_stacks = cursor.read_u8()
-					var delta_status_remaining = cursor.read_u16()
-					if cursor.has_error():
-						return _error(cursor.error_message)
-					delta_statuses.append({
-						"source": delta_status_source,
-						"slot": delta_status_slot,
-						"kind": delta_status_kind,
-						"stacks": delta_status_stacks,
-						"remaining_ms": delta_status_remaining,
-					})
-				if cursor.has_error():
-					return _error(cursor.error_message)
-				delta_players.append({
-					"player_id": delta_player_id,
-					"player_name": delta_player_name,
-					"team": delta_team,
-					"x": delta_x,
-					"y": delta_y,
-					"aim_x": delta_aim_x,
-					"aim_y": delta_aim_y,
-					"hit_points": delta_hit_points,
-					"max_hit_points": delta_max_hit_points,
-					"mana": delta_mana,
-					"max_mana": delta_max_mana,
-					"alive": delta_alive,
-					"unlocked_skill_slots": delta_unlocked_skill_slots,
-					"primary_cooldown_remaining_ms": delta_primary_remaining,
-					"primary_cooldown_total_ms": delta_primary_total,
-					"slot_cooldown_remaining_ms": delta_slot_remaining,
-					"slot_cooldown_total_ms": delta_slot_total,
-					"current_cast_slot": 0 if delta_current_cast_slot == null else int(delta_current_cast_slot),
-					"current_cast_remaining_ms": delta_current_cast_remaining_ms,
-					"current_cast_total_ms": delta_current_cast_total_ms,
-					"active_statuses": delta_statuses,
-				})
+			var delta_players = _decode_arena_players(cursor, int(delta_player_count))
+			if cursor.has_error():
+				return _error(cursor.error_message)
 			var delta_projectile_count = cursor.read_u16()
 			if cursor.has_error():
 				return _error(cursor.error_message)
@@ -1207,6 +1102,40 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 				"type": "ArenaEffectBatch",
 				"effects": effects,
 			}
+		22:
+			var summary_round = cursor.read_round()
+			var round_totals = _decode_summary_lines(cursor)
+			var running_totals = _decode_summary_lines(cursor)
+			if cursor.has_error():
+				return _error(cursor.error_message)
+			event = {
+				"type": "RoundSummary",
+				"summary": {
+					"round": summary_round,
+					"round_totals": round_totals,
+					"running_totals": running_totals,
+				},
+			}
+		23:
+			var rounds_played = cursor.read_u8()
+			var totals = _decode_summary_lines(cursor)
+			if cursor.has_error():
+				return _error(cursor.error_message)
+			event = {
+				"type": "MatchSummary",
+				"summary": {
+					"rounds_played": rounds_played,
+					"totals": totals,
+				},
+			}
+		24:
+			var combat_text_entries = _decode_arena_combat_text_entries(cursor)
+			if cursor.has_error():
+				return _error(cursor.error_message)
+			event = {
+				"type": "ArenaCombatTextBatch",
+				"entries": combat_text_entries,
+			}
 		_:
 			return _error("unknown server event %d" % kind)
 
@@ -1219,6 +1148,145 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 		"header": header,
 		"event": event,
 	}
+
+
+static func _decode_summary_lines(cursor: ByteCursor) -> Variant:
+	var line_count = cursor.read_u16()
+	if cursor.has_error():
+		return null
+	var lines: Array[Dictionary] = []
+	for _line_index in range(int(line_count)):
+		var player_id = cursor.read_player_id()
+		var player_name = cursor.read_string("player_name", MAX_PLAYER_NAME_LEN)
+		var team = cursor.read_team_label()
+		var damage_done = cursor.read_u32()
+		var healing_to_allies = cursor.read_u32()
+		var healing_to_enemies = cursor.read_u32()
+		var cc_used = cursor.read_u16()
+		var cc_hits = cursor.read_u16()
+		if cursor.has_error():
+			return null
+		lines.append({
+			"player_id": player_id,
+			"player_name": player_name,
+			"team": team,
+			"damage_done": damage_done,
+			"healing_to_allies": healing_to_allies,
+			"healing_to_enemies": healing_to_enemies,
+			"cc_used": cc_used,
+			"cc_hits": cc_hits,
+		})
+	return lines
+
+
+static func _decode_equipped_skill_trees(cursor: ByteCursor) -> Variant:
+	var trees: Array = []
+	for _tree_index in range(5):
+		var has_tree = cursor.read_bool()
+		if cursor.has_error():
+			return null
+		if has_tree:
+			trees.append(cursor.read_skill_tree_name())
+		else:
+			trees.append("")
+		if cursor.has_error():
+			return null
+	return trees
+
+
+static func _decode_arena_players(cursor: ByteCursor, player_count: int) -> Variant:
+	var players: Array[Dictionary] = []
+	for _player_index in range(player_count):
+		var player_id = cursor.read_player_id()
+		var player_name = cursor.read_string("player_name", MAX_PLAYER_NAME_LEN)
+		var team = cursor.read_team_label()
+		var x = cursor.read_i16()
+		var y = cursor.read_i16()
+		var aim_x = cursor.read_i16()
+		var aim_y = cursor.read_i16()
+		var hit_points = cursor.read_u16()
+		var max_hit_points = cursor.read_u16()
+		var mana = cursor.read_u16()
+		var max_mana = cursor.read_u16()
+		var alive = cursor.read_bool()
+		var unlocked_skill_slots = cursor.read_u8()
+		var primary_cooldown_remaining_ms = cursor.read_u16()
+		var primary_cooldown_total_ms = cursor.read_u16()
+		var slot_cooldown_remaining_ms: Array[int] = []
+		for _cooldown_index in range(5):
+			slot_cooldown_remaining_ms.append(int(cursor.read_u16()))
+		var slot_cooldown_total_ms: Array[int] = []
+		for _cooldown_total_index in range(5):
+			slot_cooldown_total_ms.append(int(cursor.read_u16()))
+		var equipped_skill_trees = _decode_equipped_skill_trees(cursor)
+		var current_cast_slot = cursor.read_optional_u8()
+		var current_cast_remaining_ms = cursor.read_u16()
+		var current_cast_total_ms = cursor.read_u16()
+		var status_count = cursor.read_u8()
+		var active_statuses: Array[Dictionary] = []
+		for _status_index in range(int(status_count)):
+			var status_source = cursor.read_player_id()
+			var status_slot = cursor.read_u8()
+			var status_kind = cursor.read_arena_status_kind()
+			var status_stacks = cursor.read_u8()
+			var status_remaining_ms = cursor.read_u16()
+			if cursor.has_error():
+				return null
+			active_statuses.append({
+				"source": status_source,
+				"slot": status_slot,
+				"kind": status_kind,
+				"stacks": status_stacks,
+				"remaining_ms": status_remaining_ms,
+			})
+		if cursor.has_error():
+			return null
+		players.append({
+			"player_id": player_id,
+			"player_name": player_name,
+			"team": team,
+			"x": x,
+			"y": y,
+			"aim_x": aim_x,
+			"aim_y": aim_y,
+			"hit_points": hit_points,
+			"max_hit_points": max_hit_points,
+			"mana": mana,
+			"max_mana": max_mana,
+			"alive": alive,
+			"unlocked_skill_slots": unlocked_skill_slots,
+			"primary_cooldown_remaining_ms": primary_cooldown_remaining_ms,
+			"primary_cooldown_total_ms": primary_cooldown_total_ms,
+			"slot_cooldown_remaining_ms": slot_cooldown_remaining_ms,
+			"slot_cooldown_total_ms": slot_cooldown_total_ms,
+			"equipped_skill_trees": equipped_skill_trees,
+			"current_cast_slot": 0 if current_cast_slot == null else int(current_cast_slot),
+			"current_cast_remaining_ms": current_cast_remaining_ms,
+			"current_cast_total_ms": current_cast_total_ms,
+			"active_statuses": active_statuses,
+		})
+	return players
+
+
+static func _decode_arena_combat_text_entries(cursor: ByteCursor) -> Variant:
+	var entry_count = cursor.read_u16()
+	if cursor.has_error():
+		return null
+	var entries: Array[Dictionary] = []
+	for _entry_index in range(int(entry_count)):
+		var x = cursor.read_i16()
+		var y = cursor.read_i16()
+		var style = cursor.read_arena_combat_text_style()
+		var text = cursor.read_string("text", MAX_MESSAGE_BYTES)
+		if cursor.has_error():
+			return null
+		entries.append({
+			"x": x,
+			"y": y,
+			"style": style,
+			"text": text,
+		})
+	return entries
 
 
 static func decode_packet(packet: PackedByteArray) -> Dictionary:

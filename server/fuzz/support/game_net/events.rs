@@ -177,6 +177,7 @@ impl FuzzArenaPlayerSnapshot {
                 self.slot_cooldown_remaining_ms,
                 self.slot_cooldown_total_ms,
             ),
+            equipped_skill_trees: [const { None }; 5],
             current_cast_slot: self.current_cast_slot.filter(|slot| (1..=5).contains(slot)),
             current_cast_remaining_ms: self.current_cast_remaining_ms,
             current_cast_total_ms: self

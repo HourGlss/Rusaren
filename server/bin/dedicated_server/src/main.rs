@@ -104,6 +104,7 @@ async fn main() {
             tick_interval: config.tick_interval,
             simulation_step_ms: COMBAT_FRAME_MS,
             record_store_path: config.record_store_path,
+            combat_log_path: DevServerOptions::default().combat_log_path,
             content_root: config.content_root,
             web_client_root: config.web_client_root,
             observability: DevServerOptions::default().observability,

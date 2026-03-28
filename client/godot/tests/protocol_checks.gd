@@ -17,6 +17,8 @@ func _init() -> void:
 	success = _assert_decode_arena_state_snapshot() and success
 	success = _assert_decode_arena_delta_snapshot() and success
 	success = _assert_decode_arena_effect_batch() and success
+	success = _assert_decode_round_summary() and success
+	success = _assert_decode_arena_combat_text_batch() and success
 	quit(0 if success else 1)
 
 
@@ -143,10 +145,16 @@ func _assert_decode_connected_with_skill_catalog() -> bool:
 	payload.append(1)
 	_push_string(payload, "mage_t1_missile")
 	_push_string(payload, "Magic Missile")
+	_push_string(payload, "Fast projectile damage.")
+	_push_string(payload, "CD 0.7s | Cast instant | Mana 16\nProjectile: range 1500, radius 16, speed 310\nEffect: 10 damage")
+	_push_string(payload, "damage")
 	_push_string(payload, "Cleric")
 	payload.append(1)
 	_push_string(payload, "cleric_t1_minor_heal")
 	_push_string(payload, "Minor Heal")
+	_push_string(payload, "Beam heal for the first ally hit.")
+	_push_string(payload, "CD 0.9s | Cast 0.3s | Mana 16\nBeam: range 280, radius 28\nEffect: 18 heal")
+	_push_string(payload, "heal")
 	var decoded := Protocol.decode_server_event(_encode_server_event_packet(payload, 7, 0))
 	if not bool(decoded.get("ok", false)):
 		return _fail("connected event with skill catalog should decode")
@@ -158,6 +166,10 @@ func _assert_decode_connected_with_skill_catalog() -> bool:
 		return _fail("connected event should decode the skill catalog entries")
 	if String(skill_catalog[0].get("skill_name", "")) != "Magic Missile":
 		return _fail("connected event should preserve catalog skill names")
+	if String(skill_catalog[0].get("skill_description", "")) != "Fast projectile damage.":
+		return _fail("connected event should decode skill descriptions")
+	if String(skill_catalog[1].get("ui_category", "")) != "heal":
+		return _fail("connected event should decode skill UI categories")
 	return true
 
 
@@ -201,6 +213,14 @@ func _assert_decode_arena_state_snapshot() -> bool:
 		_push_u16(payload, value)
 	for value in [0, 900, 0, 1400, 0]:
 		_push_u16(payload, value)
+	payload.append(1)
+	_push_string(payload, "Mage")
+	payload.append(1)
+	_push_string(payload, "Cleric")
+	payload.append(1)
+	_push_string(payload, "Rogue")
+	payload.append(0)
+	payload.append(0)
 	payload.append(1)
 	payload.append(2)
 	_push_u16(payload, 400)
@@ -248,6 +268,9 @@ func _assert_decode_arena_state_snapshot() -> bool:
 		return _fail("arena state snapshot should decode active statuses")
 	if int(players[0].get("primary_cooldown_remaining_ms", 0)) != 180:
 		return _fail("arena state snapshot should decode primary cooldown state")
+	var equipped_trees: Array = players[0].get("equipped_skill_trees", [])
+	if equipped_trees.size() != 5 or String(equipped_trees[0]) != "Mage" or String(equipped_trees[1]) != "Cleric":
+		return _fail("arena state snapshot should decode equipped skill trees")
 	if int(players[0].get("current_cast_slot", 0)) != 2:
 		return _fail("arena state snapshot should decode active cast slots")
 	if int(players[0].get("current_cast_remaining_ms", 0)) != 400:
@@ -295,6 +318,14 @@ func _assert_decode_arena_delta_snapshot() -> bool:
 		_push_u16(payload, value)
 	for value in [700, 1700, 2200, 0, 0]:
 		_push_u16(payload, value)
+	payload.append(1)
+	_push_string(payload, "Mage")
+	payload.append(1)
+	_push_string(payload, "Cleric")
+	payload.append(1)
+	_push_string(payload, "Rogue")
+	payload.append(0)
+	payload.append(0)
 	payload.append(0)
 	_push_u16(payload, 0)
 	_push_u16(payload, 0)
@@ -319,6 +350,9 @@ func _assert_decode_arena_delta_snapshot() -> bool:
 		return _fail("arena delta snapshot should preserve tile units")
 	if players.size() != 1 or int(players[0].get("mana", 0)) != 64:
 		return _fail("arena delta snapshot should decode player state")
+	var equipped_trees: Array = players[0].get("equipped_skill_trees", [])
+	if equipped_trees.size() != 5 or String(equipped_trees[2]) != "Rogue":
+		return _fail("arena delta snapshot should preserve equipped skill tree history")
 	if int(players[0].get("current_cast_slot", 0)) != 0:
 		return _fail("arena delta snapshot should decode the absence of an active cast")
 	return true
@@ -344,6 +378,83 @@ func _assert_decode_arena_effect_batch() -> bool:
 		return _fail("arena effect batch should use the ArenaEffectBatch event type")
 	if effects.size() != 1 or String(effects[0].get("kind", "")) != "SkillShot":
 		return _fail("arena effect batch should preserve the effect kind")
+	return true
+
+
+func _assert_decode_round_summary() -> bool:
+	var payload := PackedByteArray([22])
+	payload.append(2)
+	_push_u16(payload, 2)
+	_push_u32(payload, 11)
+	_push_string(payload, "Alice")
+	payload.append(Protocol.TEAM_A)
+	_push_u32(payload, 420)
+	_push_u32(payload, 120)
+	_push_u32(payload, 0)
+	_push_u16(payload, 3)
+	_push_u16(payload, 2)
+	_push_u32(payload, 12)
+	_push_string(payload, "Bob")
+	payload.append(Protocol.TEAM_B)
+	_push_u32(payload, 315)
+	_push_u32(payload, 24)
+	_push_u32(payload, 18)
+	_push_u16(payload, 1)
+	_push_u16(payload, 1)
+	_push_u16(payload, 2)
+	_push_u32(payload, 11)
+	_push_string(payload, "Alice")
+	payload.append(Protocol.TEAM_A)
+	_push_u32(payload, 840)
+	_push_u32(payload, 240)
+	_push_u32(payload, 0)
+	_push_u16(payload, 5)
+	_push_u16(payload, 3)
+	_push_u32(payload, 12)
+	_push_string(payload, "Bob")
+	payload.append(Protocol.TEAM_B)
+	_push_u32(payload, 615)
+	_push_u32(payload, 48)
+	_push_u32(payload, 20)
+	_push_u16(payload, 2)
+	_push_u16(payload, 1)
+	var decoded := Protocol.decode_server_event(_encode_server_event_packet(payload, 10, 30))
+	if not bool(decoded.get("ok", false)):
+		return _fail("round summary should decode")
+	var event: Dictionary = decoded.get("event", {})
+	var summary: Dictionary = event.get("summary", {})
+	var round_totals: Array = summary.get("round_totals", [])
+	if String(event.get("type", "")) != "RoundSummary":
+		return _fail("round summary should use the RoundSummary event type")
+	if int(summary.get("round", 0)) != 2:
+		return _fail("round summary should decode the round number")
+	if round_totals.size() != 2 or int(round_totals[0].get("cc_hits", 0)) != 2:
+		return _fail("round summary should decode combat totals")
+	return true
+
+
+func _assert_decode_arena_combat_text_batch() -> bool:
+	var payload := PackedByteArray([24])
+	_push_u16(payload, 2)
+	_push_i16(payload, -220)
+	_push_i16(payload, 180)
+	payload.append(1)
+	_push_string(payload, "82")
+	_push_i16(payload, 120)
+	_push_i16(payload, 64)
+	payload.append(6)
+	_push_string(payload, "Dispelled")
+	var decoded := Protocol.decode_server_event(
+		_encode_snapshot_packet(payload, Protocol.PACKET_KIND_COMBAT_TEXT_BATCH, 11, 31)
+	)
+	if not bool(decoded.get("ok", false)):
+		return _fail("arena combat text batch should decode")
+	var event: Dictionary = decoded.get("event", {})
+	var entries: Array = event.get("entries", [])
+	if String(event.get("type", "")) != "ArenaCombatTextBatch":
+		return _fail("combat text batch should use the ArenaCombatTextBatch event type")
+	if entries.size() != 2 or String(entries[1].get("style", "")) != "NegativeStatus":
+		return _fail("combat text batch should decode entries and styles")
 	return true
 
 
@@ -374,6 +485,19 @@ func _encode_server_event_packet(payload: PackedByteArray, seq: int, sim_tick: i
 	elif kind == 21:
 		channel_id = Protocol.CHANNEL_SNAPSHOT
 		packet_kind = Protocol.PACKET_KIND_EVENT_BATCH
+	elif kind == 24:
+		channel_id = Protocol.CHANNEL_SNAPSHOT
+		packet_kind = Protocol.PACKET_KIND_COMBAT_TEXT_BATCH
+	return _encode_snapshot_packet(payload, packet_kind, seq, sim_tick, channel_id)
+
+
+func _encode_snapshot_packet(
+	payload: PackedByteArray,
+	packet_kind: int,
+	seq: int,
+	sim_tick: int,
+	channel_id: int = Protocol.CHANNEL_SNAPSHOT
+) -> PackedByteArray:
 	var packet := PackedByteArray()
 	_push_u16(packet, Protocol.PACKET_MAGIC)
 	packet.append(Protocol.PROTOCOL_VERSION)

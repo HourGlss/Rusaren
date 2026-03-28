@@ -2,7 +2,7 @@
 
 Current target release line: `1.0.0`
 Current repo version: `0.8.0`
-Current roadmap position: `0.9.0 Beta Hardening`
+Current roadmap position: `0.9.5 Maps And Arena Variety`
 
 Completed:
 - `0.3.0 Quality Foundation`
@@ -53,16 +53,16 @@ Release gate:
 - [x] Define backend performance budgets for tick latency, command latency, CPU, memory, SQLite log write latency, and connection capacity.
 - [ ] Add repeatable load scenarios and quality gates that enforce those performance budgets on a fixed reference environment.
 - [x] Implement the advanced spell semantics required by the class design: true channels, dispels, multi-source stacking periodic effects, and trigger-on-expire or trigger-on-dispel payloads.
-- [ ] Add append-only SQLite-backed match and combat logs for all non-movement player actions, picks, casts, hits, misses, healing, status changes, deaths, and match lifecycle events.
-- [ ] Add replay-style regression checks that validate selected end-to-end match flows from server-authored match and combat logs.
+- [x] Add append-only SQLite-backed match and combat logs for all non-movement player actions, picks, casts, hits, misses, healing, status changes, deaths, and match lifecycle events.
+- [x] Add replay-style regression checks that validate selected end-to-end match flows from server-authored match and combat logs.
 - [ ] Add a private authenticated admin dashboard for health, tick timing, sessions, lobbies, matches, recent errors, and recent match/combat log views.
-- [ ] Add post-round and post-match summary screens with damage done, healing to allies and enemies, crowd control used, crowd control hits, and running totals carried forward after each round.
-- [ ] Add player-only scrolling combat text with a World of Warcraft style flow for outgoing and incoming combat events.
-- [ ] Add dynamic player coloring driven by pick order and class identity: slot 1 colors the center, slots 2 through 5 add outward rings, unpicked slots render black, the outer border is team-relative (`friendly = dark blue`, `enemy = red`), and a thin halo outside the team ring shows positive statuses on the right and negative statuses on the left with longer-duration effects higher in the stack.
+- [x] Add post-round and post-match summary screens with damage done, healing to allies and enemies, crowd control used, crowd control hits, and running totals carried forward after each round.
+- [x] Add player-only scrolling combat text with a World of Warcraft style flow for outgoing and incoming combat events.
+- [x] Add dynamic player coloring driven by pick order and class identity: slot 1 colors the center, slots 2 through 5 add outward rings, unpicked slots render black, the outer border is team-relative (`friendly = dark blue`, `enemy = red`), and a thin halo outside the team ring shows positive statuses on the right and negative statuses on the left with longer-duration effects higher in the stack.
 - [ ] Add more dynamic authored map items beyond the current static obstacle set.
 - [x] Add post-deploy smoke checks and synthetic probes for the hosted backend path.
 - [x] Add ADRs for protocol freeze, event logging, admin surface, and persistence, plus explicit crate-boundary rules and a human PR review checklist.
-- [ ] Extend backend tests, replay checks, and liveprobe scenarios to cover channel start, tick, cancel, dispel resolution, multi-source periodic stacking, and bloom-style expiration effects.
+- [x] Extend backend tests, replay checks, and liveprobe scenarios to cover channel start, tick, cancel, dispel resolution, multi-source periodic stacking, and bloom-style expiration effects.
 - [ ] Close remaining "cannot test this yet" items in the report.
 - [ ] Make GitHub Actions, GitHub Pages, docs, rustdoc, and report publishing stable and routine.
 - [x] Verify the hosted stack against the real domain path with TLS, TURN/STUN, and the web client.
@@ -118,12 +118,12 @@ Milestone gate:
 
 ### 0.9.3 Event Spine And Combat Persistence
 
-- [ ] Add the append-only SQLite-backed match and combat log as the server-authored source of truth for non-movement gameplay actions.
-- [ ] Define and persist combat events for picks, cast start, cast complete, cast cancel, hits, misses, damage, healing, status apply/remove, defeats, round transitions, and match transitions.
-- [ ] Include channel-specific and status-stack-specific event detail in that combat log, including channel tick, channel cancel reason, dispel cast, dispel result, source-aware status stack changes, and expire-or-dispel trigger outcomes.
-- [ ] Make the event model stable enough that both UI consumers and regression tooling can read it without scraping ad-hoc text logs.
-- [ ] Add replay-style regression checks that rebuild selected end-to-end match expectations from those server-authored logs.
-- [ ] Use the same event spine to support later admin views, round summaries, match summaries, and scrolling combat text instead of inventing separate one-off pipelines.
+- [x] Add the append-only SQLite-backed match and combat log as the server-authored source of truth for non-movement gameplay actions.
+- [x] Define and persist combat events for picks, cast start, cast complete, cast cancel, hits, misses, damage, healing, status apply/remove, defeats, round transitions, and match transitions.
+- [x] Include channel-specific and status-stack-specific event detail in that combat log, including channel tick, channel cancel reason, dispel cast, dispel result, source-aware status stack changes, and expire-or-dispel trigger outcomes.
+- [x] Make the event model stable enough that both UI consumers and regression tooling can read it without scraping ad-hoc text logs.
+- [x] Add replay-style regression checks that rebuild selected end-to-end match expectations from those server-authored logs.
+- [x] Use the same event spine to support later admin views, round summaries, match summaries, and scrolling combat text instead of inventing separate one-off pipelines.
 
 Milestone gate:
 - a complete match produces a durable server-authored combat log
@@ -132,32 +132,38 @@ Milestone gate:
 
 ### 0.9.4 Combat Feedback And Readability
 
-- [ ] Add post-round and post-match summary screens with damage done, healing to allies and enemies, crowd control used, crowd control hits, and running totals that carry forward after each round.
-- [ ] Add player-only scrolling combat text with a World of Warcraft style flow for that player's own outgoing and incoming combat events.
-- [ ] Drive the combat text and summary screens from the shared combat-event spine instead of local-only client guesses.
-- [ ] Surface channeling, dispels, and bloom-style trigger outcomes clearly enough in the combat UI that players can tell why a periodic heal or damage effect started, stacked, bloomed, or was removed.
-- [ ] Keep the current player physics and collision size unchanged while improving visual readability only.
-- [ ] Add dynamic player coloring driven by pick order and class identity: slot 1 colors the center, slots 2 through 5 add outward rings, unpicked slots render black, the outer border is team-relative (`friendly = dark blue`, `enemy = red`), and a thin halo outside the team ring shows positive statuses on the right and negative statuses on the left with longer-duration effects higher in the stack.
-- [ ] Use WoW-style class colors for the current WoW-analogue classes and reserve the Glasbey et al. 2007 categorical palette for non-WoW classes and future class growth.
-- [ ] Save the reserved non-WoW palette in the docs and explicitly mark which colors are already consumed by shipped classes so future class additions do not re-choose colors ad hoc.
+- [x] Add post-round and post-match summary screens with damage done, healing to allies and enemies, crowd control used, crowd control hits, and running totals that carry forward after each round.
+- [x] Add player-only scrolling combat text with a World of Warcraft style flow for that player's own outgoing and incoming combat events.
+- [x] Drive the combat text and summary screens from the shared combat-event spine instead of local-only client guesses.
+- [x] Surface channeling, dispels, and bloom-style trigger outcomes clearly enough in the combat UI that players can tell why a periodic heal or damage effect started, stacked, bloomed, or was removed.
+- [x] Replace generic skill-picker hover text with authored skill descriptions plus mechanic summaries pulled from the shared skill catalog, and use category-colored skill labels so damage, healing, control, and damage-over-time skills read differently at a glance.
+- [x] Keep aura mechanics gameplay-only in the arena view: aura deployables should not render as visible props, labels, or health bars unless a later milestone introduces a deliberate aura-specific VFX treatment.
+- [x] Keep the current player physics and collision size unchanged while improving visual readability only.
+- [x] Add dynamic player coloring driven by pick order and class identity: slot 1 colors the center, slots 2 through 5 add outward rings, unpicked slots render black, the outer border is team-relative (`friendly = dark blue`, `enemy = red`), and a thin halo outside the team ring shows positive statuses on the right and negative statuses on the left with longer-duration effects higher in the stack.
+- [x] Use WoW-style class colors for the current WoW-analogue classes and reserve the Glasbey et al. 2007 categorical palette for non-WoW classes and future class growth.
+- [x] Save the reserved non-WoW palette in the docs and explicitly mark which colors are already consumed by shipped classes so future class additions do not re-choose colors ad hoc.
 
 Milestone gate:
 - combat text, round summaries, and match summaries all work from server-authored event data
-- class identity, team identity, and status state are readable in crowded fights without changing player hitboxes
+- class identity, team identity, status state, and skill-pick readability are clear in crowded fights without changing player hitboxes
 
 ### 0.9.5 Maps And Arena Variety
 
 - [ ] Support authored maps with up to three Team A anchors and up to three Team B anchors instead of exactly one spawn anchor per side.
-- [ ] Support non-rectangular authored map footprints so out-of-shape cells are not treated as walkable arena space inside the rectangular ASCII bounds.
+- [ ] Support non-rectangular authored map footprints so out-of-shape cells are treated as out-of-bounds rather than walkable arena space inside a rectangular ASCII box.
 - [ ] Add more dynamic authored map items beyond the current static obstacle set.
-- [ ] Extend map validation, parsing tests, and simulation/runtime tests so spawn assignment, occupancy, walkability, and combat interactions stay correct as the map grammar expands.
-- [ ] Keep authored map growth data-driven so new arena items and future map shapes do not require a rewrite of the whole parser each time.
+- [ ] Extend map validation, parsing tests, and simulation/runtime tests so spawn assignment, occupancy, walkability, line-of-sight, and combat interactions stay correct as the map grammar expands.
+- [ ] Keep authored map growth data-driven so new arena items and future map shapes do not require a parser rewrite each time.
+- [ ] Add a single-player training environment with resettable combat dummies that report damage, healing, DPS, and HPS over the current session.
+- [ ] Add two authored dummy variants with `100x` player health: one dummy resets to full health after dropping below `5%` HP, and one dummy returns to a low-health state for execute-range testing instead of dying.
+- [ ] Add a player-facing reset action in the training environment that clears damage, healing, and timer metrics without restarting the whole map.
+- [ ] Support a separate authored training map where `d` and `D` place the two dummy variants directly from the ASCII map file.
 
 Milestone gate:
-- authored maps can express the new spawn and footprint rules
-- new map items are test-covered and behave correctly in simulation
+- authored maps can express the expanded spawn and footprint rules
+- new map items and training-map entities are authored from data and test-covered in simulation/runtime
 
-### 0.9.6 Ops, Admin, Perf, And Publication
+### 0.9.6 Operations, Admin, Performance Gates, And Publication Stability
 
 - [ ] Add repeatable load scenarios and quality gates that enforce the defined performance budgets on a fixed reference environment.
 - [ ] Add a private authenticated admin dashboard for health, tick timing, sessions, lobbies, matches, recent errors, and recent match/combat log views.
@@ -171,21 +177,35 @@ Milestone gate:
 - ops dashboards, load scenarios, and publication/reporting flows are routine rather than one-off
 - no major 0.9 architecture or observability gap remains
 
+### 0.9.7 Audio, Input, And Combat Polish
+- [ ] Add semi-unique sound cues for shipped spells so players can distinguish major actions without relying only on visuals.
+- [ ] Add `3D` movement audio, but suppress it for stealthed players and for players currently inside brush.
+- [ ] Add a self-cast shortcut on `x` so held self-cast targets the casting player while still respecting normal stun, silence, range, and cast-validity rules.
+- [ ] Implement and test crowd-control diminishing returns.
+- [ ] Add a YAML-configurable chance for brush movement to make an audible sound instead of being perfectly silent every time.
+- [ ] Allow nearby stealthed players to be heard within a small radius without revealing them.
+
+Milestone gate:
+- shipped spells and player movement have readable audio cues
+- self-cast and crowd-control diminishing returns behave according to the authored rules
+- stealth and brush audio behavior is data-driven and test-covered
+
+
 ## 1.0.0 Release
 
 - [x] Hosted backend and hosted Godot web client are stable on the production domain.
-- [ ] The Godot web client is playable with basic graphics and UI:
+- [ ] Godot web client baseline playability is shippable, including:
 - [x] players rendered as simple shapes with collision
 - [x] spells produce visible graphics and effects
 - [x] a basic HUD exists
 - [ ] health and mana are shown over each player
 - [x] rounds can be fully played in browser without sprites or final polish
-- [ ] All shipped spells work in the real game loop.
-- [ ] Player status is available through the protocol and API, including hp, mana, cooldowns, active statuses, and match state.
-- [ ] A player can play the game through the API, not only through Godot.
-- [ ] Public docs site is current.
-- [ ] Rust API docs are published and document how to connect, signal, send input, receive state, interpret status, and play through the API.
-- [ ] Fuzzing is active in CI, not just configured.
+- [ ] All shipped spells work in the real game loop, not only in backend simulation.
+- [ ] Player runtime status is exposed through the protocol and API, including hp, mana, cooldowns, active statuses, and match state.
+- [ ] A player can play the game through the API, not only through the Godot client.
+- [ ] Public docs site reflects the shipped game and the hosted path accurately.
+- [ ] Rust API docs are published and are sufficient to connect, signal, send input, receive state, interpret status, and play through the API.
+- [ ] Fuzzing is active in CI as part of the real release path, not just configured locally.
 - [ ] Deployment and operational steps are documented well enough for another engineer to run the project.
 
 Release gate:
@@ -234,3 +254,7 @@ Milestone gate:
 Milestone gate:
 - all normal release checks pass on the frozen candidate
 - the full mutation campaign is the last hardening pass before release tagging
+
+### Roadmap Hygiene
+
+- [ ] Audit the original `0.9.0 Beta Hardening` checklist line by line against the implemented code, hosted-path validation, and current automated tests; mark each line item done only after it is explicitly confirmed.

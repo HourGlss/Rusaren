@@ -1,11 +1,30 @@
 use super::*;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 fn temp_record_store_path() -> PathBuf {
+    static TEMP_PATH_COUNTER: AtomicU64 = AtomicU64::new(0);
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system time should be after the unix epoch")
         .as_nanos();
-    std::env::temp_dir().join(format!("rusaren-realtime-webrtc-{unique}.tsv"))
+    let counter = TEMP_PATH_COUNTER.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!(
+        "rusaren-realtime-webrtc-{}-{unique}-{counter}.tsv",
+        std::process::id()
+    ))
+}
+
+fn temp_combat_log_path() -> PathBuf {
+    static TEMP_PATH_COUNTER: AtomicU64 = AtomicU64::new(0);
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time should be after the unix epoch")
+        .as_nanos();
+    let counter = TEMP_PATH_COUNTER.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!(
+        "rusaren-realtime-webrtc-{}-{unique}-{counter}.sqlite",
+        std::process::id()
+    ))
 }
 
 fn repo_content_root() -> PathBuf {
@@ -90,6 +109,7 @@ pub(super) async fn start_server_fast() -> (game_api::DevServerHandle, String) {
             tick_interval: Duration::from_millis(10),
             simulation_step_ms: COMBAT_FRAME_MS,
             record_store_path: temp_record_store_path(),
+            combat_log_path: temp_combat_log_path(),
             content_root: repo_content_root(),
             web_client_root: temp_web_client_root("fast"),
             observability: None,

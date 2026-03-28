@@ -15,7 +15,7 @@ func _run() -> void:
 	success = await _assert_lobby_panel_shows_roster_team_and_ready_state() and success
 	success = await _assert_skill_pick_layout_prioritizes_skill_buttons() and success
 	success = await _assert_combat_hud_surfaces_local_skill_names() and success
-	success = await _assert_hidden_backtick_cycles_debug_modes() and success
+	success = await _assert_round_and_match_summary_panels_surface_event_data() and success
 	success = await _assert_disconnect_resets_back_to_central_shell() and success
 	quit(0 if success else 1)
 
@@ -160,18 +160,27 @@ func _assert_skill_pick_layout_prioritizes_skill_buttons() -> bool:
 				"tier": 1,
 				"skill_id": "mage_t1_missile",
 				"skill_name": "Magic Missile",
+				"skill_description": "Fast projectile damage.",
+				"skill_summary": "CD 0.7s | Cast instant | Mana 16\nProjectile: range 1500, radius 16, speed 310\nEffect: 10 damage",
+				"ui_category": "damage",
 			},
 			{
 				"tree": "Mage",
 				"tier": 2,
 				"skill_id": "mage_t2_ice_lance",
 				"skill_name": "Ice Lance",
+				"skill_description": "Burst damage with chill.",
+				"skill_summary": "CD 2.0s | Cast instant | Mana 30\nBurst: cast range 250, radius 86\nEffect: 14 damage\nStatus: Chill 20 for 2s (max 2)",
+				"ui_category": "control",
 			},
 			{
 				"tree": "Warrior",
 				"tier": 1,
 				"skill_id": "warrior_t1_bash",
 				"skill_name": "Bash",
+				"skill_description": "Short melee stun.",
+				"skill_summary": "CD 0.9s | Cast instant\nBeam: range 90, radius 28\nStatus: Stun for 1s",
+				"ui_category": "control",
 			},
 		],
 	})
@@ -202,6 +211,14 @@ func _assert_skill_pick_layout_prioritizes_skill_buttons() -> bool:
 		success = _fail("skill pick phase should expose at least one enabled skill choice") and success
 	if shell.skill_buttons.is_empty() or not shell.skill_buttons[0].text.contains("Magic Missile"):
 		success = _fail("skill buttons should render backend-authored skill names") and success
+	elif not shell.skill_buttons[0].tooltip_text.contains("Fast projectile damage.") or not shell.skill_buttons[0].tooltip_text.contains("Projectile: range 1500"):
+		success = _fail("skill button tooltips should use the authored description plus the mechanics summary") and success
+	elif shell.skill_buttons[0].tooltip_text.contains("Select "):
+		success = _fail("skill button tooltips should not fall back to generic select text") and success
+	var damage_color := shell.skill_buttons[0].get_theme_color("font_color")
+	var control_color := shell.skill_buttons[1].get_theme_color("font_color")
+	if damage_color == control_color:
+		success = _fail("skill button labels should use category colors for readability") and success
 
 	await _despawn_shell(shell)
 	return success
@@ -227,12 +244,18 @@ func _assert_combat_hud_surfaces_local_skill_names() -> bool:
 				"tier": 1,
 				"skill_id": "mage_t1_missile",
 				"skill_name": "Magic Missile",
+				"skill_description": "Fast projectile damage.",
+				"skill_summary": "CD 0.7s | Cast instant | Mana 16\nProjectile: range 1500, radius 16, speed 310\nEffect: 10 damage",
+				"ui_category": "damage",
 			},
 			{
 				"tree": "Mage",
 				"tier": 2,
 				"skill_id": "mage_t2_ice_lance",
 				"skill_name": "Ice Lance",
+				"skill_description": "Burst damage with chill.",
+				"skill_summary": "CD 2.0s | Cast instant | Mana 30\nBurst: cast range 250, radius 86\nEffect: 14 damage\nStatus: Chill 20 for 2s (max 2)",
+				"ui_category": "control",
 			},
 		],
 	})
@@ -307,28 +330,88 @@ func _assert_combat_hud_surfaces_local_skill_names() -> bool:
 	return success
 
 
-func _assert_hidden_backtick_cycles_debug_modes() -> bool:
+func _assert_round_and_match_summary_panels_surface_event_data() -> bool:
 	var shell = await _spawn_shell()
+	shell.app_state.mark_transport_state("open")
+	shell.app_state.local_player_id = 11
+	shell.app_state.local_player_name = "Alice"
+	shell.app_state.apply_server_event({
+		"type": "MatchStarted",
+		"match_id": 9,
+		"round": 2,
+		"skill_pick_seconds": 25,
+	})
+	shell.app_state.apply_server_event({
+		"type": "RoundSummary",
+		"summary": {
+			"round": 2,
+			"round_totals": [
+				{
+					"player_id": 11,
+					"player_name": "Alice",
+					"team": "Team A",
+					"damage_done": 140,
+					"healing_to_allies": 24,
+					"healing_to_enemies": 0,
+					"cc_used": 2,
+					"cc_hits": 1,
+				},
+			],
+			"running_totals": [
+				{
+					"player_id": 11,
+					"player_name": "Alice",
+					"team": "Team A",
+					"damage_done": 290,
+					"healing_to_allies": 44,
+					"healing_to_enemies": 3,
+					"cc_used": 4,
+					"cc_hits": 2,
+				},
+			],
+		},
+	})
+	shell._refresh_ui()
+
 	var success := true
-	var key_event := InputEventKey.new()
-	key_event.pressed = true
-	key_event.keycode = KEY_QUOTELEFT
+	if shell.round_summary_log == null or not shell.round_summary_log.visible:
+		success = _fail("skill-pick layout should surface the round summary panel when summary data exists") and success
+	elif not shell.round_summary_log.text.contains("Running total"):
+		success = _fail("round summary panel should render the running totals block") and success
 
-	shell._input(key_event)
-	if shell.app_state.debug_mode != "render":
-		success = _fail("first hidden backtick toggle should enable render debug mode") and success
+	shell.app_state.apply_server_event({
+		"type": "MatchEnded",
+		"outcome": "Victory",
+		"score_a": 3,
+		"score_b": 1,
+		"message": "Team A wins the match.",
+	})
+	shell.app_state.apply_server_event({
+		"type": "MatchSummary",
+		"summary": {
+			"rounds_played": 4,
+			"totals": [
+				{
+					"player_id": 11,
+					"player_name": "Alice",
+					"team": "Team A",
+					"damage_done": 480,
+					"healing_to_allies": 96,
+					"healing_to_enemies": 5,
+					"cc_used": 6,
+					"cc_hits": 4,
+				},
+			],
+		},
+	})
+	shell._refresh_ui()
 
-	shell._input(key_event)
-	if shell.app_state.debug_mode != "auth":
-		success = _fail("second hidden backtick toggle should enable auth debug mode") and success
-
-	shell._input(key_event)
-	if shell.app_state.debug_mode != "both":
-		success = _fail("third hidden backtick toggle should enable combined debug mode") and success
-
-	shell._input(key_event)
-	if shell.app_state.debug_mode != "off":
-		success = _fail("fourth hidden backtick toggle should return debug mode to off") and success
+	if not shell.results_panel.visible:
+		success = _fail("results phase should show the results panel") and success
+	if shell.match_summary_log == null or not shell.match_summary_log.visible:
+		success = _fail("results screen should surface the match summary panel when summary data exists") and success
+	elif not shell.match_summary_log.text.contains("Rounds played: 4"):
+		success = _fail("match summary panel should render the final rounds-played line") and success
 
 	await _despawn_shell(shell)
 	return success

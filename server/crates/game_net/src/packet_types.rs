@@ -40,6 +40,7 @@ pub enum PacketKind {
     FullSnapshot,
     DeltaSnapshot,
     EventBatch,
+    CombatTextBatch,
 }
 
 impl PacketKind {
@@ -82,6 +83,7 @@ impl PacketKind {
             32 => Some(Self::FullSnapshot),
             33 => Some(Self::DeltaSnapshot),
             34 => Some(Self::EventBatch),
+            35 => Some(Self::CombatTextBatch),
             _ => None,
         }
     }
@@ -100,6 +102,7 @@ impl PacketKind {
             Self::FullSnapshot => 32,
             Self::DeltaSnapshot => 33,
             Self::EventBatch => 34,
+            Self::CombatTextBatch => 35,
         }
     }
 }

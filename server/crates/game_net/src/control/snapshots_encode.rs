@@ -3,17 +3,20 @@ use game_domain::{LobbyId, PlayerRecord};
 use crate::PacketError;
 
 use super::codec::{
-    encode_arena_deployable_kind, encode_arena_effect_kind, encode_arena_match_phase,
-    encode_arena_obstacle_kind, encode_arena_status_kind, encode_bytes,
+    encode_arena_combat_text_style, encode_arena_deployable_kind, encode_arena_effect_kind,
+    encode_arena_match_phase, encode_arena_obstacle_kind, encode_arena_status_kind, encode_bytes,
     encode_lobby_snapshot_phase, encode_optional_team, encode_optional_u8, encode_ready_state,
     encode_team, push_len_prefixed_string,
 };
 use super::server_types::{
-    ArenaDeltaSnapshot, ArenaDeployableSnapshot, ArenaEffectSnapshot, ArenaObstacleSnapshot,
-    ArenaPlayerSnapshot, ArenaProjectileSnapshot, ArenaStateSnapshot, LobbyDirectoryEntry,
-    LobbySnapshotPhase, LobbySnapshotPlayer, SkillCatalogEntry,
+    ArenaCombatTextEntry, ArenaDeltaSnapshot, ArenaDeployableSnapshot, ArenaEffectSnapshot,
+    ArenaObstacleSnapshot, ArenaPlayerSnapshot, ArenaProjectileSnapshot, ArenaStateSnapshot,
+    LobbyDirectoryEntry, LobbySnapshotPhase, LobbySnapshotPlayer, SkillCatalogEntry,
 };
-use super::{MAX_SKILL_ID_BYTES, MAX_SKILL_NAME_BYTES, MAX_SKILL_TREE_NAME_BYTES};
+use super::{
+    MAX_MESSAGE_BYTES, MAX_SKILL_DESCRIPTION_BYTES, MAX_SKILL_ID_BYTES, MAX_SKILL_NAME_BYTES,
+    MAX_SKILL_SUMMARY_BYTES, MAX_SKILL_TREE_NAME_BYTES, MAX_SKILL_UI_CATEGORY_BYTES,
+};
 
 pub(super) fn encode_player_record(payload: &mut Vec<u8>, record: PlayerRecord) {
     payload.extend_from_slice(&record.wins.to_le_bytes());
@@ -44,6 +47,24 @@ pub(super) fn encode_skill_catalog(
             "skill_name",
             &entry.skill_name,
             MAX_SKILL_NAME_BYTES,
+        )?;
+        push_len_prefixed_string(
+            payload,
+            "skill_description",
+            &entry.skill_description,
+            MAX_SKILL_DESCRIPTION_BYTES,
+        )?;
+        push_len_prefixed_string(
+            payload,
+            "skill_summary",
+            &entry.skill_summary,
+            MAX_SKILL_SUMMARY_BYTES,
+        )?;
+        push_len_prefixed_string(
+            payload,
+            "ui_category",
+            &entry.ui_category,
+            MAX_SKILL_UI_CATEGORY_BYTES,
         )?;
     }
     Ok(())
@@ -239,6 +260,20 @@ pub(super) fn encode_arena_player(
     for total in player.slot_cooldown_total_ms {
         payload.extend_from_slice(&total.to_le_bytes());
     }
+    for tree in &player.equipped_skill_trees {
+        match tree {
+            Some(tree) => {
+                payload.push(1);
+                push_len_prefixed_string(
+                    payload,
+                    "skill_tree",
+                    tree.as_str(),
+                    MAX_SKILL_TREE_NAME_BYTES,
+                )?;
+            }
+            None => payload.push(0),
+        }
+    }
     encode_optional_u8(payload, player.current_cast_slot);
     payload.extend_from_slice(&player.current_cast_remaining_ms.to_le_bytes());
     payload.extend_from_slice(&player.current_cast_total_ms.to_le_bytes());
@@ -297,6 +332,24 @@ pub(super) fn encode_arena_effect_batch(
         payload.extend_from_slice(&effect.target_x.to_le_bytes());
         payload.extend_from_slice(&effect.target_y.to_le_bytes());
         payload.extend_from_slice(&effect.radius.to_le_bytes());
+    }
+    Ok(())
+}
+
+pub(super) fn encode_arena_combat_text_batch(
+    payload: &mut Vec<u8>,
+    entries: &[ArenaCombatTextEntry],
+) -> Result<(), PacketError> {
+    let entry_count = u16::try_from(entries.len()).map_err(|_| PacketError::PayloadTooLarge {
+        actual: entries.len(),
+        maximum: usize::from(u16::MAX),
+    })?;
+    payload.extend_from_slice(&entry_count.to_le_bytes());
+    for entry in entries {
+        payload.extend_from_slice(&entry.x.to_le_bytes());
+        payload.extend_from_slice(&entry.y.to_le_bytes());
+        payload.push(encode_arena_combat_text_style(entry.style));
+        push_len_prefixed_string(payload, "text", &entry.text, MAX_MESSAGE_BYTES)?;
     }
     Ok(())
 }

@@ -60,11 +60,17 @@ pub enum ServerControlEvent {
         score_a: u8,
         score_b: u8,
     },
+    RoundSummary {
+        summary: RoundSummarySnapshot,
+    },
     MatchEnded {
         outcome: MatchOutcome,
         score_a: u8,
         score_b: u8,
         message: String,
+    },
+    MatchSummary {
+        summary: MatchSummarySnapshot,
     },
     ReturnedToCentralLobby {
         record: PlayerRecord,
@@ -86,6 +92,9 @@ pub enum ServerControlEvent {
     ArenaEffectBatch {
         effects: Vec<ArenaEffectSnapshot>,
     },
+    ArenaCombatTextBatch {
+        entries: Vec<ArenaCombatTextEntry>,
+    },
     Error {
         message: String,
     },
@@ -97,6 +106,9 @@ pub struct SkillCatalogEntry {
     pub tier: u8,
     pub skill_id: String,
     pub skill_name: String,
+    pub skill_description: String,
+    pub skill_summary: String,
+    pub ui_category: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -215,6 +227,7 @@ pub struct ArenaPlayerSnapshot {
     pub primary_cooldown_total_ms: u16,
     pub slot_cooldown_remaining_ms: [u16; 5],
     pub slot_cooldown_total_ms: [u16; 5],
+    pub equipped_skill_trees: [Option<SkillTree>; 5],
     pub current_cast_slot: Option<u8>,
     pub current_cast_remaining_ms: u16,
     pub current_cast_total_ms: u16,
@@ -252,6 +265,50 @@ pub struct ArenaEffectSnapshot {
     pub target_x: i16,
     pub target_y: i16,
     pub radius: u16,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ArenaCombatTextStyle {
+    DamageOutgoing,
+    DamageIncoming,
+    HealOutgoing,
+    HealIncoming,
+    PositiveStatus,
+    NegativeStatus,
+    Utility,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ArenaCombatTextEntry {
+    pub x: i16,
+    pub y: i16,
+    pub style: ArenaCombatTextStyle,
+    pub text: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CombatSummaryLine {
+    pub player_id: PlayerId,
+    pub player_name: PlayerName,
+    pub team: TeamSide,
+    pub damage_done: u32,
+    pub healing_to_allies: u32,
+    pub healing_to_enemies: u32,
+    pub cc_used: u16,
+    pub cc_hits: u16,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RoundSummarySnapshot {
+    pub round: RoundNumber,
+    pub round_totals: Vec<CombatSummaryLine>,
+    pub running_totals: Vec<CombatSummaryLine>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MatchSummarySnapshot {
+    pub rounds_played: u8,
+    pub totals: Vec<CombatSummaryLine>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

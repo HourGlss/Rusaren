@@ -5,11 +5,12 @@ use game_domain::{
     SkillTree, TeamSide, MAX_PLAYER_NAME_LEN,
 };
 use game_net::{
-    ArenaDeltaSnapshot, ArenaEffectKind, ArenaEffectSnapshot, ArenaMatchPhase, ArenaObstacleKind,
-    ArenaObstacleSnapshot, ArenaPlayerSnapshot, ArenaStateSnapshot, ArenaStatusKind,
-    ArenaStatusSnapshot, ChannelId, ClientControlCommand, LobbyDirectoryEntry, LobbySnapshotPhase,
-    LobbySnapshotPlayer, PacketError, PacketHeader, PacketKind, ServerControlEvent,
-    SkillCatalogEntry,
+    ArenaCombatTextEntry, ArenaCombatTextStyle, ArenaDeltaSnapshot, ArenaEffectKind,
+    ArenaEffectSnapshot, ArenaMatchPhase, ArenaObstacleKind, ArenaObstacleSnapshot,
+    ArenaPlayerSnapshot, ArenaStateSnapshot, ArenaStatusKind, ArenaStatusSnapshot, ChannelId,
+    ClientControlCommand, CombatSummaryLine, LobbyDirectoryEntry, LobbySnapshotPhase,
+    LobbySnapshotPlayer, MatchSummarySnapshot, PacketError, PacketHeader, PacketKind,
+    RoundSummarySnapshot, ServerControlEvent, SkillCatalogEntry,
 };
 
 fn player_id(raw: u32) -> PlayerId {
@@ -31,12 +32,18 @@ fn sample_skill_catalog() -> Vec<SkillCatalogEntry> {
             tier: 1,
             skill_id: String::from("warrior_t1_bash"),
             skill_name: String::from("Bash"),
+            skill_description: String::from("Short melee stun."),
+            skill_summary: String::from("CD 0.9s | Cast instant\nBeam: range 90, radius 28\nStatus: Stun for 1s"),
+            ui_category: String::from("control"),
         },
         SkillCatalogEntry {
             tree: SkillTree::Mage,
             tier: 1,
             skill_id: String::from("mage_t1_missile"),
             skill_name: String::from("Magic Missile"),
+            skill_description: String::from("Fast projectile damage."),
+            skill_summary: String::from("CD 0.7s | Cast instant | Mana 16\nProjectile: range 1500, radius 16, speed 310\nEffect: 10 damage"),
+            ui_category: String::from("damage"),
         },
     ]
 }
@@ -77,7 +84,6 @@ fn client_control_command_round_trips_all_variants() {
             tier: 1,
         },
         ClientControlCommand::QuitToCentralLobby,
-        ClientControlCommand::SetDebugMode { mode: 3 },
     ];
 
     for (offset, command) in commands.into_iter().enumerate() {
@@ -101,6 +107,9 @@ fn connected_event_round_trips_custom_class_catalog_entries() {
             tier: 1,
             skill_id: String::from("engineer_turret"),
             skill_name: String::from("Pocket Turret"),
+            skill_description: String::from("Deploy a short-range turret."),
+            skill_summary: String::from("CD 2.5s | Cast 0.4s | Mana 24\nSummon: place 260 away, radius 32, 65 HP, lasts 7s, attacks 340 range every 0.9s"),
+            ui_category: String::from("utility"),
         }],
     };
     let packet = event.clone().encode_packet(1, 0).expect("packet");
@@ -467,6 +476,13 @@ fn arena_status_kinds_round_trip_for_all_runtime_statuses() {
                     primary_cooldown_total_ms: 650,
                     slot_cooldown_remaining_ms: [0, 0, 800, 0, 0],
                     slot_cooldown_total_ms: [700, 1700, 2200, 0, 0],
+                    equipped_skill_trees: [
+                        Some(game_domain::SkillTree::Mage),
+                        Some(game_domain::SkillTree::Cleric),
+                        Some(game_domain::SkillTree::Rogue),
+                        const { None },
+                        const { None },
+                    ],
                     current_cast_slot: Some(2),
                     current_cast_remaining_ms: 400,
                     current_cast_total_ms: 600,
@@ -501,6 +517,59 @@ fn server_control_event_round_trips_arena_effect_batch() {
     assert_eq!(effects_header.channel_id, ChannelId::Snapshot);
     assert_eq!(effects_header.packet_kind, PacketKind::EventBatch);
     assert_eq!(decoded_effect_batch, effect_batch);
+}
+
+#[test]
+fn server_control_event_round_trips_round_and_match_summaries() {
+    let round_summary = ServerControlEvent::RoundSummary {
+        summary: RoundSummarySnapshot {
+            round: RoundNumber::new(2).expect("round"),
+            round_totals: sample_summary_lines(),
+            running_totals: sample_summary_lines(),
+        },
+    };
+    let round_packet = round_summary.clone().encode_packet(9, 22).expect("packet");
+    let (round_header, decoded_round_summary) =
+        ServerControlEvent::decode_packet(&round_packet).expect("decode");
+    assert_eq!(round_header.channel_id, ChannelId::Control);
+    assert_eq!(round_header.packet_kind, PacketKind::ControlEvent);
+    assert_eq!(decoded_round_summary, round_summary);
+
+    let match_summary = ServerControlEvent::MatchSummary {
+        summary: MatchSummarySnapshot {
+            rounds_played: 3,
+            totals: sample_summary_lines(),
+        },
+    };
+    let match_packet = match_summary.clone().encode_packet(10, 22).expect("packet");
+    let (_, decoded_match_summary) =
+        ServerControlEvent::decode_packet(&match_packet).expect("decode");
+    assert_eq!(decoded_match_summary, match_summary);
+}
+
+#[test]
+fn server_control_event_round_trips_arena_combat_text_batch() {
+    let event = ServerControlEvent::ArenaCombatTextBatch {
+        entries: vec![
+            ArenaCombatTextEntry {
+                x: -220,
+                y: 180,
+                style: ArenaCombatTextStyle::DamageOutgoing,
+                text: String::from("82"),
+            },
+            ArenaCombatTextEntry {
+                x: 120,
+                y: 64,
+                style: ArenaCombatTextStyle::NegativeStatus,
+                text: String::from("Dispelled"),
+            },
+        ],
+    };
+    let packet = event.clone().encode_packet(11, 22).expect("packet");
+    let (header, decoded) = ServerControlEvent::decode_packet(&packet).expect("decode");
+    assert_eq!(header.channel_id, ChannelId::Snapshot);
+    assert_eq!(header.packet_kind, PacketKind::CombatTextBatch);
+    assert_eq!(decoded, event);
 }
 
 fn sample_full_arena_snapshot_event() -> ServerControlEvent {
@@ -548,6 +617,13 @@ fn sample_full_arena_snapshot_event() -> ServerControlEvent {
                 primary_cooldown_total_ms: 650,
                 slot_cooldown_remaining_ms: [100, 0, 900, 0, 0],
                 slot_cooldown_total_ms: [700, 1700, 2200, 0, 0],
+                equipped_skill_trees: [
+                    Some(game_domain::SkillTree::Mage),
+                    Some(game_domain::SkillTree::Cleric),
+                    Some(game_domain::SkillTree::Rogue),
+                    const { None },
+                    const { None },
+                ],
                 current_cast_slot: Some(3),
                 current_cast_remaining_ms: 200,
                 current_cast_total_ms: 300,
@@ -598,6 +674,13 @@ fn sample_delta_arena_snapshot_event() -> ServerControlEvent {
                 primary_cooldown_total_ms: 650,
                 slot_cooldown_remaining_ms: [0, 0, 800, 0, 0],
                 slot_cooldown_total_ms: [700, 1700, 2200, 0, 0],
+                equipped_skill_trees: [
+                    Some(game_domain::SkillTree::Mage),
+                    Some(game_domain::SkillTree::Cleric),
+                    Some(game_domain::SkillTree::Rogue),
+                    const { None },
+                    const { None },
+                ],
                 current_cast_slot: None,
                 current_cast_remaining_ms: 0,
                 current_cast_total_ms: 0,
@@ -627,6 +710,31 @@ fn sample_arena_effect_batch_event() -> ServerControlEvent {
             radius: 28,
         }],
     }
+}
+
+fn sample_summary_lines() -> Vec<CombatSummaryLine> {
+    vec![
+        CombatSummaryLine {
+            player_id: player_id(7),
+            player_name: player_name("Alice"),
+            team: TeamSide::TeamA,
+            damage_done: 480,
+            healing_to_allies: 120,
+            healing_to_enemies: 0,
+            cc_used: 3,
+            cc_hits: 2,
+        },
+        CombatSummaryLine {
+            player_id: player_id(8),
+            player_name: player_name("Bob"),
+            team: TeamSide::TeamB,
+            damage_done: 320,
+            healing_to_allies: 40,
+            healing_to_enemies: 16,
+            cc_used: 1,
+            cc_hits: 1,
+        },
+    ]
 }
 
 #[test]

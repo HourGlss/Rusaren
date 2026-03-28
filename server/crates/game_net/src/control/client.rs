@@ -18,7 +18,6 @@ pub enum ClientControlCommand {
     SetReady { ready: ReadyState },
     ChooseSkill { tree: SkillTree, tier: u8 },
     QuitToCentralLobby,
-    SetDebugMode { mode: u8 },
 }
 
 impl ClientControlCommand {
@@ -79,7 +78,6 @@ impl ClientControlCommand {
             Self::SetReady { .. } => 6,
             Self::ChooseSkill { .. } => 7,
             Self::QuitToCentralLobby => 8,
-            Self::SetDebugMode { .. } => 9,
         }
     }
 
@@ -110,10 +108,6 @@ impl ClientControlCommand {
                 payload.push(tier);
                 Ok(())
             }
-            Self::SetDebugMode { mode } => {
-                payload.push(mode);
-                Ok(())
-            }
         }
     }
 
@@ -133,9 +127,6 @@ impl ClientControlCommand {
             }),
             7 => decode_choose_skill_command(payload, index),
             8 => Ok(Self::QuitToCentralLobby),
-            9 => Ok(Self::SetDebugMode {
-                mode: read_u8(payload, index, "SetDebugMode")?,
-            }),
             other => Err(PacketError::UnknownControlCommand(other)),
         }
     }

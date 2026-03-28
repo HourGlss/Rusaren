@@ -2,7 +2,7 @@ tree: Mage
 melee:
   id: mage_staff_bonk
   name: Staff Bonk
-  description: A weak emergency tap with the staff.
+  description: Short melee hit.
   cooldown_ms: 600
   range: 84
   radius: 36
@@ -14,7 +14,7 @@ skills:
   - tier: 1
     id: mage_arc_bolt
     name: Arc Bolt
-    description: A fast projectile that rewards clean aim through open lanes.
+    description: Fast projectile damage.
     behavior:
       kind: projectile
       effect: skill_shot
@@ -29,7 +29,7 @@ skills:
   - tier: 2
     id: mage_blink_step
     name: Blink Step
-    description: A short teleport that skips through pillars and clamps to safe ground.
+    description: Teleport to the nearest valid point.
     behavior:
       kind: teleport
       effect: dash_trail
@@ -39,7 +39,7 @@ skills:
   - tier: 3
     id: mage_frost_burst
     name: Frost Burst
-    description: A chilling explosion at medium range that can root overextended targets after repeated hits.
+    description: Burst damage that applies chill and can set up a root.
     behavior:
       kind: burst
       effect: burst
@@ -59,7 +59,7 @@ skills:
   - tier: 4
     id: mage_scrying_field
     name: Scrying Field
-    description: A placed arcane field that repeatedly reveals anything trying to hide inside it.
+    description: Place an aura that repeatedly reveals enemies.
     behavior:
       kind: aura
       effect: nova
@@ -80,7 +80,7 @@ skills:
   - tier: 5
     id: mage_leyline_focus
     name: Leyline Focus
-    description: A passive focus that accelerates spells and drives projectiles harder through the lane.
+    description: Passive projectile speed and cast-time reduction.
     behavior:
       kind: passive
       effect: nova

@@ -5,13 +5,21 @@
 #![cfg_attr(test, allow(clippy::expect_used))]
 
 mod app;
+mod combat_feedback;
+mod combat_log;
 mod observability;
 mod realtime;
 mod records;
 mod transport;
 mod webrtc;
 
-pub use app::{AppError, ServerApp};
+pub use app::{AppError, ServerApp, ServerAppPersistenceError};
+pub use combat_log::{
+    CombatLogCastCancelReason, CombatLogCastMode, CombatLogEntry, CombatLogEvent,
+    CombatLogMissReason, CombatLogOutcome, CombatLogPhase, CombatLogRemovedStatus,
+    CombatLogStatusRemovedReason, CombatLogStore, CombatLogStoreError, CombatLogTargetKind,
+    CombatLogTeam, CombatLogTriggerReason,
+};
 pub use observability::{classify_http_path, HttpRouteLabel, ServerObservability};
 pub use realtime::{
     spawn_dev_server, spawn_dev_server_with_options, AdminAuthConfig, DevServerHandle,

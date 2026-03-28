@@ -2,7 +2,7 @@ tree: Druid
 melee:
   id: druid_claw
   name: Claw
-  description: A quick beast-form slash for close scrambles.
+  description: Short melee hit.
   cooldown_ms: 500
   range: 84
   radius: 38
@@ -14,7 +14,7 @@ skills:
   - tier: 1
     id: druid_bramble_shot
     name: Bramble Shot
-    description: A thorn projectile that keeps natural pressure on open lanes.
+    description: Projectile damage.
     behavior:
       kind: projectile
       effect: skill_shot
@@ -29,7 +29,7 @@ skills:
   - tier: 2
     id: druid_thornbark_treant
     name: Thornbark Treant
-    description: Calls up a rooted treant that swats at nearby enemies and snares anything it catches.
+    description: Summon a treant that attacks and roots.
     behavior:
       kind: summon
       effect: skill_shot
@@ -51,7 +51,7 @@ skills:
   - tier: 3
     id: druid_lifebloom
     name: Lifebloom
-    description: A nurturing bloom that heals at once, stacks into a stronger HoT, and blossoms again when it ends or is dispelled.
+    description: Heal, apply a stacking heal over time, and bloom again on expire or dispel.
     behavior:
       kind: beam
       effect: beam
@@ -78,7 +78,7 @@ skills:
   - tier: 4
     id: druid_root_snare
     name: Root Snare
-    description: A targeted grove that locks down anyone fighting inside it.
+    description: Targeted burst that roots enemies in the area.
     behavior:
       kind: burst
       effect: burst
@@ -96,7 +96,7 @@ skills:
   - tier: 5
     id: druid_dreamseed
     name: Dreamseed
-    description: A hypnotic bloom that puts clustered enemies to sleep if they linger in its blast.
+    description: Area damage that applies sleep.
     behavior:
       kind: burst
       effect: burst

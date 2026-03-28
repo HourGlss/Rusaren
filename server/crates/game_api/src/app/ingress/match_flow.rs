@@ -1,3 +1,4 @@
+use crate::combat_log::{CombatLogCastCancelReason, CombatLogEvent};
 use game_domain::{PlayerId, SkillChoice};
 use game_match::MatchPhase;
 use game_net::{
@@ -103,6 +104,7 @@ impl ServerApp {
                 return;
             }
         };
+        let mut manual_cancel_slot = None;
 
         let aim_changed =
             match runtime
@@ -120,6 +122,18 @@ impl ServerApp {
             return;
         }
 
+        if frame.buttons & BUTTON_CANCEL != 0 {
+            manual_cancel_slot = runtime
+                .world
+                .player_state(sender_id)
+                .and_then(|state| state.current_cast_slot);
+            runtime
+                .world
+                .cancel_active_cast(sender_id)
+                .map_err(|error| error.to_string())
+                .unwrap_or(false);
+        }
+
         if let Err(message) =
             Self::queue_requested_actions(&self.content, runtime, sender_id, &frame)
         {
@@ -128,6 +142,16 @@ impl ServerApp {
         }
 
         let _ = runtime;
+        if let Some(slot) = manual_cancel_slot {
+            let _ = self.append_match_log(
+                match_id,
+                CombatLogEvent::CastCanceled {
+                    player_id: sender_id.get(),
+                    slot,
+                    reason: CombatLogCastCancelReason::Manual,
+                },
+            );
+        }
         if aim_changed {
             self.broadcast_arena_delta_snapshot(transport, match_id);
         }
@@ -177,14 +201,6 @@ impl ServerApp {
         sender_id: PlayerId,
         frame: &ValidatedInputFrame,
     ) -> Result<(), String> {
-        if frame.buttons & BUTTON_CANCEL != 0 {
-            runtime
-                .world
-                .cancel_active_cast(sender_id)
-                .map_err(|error| error.to_string())?;
-            return Ok(());
-        }
-
         if frame.buttons & BUTTON_PRIMARY != 0 {
             runtime
                 .world

@@ -1,6 +1,7 @@
 use super::{
     adjusted_move_speed, movement_delta, resolve_movement, ArenaEffect, ArenaEffectKind,
-    CombatValueKind, DeployableBehavior, MovementIntent, PlayerId, SimulationEvent,
+    CombatValueKind, DeployableBehavior, MovementIntent, PlayerId, SimCastCancelReason,
+    SimMissReason, SimStatusRemovedReason, SimTargetKind, SimTriggerReason, SimulationEvent,
     SimulationWorld, StatusKind, TargetEntity, PLAYER_MANA_REGEN_PER_SECOND,
 };
 
@@ -48,6 +49,7 @@ impl SimulationWorld {
 
             let mut pending_effects = Vec::new();
             let mut pending_expire_payloads = Vec::new();
+            let mut removed_statuses = Vec::new();
             {
                 let Some(player) = self.players.get_mut(&player_id) else {
                     continue;
@@ -62,6 +64,7 @@ impl SimulationWorld {
                                 status.tick_progress_ms.saturating_sub(interval_ms);
                             pending_effects.push((
                                 status.source,
+                                status.slot,
                                 status.kind,
                                 status.magnitude.saturating_mul(u16::from(status.stacks)),
                             ));
@@ -69,27 +72,54 @@ impl SimulationWorld {
                     }
                     if status.remaining_ms > 0 {
                         retained_statuses.push(status);
-                    } else if let Some(payload) = status.expire_payload {
-                        pending_expire_payloads.push((status.source, status.slot, *payload));
+                    } else if let Some(ref payload) = status.expire_payload {
+                        let removed = Self::removed_status(&status);
+                        removed_statuses.push((removed, true));
+                        pending_expire_payloads.push((
+                            status.source,
+                            status.slot,
+                            status.kind,
+                            payload.as_ref().clone(),
+                        ));
+                    } else {
+                        removed_statuses.push((Self::removed_status(&status), false));
                     }
                 }
                 player.statuses = retained_statuses;
             }
 
-            for (source, kind, amount) in pending_effects {
+            for (removed, _had_expire_payload) in removed_statuses {
+                events.push(SimulationEvent::StatusRemoved {
+                    source: removed.source,
+                    target: player_id,
+                    slot: removed.slot,
+                    kind: removed.kind,
+                    stacks: removed.stacks,
+                    remaining_ms: removed.remaining_ms,
+                    reason: SimStatusRemovedReason::Expired,
+                });
+            }
+
+            for (source, slot, kind, amount) in pending_effects {
                 match kind {
                     StatusKind::Poison => {
-                        events.extend(self.apply_damage_internal(
+                        events.extend(self.apply_damage_internal_with_context(
                             source,
+                            slot,
                             &[TargetEntity::Player(player_id)],
                             amount,
+                            Some(kind),
+                            None,
                         ));
                     }
                     StatusKind::Hot => {
-                        events.extend(self.apply_healing_internal(
+                        events.extend(self.apply_healing_internal_with_context(
                             source,
+                            slot,
                             &[TargetEntity::Player(player_id)],
                             amount,
+                            Some(kind),
+                            None,
                         ));
                     }
                     StatusKind::Chill
@@ -104,7 +134,17 @@ impl SimulationWorld {
                     | StatusKind::Fear => {}
                 }
             }
-            for (source, slot, payload) in pending_expire_payloads {
+            for (source, slot, status_kind, payload) in pending_expire_payloads {
+                events.push(SimulationEvent::TriggerResolved {
+                    source,
+                    slot,
+                    status_kind,
+                    trigger: SimTriggerReason::Expire,
+                    target_kind: SimTargetKind::Player,
+                    target_id: player_id.get(),
+                    payload_kind: payload.kind,
+                    amount: payload.amount,
+                });
                 events.extend(self.apply_payload(
                     source,
                     slot,
@@ -170,7 +210,13 @@ impl SimulationWorld {
                         player.moving = false;
                         continue;
                     }
-                    player.active_cast = None;
+                    if let Some(cast) = player.active_cast.take() {
+                        events.push(SimulationEvent::CastCanceled {
+                            player_id,
+                            slot: cast.slot,
+                            reason: SimCastCancelReason::Movement,
+                        });
+                    }
                 }
                 player.moving = movement != MovementIntent::zero();
                 if !player.moving {
@@ -263,12 +309,32 @@ impl SimulationWorld {
                                     radius: deployable.radius,
                                 },
                             });
+                            let (target_kind, target_id) = match target {
+                                TargetEntity::Player(player_id) => {
+                                    (SimTargetKind::Player, player_id.get())
+                                }
+                                TargetEntity::Deployable(deployable_id) => {
+                                    (SimTargetKind::Deployable, deployable_id)
+                                }
+                            };
+                            events.push(SimulationEvent::ImpactHit {
+                                source: deployable.owner,
+                                slot: 0,
+                                target_kind,
+                                target_id,
+                            });
                             events.extend(self.apply_payload(
                                 deployable.owner,
                                 0,
                                 &[target],
                                 payload.clone(),
                             ));
+                        } else {
+                            events.push(SimulationEvent::ImpactMiss {
+                                source: deployable.owner,
+                                slot: 0,
+                                reason: SimMissReason::NoTarget,
+                            });
                         }
                     }
                 }
@@ -292,6 +358,12 @@ impl SimulationWorld {
                                 target_y,
                                 radius: deployable.radius,
                             },
+                        });
+                        events.push(SimulationEvent::ImpactHit {
+                            source: deployable.owner,
+                            slot: 0,
+                            target_kind: SimTargetKind::Player,
+                            target_id: target.get(),
                         });
                         events.extend(self.apply_payload(
                             deployable.owner,
@@ -342,6 +414,30 @@ impl SimulationWorld {
                             None,
                             payload.kind == CombatValueKind::Damage,
                         );
+                        if targets.is_empty() {
+                            events.push(SimulationEvent::ImpactMiss {
+                                source: deployable.owner,
+                                slot: 0,
+                                reason: SimMissReason::NoTarget,
+                            });
+                        } else {
+                            for target in &targets {
+                                let (target_kind, target_id) = match target {
+                                    TargetEntity::Player(player_id) => {
+                                        (SimTargetKind::Player, player_id.get())
+                                    }
+                                    TargetEntity::Deployable(deployable_id) => {
+                                        (SimTargetKind::Deployable, *deployable_id)
+                                    }
+                                };
+                                events.push(SimulationEvent::ImpactHit {
+                                    source: deployable.owner,
+                                    slot: 0,
+                                    target_kind,
+                                    target_id,
+                                });
+                            }
+                        }
                         events.extend(self.apply_payload(
                             deployable.owner,
                             0,

@@ -1,4 +1,5 @@
 use super::*;
+use crate::combat_log::{CombatLogEvent, CombatLogOutcome, CombatLogPhase, CombatLogTeam};
 
 #[test]
 fn end_to_end_game_lobby_countdown_and_match_start_work_via_fake_clients() {
@@ -662,4 +663,160 @@ fn primary_and_cast_button_paths_are_independent() {
     );
     assert_eq!(bob_state.primary_cooldown_remaining_ms, 0);
     assert!(bob_state.slot_cooldown_remaining_ms[0] > 0);
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn persistent_combat_logs_replay_a_complete_match_flow() {
+    fn assert_full_match_replay(entries: &[crate::combat_log::CombatLogEntry], match_id: MatchId) {
+        assert!(
+            entries.iter().all(|entry| entry.match_id == match_id.get()),
+            "every persisted entry should belong to the requested match"
+        );
+        assert_eq!(
+            entries
+                .iter()
+                .filter(|entry| matches!(entry.event, CombatLogEvent::MatchStarted { .. }))
+                .count(),
+            1,
+            "exactly one match-start row should be recorded"
+        );
+        assert_eq!(
+            entries
+                .iter()
+                .filter(|entry| matches!(entry.event, CombatLogEvent::SkillPicked { .. }))
+                .count(),
+            10,
+            "five rounds with two players should emit ten skill-pick rows"
+        );
+        assert_eq!(
+            entries
+                .iter()
+                .filter(|entry| matches!(entry.event, CombatLogEvent::PreCombatStarted { .. }))
+                .count(),
+            5,
+            "each round should emit one pre-combat countdown row"
+        );
+        assert_eq!(
+            entries
+                .iter()
+                .filter(|entry| matches!(entry.event, CombatLogEvent::CombatStarted))
+                .count(),
+            5,
+            "each round should emit one combat-start row"
+        );
+
+        let round_wins = entries
+            .iter()
+            .filter_map(|entry| match &entry.event {
+                CombatLogEvent::RoundWon {
+                    round,
+                    winning_team,
+                    score_a,
+                    score_b,
+                } => Some((*round, *winning_team, *score_a, *score_b)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            round_wins,
+            vec![
+                (1, CombatLogTeam::TeamA, 1, 0),
+                (2, CombatLogTeam::TeamA, 2, 0),
+                (3, CombatLogTeam::TeamA, 3, 0),
+                (4, CombatLogTeam::TeamA, 4, 0),
+                (5, CombatLogTeam::TeamA, 5, 0),
+            ],
+            "the persisted round winners should reconstruct the full five-round scoreline"
+        );
+
+        let match_ended = entries
+            .iter()
+            .find_map(|entry| match &entry.event {
+                CombatLogEvent::MatchEnded {
+                    outcome,
+                    score_a,
+                    score_b,
+                    message,
+                } => Some((*outcome, *score_a, *score_b, message.clone())),
+                _ => None,
+            })
+            .expect("the durable log should contain a match-ended row");
+        assert_eq!(
+            match_ended,
+            (
+                CombatLogOutcome::TeamAWin,
+                5,
+                0,
+                String::from("Team A wins 5-0 after round 5."),
+            ),
+            "the persisted match-ended row should reconstruct the final result without consulting runtime state"
+        );
+
+        assert!(
+            entries.iter().any(|entry| matches!(
+                entry.event,
+                CombatLogEvent::CastStarted { .. }
+                    | CombatLogEvent::CastCompleted { .. }
+                    | CombatLogEvent::ImpactHit { .. }
+                    | CombatLogEvent::DamageApplied { .. }
+            ) && entry.phase == CombatLogPhase::Combat
+                && entry.frame_index > 0),
+            "combat logs should include real combat-timeline events with nonzero frame indices"
+        );
+    }
+
+    let path = temp_path("server-app-combat-log-replay");
+    let combat_log_path = companion_combat_log_path(&path);
+    remove_if_exists(&path);
+    remove_if_exists(&combat_log_path);
+
+    let (match_id, before_reload_entries) = {
+        let mut server = ServerApp::new_persistent(&path).expect("persistent server should start");
+        let mut transport = InMemoryTransport::new();
+        let (mut alice, mut bob) = connect_pair(&mut server, &mut transport);
+        let match_id = launch_match(&mut server, &mut transport, &mut alice, &mut bob);
+
+        for tier in 1..=5 {
+            alice
+                .choose_skill(&mut transport, skill(SkillTree::Mage, tier))
+                .expect("alice skill");
+            bob.choose_skill(&mut transport, skill(SkillTree::Rogue, tier))
+                .expect("bob skill");
+            server.pump_transport(&mut transport);
+            let _ = alice
+                .drain_events(&mut transport)
+                .expect("alice skill events");
+            let _ = bob.drain_events(&mut transport).expect("bob skill events");
+
+            server.advance_seconds(&mut transport, 5);
+            let _ = alice
+                .drain_events(&mut transport)
+                .expect("alice pre-combat events");
+            let _ = bob
+                .drain_events(&mut transport)
+                .expect("bob pre-combat events");
+            let _ = cast_until_round_won(&mut server, &mut transport, &mut alice, &mut bob, tier);
+        }
+
+        let entries = server
+            .combat_log_entries(match_id)
+            .expect("combat logs should be queryable");
+        assert_full_match_replay(&entries, match_id);
+        (match_id, entries)
+    };
+
+    let reloaded = ServerApp::new_persistent(&path).expect("persistent server should reload");
+    let after_reload_entries = reloaded
+        .combat_log_entries(match_id)
+        .expect("reloaded combat logs should be queryable");
+    assert_eq!(
+        after_reload_entries, before_reload_entries,
+        "reloading the persistent app should preserve the exact durable combat log rows"
+    );
+    assert_full_match_replay(&after_reload_entries, match_id);
+
+    drop(reloaded);
+    remove_if_exists(&path);
+    remove_if_exists(&combat_log_path);
 }

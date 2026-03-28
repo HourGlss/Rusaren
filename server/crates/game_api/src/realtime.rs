@@ -278,6 +278,8 @@ pub struct DevServerOptions {
     pub simulation_step_ms: u16,
     /// Path to the persistent player-record store.
     pub record_store_path: PathBuf,
+    /// Path to the persistent server-authored combat log.
+    pub combat_log_path: PathBuf,
     /// Root directory that holds runtime-authored content.
     pub content_root: PathBuf,
     /// Root directory that holds the exported web client.
@@ -296,6 +298,7 @@ impl Default for DevServerOptions {
             tick_interval: Duration::from_millis(u64::from(COMBAT_FRAME_MS)),
             simulation_step_ms: COMBAT_FRAME_MS,
             record_store_path: server::default_record_store_path(),
+            combat_log_path: server::default_combat_log_path(),
             content_root: server::default_content_root(),
             web_client_root: server::default_web_client_root(),
             observability: Some(ServerObservability::new(env!("CARGO_PKG_VERSION"))),

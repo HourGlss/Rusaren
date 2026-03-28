@@ -2,7 +2,7 @@ tree: Paladin
 melee:
   id: paladin_hammer_swing
   name: Hammer Swing
-  description: A disciplined hammer strike with holy weight behind it.
+  description: Short melee hit.
   cooldown_ms: 600
   range: 90
   radius: 40
@@ -14,7 +14,7 @@ skills:
   - tier: 1
     id: paladin_judgment_lance
     name: Judgment Lance
-    description: A straight holy lance that punishes exposed lanes.
+    description: Beam damage.
     behavior:
       kind: beam
       effect: beam
@@ -28,7 +28,7 @@ skills:
   - tier: 2
     id: paladin_avenger_step
     name: Avenger Step
-    description: A shield-led rush that stuns whatever is clipped at the landing point.
+    description: Dash that damages and stuns at the landing point.
     behavior:
       kind: dash
       effect: dash_trail
@@ -46,7 +46,7 @@ skills:
   - tier: 3
     id: paladin_bulwark_prayer
     name: Bulwark Prayer
-    description: A close aura that repeatedly layers holy shielding while the paladin holds ground.
+    description: Aura that repeatedly applies shields.
     behavior:
       kind: aura
       effect: nova
@@ -66,7 +66,7 @@ skills:
   - tier: 4
     id: paladin_oathwall
     name: Oathwall
-    description: Calls down a stout line-breaker that turns a lane into a brawl on the paladin's terms.
+    description: Place a barrier that blocks movement and projectiles.
     behavior:
       kind: barrier
       effect: burst
@@ -79,7 +79,7 @@ skills:
   - tier: 5
     id: paladin_sentinel_standard
     name: Sentinel Standard
-    description: Plants a radiant standard that fights for nearby ground with repeated holy bolts.
+    description: Summon a standard that repeatedly attacks nearby enemies.
     behavior:
       kind: summon
       effect: skill_shot

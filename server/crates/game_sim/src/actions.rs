@@ -2,11 +2,60 @@ use super::{
     arena_effect_kind, normalize_aim, project_from_aim, resolve_movement, round_f32_to_i32,
     saturating_i16, truncate_line_to_obstacles, ActiveCastMode, ArenaDeployableKind, ArenaEffect,
     ArenaEffectKind, DeployableBehavior, DeployableState, PendingCast, PlayerId, ProjectileState,
-    SimPlayerState, SimulationEvent, SimulationWorld, SkillBehavior, StatusKind,
-    PLAYER_RADIUS_UNITS,
+    SimCastCancelReason, SimCastMode, SimMissReason, SimPlayerState, SimTargetKind,
+    SimulationEvent, SimulationWorld, SkillBehavior, StatusKind, TargetEntity, PLAYER_RADIUS_UNITS,
 };
 
+fn behavior_label(behavior: &SkillBehavior) -> &'static str {
+    match behavior {
+        SkillBehavior::Projectile { .. } => "projectile",
+        SkillBehavior::Beam { .. } => "beam",
+        SkillBehavior::Dash { .. } => "dash",
+        SkillBehavior::Burst { .. } => "burst",
+        SkillBehavior::Nova { .. } => "nova",
+        SkillBehavior::Teleport { .. } => "teleport",
+        SkillBehavior::Channel { .. } => "channel",
+        SkillBehavior::Passive { .. } => "passive",
+        SkillBehavior::Summon { .. } => "summon",
+        SkillBehavior::Ward { .. } => "ward",
+        SkillBehavior::Trap { .. } => "trap",
+        SkillBehavior::Barrier { .. } => "barrier",
+        SkillBehavior::Aura { .. } => "aura",
+    }
+}
+
 impl SimulationWorld {
+    fn append_target_outcomes(
+        events: &mut Vec<SimulationEvent>,
+        source: PlayerId,
+        slot: u8,
+        targets: &[TargetEntity],
+    ) {
+        if targets.is_empty() {
+            events.push(SimulationEvent::ImpactMiss {
+                source,
+                slot,
+                reason: SimMissReason::NoTarget,
+            });
+            return;
+        }
+
+        for target in targets {
+            let (target_kind, target_id) = match target {
+                TargetEntity::Player(player_id) => (SimTargetKind::Player, player_id.get()),
+                TargetEntity::Deployable(deployable_id) => {
+                    (SimTargetKind::Deployable, *deployable_id)
+                }
+            };
+            events.push(SimulationEvent::ImpactHit {
+                source,
+                slot,
+                target_kind,
+                target_id,
+            });
+        }
+    }
+
     pub(super) fn resolve_queued_actions(&mut self, events: &mut Vec<SimulationEvent>) {
         let player_ids = self.players.keys().copied().collect::<Vec<_>>();
         for player_id in player_ids {
@@ -108,7 +157,25 @@ impl SimulationWorld {
             melee.radius,
             melee.payload.kind == game_content::CombatValueKind::Damage,
         ) {
+            let (target_kind, target_id) = match target {
+                super::TargetEntity::Player(player_id) => (SimTargetKind::Player, player_id.get()),
+                super::TargetEntity::Deployable(deployable_id) => {
+                    (SimTargetKind::Deployable, deployable_id)
+                }
+            };
+            events.push(SimulationEvent::ImpactHit {
+                source: attacker,
+                slot: 0,
+                target_kind,
+                target_id,
+            });
             events.extend(self.apply_payload(attacker, 0, &[target], melee.payload));
+        } else {
+            events.push(SimulationEvent::ImpactMiss {
+                source: attacker,
+                slot: 0,
+                reason: SimMissReason::NoTarget,
+            });
         }
 
         events
@@ -135,33 +202,56 @@ impl SimulationWorld {
         if matches!(skill.behavior, SkillBehavior::Passive { .. }) {
             return Vec::new();
         }
+        let behavior_name = behavior_label(&skill.behavior);
         if matches!(skill.behavior, SkillBehavior::Channel { .. }) {
             if self.effective_cast_time_ms(attacker, skill.behavior.cast_time_ms()) > 0 {
-                if self.start_pending_cast(
+                if let Some(event) = self.start_pending_cast(
                     attacker,
                     attacker_state,
                     slot,
                     slot_index,
                     &skill.behavior,
                 ) {
-                    return Vec::new();
+                    return vec![event];
                 }
                 return Vec::new();
             }
-            if self.start_channel(attacker, attacker_state, slot, slot_index, skill.behavior) {
-                return Vec::new();
+            if let Some(event) =
+                self.start_channel(attacker, attacker_state, slot, slot_index, skill.behavior)
+            {
+                return vec![event];
             }
             return Vec::new();
         }
         if self.effective_cast_time_ms(attacker, skill.behavior.cast_time_ms()) > 0 {
-            if self.start_pending_cast(attacker, attacker_state, slot, slot_index, &skill.behavior)
+            if let Some(event) =
+                self.start_pending_cast(attacker, attacker_state, slot, slot_index, &skill.behavior)
             {
-                return Vec::new();
+                return vec![event];
             }
             return Vec::new();
         }
 
-        self.execute_skill_behavior(attacker, attacker_state, slot, slot_index, skill.behavior)
+        let mut events = vec![SimulationEvent::CastStarted {
+            player_id: attacker,
+            slot,
+            behavior: behavior_name,
+            mode: SimCastMode::Windup,
+            total_ms: 0,
+        }];
+        events.extend(self.execute_skill_behavior(
+            attacker,
+            attacker_state,
+            slot,
+            slot_index,
+            skill.behavior,
+        ));
+        events.push(SimulationEvent::CastCompleted {
+            player_id: attacker,
+            slot,
+            behavior: behavior_name,
+        });
+        events
     }
 
     fn start_pending_cast(
@@ -171,17 +261,17 @@ impl SimulationWorld {
         slot: u8,
         slot_index: usize,
         behavior: &SkillBehavior,
-    ) -> bool {
+    ) -> Option<SimulationEvent> {
         if attacker_state.moving {
-            return false;
+            return None;
         }
         let mana_cost = behavior.mana_cost();
         let cast_time_ms = self.effective_cast_time_ms(attacker, behavior.cast_time_ms());
         let Some(player) = self.players.get_mut(&attacker) else {
-            return false;
+            return None;
         };
         if player.active_cast.is_some() || player.mana < mana_cost {
-            return false;
+            return None;
         }
         player.active_cast = Some(PendingCast {
             slot,
@@ -192,7 +282,13 @@ impl SimulationWorld {
             mode: ActiveCastMode::Windup,
         });
         self.break_stealth(attacker);
-        true
+        Some(SimulationEvent::CastStarted {
+            player_id: attacker,
+            slot,
+            behavior: behavior_label(behavior),
+            mode: SimCastMode::Windup,
+            total_ms: cast_time_ms,
+        })
     }
 
     fn start_channel(
@@ -202,7 +298,7 @@ impl SimulationWorld {
         slot: u8,
         slot_index: usize,
         behavior: SkillBehavior,
-    ) -> bool {
+    ) -> Option<SimulationEvent> {
         let SkillBehavior::Channel {
             cooldown_ms,
             mana_cost,
@@ -215,19 +311,19 @@ impl SimulationWorld {
             ..
         } = behavior
         else {
-            return false;
+            return None;
         };
         if attacker_state.moving {
-            return false;
+            return None;
         }
         let Some(player) = self.players.get(&attacker) else {
-            return false;
+            return None;
         };
         if player.active_cast.is_some() || player.mana < mana_cost {
-            return false;
+            return None;
         }
         if !self.commit_skill_cast(attacker, slot_index, cooldown_ms, mana_cost) {
-            return false;
+            return None;
         }
         if let Some(player) = self.players.get_mut(&attacker) {
             player.active_cast = Some(PendingCast {
@@ -246,7 +342,13 @@ impl SimulationWorld {
                 },
             });
         }
-        true
+        Some(SimulationEvent::CastStarted {
+            player_id: attacker,
+            slot,
+            behavior: "channel",
+            mode: SimCastMode::Channel,
+            total_ms: duration_ms,
+        })
     }
 
     #[cfg(test)]
@@ -260,6 +362,7 @@ impl SimulationWorld {
         behavior: SkillBehavior,
     ) -> bool {
         self.start_pending_cast(attacker, attacker_state, slot, slot_index, &behavior)
+            .is_some()
     }
 
     #[allow(clippy::too_many_lines)]
@@ -706,26 +809,41 @@ impl SimulationWorld {
             };
             if !attacker_state.alive {
                 if let Some(player) = self.players.get_mut(&player_id) {
-                    player.active_cast = None;
+                    if let Some(cast) = player.active_cast.take() {
+                        events.push(SimulationEvent::CastCanceled {
+                            player_id,
+                            slot: cast.slot,
+                            reason: SimCastCancelReason::Defeat,
+                        });
+                    }
                 }
                 continue;
             }
 
-            let should_cancel = self.players.get(&player_id).is_some_and(|player| {
-                player.active_cast.is_some()
-                    && player.statuses.iter().any(|status| {
-                        matches!(
-                            status.kind,
-                            StatusKind::Silence
-                                | StatusKind::Stun
-                                | StatusKind::Sleep
-                                | StatusKind::Fear
-                        )
-                    })
+            let should_cancel = self.players.get(&player_id).and_then(|player| {
+                if player.active_cast.is_none() {
+                    return None;
+                }
+                player.statuses.iter().find_map(|status| {
+                    matches!(
+                        status.kind,
+                        StatusKind::Silence
+                            | StatusKind::Stun
+                            | StatusKind::Sleep
+                            | StatusKind::Fear
+                    )
+                    .then_some(SimCastCancelReason::ControlLoss)
+                })
             });
-            if should_cancel {
+            if let Some(reason) = should_cancel {
                 if let Some(player) = self.players.get_mut(&player_id) {
-                    player.active_cast = None;
+                    if let Some(cast) = player.active_cast.take() {
+                        events.push(SimulationEvent::CastCanceled {
+                            player_id,
+                            slot: cast.slot,
+                            reason,
+                        });
+                    }
                 }
                 continue;
             }
@@ -795,9 +913,13 @@ impl SimulationWorld {
 
             if let Some((slot, slot_index, behavior)) = completed_skill {
                 if matches!(behavior, SkillBehavior::Channel { .. }) {
-                    let _ =
-                        self.start_channel(player_id, attacker_state, slot, slot_index, behavior);
+                    if let Some(event) =
+                        self.start_channel(player_id, attacker_state, slot, slot_index, behavior)
+                    {
+                        events.push(event);
+                    }
                 } else {
+                    let behavior_name = behavior_label(&behavior);
                     let cast_events = self.execute_skill_behavior(
                         player_id,
                         attacker_state,
@@ -806,11 +928,22 @@ impl SimulationWorld {
                         behavior,
                     );
                     events.extend(cast_events);
+                    events.push(SimulationEvent::CastCompleted {
+                        player_id,
+                        slot,
+                        behavior: behavior_name,
+                    });
                 }
             }
 
             if let Some((slot, range, radius, effect_kind, payload, tick_count)) = channel_ticks {
-                for _ in 0..tick_count {
+                for tick_index in 0..tick_count {
+                    events.push(SimulationEvent::ChannelTick {
+                        player_id,
+                        slot,
+                        tick_index: tick_index.saturating_add(1),
+                        behavior: "channel",
+                    });
                     events.extend(self.execute_channel_tick(
                         player_id,
                         attacker_state,
@@ -820,6 +953,17 @@ impl SimulationWorld {
                         effect_kind,
                         payload.clone(),
                     ));
+                }
+                let channel_finished = self
+                    .players
+                    .get(&player_id)
+                    .is_none_or(|player| player.active_cast.is_none());
+                if channel_finished {
+                    events.push(SimulationEvent::CastCompleted {
+                        player_id,
+                        slot,
+                        behavior: "channel",
+                    });
                 }
             }
         }
@@ -870,6 +1014,30 @@ impl SimulationWorld {
             None,
             payload.kind == game_content::CombatValueKind::Damage,
         );
+        if targets.is_empty() {
+            events.push(SimulationEvent::ImpactMiss {
+                source: attacker,
+                slot,
+                reason: SimMissReason::NoTarget,
+            });
+        } else {
+            for target in &targets {
+                let (target_kind, target_id) = match target {
+                    super::TargetEntity::Player(player_id) => {
+                        (SimTargetKind::Player, player_id.get())
+                    }
+                    super::TargetEntity::Deployable(deployable_id) => {
+                        (SimTargetKind::Deployable, *deployable_id)
+                    }
+                };
+                events.push(SimulationEvent::ImpactHit {
+                    source: attacker,
+                    slot,
+                    target_kind,
+                    target_id,
+                });
+            }
+        }
         events.extend(self.apply_payload(attacker, slot, &targets, payload));
         events
     }
@@ -966,7 +1134,14 @@ impl SimulationWorld {
             radius,
             payload.kind == game_content::CombatValueKind::Damage,
         ) {
+            Self::append_target_outcomes(&mut events, attacker, slot, &[target]);
             events.extend(self.apply_payload(attacker, slot, &[target], payload));
+        } else {
+            events.push(SimulationEvent::ImpactMiss {
+                source: attacker,
+                slot,
+                reason: SimMissReason::NoTarget,
+            });
         }
         events
     }
@@ -1031,6 +1206,7 @@ impl SimulationWorld {
                 Some(attacker),
                 payload.kind == game_content::CombatValueKind::Damage,
             );
+            Self::append_target_outcomes(&mut events, attacker, slot, &targets);
             events.extend(self.apply_payload(attacker, slot, &targets, payload));
         }
 
@@ -1078,6 +1254,7 @@ impl SimulationWorld {
             None,
             payload.kind == game_content::CombatValueKind::Damage,
         );
+        Self::append_target_outcomes(&mut events, attacker, slot, &targets);
         events.extend(self.apply_payload(attacker, slot, &targets, payload));
         events
     }
@@ -1110,6 +1287,7 @@ impl SimulationWorld {
             None,
             payload.kind == game_content::CombatValueKind::Damage,
         );
+        Self::append_target_outcomes(&mut events, attacker, slot, &targets);
         events.extend(self.apply_payload(attacker, slot, &targets, payload));
         events
     }

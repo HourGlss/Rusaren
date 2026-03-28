@@ -2,6 +2,7 @@
 
 use std::fs;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use futures_util::{SinkExt, StreamExt};
@@ -178,6 +179,7 @@ async fn start_server_fast() -> (game_api::DevServerHandle, String) {
         tick_interval: Duration::from_millis(10),
         simulation_step_ms: COMBAT_FRAME_MS,
         record_store_path: temp_record_store_path(),
+        combat_log_path: temp_combat_log_path(),
         content_root: repo_content_root(),
         web_client_root: temp_web_client_root("fast-default", None),
         observability: Some(ServerObservability::new("test-fast")),
@@ -194,6 +196,7 @@ async fn start_server_fast_with_content_root(
         tick_interval: Duration::from_millis(10),
         simulation_step_ms: COMBAT_FRAME_MS,
         record_store_path: temp_record_store_path(),
+        combat_log_path: temp_combat_log_path(),
         content_root,
         web_client_root: temp_web_client_root("fast-default", None),
         observability: Some(ServerObservability::new("test-fast")),
@@ -210,6 +213,7 @@ async fn start_server_with_web_root(
         tick_interval: Duration::from_secs(1),
         simulation_step_ms: COMBAT_FRAME_MS,
         record_store_path: temp_record_store_path(),
+        combat_log_path: temp_combat_log_path(),
         content_root: repo_content_root(),
         web_client_root,
         observability: Some(ServerObservability::new("test-web-root")),
@@ -330,11 +334,29 @@ fn connected_player_id(events: &[ServerControlEvent], expected_name: &str) -> Pl
 }
 
 fn temp_record_store_path() -> PathBuf {
+    static TEMP_PATH_COUNTER: AtomicU64 = AtomicU64::new(0);
     let unique = match SystemTime::now().duration_since(UNIX_EPOCH) {
         Ok(duration) => duration.as_nanos(),
         Err(error) => panic!("system time should be after the unix epoch: {error}"),
     };
-    std::env::temp_dir().join(format!("rusaren-realtime-websocket-{unique}.tsv"))
+    let counter = TEMP_PATH_COUNTER.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!(
+        "rusaren-realtime-websocket-{}-{unique}-{counter}.tsv",
+        std::process::id()
+    ))
+}
+
+fn temp_combat_log_path() -> PathBuf {
+    static TEMP_PATH_COUNTER: AtomicU64 = AtomicU64::new(0);
+    let unique = match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(duration) => duration.as_nanos(),
+        Err(error) => panic!("system time should be after the unix epoch: {error}"),
+    };
+    let counter = TEMP_PATH_COUNTER.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!(
+        "rusaren-realtime-websocket-{}-{unique}-{counter}.sqlite",
+        std::process::id()
+    ))
 }
 
 fn repo_content_root() -> PathBuf {

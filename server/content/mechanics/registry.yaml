@@ -143,6 +143,30 @@ behaviors:
         projectile_speed_bps: forbidden
         cooldown_bps: forbidden
         cast_time_bps: forbidden
+  - id: dispel
+    label: Dispel
+    implemented: true
+    inspiration: "WoW cleanse, purge, and magic-removal spells"
+    notes: "Implemented as a payload modifier that removes eligible statuses by authored scope and max_statuses."
+    schema:
+      payload: required
+      allowed_effects: [skill_shot, beam, burst, nova, melee_swing]
+      numeric_fields:
+        cooldown_ms: required
+        cast_time_ms: optional
+        mana_cost: optional
+        range: optional
+        radius: optional
+        distance: optional
+        speed: optional
+        impact_radius: optional
+        duration_ms: forbidden
+        hit_points: forbidden
+        tick_interval_ms: forbidden
+        player_speed_bps: forbidden
+        projectile_speed_bps: forbidden
+        cooldown_bps: forbidden
+        cast_time_bps: forbidden
   - id: summon
     label: Summon
     implemented: true
