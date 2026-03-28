@@ -226,6 +226,9 @@ fn planner_covers_all_trees_and_fills_the_last_match() {
                 tier,
                 skill_id: format!("{tree_name}-{tier}"),
                 skill_name: format!("{tree_name} {tier}"),
+                skill_description: format!("{tree_name} tier {tier}"),
+                skill_summary: String::from("Test summary"),
+                ui_category: String::from("neutral"),
             });
         }
     }

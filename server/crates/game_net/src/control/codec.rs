@@ -7,9 +7,9 @@ use crate::PacketError;
 
 use super::{
     ArenaCombatTextStyle, ArenaDeployableKind, ArenaEffectKind, ArenaMatchPhase, ArenaObstacleKind,
-    ArenaStatusKind, LobbySnapshotPhase, SkillCatalogEntry, MAX_SKILL_DESCRIPTION_BYTES,
-    MAX_SKILL_ID_BYTES, MAX_SKILL_NAME_BYTES, MAX_SKILL_SUMMARY_BYTES, MAX_SKILL_TREE_NAME_BYTES,
-    MAX_SKILL_UI_CATEGORY_BYTES,
+    ArenaSessionMode, ArenaStatusKind, LobbySnapshotPhase, SkillCatalogEntry,
+    MAX_SKILL_DESCRIPTION_BYTES, MAX_SKILL_ID_BYTES, MAX_SKILL_NAME_BYTES, MAX_SKILL_SUMMARY_BYTES,
+    MAX_SKILL_TREE_NAME_BYTES, MAX_SKILL_UI_CATEGORY_BYTES,
 };
 
 pub(super) fn encode_bytes(
@@ -332,6 +332,18 @@ pub(super) fn read_arena_match_phase(
     }
 }
 
+pub(super) fn read_arena_session_mode(
+    payload: &[u8],
+    index: &mut usize,
+    kind: &'static str,
+) -> Result<ArenaSessionMode, PacketError> {
+    match read_u8(payload, index, kind)? {
+        1 => Ok(ArenaSessionMode::Match),
+        2 => Ok(ArenaSessionMode::Training),
+        other => Err(PacketError::InvalidEncodedArenaMatchPhase(other)),
+    }
+}
+
 pub(super) fn read_arena_status_kind(
     payload: &[u8],
     index: &mut usize,
@@ -401,6 +413,13 @@ pub(super) fn encode_arena_match_phase(phase: ArenaMatchPhase) -> u8 {
     }
 }
 
+pub(super) fn encode_arena_session_mode(mode: ArenaSessionMode) -> u8 {
+    match mode {
+        ArenaSessionMode::Match => 1,
+        ArenaSessionMode::Training => 2,
+    }
+}
+
 pub(super) fn encode_arena_status_kind(kind: ArenaStatusKind) -> u8 {
     match kind {
         ArenaStatusKind::Poison => 1,
@@ -425,6 +444,8 @@ pub(super) fn encode_arena_deployable_kind(kind: ArenaDeployableKind) -> u8 {
         ArenaDeployableKind::Trap => 3,
         ArenaDeployableKind::Barrier => 4,
         ArenaDeployableKind::Aura => 5,
+        ArenaDeployableKind::TrainingDummyResetFull => 6,
+        ArenaDeployableKind::TrainingDummyExecute => 7,
     }
 }
 
@@ -476,6 +497,8 @@ pub(super) fn read_arena_deployable_kind(
         3 => Ok(ArenaDeployableKind::Trap),
         4 => Ok(ArenaDeployableKind::Barrier),
         5 => Ok(ArenaDeployableKind::Aura),
+        6 => Ok(ArenaDeployableKind::TrainingDummyResetFull),
+        7 => Ok(ArenaDeployableKind::TrainingDummyExecute),
         other => Err(PacketError::InvalidEncodedArenaEffectKind(other)),
     }
 }

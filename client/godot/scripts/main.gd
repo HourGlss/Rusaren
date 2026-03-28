@@ -42,6 +42,7 @@ var identity_label: Label
 var phase_label: Label
 var countdown_value_label: Label
 var combat_hint_label: Label
+var training_metrics_label: Label
 var cooldown_summary_label: Label
 var score_label: Label
 var outcome_label: Label
@@ -63,9 +64,12 @@ var leave_lobby_button: Button
 var quit_results_button: Button
 var create_lobby_button: Button
 var join_lobby_button: Button
+var start_training_button: Button
 var team_a_button: Button
 var team_b_button: Button
 var primary_attack_button: Button
+var reset_training_button: Button
+var quit_arena_button: Button
 var name_save_button: Button
 var name_randomize_button: Button
 var skill_pick_panel: PanelContainer
@@ -287,6 +291,10 @@ func _build_connection_panel() -> PanelContainer:
 	join_lobby_button.pressed.connect(_on_join_lobby_pressed)
 	controls.add_child(join_lobby_button)
 
+	start_training_button = _action_button("Start Training", Color8(62, 90, 50))
+	start_training_button.pressed.connect(_on_start_training_pressed)
+	controls.add_child(start_training_button)
+
 	return panel
 
 
@@ -484,6 +492,11 @@ func _build_match_panel() -> PanelContainer:
 	cooldown_summary_label.add_theme_color_override("font_color", Color8(183, 204, 214))
 	combat_panel.add_child(cooldown_summary_label)
 
+	training_metrics_label = Label.new()
+	training_metrics_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	training_metrics_label.add_theme_color_override("font_color", Color8(164, 232, 191))
+	combat_panel.add_child(training_metrics_label)
+
 	var combat_title := Label.new()
 	combat_title.text = "Combat controls"
 	combat_title.add_theme_color_override("font_color", Color8(244, 233, 216))
@@ -496,6 +509,14 @@ func _build_match_panel() -> PanelContainer:
 	primary_attack_button = _action_button("Primary Attack", Color8(120, 78, 34))
 	primary_attack_button.pressed.connect(_on_primary_attack_pressed)
 	combat_row.add_child(primary_attack_button)
+
+	reset_training_button = _action_button("Reset Training", Color8(56, 97, 76))
+	reset_training_button.pressed.connect(_on_reset_training_pressed)
+	combat_row.add_child(reset_training_button)
+
+	quit_arena_button = _action_button("Quit Training", Color8(102, 57, 28))
+	quit_arena_button.pressed.connect(_on_quit_arena_pressed)
+	combat_row.add_child(quit_arena_button)
 
 	return panel
 
@@ -939,6 +960,12 @@ func _on_create_lobby_pressed() -> void:
 		_refresh_ui()
 
 
+func _on_start_training_pressed() -> void:
+	if transport.send_control_command("StartTraining"):
+		app_state.announce_local("Requested a solo training session.")
+		_refresh_ui()
+
+
 func _on_join_lobby_pressed() -> void:
 	var lobby_id := int(join_lobby_input.text.strip_edges())
 	_try_join_lobby(lobby_id)
@@ -986,6 +1013,18 @@ func _on_skill_pressed(tree_name: String, tier: int) -> void:
 
 
 func _on_quit_results_pressed() -> void:
+	if transport.send_control_command("QuitToCentralLobby"):
+		app_state.announce_local("Requested return to the central lobby.")
+		_refresh_ui()
+
+
+func _on_reset_training_pressed() -> void:
+	if transport.send_control_command("ResetTrainingSession"):
+		app_state.announce_local("Requested a training reset.")
+		_refresh_ui()
+
+
+func _on_quit_arena_pressed() -> void:
 	if transport.send_control_command("QuitToCentralLobby"):
 		app_state.announce_local("Requested return to the central lobby.")
 		_refresh_ui()
@@ -1106,21 +1145,29 @@ func _refresh_ui() -> void:
 	team_label.text = "Current team: %s" % app_state.current_team()
 	lobby_roster_log.text = "\n".join(app_state.lobby_roster_lines())
 	phase_label.text = app_state.phase_label
-	score_label.text = app_state.score_text()
+	var is_training := app_state.is_training_mode()
+	score_label.text = "Training Mode" if is_training else app_state.score_text()
 	countdown_value_label.text = app_state.countdown_label
 	var local_player := app_state.local_arena_player()
 	var unlocked_slots := int(local_player.get("unlocked_skill_slots", 0))
 	var alive_state := "alive" if bool(local_player.get("alive", false)) else "down"
 	var show_skill_pick := app_state.screen == "match" and app_state.match_phase == "skill_pick"
-	if app_state.can_choose_skill():
+	var show_skill_catalog := show_skill_pick or is_training
+	if is_training:
+		skill_pick_summary_label.text = "Training loadout is live. Click any tier 1-5 skill to replace that slot immediately."
+	elif app_state.can_choose_skill():
 		skill_pick_summary_label.text = "Choose one legal tier now. Only the next tier in a started tree, or tier 1 in an unstarted tree, is enabled."
 	elif show_skill_pick:
 		skill_pick_summary_label.text = "Your pick is locked. Waiting for the round to leave the skill-pick phase."
 	else:
 		skill_pick_summary_label.text = "Skill picks appear here at the start of each round."
 	round_summary_log.text = app_state.round_summary_text()
-	combat_hint_label.text = "WASD move, aim with the mouse, left click for melee, and use 1-5 for combat skills. Unlocked slots: %d. Local state: %s." % [unlocked_slots, alive_state]
+	if is_training:
+		combat_hint_label.text = "Training: WASD move, aim with the mouse, left click for melee, use 1-5 for skills, reset metrics and dummies without reloading the map, or quit back to central. Local state: %s." % alive_state
+	else:
+		combat_hint_label.text = "WASD move, aim with the mouse, left click for melee, and use 1-5 for combat skills. Unlocked slots: %d. Local state: %s." % [unlocked_slots, alive_state]
 	cooldown_summary_label.text = app_state.cooldown_summary_text()
+	training_metrics_label.text = app_state.training_metrics_text()
 	outcome_label.text = result_text
 	match_summary_log.text = app_state.match_summary_text()
 	central_directory_log.text = app_state.lobby_directory_bbcode()
@@ -1129,6 +1176,7 @@ func _refresh_ui() -> void:
 
 	create_lobby_button.disabled = not app_state.can_join_or_create_lobby()
 	join_lobby_button.disabled = not app_state.can_join_or_create_lobby()
+	start_training_button.disabled = not app_state.can_start_training()
 	team_a_button.disabled = not app_state.can_manage_lobby()
 	team_b_button.disabled = not app_state.can_manage_lobby()
 	ready_button.disabled = not app_state.can_manage_lobby()
@@ -1137,6 +1185,8 @@ func _refresh_ui() -> void:
 	quit_results_button.disabled = not app_state.can_quit_results()
 	primary_attack_button.disabled = not app_state.can_use_primary_attack()
 	primary_attack_button.text = "Primary Attack" if app_state.can_use_primary_attack() else "Primary Cooling"
+	reset_training_button.disabled = not app_state.can_reset_training()
+	quit_arena_button.disabled = not app_state.can_quit_arena()
 	name_save_button.disabled = false
 	name_randomize_button.disabled = false
 
@@ -1150,7 +1200,12 @@ func _refresh_ui() -> void:
 		button.disabled = not selectable
 		button.text = "%d. %s" % [tier, skill_name]
 		_apply_skill_button_font_color(button, category_color)
-		if app_state.can_choose_skill():
+		if is_training:
+			button.tooltip_text = _append_tooltip_note(
+				tooltip_text,
+				"Training equip: replace slot %d immediately." % tier
+			)
+		elif app_state.can_choose_skill():
 			var next_tier := app_state.next_skill_tier_for(tree_name)
 			if next_tier == 0:
 				button.tooltip_text = _append_tooltip_note(
@@ -1175,10 +1230,13 @@ func _refresh_ui() -> void:
 	lobby_panel.visible = app_state.screen == "lobby"
 	match_panel.visible = app_state.screen == "match"
 	results_panel.visible = app_state.screen == "results"
-	skill_pick_panel.visible = show_skill_pick
-	combat_panel.visible = app_state.screen == "match" and not show_skill_pick
+	skill_pick_panel.visible = app_state.screen == "match" and show_skill_catalog
+	combat_panel.visible = app_state.screen == "match" and (is_training or not show_skill_pick)
 	round_summary_log.visible = app_state.round_summary_text() != ""
 	match_summary_log.visible = app_state.match_summary_text() != ""
+	training_metrics_label.visible = is_training
+	reset_training_button.visible = is_training
+	quit_arena_button.visible = is_training
 
 
 func _rebuild_skill_buttons() -> void:

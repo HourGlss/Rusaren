@@ -19,6 +19,7 @@ func _init() -> void:
 	success = _assert_skill_buttons_only_unlock_next_tiers() and success
 	success = _assert_arena_state_updates_local_combat_slots_and_effects() and success
 	success = _assert_aura_deployables_stay_hidden_from_client_render_state() and success
+	success = _assert_training_state_tracks_footprint_metrics_and_dummy_variants() and success
 	success = _assert_local_skill_labels_and_render_smoothing() and success
 	success = _assert_round_and_match_summaries_and_combat_text() and success
 	success = _assert_player_token_palette_and_team_rings() and success
@@ -355,6 +356,110 @@ func _assert_aura_deployables_stay_hidden_from_client_render_state() -> bool:
 		return _fail("client render state should omit aura deployables entirely")
 	if String(deployables[0].get("kind", "")) != "Ward":
 		return _fail("non-aura deployables should still remain visible to the client")
+	return true
+
+
+func _assert_training_state_tracks_footprint_metrics_and_dummy_variants() -> bool:
+	var state := ClientStateScript.new()
+	state.mark_transport_state("open")
+	state.local_player_id = 11
+	state.local_player_name = "Alice"
+	var footprint := _mask_with_visible_tiles(4, 3, [
+		Vector2i(0, 0), Vector2i(1, 0), Vector2i(2, 0),
+		Vector2i(0, 1), Vector2i(1, 1), Vector2i(2, 1),
+		Vector2i(0, 2), Vector2i(1, 2),
+	])
+	state.apply_server_event({
+		"type": "TrainingStarted",
+		"training_id": 14,
+	})
+	state.apply_server_event({
+		"type": "ArenaStateSnapshot",
+		"snapshot": {
+			"mode": "Training",
+			"phase": "Combat",
+			"width": 200,
+			"height": 150,
+			"tile_units": 50,
+			"footprint_tiles": footprint,
+			"visible_tiles": footprint,
+			"explored_tiles": footprint,
+			"obstacles": [],
+			"deployables": [
+				{
+					"id": 91,
+					"owner": 11,
+					"team": "Team A",
+					"kind": "TrainingDummyResetFull",
+					"x": -50,
+					"y": 0,
+					"radius": 28,
+					"hit_points": 10000,
+					"max_hit_points": 10000,
+					"remaining_ms": 0,
+				},
+				{
+					"id": 92,
+					"owner": 11,
+					"team": "Team A",
+					"kind": "TrainingDummyExecute",
+					"x": 50,
+					"y": 0,
+					"radius": 28,
+					"hit_points": 500,
+					"max_hit_points": 10000,
+					"remaining_ms": 0,
+				},
+			],
+			"players": [
+				{
+					"player_id": 11,
+					"player_name": "Alice",
+					"team": "Team A",
+					"x": -75,
+					"y": 0,
+					"aim_x": 100,
+					"aim_y": 0,
+					"hit_points": 100,
+					"max_hit_points": 100,
+					"mana": 100,
+					"max_mana": 100,
+					"alive": true,
+					"unlocked_skill_slots": 5,
+					"primary_cooldown_remaining_ms": 0,
+					"primary_cooldown_total_ms": 600,
+					"slot_cooldown_remaining_ms": [0, 0, 0, 0, 0],
+					"slot_cooldown_total_ms": [0, 0, 0, 0, 0],
+					"equipped_skill_trees": ["Warrior", "", "", "Ranger", ""],
+					"current_cast_slot": 0,
+					"current_cast_remaining_ms": 0,
+					"current_cast_total_ms": 0,
+					"active_statuses": [],
+				},
+			],
+			"projectiles": [],
+			"training_metrics": {
+				"damage_done": 500,
+				"healing_done": 120,
+				"elapsed_ms": 5000,
+			},
+		},
+	})
+	if not state.is_training_mode():
+		return _fail("training snapshots should switch the client into training mode")
+	if not state.is_tile_in_footprint(2, 1):
+		return _fail("training snapshots should preserve in-footprint tiles")
+	if state.is_tile_in_footprint(3, 2):
+		return _fail("training snapshots should mark out-of-shape tiles as outside the footprint")
+	if not state.training_metrics_text().contains("dmg 500") or not state.training_metrics_text().contains("HPS"):
+		return _fail("training metrics text should render aggregate damage, healing, and throughput")
+	var deployables := state.arena_deployables_list()
+	if deployables.size() != 2:
+		return _fail("training dummy variants should remain visible to the client")
+	if String(deployables[0].get("kind", "")) != "TrainingDummyResetFull":
+		return _fail("training dummy reset-full kind should survive snapshot decoding")
+	if String(deployables[1].get("kind", "")) != "TrainingDummyExecute":
+		return _fail("training dummy execute kind should survive snapshot decoding")
 	return true
 
 

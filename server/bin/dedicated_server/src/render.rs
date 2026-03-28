@@ -96,28 +96,40 @@ pub(crate) fn render_sim_event(event: &SimulationEvent) -> String {
         SimulationEvent::DamageApplied {
             attacker,
             target,
+            slot,
             amount,
             remaining_hit_points,
             defeated,
+            status_kind,
+            trigger,
         } => format!(
-            "player {} hit player {} for {} (remaining hp {}, defeated: {})",
+            "player {} hit player {} from slot {} for {} (remaining hp {}, defeated: {}, status: {:?}, trigger: {:?})",
             attacker.get(),
             target.get(),
+            slot,
             amount,
             remaining_hit_points,
-            defeated
+            defeated,
+            status_kind,
+            trigger
         ),
         SimulationEvent::HealingApplied {
             source,
             target,
+            slot,
             amount,
             resulting_hit_points,
+            status_kind,
+            trigger,
         } => format!(
-            "player {} healed player {} for {} (hp now {})",
+            "player {} healed player {} from slot {} for {} (hp now {}, status: {:?}, trigger: {:?})",
             source.get(),
             target.get(),
+            slot,
             amount,
-            resulting_hit_points
+            resulting_hit_points,
+            status_kind,
+            trigger
         ),
         SimulationEvent::StatusApplied {
             source,
@@ -125,14 +137,16 @@ pub(crate) fn render_sim_event(event: &SimulationEvent) -> String {
             slot,
             kind,
             stacks,
+            stack_delta,
             remaining_ms,
         } => format!(
-            "player {} applied {:?} from slot {} to player {} (stacks {}, remaining {}ms)",
+            "player {} applied {:?} from slot {} to player {} (stacks {}, +{}, remaining {}ms)",
             source.get(),
             kind,
             slot,
             target.get(),
             stacks,
+            stack_delta,
             remaining_ms
         ),
         SimulationEvent::DeployableSpawned {
@@ -162,5 +176,6 @@ pub(crate) fn render_sim_event(event: &SimulationEvent) -> String {
             remaining_hit_points,
             destroyed
         ),
+        _ => format!("{event:?}"),
     }
 }

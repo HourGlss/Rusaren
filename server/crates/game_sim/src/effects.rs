@@ -370,7 +370,23 @@ impl SimulationWorld {
                     };
                     let applied_damage = amount.min(deployable.hit_points);
                     deployable.hit_points = deployable.hit_points.saturating_sub(applied_damage);
-                    let destroyed = deployable.hit_points == 0;
+                    let threshold_hit_points =
+                        Self::training_dummy_execute_hit_points(deployable.max_hit_points);
+                    let destroyed = match deployable.behavior {
+                        super::DeployableBehavior::TrainingDummyResetFull => {
+                            if deployable.hit_points <= threshold_hit_points {
+                                deployable.hit_points = deployable.max_hit_points;
+                            }
+                            false
+                        }
+                        super::DeployableBehavior::TrainingDummyExecute => {
+                            if deployable.hit_points <= threshold_hit_points {
+                                deployable.hit_points = threshold_hit_points;
+                            }
+                            false
+                        }
+                        _ => deployable.hit_points == 0,
+                    };
                     events.push(SimulationEvent::DeployableDamaged {
                         attacker,
                         deployable_id,
@@ -444,16 +460,6 @@ impl SimulationWorld {
     #[cfg(test)]
     pub(super) fn test_consume_shields(&mut self, player_id: PlayerId, amount: u16) -> u16 {
         self.consume_shields(player_id, amount, &mut Vec::new())
-    }
-
-    #[cfg(test)]
-    pub(super) fn apply_healing_internal(
-        &mut self,
-        source: PlayerId,
-        targets: &[TargetEntity],
-        amount: u16,
-    ) -> Vec<SimulationEvent> {
-        self.apply_healing_internal_with_context(source, 0, targets, amount, None, None)
     }
 
     pub(super) fn apply_healing_internal_with_context(

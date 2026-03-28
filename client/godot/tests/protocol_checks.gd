@@ -12,10 +12,14 @@ func _init() -> void:
 	success = _assert_missing_cast_context_rejection() and success
 	success = _assert_unexpected_context_rejection() and success
 	success = _assert_aim_range_rejection() and success
+	success = _assert_start_training_uses_kind_five() and success
 	success = _assert_choose_skill_uses_tree_strings() and success
+	success = _assert_reset_training_uses_kind_nine() and success
 	success = _assert_decode_connected_with_skill_catalog() and success
+	success = _assert_decode_training_started() and success
 	success = _assert_decode_arena_state_snapshot() and success
 	success = _assert_decode_arena_delta_snapshot() and success
+	success = _assert_decode_training_state_snapshot() and success
 	success = _assert_decode_arena_effect_batch() and success
 	success = _assert_decode_round_summary() and success
 	success = _assert_decode_arena_combat_text_batch() and success
@@ -113,6 +117,19 @@ func _assert_aim_range_rejection() -> bool:
 	return _expect_error(encoded, "aim_horizontal_q=40000 is outside the allowed range -32768..=32767")
 
 
+func _assert_start_training_uses_kind_five() -> bool:
+	var encoded := Protocol.encode_client_command("StartTraining", {}, 5, 0)
+	if not bool(encoded.get("ok", false)):
+		return _fail("start-training command should encode")
+	var decoded := Protocol.decode_packet(encoded.get("packet", PackedByteArray()))
+	if not bool(decoded.get("ok", false)):
+		return _fail("start-training packet should decode")
+	var payload: PackedByteArray = decoded.get("payload", PackedByteArray())
+	if payload.size() != 1 or int(payload[0]) != 5:
+		return _fail("start-training command should use kind 5 with no trailing payload")
+	return true
+
+
 func _assert_choose_skill_uses_tree_strings() -> bool:
 	var encoded := Protocol.encode_client_command("ChooseSkill", {
 		"tree": "Druid",
@@ -126,10 +143,23 @@ func _assert_choose_skill_uses_tree_strings() -> bool:
 	var payload: PackedByteArray = decoded.get("payload", PackedByteArray())
 	if payload.size() < 4:
 		return _fail("choose-skill payload should include kind, tree string, and tier")
-	if int(payload[0]) != 7:
-		return _fail("choose-skill command should use kind 7")
+	if int(payload[0]) != 8:
+		return _fail("choose-skill command should use kind 8")
 	if int(payload[1]) != 5:
 		return _fail("choose-skill command should prefix the tree string length")
+	return true
+
+
+func _assert_reset_training_uses_kind_nine() -> bool:
+	var encoded := Protocol.encode_client_command("ResetTrainingSession", {}, 6, 0)
+	if not bool(encoded.get("ok", false)):
+		return _fail("reset-training command should encode")
+	var decoded := Protocol.decode_packet(encoded.get("packet", PackedByteArray()))
+	if not bool(decoded.get("ok", false)):
+		return _fail("reset-training packet should decode")
+	var payload: PackedByteArray = decoded.get("payload", PackedByteArray())
+	if payload.size() != 1 or int(payload[0]) != 9:
+		return _fail("reset-training command should use kind 9 with no trailing payload")
 	return true
 
 
@@ -173,19 +203,31 @@ func _assert_decode_connected_with_skill_catalog() -> bool:
 	return true
 
 
+func _assert_decode_training_started() -> bool:
+	var payload := PackedByteArray([25])
+	_push_u32(payload, 19)
+	var decoded := Protocol.decode_server_event(_encode_server_event_packet(payload, 8, 0))
+	if not bool(decoded.get("ok", false)):
+		return _fail("training-started event should decode")
+	var event: Dictionary = decoded.get("event", {})
+	if String(event.get("type", "")) != "TrainingStarted":
+		return _fail("training-started payload should decode as a TrainingStarted event")
+	if int(event.get("training_id", 0)) != 19:
+		return _fail("training-started payload should preserve the training id")
+	return true
+
+
 func _assert_decode_arena_state_snapshot() -> bool:
 	var payload := PackedByteArray([19])
+	payload.append(1)
 	payload.append(3)
 	payload.append(0)
 	_push_u16(payload, 1800)
 	_push_u16(payload, 1200)
 	_push_u16(payload, 50)
-	_push_u16(payload, 2)
-	payload.append(0x3F)
-	payload.append(0x03)
-	_push_u16(payload, 2)
-	payload.append(0xFF)
-	payload.append(0x0F)
+	_push_blob(payload, PackedByteArray([0x7F, 0x03]))
+	_push_blob(payload, PackedByteArray([0x3F, 0x03]))
+	_push_blob(payload, PackedByteArray([0xFF, 0x0F]))
 	_push_u16(payload, 1)
 	payload.append(1)
 	_push_i16(payload, -220)
@@ -250,10 +292,15 @@ func _assert_decode_arena_state_snapshot() -> bool:
 		return _fail("arena state snapshot should use the ArenaStateSnapshot event type")
 	if players.size() != 1:
 		return _fail("arena state snapshot should decode one player")
+	if String(snapshot.get("mode", "")) != "Match":
+		return _fail("arena state snapshot should decode the arena session mode")
 	if String(snapshot.get("phase", "")) != "Combat":
 		return _fail("arena state snapshot should decode the arena phase")
 	if int(snapshot.get("tile_units", 0)) != 50:
 		return _fail("arena state snapshot should decode tile units")
+	var footprint_tiles: PackedByteArray = snapshot.get("footprint_tiles", PackedByteArray())
+	if footprint_tiles.size() != 2 or int(footprint_tiles[0]) != 0x7F:
+		return _fail("arena state snapshot should decode footprint tile masks")
 	var visible_tiles: PackedByteArray = snapshot.get("visible_tiles", PackedByteArray())
 	if visible_tiles.size() != 2 or int(visible_tiles[0]) != 0x3F:
 		return _fail("arena state snapshot should decode visible tile masks")
@@ -277,20 +324,20 @@ func _assert_decode_arena_state_snapshot() -> bool:
 		return _fail("arena state snapshot should decode cast remaining state")
 	if projectiles.size() != 1 or String(projectiles[0].get("kind", "")) != "SkillShot":
 		return _fail("arena state snapshot should decode projectile state")
+	if not Dictionary(snapshot.get("training_metrics", {})).is_empty():
+		return _fail("match arena snapshots should decode without training metrics")
 	return true
 
 
 func _assert_decode_arena_delta_snapshot() -> bool:
 	var payload := PackedByteArray([20])
+	payload.append(1)
 	payload.append(3)
 	payload.append(0)
 	_push_u16(payload, 50)
-	_push_u16(payload, 2)
-	payload.append(0x3F)
-	payload.append(0x03)
-	_push_u16(payload, 2)
-	payload.append(0xFF)
-	payload.append(0x0F)
+	_push_blob(payload, PackedByteArray([0x7F, 0x03]))
+	_push_blob(payload, PackedByteArray([0x3F, 0x03]))
+	_push_blob(payload, PackedByteArray([0xFF, 0x0F]))
 	_push_u16(payload, 1)
 	payload.append(2)
 	_push_i16(payload, -220)
@@ -344,10 +391,15 @@ func _assert_decode_arena_delta_snapshot() -> bool:
 		return _fail("arena delta snapshot should use the ArenaDeltaSnapshot event type")
 	var snapshot: Dictionary = event.get("snapshot", {})
 	var players: Array = snapshot.get("players", [])
+	if String(snapshot.get("mode", "")) != "Match":
+		return _fail("arena delta snapshot should preserve the arena session mode")
 	if String(snapshot.get("phase", "")) != "Combat":
 		return _fail("arena delta snapshot should preserve phase")
 	if int(snapshot.get("tile_units", 0)) != 50:
 		return _fail("arena delta snapshot should preserve tile units")
+	var footprint_tiles: PackedByteArray = snapshot.get("footprint_tiles", PackedByteArray())
+	if footprint_tiles.size() != 2 or int(footprint_tiles[0]) != 0x7F:
+		return _fail("arena delta snapshot should decode footprint tiles")
 	if players.size() != 1 or int(players[0].get("mana", 0)) != 64:
 		return _fail("arena delta snapshot should decode player state")
 	var equipped_trees: Array = players[0].get("equipped_skill_trees", [])
@@ -355,6 +407,102 @@ func _assert_decode_arena_delta_snapshot() -> bool:
 		return _fail("arena delta snapshot should preserve equipped skill tree history")
 	if int(players[0].get("current_cast_slot", 0)) != 0:
 		return _fail("arena delta snapshot should decode the absence of an active cast")
+	if not Dictionary(snapshot.get("training_metrics", {})).is_empty():
+		return _fail("match arena delta snapshots should decode without training metrics")
+	return true
+
+
+func _assert_decode_training_state_snapshot() -> bool:
+	var payload := PackedByteArray([19])
+	payload.append(2)
+	payload.append(3)
+	payload.append(0)
+	_push_u16(payload, 900)
+	_push_u16(payload, 700)
+	_push_u16(payload, 50)
+	_push_blob(payload, PackedByteArray([0x1F, 0x01]))
+	_push_blob(payload, PackedByteArray([0x1F, 0x01]))
+	_push_blob(payload, PackedByteArray([0x1F, 0x01]))
+	_push_u16(payload, 0)
+	_push_u16(payload, 2)
+	_push_u32(payload, 91)
+	_push_u32(payload, 11)
+	payload.append(Protocol.TEAM_A)
+	payload.append(6)
+	_push_i16(payload, -120)
+	_push_i16(payload, 40)
+	_push_u16(payload, 28)
+	_push_u16(payload, 10000)
+	_push_u16(payload, 10000)
+	_push_u16(payload, 0)
+	_push_u32(payload, 92)
+	_push_u32(payload, 11)
+	payload.append(Protocol.TEAM_A)
+	payload.append(7)
+	_push_i16(payload, 120)
+	_push_i16(payload, 40)
+	_push_u16(payload, 28)
+	_push_u16(payload, 500)
+	_push_u16(payload, 10000)
+	_push_u16(payload, 0)
+	_push_u16(payload, 1)
+	_push_u32(payload, 11)
+	_push_string(payload, "Alice")
+	payload.append(Protocol.TEAM_A)
+	_push_i16(payload, -320)
+	_push_i16(payload, 0)
+	_push_i16(payload, 160)
+	_push_i16(payload, 0)
+	_push_u16(payload, 100)
+	_push_u16(payload, 100)
+	_push_u16(payload, 100)
+	_push_u16(payload, 100)
+	payload.append(1)
+	payload.append(5)
+	_push_u16(payload, 0)
+	_push_u16(payload, 600)
+	for value in [0, 0, 0, 0, 0]:
+		_push_u16(payload, value)
+	for value in [0, 0, 0, 0, 0]:
+		_push_u16(payload, value)
+	payload.append(1)
+	_push_string(payload, "Warrior")
+	payload.append(0)
+	payload.append(0)
+	payload.append(1)
+	_push_string(payload, "Ranger")
+	payload.append(0)
+	payload.append(0)
+	_push_u16(payload, 0)
+	_push_u16(payload, 0)
+	payload.append(0)
+	_push_u16(payload, 0)
+	_push_training_metrics(payload, {
+		"damage_done": 420,
+		"healing_done": 150,
+		"elapsed_ms": 5000,
+	})
+	var decoded := Protocol.decode_server_event(_encode_server_event_packet(payload, 12, 40))
+	if not bool(decoded.get("ok", false)):
+		return _fail("training state snapshot should decode")
+	var event: Dictionary = decoded.get("event", {})
+	var snapshot: Dictionary = event.get("snapshot", {})
+	var deployables: Array = snapshot.get("deployables", [])
+	var training_metrics: Dictionary = snapshot.get("training_metrics", {})
+	if String(event.get("type", "")) != "ArenaStateSnapshot":
+		return _fail("training state payload should decode through the arena snapshot event")
+	if String(snapshot.get("mode", "")) != "Training":
+		return _fail("training state snapshot should preserve training mode")
+	if deployables.size() != 2:
+		return _fail("training state snapshot should decode dummy deployables")
+	if String(deployables[0].get("kind", "")) != "TrainingDummyResetFull":
+		return _fail("training state snapshot should decode the reset-full dummy kind")
+	if String(deployables[1].get("kind", "")) != "TrainingDummyExecute":
+		return _fail("training state snapshot should decode the execute dummy kind")
+	if int(training_metrics.get("damage_done", 0)) != 420 or int(training_metrics.get("healing_done", 0)) != 150:
+		return _fail("training state snapshot should decode training metrics")
+	if int(training_metrics.get("elapsed_ms", 0)) != 5000:
+		return _fail("training state snapshot should decode elapsed training time")
 	return true
 
 
@@ -533,3 +681,18 @@ func _push_u32(bytes: PackedByteArray, value: int) -> void:
 	bytes.append((value >> 8) & 0xff)
 	bytes.append((value >> 16) & 0xff)
 	bytes.append((value >> 24) & 0xff)
+
+
+func _push_blob(bytes: PackedByteArray, value: PackedByteArray) -> void:
+	_push_u16(bytes, value.size())
+	bytes.append_array(value)
+
+
+func _push_training_metrics(bytes: PackedByteArray, metrics: Dictionary) -> void:
+	if metrics.is_empty():
+		bytes.append(0)
+		return
+	bytes.append(1)
+	_push_u32(bytes, int(metrics.get("damage_done", 0)))
+	_push_u32(bytes, int(metrics.get("healing_done", 0)))
+	_push_u32(bytes, int(metrics.get("elapsed_ms", 0)))

@@ -8,10 +8,11 @@ use game_net::{
     ArenaDeployableKind, ArenaDeployableSnapshot, ArenaEffectKind, ArenaEffectSnapshot,
     ArenaMatchPhase, ArenaObstacleKind, ArenaObstacleSnapshot, ArenaPlayerSnapshot,
     ArenaProjectileSnapshot, ArenaStatusKind, ArenaStatusSnapshot, SkillCatalogEntry,
+    TrainingMetricsSnapshot,
 };
 use game_sim::{ArenaDeployable, ArenaEffect, ArenaObstacle, SimulationEvent, SimulationWorld};
 
-use super::super::{MatchRuntime, ServerApp};
+use super::super::{MatchRuntime, ServerApp, TrainingRuntime};
 
 impl ServerApp {
     pub(in super::super) fn arena_obstacle_snapshot(
@@ -43,11 +44,11 @@ impl ServerApp {
     }
 
     pub(in super::super) fn arena_player_snapshot(
-        world: &SimulationWorld,
-        runtime: &MatchRuntime,
         assignment: &TeamAssignment,
         state: game_sim::SimPlayerState,
         unlocked_skill_slots: u8,
+        equipped_skill_trees: [Option<game_domain::SkillTree>; 5],
+        statuses: Vec<game_sim::SimStatusState>,
     ) -> ArenaPlayerSnapshot {
         ArenaPlayerSnapshot {
             player_id: assignment.player_id,
@@ -67,22 +68,38 @@ impl ServerApp {
             primary_cooldown_total_ms: state.primary_cooldown_total_ms,
             slot_cooldown_remaining_ms: state.slot_cooldown_remaining_ms,
             slot_cooldown_total_ms: state.slot_cooldown_total_ms,
-            equipped_skill_trees: std::array::from_fn(|index| {
+            equipped_skill_trees,
+            current_cast_slot: state.current_cast_slot,
+            current_cast_remaining_ms: state.current_cast_remaining_ms,
+            current_cast_total_ms: state.current_cast_total_ms,
+            active_statuses: statuses
+                .into_iter()
+                .map(Self::arena_status_snapshot)
+                .collect(),
+        }
+    }
+
+    fn arena_match_player_snapshot(
+        runtime: &MatchRuntime,
+        assignment: &TeamAssignment,
+        state: game_sim::SimPlayerState,
+        unlocked_skill_slots: u8,
+    ) -> ArenaPlayerSnapshot {
+        Self::arena_player_snapshot(
+            assignment,
+            state,
+            unlocked_skill_slots,
+            std::array::from_fn(|index| {
                 runtime
                     .session
                     .equipped_choice(assignment.player_id, u8::try_from(index + 1).ok()?)
                     .map(|choice| choice.tree)
             }),
-            current_cast_slot: state.current_cast_slot,
-            current_cast_remaining_ms: state.current_cast_remaining_ms,
-            current_cast_total_ms: state.current_cast_total_ms,
-            active_statuses: world
+            runtime
+                .world
                 .statuses_for(assignment.player_id)
-                .unwrap_or_default()
-                .into_iter()
-                .map(Self::arena_status_snapshot)
-                .collect(),
-        }
+                .unwrap_or_default(),
+        )
     }
 
     pub(in super::super) fn arena_players_snapshot(
@@ -115,8 +132,7 @@ impl ServerApp {
                             )
                     })
                     .map(|state| {
-                        Self::arena_player_snapshot(
-                            &runtime.world,
+                        Self::arena_match_player_snapshot(
                             runtime,
                             assignment,
                             state,
@@ -124,6 +140,39 @@ impl ServerApp {
                         )
                     })
             })
+            .collect()
+    }
+
+    pub(in super::super) fn arena_training_players_snapshot(
+        runtime: &TrainingRuntime,
+        viewer_id: PlayerId,
+        map: &ArenaMapDefinition,
+        visible_tiles: &[u8],
+    ) -> Vec<ArenaPlayerSnapshot> {
+        runtime
+            .world
+            .player_state(runtime.participant.player_id)
+            .filter(|state| {
+                runtime.participant.player_id == viewer_id
+                    || Self::mask_contains_point(map, visible_tiles, state.x, state.y)
+            })
+            .map(|state| {
+                Self::arena_player_snapshot(
+                    &runtime.participant,
+                    state,
+                    5,
+                    std::array::from_fn(|index| {
+                        runtime.loadout[index]
+                            .as_ref()
+                            .map(|choice| choice.tree.clone())
+                    }),
+                    runtime
+                        .world
+                        .statuses_for(runtime.participant.player_id)
+                        .unwrap_or_default(),
+                )
+            })
+            .into_iter()
             .collect()
     }
 
@@ -165,6 +214,12 @@ impl ServerApp {
                 game_sim::ArenaDeployableKind::Trap => ArenaDeployableKind::Trap,
                 game_sim::ArenaDeployableKind::Barrier => ArenaDeployableKind::Barrier,
                 game_sim::ArenaDeployableKind::Aura => ArenaDeployableKind::Aura,
+                game_sim::ArenaDeployableKind::TrainingDummyResetFull => {
+                    ArenaDeployableKind::TrainingDummyResetFull
+                }
+                game_sim::ArenaDeployableKind::TrainingDummyExecute => {
+                    ArenaDeployableKind::TrainingDummyExecute
+                }
             },
             x: deployable.x,
             y: deployable.y,
@@ -176,33 +231,35 @@ impl ServerApp {
     }
 
     pub(in super::super) fn arena_deployables_snapshot(
-        runtime: &MatchRuntime,
+        world: &SimulationWorld,
         viewer_id: PlayerId,
         map: &ArenaMapDefinition,
         visible_tiles: &[u8],
     ) -> Vec<ArenaDeployableSnapshot> {
-        runtime
-            .world
+        world
             .deployables()
             .into_iter()
             .filter(|deployable| {
                 deployable.kind != game_sim::ArenaDeployableKind::Aura
                     && (deployable.owner == viewer_id
-                    || Self::mask_contains_point(map, visible_tiles, deployable.x, deployable.y)
-                    )
+                        || Self::mask_contains_point(
+                            map,
+                            visible_tiles,
+                            deployable.x,
+                            deployable.y,
+                        ))
             })
             .map(Self::arena_deployable_snapshot)
             .collect()
     }
 
     pub(in super::super) fn arena_projectiles_snapshot(
-        runtime: &MatchRuntime,
+        world: &SimulationWorld,
         viewer_id: PlayerId,
         map: &ArenaMapDefinition,
         visible_tiles: &[u8],
     ) -> Vec<ArenaProjectileSnapshot> {
-        runtime
-            .world
+        world
             .projectiles()
             .into_iter()
             .filter(|projectile| {
@@ -238,7 +295,12 @@ impl ServerApp {
         let Some(runtime) = self.matches.get_mut(&match_id) else {
             return Vec::new();
         };
-        let Some((visible_tiles, _)) = Self::build_visibility_masks(runtime, viewer_id, map) else {
+        let Some((visible_tiles, _)) = Self::build_visibility_masks(
+            &runtime.world,
+            &mut runtime.explored_tiles,
+            viewer_id,
+            map,
+        ) else {
             return Vec::new();
         };
         effects
@@ -310,6 +372,16 @@ impl ServerApp {
             }
             MatchPhase::Combat => (ArenaMatchPhase::Combat, None),
             MatchPhase::MatchEnd { .. } => (ArenaMatchPhase::MatchEnd, None),
+        }
+    }
+
+    pub(in super::super) fn training_metrics_snapshot(
+        runtime: &TrainingRuntime,
+    ) -> TrainingMetricsSnapshot {
+        TrainingMetricsSnapshot {
+            damage_done: runtime.metrics.damage_done,
+            healing_done: runtime.metrics.healing_done,
+            elapsed_ms: runtime.metrics.elapsed_ms,
         }
     }
 

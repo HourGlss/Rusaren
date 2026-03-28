@@ -1171,6 +1171,10 @@ impl SimulationWorld {
             i32::from(desired.1),
             self.arena_width_units,
             self.arena_height_units,
+            self.arena_width_tiles,
+            self.arena_height_tiles,
+            self.arena_tile_units,
+            &self.footprint_mask,
             &combat_obstacles,
         );
         if let Some(player) = self.players.get_mut(&attacker) {
@@ -1635,6 +1639,8 @@ impl SimulationWorld {
                         ArenaDeployableKind::Trap | ArenaDeployableKind::Barrier => {
                             ArenaEffectKind::Burst
                         }
+                        ArenaDeployableKind::TrainingDummyResetFull
+                        | ArenaDeployableKind::TrainingDummyExecute => ArenaEffectKind::Burst,
                     },
                     owner: attacker,
                     slot,

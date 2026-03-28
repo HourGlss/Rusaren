@@ -4,15 +4,16 @@ use crate::PacketError;
 
 use super::codec::{
     decode_bytes, read_arena_combat_text_style, read_arena_deployable_kind, read_arena_effect_kind,
-    read_arena_match_phase, read_arena_obstacle_kind, read_arena_status_kind, read_bool, read_i16,
-    read_lobby_id, read_lobby_snapshot_phase, read_optional_team, read_optional_u8, read_player_id,
-    read_player_name, read_player_record, read_ready_state, read_skill_tree, read_string,
-    read_team, read_u16, read_u32, read_u8,
+    read_arena_match_phase, read_arena_obstacle_kind, read_arena_session_mode,
+    read_arena_status_kind, read_bool, read_i16, read_lobby_id, read_lobby_snapshot_phase,
+    read_optional_team, read_optional_u8, read_player_id, read_player_name, read_player_record,
+    read_ready_state, read_skill_tree, read_string, read_team, read_u16, read_u32, read_u8,
 };
 use super::server_types::{
     ArenaCombatTextEntry, ArenaDeltaSnapshot, ArenaDeployableSnapshot, ArenaEffectSnapshot,
     ArenaObstacleSnapshot, ArenaPlayerSnapshot, ArenaProjectileSnapshot, ArenaStateSnapshot,
     ArenaStatusSnapshot, LobbyDirectoryEntry, LobbySnapshotPlayer, ServerControlEvent,
+    TrainingMetricsSnapshot,
 };
 use super::MAX_MESSAGE_BYTES;
 
@@ -65,31 +66,37 @@ pub(super) fn decode_arena_state_snapshot(
     payload: &[u8],
     index: &mut usize,
 ) -> Result<ServerControlEvent, PacketError> {
+    let mode = read_arena_session_mode(payload, index, "ArenaStateSnapshot")?;
     let phase = read_arena_match_phase(payload, index, "ArenaStateSnapshot")?;
     let phase_seconds_remaining = read_optional_u8(payload, index, "ArenaStateSnapshot")?;
     let width = read_u16(payload, index, "ArenaStateSnapshot")?;
     let height = read_u16(payload, index, "ArenaStateSnapshot")?;
     let tile_units = read_u16(payload, index, "ArenaStateSnapshot")?;
+    let footprint_tiles = decode_bytes(payload, index, "ArenaStateSnapshot", "footprint_tiles")?;
     let visible_tiles = decode_bytes(payload, index, "ArenaStateSnapshot", "visible_tiles")?;
     let explored_tiles = decode_bytes(payload, index, "ArenaStateSnapshot", "explored_tiles")?;
     let obstacles = decode_arena_obstacles(payload, index, "ArenaStateSnapshot")?;
     let deployables = decode_arena_deployables(payload, index, "ArenaStateSnapshot")?;
     let players = decode_arena_players(payload, index, "ArenaStateSnapshot")?;
     let projectiles = decode_arena_projectiles(payload, index, "ArenaStateSnapshot")?;
+    let training_metrics = decode_training_metrics(payload, index, "ArenaStateSnapshot")?;
 
     Ok(ServerControlEvent::ArenaStateSnapshot {
         snapshot: ArenaStateSnapshot {
+            mode,
             phase,
             phase_seconds_remaining,
             width,
             height,
             tile_units,
+            footprint_tiles,
             visible_tiles,
             explored_tiles,
             obstacles,
             deployables,
             players,
             projectiles,
+            training_metrics,
         },
     })
 }
@@ -98,29 +105,50 @@ pub(super) fn decode_arena_delta_snapshot(
     payload: &[u8],
     index: &mut usize,
 ) -> Result<ServerControlEvent, PacketError> {
+    let mode = read_arena_session_mode(payload, index, "ArenaDeltaSnapshot")?;
     let phase = read_arena_match_phase(payload, index, "ArenaDeltaSnapshot")?;
     let phase_seconds_remaining = read_optional_u8(payload, index, "ArenaDeltaSnapshot")?;
     let tile_units = read_u16(payload, index, "ArenaDeltaSnapshot")?;
+    let footprint_tiles = decode_bytes(payload, index, "ArenaDeltaSnapshot", "footprint_tiles")?;
     let visible_tiles = decode_bytes(payload, index, "ArenaDeltaSnapshot", "visible_tiles")?;
     let explored_tiles = decode_bytes(payload, index, "ArenaDeltaSnapshot", "explored_tiles")?;
     let obstacles = decode_arena_obstacles(payload, index, "ArenaDeltaSnapshot")?;
     let deployables = decode_arena_deployables(payload, index, "ArenaDeltaSnapshot")?;
     let players = decode_arena_players(payload, index, "ArenaDeltaSnapshot")?;
     let projectiles = decode_arena_projectiles(payload, index, "ArenaDeltaSnapshot")?;
+    let training_metrics = decode_training_metrics(payload, index, "ArenaDeltaSnapshot")?;
 
     Ok(ServerControlEvent::ArenaDeltaSnapshot {
         snapshot: ArenaDeltaSnapshot {
+            mode,
             phase,
             phase_seconds_remaining,
             tile_units,
+            footprint_tiles,
             visible_tiles,
             explored_tiles,
             obstacles,
             deployables,
             players,
             projectiles,
+            training_metrics,
         },
     })
+}
+
+fn decode_training_metrics(
+    payload: &[u8],
+    index: &mut usize,
+    kind: &'static str,
+) -> Result<Option<TrainingMetricsSnapshot>, PacketError> {
+    if !read_bool(payload, index, kind)? {
+        return Ok(None);
+    }
+    Ok(Some(TrainingMetricsSnapshot {
+        damage_done: read_u32(payload, index, kind)?,
+        healing_done: read_u32(payload, index, kind)?,
+        elapsed_ms: read_u32(payload, index, kind)?,
+    }))
 }
 
 pub(super) fn decode_arena_obstacles(

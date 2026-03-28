@@ -2,7 +2,7 @@
 
 Current target release line: `1.0.0`
 Current repo version: `0.8.0`
-Current roadmap position: `0.9.5 Maps And Arena Variety`
+Current roadmap position: `0.9.6 Operations, Admin, Performance Gates, And Publication Stability`
 
 Completed:
 - `0.3.0 Quality Foundation`
@@ -59,15 +59,15 @@ Release gate:
 - [x] Add post-round and post-match summary screens with damage done, healing to allies and enemies, crowd control used, crowd control hits, and running totals carried forward after each round.
 - [x] Add player-only scrolling combat text with a World of Warcraft style flow for outgoing and incoming combat events.
 - [x] Add dynamic player coloring driven by pick order and class identity: slot 1 colors the center, slots 2 through 5 add outward rings, unpicked slots render black, the outer border is team-relative (`friendly = dark blue`, `enemy = red`), and a thin halo outside the team ring shows positive statuses on the right and negative statuses on the left with longer-duration effects higher in the stack.
-- [ ] Add more dynamic authored map items beyond the current static obstacle set.
+- [x] Add more dynamic authored map items beyond the current static obstacle set.
 - [x] Add post-deploy smoke checks and synthetic probes for the hosted backend path.
 - [x] Add ADRs for protocol freeze, event logging, admin surface, and persistence, plus explicit crate-boundary rules and a human PR review checklist.
 - [x] Extend backend tests, replay checks, and liveprobe scenarios to cover channel start, tick, cancel, dispel resolution, multi-source periodic stacking, and bloom-style expiration effects.
 - [ ] Close remaining "cannot test this yet" items in the report.
 - [ ] Make GitHub Actions, GitHub Pages, docs, rustdoc, and report publishing stable and routine.
 - [x] Verify the hosted stack against the real domain path with TLS, TURN/STUN, and the web client.
-- [ ] Support authored maps with up to three Team A anchors and up to three Team B anchors instead of exactly one spawn anchor per side.
-- [ ] Support non-rectangular authored map footprints so out-of-shape cells are not treated as walkable arena space inside the rectangular ASCII bounds.
+- [x] Support authored maps with up to three Team A anchors and up to three Team B anchors instead of exactly one spawn anchor per side.
+- [x] Support non-rectangular authored map footprints so out-of-shape cells are not treated as walkable arena space inside the rectangular ASCII bounds.
 
 Release gate:
 - no major architecture gaps remain
@@ -149,15 +149,15 @@ Milestone gate:
 
 ### 0.9.5 Maps And Arena Variety
 
-- [ ] Support authored maps with up to three Team A anchors and up to three Team B anchors instead of exactly one spawn anchor per side.
-- [ ] Support non-rectangular authored map footprints so out-of-shape cells are treated as out-of-bounds rather than walkable arena space inside a rectangular ASCII box.
-- [ ] Add more dynamic authored map items beyond the current static obstacle set.
-- [ ] Extend map validation, parsing tests, and simulation/runtime tests so spawn assignment, occupancy, walkability, line-of-sight, and combat interactions stay correct as the map grammar expands.
-- [ ] Keep authored map growth data-driven so new arena items and future map shapes do not require a parser rewrite each time.
-- [ ] Add a single-player training environment with resettable combat dummies that report damage, healing, DPS, and HPS over the current session.
-- [ ] Add two authored dummy variants with `100x` player health: one dummy resets to full health after dropping below `5%` HP, and one dummy returns to a low-health state for execute-range testing instead of dying.
-- [ ] Add a player-facing reset action in the training environment that clears damage, healing, and timer metrics without restarting the whole map.
-- [ ] Support a separate authored training map where `d` and `D` place the two dummy variants directly from the ASCII map file.
+- [x] Support authored maps with up to three Team A anchors and up to three Team B anchors instead of exactly one spawn anchor per side.
+- [x] Support non-rectangular authored map footprints so out-of-shape cells are treated as out-of-bounds rather than walkable arena space inside a rectangular ASCII box.
+- [x] Add more dynamic authored map items beyond the current static obstacle set.
+- [x] Extend map validation, parsing tests, and simulation/runtime tests so spawn assignment, occupancy, walkability, line-of-sight, and combat interactions stay correct as the map grammar expands.
+- [x] Keep authored map growth data-driven so new arena items and future map shapes do not require a parser rewrite each time.
+- [x] Add a single-player training environment with resettable combat dummies that report damage, healing, DPS, and HPS over the current session.
+- [x] Add two authored dummy variants with `100x` player health: one dummy resets to full health after dropping below `5%` HP, and one dummy returns to a low-health state for execute-range testing instead of dying.
+- [x] Add a player-facing reset action in the training environment that clears damage, healing, and timer metrics without restarting the whole map.
+- [x] Support a separate authored training map where `d` and `D` place the two dummy variants directly from the ASCII map file.
 
 Milestone gate:
 - authored maps can express the expanded spawn and footprint rules

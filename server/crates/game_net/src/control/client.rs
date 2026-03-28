@@ -14,9 +14,11 @@ pub enum ClientControlCommand {
     CreateGameLobby,
     JoinGameLobby { lobby_id: LobbyId },
     LeaveGameLobby,
+    StartTraining,
     SelectTeam { team: TeamSide },
     SetReady { ready: ReadyState },
     ChooseSkill { tree: SkillTree, tier: u8 },
+    ResetTrainingSession,
     QuitToCentralLobby,
 }
 
@@ -74,10 +76,12 @@ impl ClientControlCommand {
             Self::CreateGameLobby => 2,
             Self::JoinGameLobby { .. } => 3,
             Self::LeaveGameLobby => 4,
-            Self::SelectTeam { .. } => 5,
-            Self::SetReady { .. } => 6,
-            Self::ChooseSkill { .. } => 7,
-            Self::QuitToCentralLobby => 8,
+            Self::StartTraining => 5,
+            Self::SelectTeam { .. } => 6,
+            Self::SetReady { .. } => 7,
+            Self::ChooseSkill { .. } => 8,
+            Self::ResetTrainingSession => 9,
+            Self::QuitToCentralLobby => 10,
         }
     }
 
@@ -85,7 +89,11 @@ impl ClientControlCommand {
     fn encode_body(self, payload: &mut Vec<u8>) -> Result<(), PacketError> {
         match self {
             Self::Connect { player_name } => encode_connect_command(payload, &player_name),
-            Self::CreateGameLobby | Self::LeaveGameLobby | Self::QuitToCentralLobby => Ok(()),
+            Self::CreateGameLobby
+            | Self::LeaveGameLobby
+            | Self::StartTraining
+            | Self::ResetTrainingSession
+            | Self::QuitToCentralLobby => Ok(()),
             Self::JoinGameLobby { lobby_id } => {
                 payload.extend_from_slice(&lobby_id.get().to_le_bytes());
                 Ok(())
@@ -119,14 +127,16 @@ impl ClientControlCommand {
                 lobby_id: read_lobby_id(payload, index, "JoinGameLobby")?,
             }),
             4 => Ok(Self::LeaveGameLobby),
-            5 => Ok(Self::SelectTeam {
+            5 => Ok(Self::StartTraining),
+            6 => Ok(Self::SelectTeam {
                 team: read_team(payload, index, "SelectTeam")?,
             }),
-            6 => Ok(Self::SetReady {
+            7 => Ok(Self::SetReady {
                 ready: read_ready_state(payload, index, "SetReady")?,
             }),
-            7 => decode_choose_skill_command(payload, index),
-            8 => Ok(Self::QuitToCentralLobby),
+            8 => decode_choose_skill_command(payload, index),
+            9 => Ok(Self::ResetTrainingSession),
+            10 => Ok(Self::QuitToCentralLobby),
             other => Err(PacketError::UnknownControlCommand(other)),
         }
     }

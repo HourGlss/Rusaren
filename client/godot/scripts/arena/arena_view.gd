@@ -2,7 +2,6 @@ extends Control
 class_name ArenaView
 
 const PADDING := 22.0
-const GRID_STEP_UNITS := 60.0
 const PLAYER_RADIUS_UNITS := 28.0
 const FOG_EDGE_EXTENSION_RATIO := 0.52
 const FOG_EDGE_ALPHA_SCALE := 0.58
@@ -12,6 +11,8 @@ const OBSTACLE_SHADOW_COLOR := Color(0.03, 0.04, 0.06, 0.16)
 const DEPLOYABLE_SHADOW_COLOR := Color(0.03, 0.05, 0.08, 0.22)
 const FRIENDLY_TEAM_COLOR := Color8(27, 58, 128)
 const ENEMY_TEAM_COLOR := Color8(196, 61, 50)
+const ARENA_VOID_COLOR := Color8(20, 21, 25)
+const ARENA_FLOOR_COLOR := Color8(232, 232, 236)
 
 var app_state: ClientState = null
 
@@ -62,7 +63,8 @@ func _draw() -> void:
 		return
 
 	var arena_rect := _arena_rect()
-	draw_rect(arena_rect, Color8(232, 232, 236))
+	draw_rect(arena_rect, ARENA_VOID_COLOR)
+	_draw_floor(arena_rect)
 	_draw_grid(arena_rect)
 	_draw_obstacles(arena_rect)
 	_draw_visibility_overlay(arena_rect)
@@ -72,6 +74,20 @@ func _draw() -> void:
 	_draw_players(arena_rect)
 	_draw_local_combat_texts(arena_rect)
 	_draw_border(arena_rect)
+
+
+func _draw_floor(arena_rect: Rect2) -> void:
+	var tile_width := app_state.arena_tile_width()
+	var tile_height := app_state.arena_tile_height()
+	if tile_width <= 0 or tile_height <= 0 or app_state.arena_tile_units <= 0:
+		draw_rect(arena_rect, ARENA_FLOOR_COLOR)
+		return
+	var half_tile := float(app_state.arena_tile_units) * 0.5
+	for row in range(tile_height):
+		for column in range(tile_width):
+			if not app_state.is_tile_in_footprint(column, row):
+				continue
+			draw_rect(_tile_canvas_rect(arena_rect, column, row, half_tile), ARENA_FLOOR_COLOR)
 
 
 func _arena_rect() -> Rect2:
@@ -92,29 +108,22 @@ func _arena_rect() -> Rect2:
 
 
 func _draw_grid(arena_rect: Rect2) -> void:
-	var step_x := arena_rect.size.x * (GRID_STEP_UNITS / float(app_state.arena_width))
-	var step_y := arena_rect.size.y * (GRID_STEP_UNITS / float(app_state.arena_height))
 	var grid_color := Color8(205, 206, 212)
-
-	var x := arena_rect.position.x
-	while x <= arena_rect.end.x + 0.5:
-		draw_line(
-			Vector2(x, arena_rect.position.y),
-			Vector2(x, arena_rect.end.y),
-			grid_color,
-			1.0
-		)
-		x += step_x
-
-	var y := arena_rect.position.y
-	while y <= arena_rect.end.y + 0.5:
-		draw_line(
-			Vector2(arena_rect.position.x, y),
-			Vector2(arena_rect.end.x, y),
-			grid_color,
-			1.0
-		)
-		y += step_y
+	var tile_width := app_state.arena_tile_width()
+	var tile_height := app_state.arena_tile_height()
+	if tile_width <= 0 or tile_height <= 0 or app_state.arena_tile_units <= 0:
+		return
+	var half_tile := float(app_state.arena_tile_units) * 0.5
+	for row in range(tile_height):
+		for column in range(tile_width):
+			if not app_state.is_tile_in_footprint(column, row):
+				continue
+			draw_rect(
+				_tile_canvas_rect(arena_rect, column, row, half_tile),
+				grid_color,
+				false,
+				1.0
+			)
 
 
 func _draw_obstacles(arena_rect: Rect2) -> void:
@@ -353,6 +362,8 @@ func _draw_visibility_overlay(arena_rect: Rect2) -> void:
 	var half_tile := float(app_state.arena_tile_units) * 0.5
 	for row in range(tile_height):
 		for column in range(tile_width):
+			if not app_state.is_tile_in_footprint(column, row):
+				continue
 			if app_state.is_tile_visible(column, row):
 				continue
 			var center_x := -float(app_state.arena_width) * 0.5 + float(column * app_state.arena_tile_units) + half_tile
@@ -437,7 +448,7 @@ func _draw_fog_soft_edges(
 
 
 func _has_fog_edge(column: int, row: int, direction: Vector2i) -> bool:
-	if app_state == null or app_state.is_tile_visible(column, row):
+	if app_state == null or not app_state.is_tile_in_footprint(column, row) or app_state.is_tile_visible(column, row):
 		return false
 	return app_state.is_tile_visible(column + direction.x, row + direction.y)
 
@@ -530,6 +541,11 @@ func _tile_center_world(column: int, row: int, half_tile: float) -> Vector2:
 		-float(app_state.arena_width) * 0.5 + float(column * app_state.arena_tile_units) + half_tile,
 		-float(app_state.arena_height) * 0.5 + float(row * app_state.arena_tile_units) + half_tile
 	)
+
+
+func _tile_canvas_rect(arena_rect: Rect2, column: int, row: int, half_tile: float) -> Rect2:
+	var center := _tile_center_world(column, row, half_tile)
+	return _world_rect_to_canvas(arena_rect, center.x, center.y, half_tile, half_tile)
 
 
 func _draw_centered_text(rect: Rect2, text: String) -> void:

@@ -13,8 +13,8 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use game_content::{
-    ArenaMapDefinition, CombatValueKind, DispelScope, EffectPayload, MeleeDefinition,
-    SkillBehavior, SkillDefinition, StatusDefinition, StatusKind,
+    ArenaMapDefinition, ArenaMapFeatureKind, CombatValueKind, DispelScope, EffectPayload,
+    MeleeDefinition, SkillBehavior, SkillDefinition, StatusDefinition, StatusKind,
 };
 use game_domain::{PlayerId, TeamAssignment, TeamSide};
 
@@ -27,8 +27,9 @@ pub use geometry::{
     obstacle_contains_point, segment_hits_obstacle,
 };
 use helpers::{
-    adjusted_move_speed, arena_effect_kind, map_obstacle_to_sim_obstacle, movement_delta,
-    resolve_movement, spawn_position, total_move_modifier_bps, travel_distance_units,
+    adjusted_move_speed, arena_effect_kind, circle_fits_map_footprint,
+    map_obstacle_to_sim_obstacle, movement_delta, resolve_movement, spawn_position,
+    total_move_modifier_bps, travel_distance_units,
 };
 
 pub const PLAYER_RADIUS_UNITS: u16 = 28;
@@ -40,6 +41,9 @@ pub const VISION_RADIUS_UNITS: u16 = 450;
 const SPAWN_SPACING_UNITS: i16 = 120;
 const DEFAULT_AIM_X: i16 = 120;
 const DEFAULT_AIM_Y: i16 = 0;
+const DEFAULT_PLAYER_HIT_POINTS: u16 = 100;
+const TRAINING_DUMMY_HEALTH_MULTIPLIER: u16 = 100;
+const TRAINING_DUMMY_RESET_THRESHOLD_BPS: u16 = 500;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MovementIntent {
@@ -126,6 +130,8 @@ pub enum ArenaDeployableKind {
     Trap,
     Barrier,
     Aura,
+    TrainingDummyResetFull,
+    TrainingDummyExecute,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -421,6 +427,10 @@ impl std::error::Error for SimulationError {}
 pub struct SimulationWorld {
     arena_width_units: u16,
     arena_height_units: u16,
+    arena_width_tiles: u16,
+    arena_height_tiles: u16,
+    arena_tile_units: u16,
+    footprint_mask: Vec<u8>,
     obstacles: Vec<ArenaObstacle>,
     players: BTreeMap<PlayerId, SimPlayer>,
     projectiles: Vec<ProjectileState>,
@@ -431,6 +441,10 @@ pub struct SimulationWorld {
 #[derive(Clone, Debug)]
 struct SimPlayer {
     team: TeamSide,
+    spawn_x: i16,
+    spawn_y: i16,
+    spawn_aim_x: i16,
+    spawn_aim_y: i16,
     x: i16,
     y: i16,
     aim_x: i16,
@@ -552,6 +566,8 @@ enum DeployableBehavior {
         payload: game_content::EffectPayload,
         anchor_player: Option<PlayerId>,
     },
+    TrainingDummyResetFull,
+    TrainingDummyExecute,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -599,6 +615,10 @@ impl SimulationWorld {
                     player.assignment.player_id,
                     SimPlayer {
                         team: player.assignment.team,
+                        spawn_x,
+                        spawn_y,
+                        spawn_aim_x: aim_x,
+                        spawn_aim_y: DEFAULT_AIM_Y,
                         x: spawn_x,
                         y: spawn_y,
                         aim_x,
@@ -629,9 +649,13 @@ impl SimulationWorld {
             }
         }
 
-        Ok(Self {
+        let mut world = Self {
             arena_width_units: map.width_units,
             arena_height_units: map.height_units,
+            arena_width_tiles: map.width_tiles,
+            arena_height_tiles: map.height_tiles,
+            arena_tile_units: map.tile_units,
+            footprint_mask: map.footprint_mask.clone(),
             obstacles: map
                 .obstacles
                 .iter()
@@ -641,7 +665,16 @@ impl SimulationWorld {
             projectiles: Vec::new(),
             deployables: Vec::new(),
             next_deployable_id: 1,
-        })
+        };
+        if let Some(owner) = world.players.keys().next().copied() {
+            let owner_team = world
+                .players
+                .get(&owner)
+                .map(|player| player.team)
+                .unwrap_or(TeamSide::TeamA);
+            world.spawn_map_features(owner, owner_team, map);
+        }
+        Ok(world)
     }
 
     pub fn submit_input(
@@ -728,6 +761,45 @@ impl SimulationWorld {
             return Err(SimulationError::PlayerAlreadyDefeated(player_id));
         }
         Ok(player.active_cast.take().is_some())
+    }
+
+    pub fn reset_training_session(&mut self) {
+        self.projectiles.clear();
+        self.deployables.retain(|deployable| {
+            matches!(
+                deployable.behavior,
+                DeployableBehavior::TrainingDummyResetFull
+                    | DeployableBehavior::TrainingDummyExecute
+            )
+        });
+        for deployable in &mut self.deployables {
+            deployable.remaining_ms = u16::MAX;
+            deployable.hit_points = match deployable.behavior {
+                DeployableBehavior::TrainingDummyResetFull => deployable.max_hit_points,
+                DeployableBehavior::TrainingDummyExecute => {
+                    Self::training_dummy_execute_hit_points(deployable.max_hit_points)
+                }
+                _ => deployable.hit_points,
+            };
+        }
+        for player in self.players.values_mut() {
+            player.x = player.spawn_x;
+            player.y = player.spawn_y;
+            player.aim_x = player.spawn_aim_x;
+            player.aim_y = player.spawn_aim_y;
+            player.hit_points = player.max_hit_points;
+            player.mana = player.max_mana;
+            player.alive = true;
+            player.moving = false;
+            player.movement_intent = MovementIntent::zero();
+            player.queued_primary = false;
+            player.queued_cast_slot = None;
+            player.active_cast = None;
+            player.primary_cooldown_remaining_ms = 0;
+            player.slot_cooldown_remaining_ms = [0; 5];
+            player.mana_regen_progress = 0;
+            player.statuses.clear();
+        }
     }
 
     pub fn tick(&mut self, delta_ms: u16) -> Vec<SimulationEvent> {
@@ -864,6 +936,11 @@ impl SimulationWorld {
     }
 
     #[must_use]
+    pub fn footprint_mask(&self) -> &[u8] {
+        &self.footprint_mask
+    }
+
+    #[must_use]
     pub fn is_team_defeated(&self, team: TeamSide) -> bool {
         self.players
             .values()
@@ -965,6 +1042,19 @@ impl SimulationWorld {
         if x_i32 < min_x || x_i32 > max_x || y_i32 < min_y || y_i32 > max_y {
             return false;
         }
+        if !circle_fits_map_footprint(
+            x,
+            y,
+            PLAYER_RADIUS_UNITS,
+            self.arena_width_units,
+            self.arena_height_units,
+            self.arena_width_tiles,
+            self.arena_height_tiles,
+            self.arena_tile_units,
+            &self.footprint_mask,
+        ) {
+            return false;
+        }
         !self
             .combat_obstacles()
             .iter()
@@ -1054,6 +1144,53 @@ impl SimulationWorld {
         let id = self.next_deployable_id;
         self.next_deployable_id = self.next_deployable_id.saturating_add(1);
         id
+    }
+
+    fn spawn_map_features(
+        &mut self,
+        owner: PlayerId,
+        owner_team: TeamSide,
+        map: &ArenaMapDefinition,
+    ) {
+        let dummy_team = match owner_team {
+            TeamSide::TeamA => TeamSide::TeamB,
+            TeamSide::TeamB => TeamSide::TeamA,
+        };
+        let hit_points = DEFAULT_PLAYER_HIT_POINTS.saturating_mul(TRAINING_DUMMY_HEALTH_MULTIPLIER);
+        for feature in &map.features {
+            let (kind, behavior) = match feature.kind {
+                ArenaMapFeatureKind::TrainingDummyResetFull => (
+                    ArenaDeployableKind::TrainingDummyResetFull,
+                    DeployableBehavior::TrainingDummyResetFull,
+                ),
+                ArenaMapFeatureKind::TrainingDummyExecute => (
+                    ArenaDeployableKind::TrainingDummyExecute,
+                    DeployableBehavior::TrainingDummyExecute,
+                ),
+            };
+            let deployable_id = self.next_deployable_id();
+            self.deployables.push(DeployableState {
+                id: deployable_id,
+                owner,
+                team: dummy_team,
+                kind,
+                x: feature.center_x,
+                y: feature.center_y,
+                radius: PLAYER_RADIUS_UNITS,
+                hit_points,
+                max_hit_points: hit_points,
+                remaining_ms: u16::MAX,
+                blocks_movement: false,
+                blocks_projectiles: false,
+                behavior,
+            });
+        }
+    }
+
+    fn training_dummy_execute_hit_points(max_hit_points: u16) -> u16 {
+        let threshold =
+            (u32::from(max_hit_points) * u32::from(TRAINING_DUMMY_RESET_THRESHOLD_BPS)) / 10_000;
+        u16::try_from(threshold.max(1)).unwrap_or(1)
     }
 }
 

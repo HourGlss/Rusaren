@@ -125,6 +125,7 @@ fn projectiles_travel_through_shrubs_but_stop_on_pillars() {
 
 #[test]
 fn movement_helpers_return_exact_values() {
+    let full_footprint = vec![0xFF; (5_usize * 5).div_ceil(8)];
     assert_eq!(
         movement_delta(MovementIntent::zero(), 100),
         (0, 0),
@@ -165,25 +166,37 @@ fn movement_helpers_return_exact_values() {
     };
 
     assert_eq!(
-        resolve_movement(0, 0, 500, 0, 500, 500, &[]),
+        resolve_movement(0, 0, 500, 0, 500, 500, 5, 5, 100, &full_footprint, &[]),
         (222, 0),
         "movement should clamp to the arena edge while respecting player radius"
     );
     assert_eq!(
-        resolve_movement(0, 0, -500, -500, 500, 500, &[]),
+        resolve_movement(0, 0, -500, -500, 500, 500, 5, 5, 100, &full_footprint, &[],),
         (-222, -222)
     );
     assert_eq!(
-        resolve_movement(0, 0, 100, -100, 500, 500, &[]),
+        resolve_movement(0, 0, 100, -100, 500, 500, 5, 5, 100, &full_footprint, &[]),
         (100, -100)
     );
     assert_eq!(
-        resolve_movement(-100, 0, 0, 0, 500, 500, &[pillar]),
+        resolve_movement(
+            -100,
+            0,
+            0,
+            0,
+            500,
+            500,
+            5,
+            5,
+            100,
+            &full_footprint,
+            &[pillar],
+        ),
         (-100, 0),
         "movement into a blocking pillar should revert to the starting point"
     );
     assert_eq!(
-        resolve_movement(0, 0, 260, 260, 500, 500, &[]),
+        resolve_movement(0, 0, 260, 260, 500, 500, 5, 5, 100, &full_footprint, &[]),
         (222, 222),
         "movement should clamp independently on both axes at the arena edge"
     );
@@ -447,21 +460,25 @@ fn spawn_positions_and_obstacle_blocking_rules_stay_stable() {
 
     assert_eq!(
         spawn_position(TeamSide::TeamA, 0, map),
-        (map.team_a_anchor.0, map.team_a_anchor.1, DEFAULT_AIM_X)
+        (
+            map.team_a_anchors[0].0,
+            map.team_a_anchors[0].1,
+            DEFAULT_AIM_X
+        )
     );
     assert_eq!(
         spawn_position(TeamSide::TeamB, 1, map),
         (
-            map.team_b_anchor.0,
-            map.team_b_anchor.1 + SPAWN_SPACING_UNITS,
+            map.team_b_anchors[0].0,
+            map.team_b_anchors[0].1 + SPAWN_SPACING_UNITS,
             -DEFAULT_AIM_X,
         )
     );
     assert_eq!(
         spawn_position(TeamSide::TeamA, 2, map),
         (
-            map.team_a_anchor.0,
-            map.team_a_anchor.1 + SPAWN_SPACING_UNITS.saturating_mul(2),
+            map.team_a_anchors[0].0,
+            map.team_a_anchors[0].1 + SPAWN_SPACING_UNITS.saturating_mul(2),
             DEFAULT_AIM_X,
         )
     );
@@ -475,6 +492,44 @@ fn spawn_positions_and_obstacle_blocking_rules_stay_stable() {
     assert!(obstacle_blocks_movement(&mapped));
     assert!(obstacle_blocks_projectiles(&mapped));
     assert!(obstacle_blocks_vision(&mapped));
+}
+
+#[test]
+fn multi_anchor_spawns_cycle_across_authored_spawn_points() {
+    let map = game_content::ArenaMapDefinition {
+        map_id: String::from("multi-anchor"),
+        width_tiles: 10,
+        height_tiles: 6,
+        tile_units: 100,
+        width_units: 1000,
+        height_units: 600,
+        footprint_mask: vec![0xFF; (10_usize * 6).div_ceil(8)],
+        team_a_anchors: vec![(-350, -120), (-350, 0), (-350, 120)],
+        team_b_anchors: vec![(350, -120), (350, 0), (350, 120)],
+        obstacles: Vec::new(),
+        features: Vec::new(),
+    };
+
+    assert_eq!(
+        spawn_position(TeamSide::TeamA, 0, &map),
+        (-350, -120, DEFAULT_AIM_X)
+    );
+    assert_eq!(
+        spawn_position(TeamSide::TeamA, 1, &map),
+        (-350, 0, DEFAULT_AIM_X)
+    );
+    assert_eq!(
+        spawn_position(TeamSide::TeamA, 2, &map),
+        (-350, 120, DEFAULT_AIM_X)
+    );
+    assert_eq!(
+        spawn_position(TeamSide::TeamA, 3, &map),
+        (-350, -120 + SPAWN_SPACING_UNITS, DEFAULT_AIM_X)
+    );
+    assert_eq!(
+        spawn_position(TeamSide::TeamB, 4, &map),
+        (350, 0 + SPAWN_SPACING_UNITS, -DEFAULT_AIM_X)
+    );
 }
 
 #[test]

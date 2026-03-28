@@ -1,15 +1,15 @@
 use std::path::Path;
 
 use super::{
-    AnchorPoint, ArenaMapDefinition, ArenaMapObstacle, ArenaMapObstacleKind, ContentError,
-    DEFAULT_TILE_UNITS, MAX_MAP_DIMENSION_TILES,
+    AnchorPoint, ArenaMapDefinition, ArenaMapFeature, ArenaMapFeatureKind, ArenaMapObstacle,
+    ArenaMapObstacleKind, ContentError, DEFAULT_TILE_UNITS, MAX_MAP_DIMENSION_TILES,
 };
 
 pub fn parse_ascii_map(source: &str, ascii_map: &str) -> Result<ArenaMapDefinition, ContentError> {
     let rows = collect_map_rows(source, ascii_map)?;
     let (width_tiles, height_tiles, width_units, height_units) =
         validate_map_dimensions(source, &rows)?;
-    let (team_a_anchor, team_b_anchor, obstacles) =
+    let (footprint_mask, team_a_anchors, team_b_anchors, obstacles, features) =
         parse_map_layout(source, &rows, width_tiles, height_tiles)?;
 
     Ok(ArenaMapDefinition {
@@ -19,9 +19,11 @@ pub fn parse_ascii_map(source: &str, ascii_map: &str) -> Result<ArenaMapDefiniti
         tile_units: DEFAULT_TILE_UNITS,
         width_units,
         height_units,
-        team_a_anchor,
-        team_b_anchor,
+        footprint_mask,
+        team_a_anchors,
+        team_b_anchors,
         obstacles,
+        features,
     })
 }
 
@@ -44,7 +46,11 @@ fn validate_map_dimensions(
     source: &str,
     rows: &[&str],
 ) -> Result<(u16, u16, u16, u16), ContentError> {
-    let width = rows[0].chars().count();
+    let width = rows
+        .iter()
+        .map(|row| row.chars().count())
+        .max()
+        .unwrap_or(0);
     if width == 0 || width > MAX_MAP_DIMENSION_TILES {
         return Err(ContentError::Validation {
             source: String::from(source),
@@ -92,16 +98,26 @@ fn parse_map_layout(
     rows: &[&str],
     width_tiles: u16,
     height_tiles: u16,
-) -> Result<(AnchorPoint, AnchorPoint, Vec<ArenaMapObstacle>), ContentError> {
-    let mut team_a_anchor = None;
-    let mut team_b_anchor = None;
+) -> Result<
+    (
+        Vec<u8>,
+        Vec<AnchorPoint>,
+        Vec<AnchorPoint>,
+        Vec<ArenaMapObstacle>,
+        Vec<ArenaMapFeature>,
+    ),
+    ContentError,
+> {
+    let mut footprint_mask = blank_map_mask(width_tiles, height_tiles);
+    let mut team_a_anchors = Vec::new();
+    let mut team_b_anchors = Vec::new();
     let mut obstacles = Vec::new();
-    let expected_width = usize::from(width_tiles);
+    let mut features = Vec::new();
 
     for (row_index, row) in rows.iter().enumerate() {
-        validate_map_row_width(source, row, row_index, expected_width)?;
-
-        for (column_index, glyph) in row.chars().enumerate() {
+        let glyphs = row.chars().collect::<Vec<_>>();
+        for column_index in 0..usize::from(width_tiles) {
+            let glyph = glyphs.get(column_index).copied().unwrap_or(' ');
             let (center_x, center_y) = map_cell_center(
                 width_tiles,
                 height_tiles,
@@ -114,45 +130,63 @@ fn parse_map_layout(
                 glyph,
                 row_index,
                 column_index,
+                &mut footprint_mask,
+                width_tiles,
                 center_x,
                 center_y,
-                &mut team_a_anchor,
-                &mut team_b_anchor,
+                &mut team_a_anchors,
+                &mut team_b_anchors,
                 &mut obstacles,
+                &mut features,
             )?;
         }
     }
 
-    let team_a_anchor = team_a_anchor.ok_or_else(|| ContentError::Validation {
-        source: String::from(source),
-        message: String::from("map must contain one Team A anchor 'A'"),
-    })?;
-    let team_b_anchor = team_b_anchor.ok_or_else(|| ContentError::Validation {
-        source: String::from(source),
-        message: String::from("map must contain one Team B anchor 'B'"),
-    })?;
-    Ok((team_a_anchor, team_b_anchor, obstacles))
-}
-
-fn validate_map_row_width(
-    source: &str,
-    row: &str,
-    row_index: usize,
-    expected_width: usize,
-) -> Result<(), ContentError> {
-    let row_width = row.chars().count();
-    if row_width != expected_width {
+    if team_a_anchors.is_empty() {
         return Err(ContentError::Validation {
             source: String::from(source),
-            message: format!(
-                "row {} has width {} but expected {}",
-                row_index + 1,
-                row_width,
-                expected_width
-            ),
+            message: String::from("map must contain at least one Team A anchor 'A'"),
         });
     }
-    Ok(())
+    if team_b_anchors.is_empty() {
+        return Err(ContentError::Validation {
+            source: String::from(source),
+            message: String::from("map must contain at least one Team B anchor 'B'"),
+        });
+    }
+    if team_a_anchors.len() > 3 {
+        return Err(ContentError::Validation {
+            source: String::from(source),
+            message: String::from("map must contain at most three Team A anchors"),
+        });
+    }
+    if team_b_anchors.len() > 3 {
+        return Err(ContentError::Validation {
+            source: String::from(source),
+            message: String::from("map must contain at most three Team B anchors"),
+        });
+    }
+    Ok((
+        footprint_mask,
+        team_a_anchors,
+        team_b_anchors,
+        obstacles,
+        features,
+    ))
+}
+
+fn blank_map_mask(width_tiles: u16, height_tiles: u16) -> Vec<u8> {
+    let tile_count = usize::from(width_tiles) * usize::from(height_tiles);
+    vec![0_u8; tile_count.div_ceil(8)]
+}
+
+fn set_map_mask_bit(mask: &mut [u8], width_tiles: u16, row_index: usize, column_index: usize) {
+    let index = row_index * usize::from(width_tiles) + column_index;
+    let byte_index = index / 8;
+    let bit_index = index % 8;
+    if let Some(byte) = mask.get_mut(byte_index) {
+        *byte |= 1_u8 << bit_index;
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -161,17 +195,33 @@ fn parse_map_glyph(
     glyph: char,
     row_index: usize,
     column_index: usize,
+    footprint_mask: &mut [u8],
+    width_tiles: u16,
     center_x: i16,
     center_y: i16,
-    team_a_anchor: &mut Option<AnchorPoint>,
-    team_b_anchor: &mut Option<AnchorPoint>,
+    team_a_anchors: &mut Vec<AnchorPoint>,
+    team_b_anchors: &mut Vec<AnchorPoint>,
     obstacles: &mut Vec<ArenaMapObstacle>,
+    features: &mut Vec<ArenaMapFeature>,
 ) -> Result<(), ContentError> {
     match glyph {
-        '.' | ' ' => Ok(()),
-        'A' => set_team_anchor(source, "A", team_a_anchor, center_x, center_y),
-        'B' => set_team_anchor(source, "B", team_b_anchor, center_x, center_y),
+        ' ' => Ok(()),
+        '.' => {
+            set_map_mask_bit(footprint_mask, width_tiles, row_index, column_index);
+            Ok(())
+        }
+        'A' => {
+            set_map_mask_bit(footprint_mask, width_tiles, row_index, column_index);
+            team_a_anchors.push((center_x, center_y));
+            Ok(())
+        }
+        'B' => {
+            set_map_mask_bit(footprint_mask, width_tiles, row_index, column_index);
+            team_b_anchors.push((center_x, center_y));
+            Ok(())
+        }
         '#' => {
+            set_map_mask_bit(footprint_mask, width_tiles, row_index, column_index);
             obstacles.push(map_obstacle(
                 ArenaMapObstacleKind::Pillar,
                 center_x,
@@ -180,11 +230,30 @@ fn parse_map_glyph(
             Ok(())
         }
         '+' => {
+            set_map_mask_bit(footprint_mask, width_tiles, row_index, column_index);
             obstacles.push(map_obstacle(
                 ArenaMapObstacleKind::Shrub,
                 center_x,
                 center_y,
             ));
+            Ok(())
+        }
+        'd' => {
+            set_map_mask_bit(footprint_mask, width_tiles, row_index, column_index);
+            features.push(ArenaMapFeature {
+                kind: ArenaMapFeatureKind::TrainingDummyResetFull,
+                center_x,
+                center_y,
+            });
+            Ok(())
+        }
+        'D' => {
+            set_map_mask_bit(footprint_mask, width_tiles, row_index, column_index);
+            features.push(ArenaMapFeature {
+                kind: ArenaMapFeatureKind::TrainingDummyExecute,
+                center_x,
+                center_y,
+            });
             Ok(())
         }
         other => Err(ContentError::Validation {
@@ -196,22 +265,6 @@ fn parse_map_glyph(
             ),
         }),
     }
-}
-
-fn set_team_anchor(
-    source: &str,
-    label: &str,
-    anchor: &mut Option<AnchorPoint>,
-    center_x: i16,
-    center_y: i16,
-) -> Result<(), ContentError> {
-    if anchor.replace((center_x, center_y)).is_some() {
-        return Err(ContentError::Validation {
-            source: String::from(source),
-            message: format!("map must contain exactly one Team {label} anchor"),
-        });
-    }
-    Ok(())
 }
 
 fn map_obstacle(kind: ArenaMapObstacleKind, center_x: i16, center_y: i16) -> ArenaMapObstacle {

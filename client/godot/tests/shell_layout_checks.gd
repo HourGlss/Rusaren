@@ -14,6 +14,7 @@ func _run() -> void:
 	success = await _assert_joined_shell_hides_setup_chrome() and success
 	success = await _assert_lobby_panel_shows_roster_team_and_ready_state() and success
 	success = await _assert_skill_pick_layout_prioritizes_skill_buttons() and success
+	success = await _assert_training_shell_surfaces_live_loadout_and_reset_controls() and success
 	success = await _assert_combat_hud_surfaces_local_skill_names() and success
 	success = await _assert_round_and_match_summary_panels_surface_event_data() and success
 	success = await _assert_disconnect_resets_back_to_central_shell() and success
@@ -219,6 +220,150 @@ func _assert_skill_pick_layout_prioritizes_skill_buttons() -> bool:
 	var control_color := shell.skill_buttons[1].get_theme_color("font_color")
 	if damage_color == control_color:
 		success = _fail("skill button labels should use category colors for readability") and success
+
+	await _despawn_shell(shell)
+	return success
+
+
+func _assert_training_shell_surfaces_live_loadout_and_reset_controls() -> bool:
+	var shell = await _spawn_shell()
+	shell.app_state.mark_transport_state("open")
+	shell.app_state.local_player_id = 11
+	shell.app_state.local_player_name = "Alice"
+	shell._refresh_ui()
+
+	var success := true
+	if shell.start_training_button == null or not shell.start_training_button.visible:
+		success = _fail("central shell should expose the start-training action") and success
+	elif shell.start_training_button.disabled:
+		success = _fail("start-training should be enabled from the central shell when transport is open") and success
+
+	shell.app_state.apply_server_event({
+		"type": "Connected",
+		"player_id": 11,
+		"player_name": "Alice",
+		"record": {
+			"wins": 0,
+			"losses": 0,
+			"no_contests": 0,
+		},
+		"skill_catalog": [
+			{
+				"tree": "Warrior",
+				"tier": 1,
+				"skill_id": "warrior_t1_bash",
+				"skill_name": "Bash",
+				"skill_description": "Short melee stun.",
+				"skill_summary": "CD 0.9s | Cast instant\nBeam: range 90, radius 28\nStatus: Stun for 1s",
+				"ui_category": "control",
+			},
+			{
+				"tree": "Ranger",
+				"tier": 4,
+				"skill_id": "ranger_t4_watchpost",
+				"skill_name": "Watchpost",
+				"skill_description": "Place a vision ward.",
+				"skill_summary": "CD 7.0s | Cast instant | Mana 20\nWard: place 180 away, vision radius 160, 120 HP, lasts 60s",
+				"ui_category": "utility",
+			},
+		],
+	})
+	shell.app_state.apply_server_event({
+		"type": "TrainingStarted",
+		"training_id": 14,
+	})
+	shell.app_state.apply_server_event({
+		"type": "ArenaStateSnapshot",
+		"snapshot": {
+			"mode": "Training",
+			"phase": "Combat",
+			"width": 900,
+			"height": 700,
+			"tile_units": 50,
+			"footprint_tiles": PackedByteArray([0x1F, 0x01]),
+			"visible_tiles": PackedByteArray([0x1F, 0x01]),
+			"explored_tiles": PackedByteArray([0x1F, 0x01]),
+			"obstacles": [],
+			"deployables": [
+				{
+					"id": 91,
+					"owner": 11,
+					"team": "Team A",
+					"kind": "TrainingDummyResetFull",
+					"x": -120,
+					"y": 40,
+					"radius": 28,
+					"hit_points": 10000,
+					"max_hit_points": 10000,
+					"remaining_ms": 0,
+				},
+				{
+					"id": 92,
+					"owner": 11,
+					"team": "Team A",
+					"kind": "TrainingDummyExecute",
+					"x": 120,
+					"y": 40,
+					"radius": 28,
+					"hit_points": 500,
+					"max_hit_points": 10000,
+					"remaining_ms": 0,
+				},
+			],
+			"players": [
+				{
+					"player_id": 11,
+					"player_name": "Alice",
+					"team": "Team A",
+					"x": -320,
+					"y": 0,
+					"aim_x": 160,
+					"aim_y": 0,
+					"hit_points": 100,
+					"max_hit_points": 100,
+					"mana": 100,
+					"max_mana": 100,
+					"alive": true,
+					"unlocked_skill_slots": 5,
+					"primary_cooldown_remaining_ms": 0,
+					"primary_cooldown_total_ms": 600,
+					"slot_cooldown_remaining_ms": [0, 0, 0, 0, 0],
+					"slot_cooldown_total_ms": [0, 0, 0, 0, 0],
+					"equipped_skill_trees": ["Warrior", "", "", "Ranger", ""],
+					"current_cast_slot": 0,
+					"current_cast_remaining_ms": 0,
+					"current_cast_total_ms": 0,
+					"active_statuses": [],
+				},
+			],
+			"projectiles": [],
+			"training_metrics": {
+				"damage_done": 420,
+				"healing_done": 150,
+				"elapsed_ms": 5000,
+			},
+		},
+	})
+	shell._refresh_ui()
+
+	if not shell.match_panel.visible:
+		success = _fail("training should enter the match shell") and success
+	if not shell.skill_pick_panel.visible:
+		success = _fail("training should keep the live loadout catalog visible") and success
+	if not shell.combat_panel.visible:
+		success = _fail("training should also keep the combat panel visible") and success
+	if shell.training_metrics_label == null or not shell.training_metrics_label.visible:
+		success = _fail("training should surface the metrics label") and success
+	elif not shell.training_metrics_label.text.contains("DPS") or not shell.training_metrics_label.text.contains("dmg 420"):
+		success = _fail("training metrics should show damage, healing, and throughput") and success
+	if shell.reset_training_button == null or not shell.reset_training_button.visible:
+		success = _fail("training should expose the reset action") and success
+	if shell.quit_arena_button == null or not shell.quit_arena_button.visible:
+		success = _fail("training should expose the quit-training action") and success
+	if shell.score_label.text != "Training Mode":
+		success = _fail("training should replace the normal scoreboard label") and success
+	if shell.skill_buttons.is_empty() or not shell.skill_buttons[0].tooltip_text.contains("Training equip: replace slot 1 immediately."):
+		success = _fail("training skill tooltips should explain immediate slot replacement") and success
 
 	await _despawn_shell(shell)
 	return success

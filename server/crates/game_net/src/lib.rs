@@ -14,9 +14,10 @@ pub use control::{
     ArenaCombatTextEntry, ArenaCombatTextStyle, ArenaDeltaSnapshot, ArenaDeployableKind,
     ArenaDeployableSnapshot, ArenaEffectKind, ArenaEffectSnapshot, ArenaMatchPhase,
     ArenaObstacleKind, ArenaObstacleSnapshot, ArenaPlayerSnapshot, ArenaProjectileSnapshot,
-    ArenaStateSnapshot, ArenaStatusKind, ArenaStatusSnapshot, ClientControlCommand,
-    CombatSummaryLine, LobbyDirectoryEntry, LobbySnapshotPhase, LobbySnapshotPlayer,
-    MatchSummarySnapshot, RoundSummarySnapshot, ServerControlEvent, SkillCatalogEntry,
+    ArenaSessionMode, ArenaStateSnapshot, ArenaStatusKind, ArenaStatusSnapshot,
+    ClientControlCommand, CombatSummaryLine, LobbyDirectoryEntry, LobbySnapshotPhase,
+    LobbySnapshotPlayer, MatchSummarySnapshot, RoundSummarySnapshot, ServerControlEvent,
+    SkillCatalogEntry, TrainingMetricsSnapshot,
 };
 pub use error::PacketError;
 pub use header::PacketHeader;
@@ -25,7 +26,7 @@ pub use input::{SequenceTracker, ValidatedInputFrame};
 pub use packet_types::{ChannelId, PacketKind};
 
 pub const PACKET_MAGIC: u16 = 0x5241;
-pub const PROTOCOL_VERSION: u8 = 5;
+pub const PROTOCOL_VERSION: u8 = 6;
 pub const HEADER_LEN: usize = 16;
 pub const INPUT_PAYLOAD_LEN: usize = 16;
 pub const INPUT_PAYLOAD_LEN_U16: u16 = 16;

@@ -59,6 +59,7 @@ impl ServerControlEvent {
             17..=21 => decode_snapshot_event(kind, payload, index),
             22..=23 => decode_summary_event(kind, payload, index),
             24 => decode_snapshot_event(kind, payload, index),
+            25 => decode_match_event(kind, payload, index),
             other => Err(PacketError::UnknownServerEvent(other)),
         }
     }
@@ -115,6 +116,9 @@ fn decode_match_event(
         12 => Ok(ServerControlEvent::CombatStarted),
         13 => decode_round_won_event(payload, index),
         14 => decode_match_ended_event(payload, index),
+        25 => Ok(ServerControlEvent::TrainingStarted {
+            training_id: read_match_id(payload, index, "TrainingStarted")?,
+        }),
         _ => Err(PacketError::UnknownServerEvent(kind)),
     }
 }

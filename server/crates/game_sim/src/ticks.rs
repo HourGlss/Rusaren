@@ -158,6 +158,10 @@ impl SimulationWorld {
     pub(super) fn move_players(&mut self, delta_ms: u16, events: &mut Vec<SimulationEvent>) {
         let arena_width_units = self.arena_width_units;
         let arena_height_units = self.arena_height_units;
+        let arena_width_tiles = self.arena_width_tiles;
+        let arena_height_tiles = self.arena_height_tiles;
+        let arena_tile_units = self.arena_tile_units;
+        let footprint_mask = self.footprint_mask.clone();
         let obstacles = self.combat_obstacles();
         let player_ids = self.players.keys().copied().collect::<Vec<_>>();
         for player_id in player_ids {
@@ -239,6 +243,10 @@ impl SimulationWorld {
                 next_y,
                 arena_width_units,
                 arena_height_units,
+                arena_width_tiles,
+                arena_height_tiles,
+                arena_tile_units,
+                &footprint_mask,
                 &obstacles,
             );
 
@@ -273,8 +281,17 @@ impl SimulationWorld {
                 continue;
             };
             let mut deployable = self.deployables[index].clone();
-            deployable.remaining_ms = deployable.remaining_ms.saturating_sub(delta_ms);
-            if deployable.remaining_ms == 0 || deployable.hit_points == 0 {
+            let permanent_training_dummy = matches!(
+                deployable.behavior,
+                DeployableBehavior::TrainingDummyResetFull
+                    | DeployableBehavior::TrainingDummyExecute
+            );
+            if !permanent_training_dummy {
+                deployable.remaining_ms = deployable.remaining_ms.saturating_sub(delta_ms);
+            }
+            if (!permanent_training_dummy && deployable.remaining_ms == 0)
+                || deployable.hit_points == 0
+            {
                 expired.push(deployable_id);
                 continue;
             }
@@ -338,7 +355,10 @@ impl SimulationWorld {
                         }
                     }
                 }
-                DeployableBehavior::Ward | DeployableBehavior::Barrier => {}
+                DeployableBehavior::Ward
+                | DeployableBehavior::Barrier
+                | DeployableBehavior::TrainingDummyResetFull
+                | DeployableBehavior::TrainingDummyExecute => {}
                 DeployableBehavior::Trap { payload } => {
                     if let Some(target) = self.find_enemy_player_near_point(
                         deployable.owner,

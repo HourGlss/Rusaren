@@ -18,6 +18,11 @@ impl ServerApp {
 
             self.advance_combat_match(transport, match_id);
         }
+
+        let training_ids = self.training_sessions.keys().copied().collect::<Vec<_>>();
+        for training_id in training_ids {
+            self.advance_training_session(transport, training_id);
+        }
     }
 
     fn is_combat_match(&self, match_id: MatchId) -> bool {
@@ -59,6 +64,32 @@ impl ServerApp {
         self.broadcast_arena_delta_snapshot(transport, match_id);
     }
 
+    fn advance_training_session<T: AppTransport>(
+        &mut self,
+        transport: &mut T,
+        training_id: MatchId,
+    ) {
+        let Some((simulation_events, effect_batch, errors)) =
+            self.tick_training_session(training_id)
+        else {
+            return;
+        };
+        if !effect_batch.is_empty() {
+            self.broadcast_training_effect_batch(transport, training_id, &effect_batch);
+        }
+        if !errors.is_empty() {
+            self.broadcast_event(
+                transport,
+                &self.training_recipients(training_id),
+                ServerControlEvent::Error {
+                    message: errors.join(" | "),
+                },
+            );
+        }
+        let _ = simulation_events;
+        self.broadcast_training_delta_snapshot(transport, training_id);
+    }
+
     fn tick_combat_match(
         &mut self,
         match_id: MatchId,
@@ -85,6 +116,55 @@ impl ServerApp {
             combined_errors.push(error.to_string());
         }
         Some((effect_batch, match_events, combined_errors))
+    }
+
+    fn tick_training_session(
+        &mut self,
+        training_id: MatchId,
+    ) -> Option<(
+        Vec<game_sim::SimulationEvent>,
+        Vec<game_net::ArenaEffectSnapshot>,
+        Vec<String>,
+    )> {
+        let (simulation_events, effect_batch) = {
+            let runtime = self.training_sessions.get_mut(&training_id)?;
+            runtime.combat_frame_index = runtime.combat_frame_index.saturating_add(1);
+            runtime.metrics.elapsed_ms = runtime
+                .metrics
+                .elapsed_ms
+                .saturating_add(u32::from(COMBAT_FRAME_MS));
+            let simulation_events = runtime.world.tick(COMBAT_FRAME_MS);
+            Self::accumulate_training_metrics(
+                &mut runtime.metrics,
+                runtime.participant.player_id,
+                &simulation_events,
+            );
+            let effect_batch = Self::collect_effect_batch(&simulation_events);
+            (simulation_events, effect_batch)
+        };
+        Some((simulation_events, effect_batch, Vec::new()))
+    }
+
+    fn accumulate_training_metrics(
+        metrics: &mut super::TrainingMetrics,
+        player_id: PlayerId,
+        events: &[game_sim::SimulationEvent],
+    ) {
+        for event in events {
+            match event {
+                game_sim::SimulationEvent::DamageApplied {
+                    attacker, amount, ..
+                } if *attacker == player_id => {
+                    metrics.damage_done = metrics.damage_done.saturating_add(u32::from(*amount));
+                }
+                game_sim::SimulationEvent::HealingApplied { source, amount, .. }
+                    if *source == player_id =>
+                {
+                    metrics.healing_done = metrics.healing_done.saturating_add(u32::from(*amount));
+                }
+                _ => {}
+            }
+        }
     }
 
     fn resolve_match_progress(

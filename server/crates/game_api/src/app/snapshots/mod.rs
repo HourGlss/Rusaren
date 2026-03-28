@@ -1,6 +1,6 @@
 use game_net::{
-    ArenaDeltaSnapshot, ArenaEffectSnapshot, ArenaStateSnapshot, LobbyDirectoryEntry,
-    LobbySnapshotPhase, LobbySnapshotPlayer, ServerControlEvent,
+    ArenaDeltaSnapshot, ArenaEffectSnapshot, ArenaSessionMode, ArenaStateSnapshot,
+    LobbyDirectoryEntry, LobbySnapshotPhase, LobbySnapshotPlayer, ServerControlEvent,
 };
 
 use super::{
@@ -127,27 +127,36 @@ impl ServerApp {
         map: &ArenaMapDefinition,
     ) -> Option<ArenaStateSnapshot> {
         let runtime = self.matches.get_mut(&match_id)?;
-        let (visible_tiles, explored_tiles) =
-            Self::build_visibility_masks(runtime, viewer_id, map)?;
+        let (visible_tiles, explored_tiles) = Self::build_visibility_masks(
+            &runtime.world,
+            &mut runtime.explored_tiles,
+            viewer_id,
+            map,
+        )?;
         let obstacles =
             Self::arena_obstacles_snapshot(runtime.world.obstacles(), map, &explored_tiles);
-        let deployables = Self::arena_deployables_snapshot(runtime, viewer_id, map, &visible_tiles);
+        let deployables =
+            Self::arena_deployables_snapshot(&runtime.world, viewer_id, map, &visible_tiles);
         let players = Self::arena_players_snapshot(runtime, viewer_id, map, &visible_tiles);
-        let projectiles = Self::arena_projectiles_snapshot(runtime, viewer_id, map, &visible_tiles);
+        let projectiles =
+            Self::arena_projectiles_snapshot(&runtime.world, viewer_id, map, &visible_tiles);
         let (phase, phase_seconds_remaining) = Self::arena_match_phase_snapshot(&runtime.session);
 
         Some(ArenaStateSnapshot {
+            mode: ArenaSessionMode::Match,
             phase,
             phase_seconds_remaining,
             width: runtime.world.arena_width_units(),
             height: runtime.world.arena_height_units(),
             tile_units: map.tile_units,
+            footprint_tiles: runtime.world.footprint_mask().to_vec(),
             visible_tiles,
             explored_tiles,
             obstacles,
             deployables,
             players,
             projectiles,
+            training_metrics: None,
         })
     }
 
@@ -158,25 +167,112 @@ impl ServerApp {
         map: &ArenaMapDefinition,
     ) -> Option<ArenaDeltaSnapshot> {
         let runtime = self.matches.get_mut(&match_id)?;
-        let (visible_tiles, explored_tiles) =
-            Self::build_visibility_masks(runtime, viewer_id, map)?;
+        let (visible_tiles, explored_tiles) = Self::build_visibility_masks(
+            &runtime.world,
+            &mut runtime.explored_tiles,
+            viewer_id,
+            map,
+        )?;
         let obstacles =
             Self::arena_obstacles_snapshot(runtime.world.obstacles(), map, &explored_tiles);
-        let deployables = Self::arena_deployables_snapshot(runtime, viewer_id, map, &visible_tiles);
+        let deployables =
+            Self::arena_deployables_snapshot(&runtime.world, viewer_id, map, &visible_tiles);
         let players = Self::arena_players_snapshot(runtime, viewer_id, map, &visible_tiles);
-        let projectiles = Self::arena_projectiles_snapshot(runtime, viewer_id, map, &visible_tiles);
+        let projectiles =
+            Self::arena_projectiles_snapshot(&runtime.world, viewer_id, map, &visible_tiles);
         let (phase, phase_seconds_remaining) = Self::arena_match_phase_snapshot(&runtime.session);
 
         Some(ArenaDeltaSnapshot {
+            mode: ArenaSessionMode::Match,
             phase,
             phase_seconds_remaining,
             tile_units: map.tile_units,
+            footprint_tiles: runtime.world.footprint_mask().to_vec(),
             visible_tiles,
             explored_tiles,
             obstacles,
             deployables,
             players,
             projectiles,
+            training_metrics: None,
+        })
+    }
+
+    pub(super) fn build_training_state_snapshot(
+        &mut self,
+        training_id: MatchId,
+        viewer_id: PlayerId,
+        map: &ArenaMapDefinition,
+    ) -> Option<ArenaStateSnapshot> {
+        let runtime = self.training_sessions.get_mut(&training_id)?;
+        let (visible_tiles, explored_tiles) = Self::build_visibility_masks(
+            &runtime.world,
+            &mut runtime.explored_tiles,
+            viewer_id,
+            map,
+        )?;
+        let obstacles =
+            Self::arena_obstacles_snapshot(runtime.world.obstacles(), map, &explored_tiles);
+        let deployables =
+            Self::arena_deployables_snapshot(&runtime.world, viewer_id, map, &visible_tiles);
+        let players =
+            Self::arena_training_players_snapshot(runtime, viewer_id, map, &visible_tiles);
+        let projectiles =
+            Self::arena_projectiles_snapshot(&runtime.world, viewer_id, map, &visible_tiles);
+
+        Some(ArenaStateSnapshot {
+            mode: ArenaSessionMode::Training,
+            phase: game_net::ArenaMatchPhase::Combat,
+            phase_seconds_remaining: None,
+            width: runtime.world.arena_width_units(),
+            height: runtime.world.arena_height_units(),
+            tile_units: map.tile_units,
+            footprint_tiles: runtime.world.footprint_mask().to_vec(),
+            visible_tiles,
+            explored_tiles,
+            obstacles,
+            deployables,
+            players,
+            projectiles,
+            training_metrics: Some(Self::training_metrics_snapshot(runtime)),
+        })
+    }
+
+    pub(super) fn build_training_delta_snapshot(
+        &mut self,
+        training_id: MatchId,
+        viewer_id: PlayerId,
+        map: &ArenaMapDefinition,
+    ) -> Option<ArenaDeltaSnapshot> {
+        let runtime = self.training_sessions.get_mut(&training_id)?;
+        let (visible_tiles, explored_tiles) = Self::build_visibility_masks(
+            &runtime.world,
+            &mut runtime.explored_tiles,
+            viewer_id,
+            map,
+        )?;
+        let obstacles =
+            Self::arena_obstacles_snapshot(runtime.world.obstacles(), map, &explored_tiles);
+        let deployables =
+            Self::arena_deployables_snapshot(&runtime.world, viewer_id, map, &visible_tiles);
+        let players =
+            Self::arena_training_players_snapshot(runtime, viewer_id, map, &visible_tiles);
+        let projectiles =
+            Self::arena_projectiles_snapshot(&runtime.world, viewer_id, map, &visible_tiles);
+
+        Some(ArenaDeltaSnapshot {
+            mode: ArenaSessionMode::Training,
+            phase: game_net::ArenaMatchPhase::Combat,
+            phase_seconds_remaining: None,
+            tile_units: map.tile_units,
+            footprint_tiles: runtime.world.footprint_mask().to_vec(),
+            visible_tiles,
+            explored_tiles,
+            obstacles,
+            deployables,
+            players,
+            projectiles,
+            training_metrics: Some(Self::training_metrics_snapshot(runtime)),
         })
     }
 
@@ -192,6 +288,31 @@ impl ServerApp {
         let map = self.content.map().clone();
         for recipient in recipients {
             let Some(snapshot) = self.build_arena_state_snapshot(match_id, recipient, &map) else {
+                continue;
+            };
+            self.send_event(
+                transport,
+                recipient,
+                ServerControlEvent::ArenaStateSnapshot { snapshot },
+            );
+        }
+    }
+
+    pub(super) fn broadcast_training_state_snapshot<T: AppTransport>(
+        &mut self,
+        transport: &mut T,
+        training_id: MatchId,
+    ) {
+        let recipients = self.training_recipients(training_id);
+        if recipients.is_empty() {
+            return;
+        }
+        let Some(map) = self.content.training_map().cloned() else {
+            return;
+        };
+        for recipient in recipients {
+            let Some(snapshot) = self.build_training_state_snapshot(training_id, recipient, &map)
+            else {
                 continue;
             };
             self.send_event(
@@ -224,6 +345,31 @@ impl ServerApp {
         }
     }
 
+    pub(super) fn broadcast_training_delta_snapshot<T: AppTransport>(
+        &mut self,
+        transport: &mut T,
+        training_id: MatchId,
+    ) {
+        let recipients = self.training_recipients(training_id);
+        if recipients.is_empty() {
+            return;
+        }
+        let Some(map) = self.content.training_map().cloned() else {
+            return;
+        };
+        for recipient in recipients {
+            let Some(snapshot) = self.build_training_delta_snapshot(training_id, recipient, &map)
+            else {
+                continue;
+            };
+            self.send_event(
+                transport,
+                recipient,
+                ServerControlEvent::ArenaDeltaSnapshot { snapshot },
+            );
+        }
+    }
+
     pub(super) fn broadcast_arena_effect_batch<T: AppTransport>(
         &mut self,
         transport: &mut T,
@@ -241,6 +387,59 @@ impl ServerApp {
         let map = self.content.map().clone();
         for recipient in recipients {
             let filtered = self.filter_arena_effects(match_id, recipient, effects, &map);
+            if filtered.is_empty() {
+                continue;
+            }
+            self.send_event(
+                transport,
+                recipient,
+                ServerControlEvent::ArenaEffectBatch { effects: filtered },
+            );
+        }
+    }
+
+    pub(super) fn broadcast_training_effect_batch<T: AppTransport>(
+        &mut self,
+        transport: &mut T,
+        training_id: MatchId,
+        effects: &[ArenaEffectSnapshot],
+    ) {
+        if effects.is_empty() {
+            return;
+        }
+        let recipients = self.training_recipients(training_id);
+        if recipients.is_empty() {
+            return;
+        }
+        let Some(map) = self.content.training_map().cloned() else {
+            return;
+        };
+        for recipient in recipients {
+            let Some(runtime) = self.training_sessions.get_mut(&training_id) else {
+                continue;
+            };
+            let Some((visible_tiles, _)) = Self::build_visibility_masks(
+                &runtime.world,
+                &mut runtime.explored_tiles,
+                recipient,
+                &map,
+            ) else {
+                continue;
+            };
+            let filtered = effects
+                .iter()
+                .copied()
+                .filter(|effect| {
+                    effect.owner == recipient
+                        || Self::mask_contains_point(&map, &visible_tiles, effect.x, effect.y)
+                        || Self::mask_contains_point(
+                            &map,
+                            &visible_tiles,
+                            effect.target_x,
+                            effect.target_y,
+                        )
+                })
+                .collect::<Vec<_>>();
             if filtered.is_empty() {
                 continue;
             }

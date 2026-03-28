@@ -80,6 +80,7 @@ fn control_kind_byte(event: &ServerControlEvent) -> u8 {
         | ServerControlEvent::LaunchCountdownStarted { .. }
         | ServerControlEvent::LaunchCountdownTick { .. } => lobby_kind_byte(event),
         ServerControlEvent::MatchStarted { .. }
+        | ServerControlEvent::TrainingStarted { .. }
         | ServerControlEvent::SkillChosen { .. }
         | ServerControlEvent::PreCombatStarted { .. }
         | ServerControlEvent::CombatStarted
@@ -124,8 +125,9 @@ fn match_kind_byte(event: &ServerControlEvent) -> u8 {
         ServerControlEvent::MatchEnded { .. } => 14,
         ServerControlEvent::ReturnedToCentralLobby { .. } => 15,
         ServerControlEvent::Error { .. } => 16,
-        ServerControlEvent::RoundSummary { .. } => 17,
-        ServerControlEvent::MatchSummary { .. } => 18,
+        ServerControlEvent::RoundSummary { .. } => 22,
+        ServerControlEvent::MatchSummary { .. } => 23,
+        ServerControlEvent::TrainingStarted { .. } => 25,
         _ => unreachable!("lobby variants should not route through match_kind_byte"),
     }
 }
@@ -144,6 +146,7 @@ fn encode_control_body(
         | ServerControlEvent::LaunchCountdownStarted { .. }
         | ServerControlEvent::LaunchCountdownTick { .. } => encode_lobby_body(event, payload),
         ServerControlEvent::MatchStarted { .. }
+        | ServerControlEvent::TrainingStarted { .. }
         | ServerControlEvent::SkillChosen { .. }
         | ServerControlEvent::PreCombatStarted { .. }
         | ServerControlEvent::CombatStarted
@@ -232,6 +235,10 @@ fn encode_match_body(event: ServerControlEvent, payload: &mut Vec<u8>) -> Result
             skill_pick_seconds,
         } => {
             encode_match_started_event(payload, match_id, round, skill_pick_seconds);
+            Ok(())
+        }
+        ServerControlEvent::TrainingStarted { training_id } => {
+            payload.extend_from_slice(&training_id.get().to_le_bytes());
             Ok(())
         }
         ServerControlEvent::SkillChosen {

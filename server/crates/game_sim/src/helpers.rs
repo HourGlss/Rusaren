@@ -18,18 +18,18 @@ pub(crate) fn spawn_position(
     index: u16,
     map: &ArenaMapDefinition,
 ) -> (i16, i16, i16) {
-    let horizontal_offset = i16::try_from(index).unwrap_or(i16::MAX) * SPAWN_SPACING_UNITS;
+    let anchors = match team {
+        TeamSide::TeamA => &map.team_a_anchors,
+        TeamSide::TeamB => &map.team_b_anchors,
+    };
+    let anchor_count = u16::try_from(anchors.len()).unwrap_or(1).max(1);
+    let anchor_index = usize::from(index % anchor_count);
+    let lane_index = index / anchor_count;
+    let vertical_offset = i16::try_from(lane_index).unwrap_or(i16::MAX) * SPAWN_SPACING_UNITS;
+    let anchor = anchors[anchor_index];
     match team {
-        TeamSide::TeamA => (
-            map.team_a_anchor.0,
-            map.team_a_anchor.1 + horizontal_offset,
-            DEFAULT_AIM_X,
-        ),
-        TeamSide::TeamB => (
-            map.team_b_anchor.0,
-            map.team_b_anchor.1 + horizontal_offset,
-            -DEFAULT_AIM_X,
-        ),
+        TeamSide::TeamA => (anchor.0, anchor.1 + vertical_offset, DEFAULT_AIM_X),
+        TeamSide::TeamB => (anchor.0, anchor.1 + vertical_offset, -DEFAULT_AIM_X),
     }
 }
 
@@ -127,6 +127,10 @@ pub(crate) fn resolve_movement(
     desired_y: i32,
     arena_width_units: u16,
     arena_height_units: u16,
+    width_tiles: u16,
+    height_tiles: u16,
+    tile_units: u16,
+    footprint_mask: &[u8],
     obstacles: &[ArenaObstacle],
 ) -> (i16, i16) {
     let min_x = -i32::from(arena_width_units / 2);
@@ -144,6 +148,20 @@ pub(crate) fn resolve_movement(
 
     let mut resolved_x = saturating_i16(candidate_x);
     let mut resolved_y = saturating_i16(candidate_y);
+    if !circle_fits_map_footprint(
+        resolved_x,
+        resolved_y,
+        PLAYER_RADIUS_UNITS,
+        arena_width_units,
+        arena_height_units,
+        width_tiles,
+        height_tiles,
+        tile_units,
+        footprint_mask,
+    ) {
+        resolved_x = start_x;
+        resolved_y = start_y;
+    }
     if obstacles
         .iter()
         .filter(|obstacle| obstacle_blocks_movement(obstacle))
@@ -156,4 +174,124 @@ pub(crate) fn resolve_movement(
     }
 
     (resolved_x, resolved_y)
+}
+
+pub(crate) fn map_mask_has_tile(mask: &[u8], index: usize) -> bool {
+    let byte_index = index / 8;
+    let bit_index = index % 8;
+    mask.get(byte_index)
+        .is_some_and(|byte| (byte & (1_u8 << bit_index)) != 0)
+}
+
+pub(crate) fn point_in_map_footprint(
+    x: i16,
+    y: i16,
+    arena_width_units: u16,
+    arena_height_units: u16,
+    width_tiles: u16,
+    height_tiles: u16,
+    tile_units: u16,
+    footprint_mask: &[u8],
+) -> bool {
+    let Some(index) = tile_index_for_point(
+        x,
+        y,
+        arena_width_units,
+        arena_height_units,
+        width_tiles,
+        height_tiles,
+        tile_units,
+    ) else {
+        return false;
+    };
+    map_mask_has_tile(footprint_mask, index)
+}
+
+pub(crate) fn circle_fits_map_footprint(
+    x: i16,
+    y: i16,
+    radius: u16,
+    arena_width_units: u16,
+    arena_height_units: u16,
+    width_tiles: u16,
+    height_tiles: u16,
+    tile_units: u16,
+    footprint_mask: &[u8],
+) -> bool {
+    let diagonal_offset = i16::try_from(u32::from(radius) * 707 / 1000).unwrap_or(i16::MAX);
+    let radius_i16 = i16::try_from(radius).unwrap_or(i16::MAX);
+    [
+        (x, y),
+        (x.saturating_add(radius_i16), y),
+        (x.saturating_sub(radius_i16), y),
+        (x, y.saturating_add(radius_i16)),
+        (x, y.saturating_sub(radius_i16)),
+        (
+            x.saturating_add(diagonal_offset),
+            y.saturating_add(diagonal_offset),
+        ),
+        (
+            x.saturating_add(diagonal_offset),
+            y.saturating_sub(diagonal_offset),
+        ),
+        (
+            x.saturating_sub(diagonal_offset),
+            y.saturating_add(diagonal_offset),
+        ),
+        (
+            x.saturating_sub(diagonal_offset),
+            y.saturating_sub(diagonal_offset),
+        ),
+    ]
+    .into_iter()
+    .all(|(sample_x, sample_y)| {
+        point_in_map_footprint(
+            sample_x,
+            sample_y,
+            arena_width_units,
+            arena_height_units,
+            width_tiles,
+            height_tiles,
+            tile_units,
+            footprint_mask,
+        )
+    })
+}
+
+fn tile_index_for_point(
+    x: i16,
+    y: i16,
+    arena_width_units: u16,
+    arena_height_units: u16,
+    width_tiles: u16,
+    height_tiles: u16,
+    tile_units: u16,
+) -> Option<usize> {
+    let tile_units_i32 = i32::from(tile_units);
+    if tile_units_i32 <= 0 {
+        return None;
+    }
+    let mut relative_x = i32::from(x) + i32::from(arena_width_units) / 2;
+    let mut relative_y = i32::from(y) + i32::from(arena_height_units) / 2;
+    let arena_width_units_i32 = i32::from(arena_width_units);
+    let arena_height_units_i32 = i32::from(arena_height_units);
+    if relative_x == arena_width_units_i32 {
+        relative_x = arena_width_units_i32.saturating_sub(1);
+    }
+    if relative_y == arena_height_units_i32 {
+        relative_y = arena_height_units_i32.saturating_sub(1);
+    }
+    if relative_x < 0
+        || relative_y < 0
+        || relative_x >= arena_width_units_i32
+        || relative_y >= arena_height_units_i32
+    {
+        return None;
+    }
+    let column = usize::try_from(relative_x / tile_units_i32).ok()?;
+    let row = usize::try_from(relative_y / tile_units_i32).ok()?;
+    if column >= usize::from(width_tiles) || row >= usize::from(height_tiles) {
+        return None;
+    }
+    Some(row * usize::from(width_tiles) + column)
 }

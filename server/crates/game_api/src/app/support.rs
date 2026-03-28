@@ -139,6 +139,26 @@ impl ServerApp {
         }
     }
 
+    pub(super) fn require_training<T: AppTransport>(
+        &mut self,
+        transport: &mut T,
+        player_id: PlayerId,
+    ) -> Option<MatchId> {
+        match self.players.get(&player_id) {
+            Some(player) => match player.location {
+                PlayerLocation::Training(training_id) => Some(training_id),
+                _ => {
+                    self.send_error(transport, player_id, "player is not inside training");
+                    None
+                }
+            },
+            None => {
+                self.send_error(transport, player_id, "player is not connected");
+                None
+            }
+        }
+    }
+
     pub(super) fn require_results<T: AppTransport>(
         &mut self,
         transport: &mut T,
@@ -193,6 +213,18 @@ impl ServerApp {
             .unwrap_or_default()
     }
 
+    pub(super) fn training_recipients(&self, training_id: MatchId) -> Vec<PlayerId> {
+        self.training_sessions
+            .get(&training_id)
+            .map(|runtime| {
+                self.players
+                    .contains_key(&runtime.participant.player_id)
+                    .then_some(vec![runtime.participant.player_id])
+                    .unwrap_or_default()
+            })
+            .unwrap_or_default()
+    }
+
     pub(super) fn cleanup_empty_lobby(&mut self, lobby_id: LobbyId) {
         let empty = self
             .game_lobbies
@@ -209,6 +241,16 @@ impl ServerApp {
         });
         if !still_present {
             self.matches.remove(&match_id);
+        }
+    }
+
+    pub(super) fn cleanup_finished_training(&mut self, training_id: MatchId) {
+        let still_present = self
+            .players
+            .values()
+            .any(|player| matches!(player.location, PlayerLocation::Training(current) if current == training_id));
+        if !still_present {
+            self.training_sessions.remove(&training_id);
         }
     }
 

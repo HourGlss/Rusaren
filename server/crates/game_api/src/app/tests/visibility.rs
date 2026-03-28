@@ -51,8 +51,7 @@ fn visibility_masks_tiles_players_projectiles_and_effects_are_precise() {
     let map = server.content.map().clone();
 
     let runtime = server.matches.get_mut(&match_id).expect("match runtime");
-    let (visible_tiles, explored_tiles) =
-        ServerApp::build_visibility_masks(runtime, alice_id, &map).expect("visibility masks");
+    let (visible_tiles, explored_tiles) = build_runtime_visibility_masks(runtime, alice_id, &map);
     let alice_state = runtime.world.player_state(alice_id).expect("alice state");
     let close_shrub = *runtime
         .world
@@ -185,8 +184,7 @@ fn visibility_masks_tiles_players_projectiles_and_effects_are_precise() {
         .queue_cast(alice_id, 1)
         .expect("projectile skill should queue");
     let _ = runtime.world.tick(COMBAT_FRAME_MS);
-    let owned_projectiles =
-        ServerApp::arena_projectiles_snapshot(runtime, alice_id, &map, &visible_tiles);
+    let owned_projectiles = runtime_projectiles_snapshot(runtime, alice_id, &map, &visible_tiles);
     assert!(
         !owned_projectiles.is_empty(),
         "owners should receive their own projectiles even when enemies cannot"
@@ -229,9 +227,11 @@ fn visibility_helper_boundaries_and_shared_shrubs_are_precise() {
         tile_units: 100,
         width_units: 400,
         height_units: 400,
-        team_a_anchor: (-150, -150),
-        team_b_anchor: (150, 150),
+        footprint_mask: vec![0xFF, 0xFF],
+        team_a_anchors: vec![(-150, -150)],
+        team_b_anchors: vec![(150, 150)],
         obstacles: Vec::new(),
+        features: Vec::new(),
     };
 
     assert_eq!(ServerApp::tile_index_for_point(&map, -200, -200), Some(0));
@@ -431,7 +431,7 @@ fn snapshot_filters_include_visible_non_owned_entities_and_repair_explored_masks
         let runtime = server.matches.get_mut(&match_id).expect("match runtime");
         runtime.explored_tiles.insert(alice_id, vec![0xFF]);
         let (visible_tiles, explored_tiles) =
-            ServerApp::build_visibility_masks(runtime, alice_id, &map).expect("visibility");
+            build_runtime_visibility_masks(runtime, alice_id, &map);
         assert_eq!(explored_tiles.len(), visible_tiles.len());
         assert_ne!(explored_tiles, vec![0xFF]);
 
@@ -461,12 +461,11 @@ fn snapshot_filters_include_visible_non_owned_entities_and_repair_explored_masks
             ServerApp::tile_index_for_point(&map, bob_projectile.x, bob_projectile.y)
                 .expect("projectile tile should be on the map");
         ServerApp::set_mask_bit(&mut projectile_mask, projectile_tile);
-        let projectiles =
-            ServerApp::arena_projectiles_snapshot(runtime, alice_id, &map, &projectile_mask);
+        let projectiles = runtime_projectiles_snapshot(runtime, alice_id, &map, &projectile_mask);
         assert!(projectiles
             .iter()
             .any(|projectile| projectile.owner == bob_id));
-        let hidden_projectiles = ServerApp::arena_projectiles_snapshot(
+        let hidden_projectiles = runtime_projectiles_snapshot(
             runtime,
             alice_id,
             &map,
@@ -587,7 +586,7 @@ fn deployable_snapshots_always_include_owned_and_only_visible_foreign_entities()
         .find(|deployable| deployable.owner == bob_id)
         .expect("bob ward");
 
-    let hidden_snapshot = ServerApp::arena_deployables_snapshot(
+    let hidden_snapshot = runtime_deployables_snapshot(
         &runtime,
         alice_id,
         &map,
@@ -610,8 +609,7 @@ fn deployable_snapshots_always_include_owned_and_only_visible_foreign_entities()
     let bob_tile = ServerApp::tile_index_for_point(&map, bob_ward.x, bob_ward.y)
         .expect("bob ward tile should exist");
     ServerApp::set_mask_bit(&mut visible_mask, bob_tile);
-    let visible_snapshot =
-        ServerApp::arena_deployables_snapshot(&runtime, alice_id, &map, &visible_mask);
+    let visible_snapshot = runtime_deployables_snapshot(&runtime, alice_id, &map, &visible_mask);
     assert!(visible_snapshot
         .iter()
         .any(|deployable| deployable.id == alice_ward.id && deployable.owner == alice_id));
@@ -663,7 +661,7 @@ fn aura_deployables_are_omitted_from_arena_snapshots() {
         "the authored aura skill should still create an aura deployable in the sim"
     );
 
-    let snapshot = ServerApp::arena_deployables_snapshot(
+    let snapshot = runtime_deployables_snapshot(
         &runtime,
         alice_id,
         &map,
@@ -679,6 +677,33 @@ fn aura_deployables_are_omitted_from_arena_snapshots() {
 
 fn manual_player_id(raw: u32) -> PlayerId {
     PlayerId::new(raw).expect("valid player id")
+}
+
+fn build_runtime_visibility_masks(
+    runtime: &mut MatchRuntime,
+    viewer_id: PlayerId,
+    map: &game_content::ArenaMapDefinition,
+) -> (Vec<u8>, Vec<u8>) {
+    ServerApp::build_visibility_masks(&runtime.world, &mut runtime.explored_tiles, viewer_id, map)
+        .expect("visibility mask")
+}
+
+fn runtime_projectiles_snapshot(
+    runtime: &MatchRuntime,
+    viewer_id: PlayerId,
+    map: &game_content::ArenaMapDefinition,
+    visible_tiles: &[u8],
+) -> Vec<game_net::ArenaProjectileSnapshot> {
+    ServerApp::arena_projectiles_snapshot(&runtime.world, viewer_id, map, visible_tiles)
+}
+
+fn runtime_deployables_snapshot(
+    runtime: &MatchRuntime,
+    viewer_id: PlayerId,
+    map: &game_content::ArenaMapDefinition,
+    visible_tiles: &[u8],
+) -> Vec<game_net::ArenaDeployableSnapshot> {
+    ServerApp::arena_deployables_snapshot(&runtime.world, viewer_id, map, visible_tiles)
 }
 
 fn manual_assignment(raw_id: u32, raw_name: &str, team: TeamSide) -> TeamAssignment {
@@ -767,7 +792,10 @@ fn content_with_reveal_only_field(
     let mage_path = root.join("skills").join("mage.yaml");
     let mage_yaml = fs::read_to_string(&mage_path).expect("mage yaml");
     let patched = mage_yaml
-        .replace("amount: 4\r\n        status:", "amount: 0\r\n        status:")
+        .replace(
+            "amount: 4\r\n        status:",
+            "amount: 0\r\n        status:",
+        )
         .replace("amount: 4\n        status:", "amount: 0\n        status:");
     assert_ne!(
         patched, mage_yaml,
@@ -814,8 +842,7 @@ fn allied_wards_extend_visibility_masks_and_enemy_snapshots() {
     );
 
     let bob_state = runtime.world.player_state(bob_id).expect("bob state");
-    let (visible_before, _) =
-        ServerApp::build_visibility_masks(&mut runtime, alice_id, &map).expect("mask");
+    let (visible_before, _) = build_runtime_visibility_masks(&mut runtime, alice_id, &map);
     assert!(
         !ServerApp::mask_contains_point(&map, &visible_before, bob_state.x, bob_state.y),
         "bob should begin outside alice's base vision radius on the custom map"
@@ -843,8 +870,7 @@ fn allied_wards_extend_visibility_masks_and_enemy_snapshots() {
         "the ward cast should create a deployable vision source"
     );
 
-    let (visible_after, _) =
-        ServerApp::build_visibility_masks(&mut runtime, alice_id, &map).expect("mask");
+    let (visible_after, _) = build_runtime_visibility_masks(&mut runtime, alice_id, &map);
     assert!(
         ServerApp::mask_contains_point(&map, &visible_after, bob_state.x, bob_state.y),
         "the allied ward should extend visibility to bob's location"
@@ -919,8 +945,7 @@ fn stealthed_players_stay_hidden_until_a_reveal_effect_lands() {
         .expect("stop movement");
 
     let alice_state = runtime.world.player_state(alice_id).expect("alice state");
-    let (visible_while_stealthed, _) =
-        ServerApp::build_visibility_masks(&mut runtime, bob_id, &map).expect("mask");
+    let (visible_while_stealthed, _) = build_runtime_visibility_masks(&mut runtime, bob_id, &map);
     assert!(
         ServerApp::mask_contains_point(
             &map,
@@ -953,8 +978,7 @@ fn stealthed_players_stay_hidden_until_a_reveal_effect_lands() {
         "the reveal field should apply reveal without relying on damage to break stealth in this test"
     );
 
-    let (visible_after_reveal, _) =
-        ServerApp::build_visibility_masks(&mut runtime, bob_id, &map).expect("mask");
+    let (visible_after_reveal, _) = build_runtime_visibility_masks(&mut runtime, bob_id, &map);
     assert!(
         ServerApp::arena_players_snapshot(&runtime, bob_id, &map, &visible_after_reveal)
             .iter()

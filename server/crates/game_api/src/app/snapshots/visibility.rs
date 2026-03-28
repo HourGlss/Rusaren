@@ -5,19 +5,22 @@ use game_sim::{
     ArenaObstacleKind as SimArenaObstacleKind, VISION_RADIUS_UNITS,
 };
 
-use super::super::{MatchRuntime, ServerApp};
+use std::collections::BTreeMap;
+
+use super::super::ServerApp;
 
 impl ServerApp {
     pub(in super::super) fn build_visibility_masks(
-        runtime: &mut MatchRuntime,
+        world: &game_sim::SimulationWorld,
+        explored_tiles_by_player: &mut BTreeMap<PlayerId, Vec<u8>>,
         viewer_id: PlayerId,
         map: &ArenaMapDefinition,
     ) -> Option<(Vec<u8>, Vec<u8>)> {
-        let viewer_state = runtime.world.player_state(viewer_id)?;
+        let viewer_state = world.player_state(viewer_id)?;
         let mut visible_tiles = Self::blank_visibility_mask(map);
         let viewer_position = (viewer_state.x, viewer_state.y);
         let mut vision_sources = vec![(viewer_position, VISION_RADIUS_UNITS)];
-        for deployable in runtime.world.deployables() {
+        for deployable in world.deployables() {
             if deployable.team == viewer_state.team
                 && deployable.kind == game_sim::ArenaDeployableKind::Ward
             {
@@ -30,6 +33,10 @@ impl ServerApp {
 
         for row in 0..usize::from(map.height_tiles) {
             for column in 0..usize::from(map.width_tiles) {
+                let tile_index = row * usize::from(map.width_tiles) + column;
+                if !Self::mask_has_tile(&map.footprint_mask, tile_index) {
+                    continue;
+                }
                 let tile_center = Self::tile_center_units(map, column, row);
                 if vision_sources
                     .iter()
@@ -37,19 +44,17 @@ impl ServerApp {
                         Self::point_is_visible_from_source(
                             *source_position,
                             tile_center,
-                            runtime.world.obstacles(),
+                            world.obstacles(),
                             *vision_radius,
                         )
                     })
                 {
-                    let tile_index = row * usize::from(map.width_tiles) + column;
                     Self::set_mask_bit(&mut visible_tiles, tile_index);
                 }
             }
         }
 
-        let explored_tiles = runtime
-            .explored_tiles
+        let explored_tiles = explored_tiles_by_player
             .entry(viewer_id)
             .or_insert_with(|| Self::blank_visibility_mask(map));
         if explored_tiles.len() != visible_tiles.len() {
@@ -184,7 +189,10 @@ impl ServerApp {
         for row in min_row..=max_row {
             for column in min_column..=max_column {
                 let tile_index = usize::try_from(row * width_tiles + column).unwrap_or(usize::MAX);
-                if tile_index != usize::MAX && Self::mask_has_tile(mask, tile_index) {
+                if tile_index != usize::MAX
+                    && Self::mask_has_tile(&map.footprint_mask, tile_index)
+                    && Self::mask_has_tile(mask, tile_index)
+                {
                     return true;
                 }
             }
@@ -215,7 +223,8 @@ impl ServerApp {
         }
         let column = usize::try_from(relative_x / tile_units).ok()?;
         let row = usize::try_from(relative_y / tile_units).ok()?;
-        Some(row * usize::from(map.width_tiles) + column)
+        let index = row * usize::from(map.width_tiles) + column;
+        Self::mask_has_tile(&map.footprint_mask, index).then_some(index)
     }
 
     pub(in super::super) fn tile_center_units(

@@ -45,6 +45,9 @@ pub enum ServerControlEvent {
         round: RoundNumber,
         skill_pick_seconds: u8,
     },
+    TrainingStarted {
+        training_id: MatchId,
+    },
     SkillChosen {
         player_id: PlayerId,
         tree: SkillTree,
@@ -152,6 +155,12 @@ pub enum ArenaMatchPhase {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ArenaSessionMode {
+    Match,
+    Training,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ArenaStatusKind {
     Poison,
     Hot,
@@ -192,6 +201,8 @@ pub enum ArenaDeployableKind {
     Trap,
     Barrier,
     Aura,
+    TrainingDummyResetFull,
+    TrainingDummyExecute,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -286,6 +297,13 @@ pub struct ArenaCombatTextEntry {
     pub text: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TrainingMetricsSnapshot {
+    pub damage_done: u32,
+    pub healing_done: u32,
+    pub elapsed_ms: u32,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CombatSummaryLine {
     pub player_id: PlayerId,
@@ -313,28 +331,34 @@ pub struct MatchSummarySnapshot {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ArenaStateSnapshot {
+    pub mode: ArenaSessionMode,
     pub phase: ArenaMatchPhase,
     pub phase_seconds_remaining: Option<u8>,
     pub width: u16,
     pub height: u16,
     pub tile_units: u16,
+    pub footprint_tiles: Vec<u8>,
     pub visible_tiles: Vec<u8>,
     pub explored_tiles: Vec<u8>,
     pub obstacles: Vec<ArenaObstacleSnapshot>,
     pub deployables: Vec<ArenaDeployableSnapshot>,
     pub players: Vec<ArenaPlayerSnapshot>,
     pub projectiles: Vec<ArenaProjectileSnapshot>,
+    pub training_metrics: Option<TrainingMetricsSnapshot>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ArenaDeltaSnapshot {
+    pub mode: ArenaSessionMode,
     pub phase: ArenaMatchPhase,
     pub phase_seconds_remaining: Option<u8>,
     pub tile_units: u16,
+    pub footprint_tiles: Vec<u8>,
     pub visible_tiles: Vec<u8>,
     pub explored_tiles: Vec<u8>,
     pub obstacles: Vec<ArenaObstacleSnapshot>,
     pub deployables: Vec<ArenaDeployableSnapshot>,
     pub players: Vec<ArenaPlayerSnapshot>,
     pub projectiles: Vec<ArenaProjectileSnapshot>,
+    pub training_metrics: Option<TrainingMetricsSnapshot>,
 }

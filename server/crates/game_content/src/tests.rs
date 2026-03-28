@@ -29,6 +29,22 @@ fn bundled_content_loads_all_classes_and_the_ascii_map() {
     assert!(content.skills().melee_for(&SkillTree::Warrior).is_some());
     assert_eq!(content.map().map_id, "prototype_arena");
     assert!(!content.map().obstacles.is_empty());
+    assert_eq!(
+        content.training_map().map(|map| map.map_id.as_str()),
+        Some("training_arena")
+    );
+    let training_map = content
+        .training_map()
+        .expect("bundled content should include the authored training map");
+    assert!(!training_map.footprint_mask.is_empty());
+    assert!(training_map
+        .features
+        .iter()
+        .any(|feature| matches!(feature.kind, ArenaMapFeatureKind::TrainingDummyResetFull)));
+    assert!(training_map
+        .features
+        .iter()
+        .any(|feature| matches!(feature.kind, ArenaMapFeatureKind::TrainingDummyExecute)));
     assert!(content
         .mechanics()
         .behaviors
@@ -39,22 +55,24 @@ fn bundled_content_loads_all_classes_and_the_ascii_map() {
         .behaviors
         .iter()
         .any(|mechanic| mechanic.id == "passive" && mechanic.implemented));
+    assert_eq!(content.map().team_a_anchors.len(), 1);
+    assert_eq!(content.map().team_b_anchors.len(), 1);
     assert!(
-        content.map().team_a_anchor.0 < content.map().team_b_anchor.0,
+        content.map().team_a_anchors[0].0 < content.map().team_b_anchors[0].0,
         "team A should remain left of team B in the bundled map"
     );
     assert_eq!(
-        content.map().team_a_anchor.1,
-        content.map().team_b_anchor.1,
+        content.map().team_a_anchors[0].1,
+        content.map().team_b_anchors[0].1,
         "the bundled anchors should remain on the same horizontal lane"
     );
     let half_width = i32::from(content.map().width_units) / 2;
     assert!(
-        i32::from(content.map().team_a_anchor.0).abs() < half_width,
+        i32::from(content.map().team_a_anchors[0].0).abs() < half_width,
         "team A anchor should stay inside the authored map bounds"
     );
     assert!(
-        i32::from(content.map().team_b_anchor.0).abs() < half_width,
+        i32::from(content.map().team_b_anchors[0].0).abs() < half_width,
         "team B anchor should stay inside the authored map bounds"
     );
 }
@@ -907,12 +925,26 @@ skills:
 }
 
 #[test]
-fn parse_ascii_map_rejects_ragged_rows_bad_glyphs_and_missing_anchors() {
-    let ragged = "A..\n..\n";
-    assert!(matches!(
-        parse_ascii_map("maps/ragged.txt", ragged),
-        Err(ContentError::Validation { .. })
-    ));
+fn parse_ascii_map_accepts_ragged_rows_and_rejects_bad_glyphs_and_missing_anchors() {
+    let ragged = " A.d\nA..B\n  D B\n";
+    let parsed = parse_ascii_map("maps/ragged.txt", ragged).expect("ragged rows should parse");
+    assert_eq!(parsed.width_tiles, 5);
+    assert_eq!(parsed.height_tiles, 3);
+    assert_eq!(parsed.team_a_anchors.len(), 2);
+    assert_eq!(parsed.team_b_anchors.len(), 2);
+    assert!(
+        !parsed.footprint_mask.is_empty(),
+        "ragged maps should still produce a valid footprint mask"
+    );
+    assert_eq!(parsed.features.len(), 2);
+    assert!(parsed
+        .features
+        .iter()
+        .any(|feature| matches!(feature.kind, ArenaMapFeatureKind::TrainingDummyResetFull)));
+    assert!(parsed
+        .features
+        .iter()
+        .any(|feature| matches!(feature.kind, ArenaMapFeatureKind::TrainingDummyExecute)));
 
     let invalid_glyph = "A..\n.@.\n..B\n";
     assert!(matches!(
@@ -923,6 +955,12 @@ fn parse_ascii_map_rejects_ragged_rows_bad_glyphs_and_missing_anchors() {
     let missing_anchor = "...\n.#.\n...\n";
     assert!(matches!(
         parse_ascii_map("maps/missing.txt", missing_anchor),
+        Err(ContentError::Validation { .. })
+    ));
+
+    let too_many_anchors = "AAAB\nA..B\n...B\n";
+    assert!(matches!(
+        parse_ascii_map("maps/too-many.txt", too_many_anchors),
         Err(ContentError::Validation { .. })
     ));
 }

@@ -702,6 +702,168 @@ fn persistent_player_records_survive_reconnect() {
 }
 
 #[test]
+fn training_sessions_reset_metrics_without_restarting_the_map() {
+    let mut server = ServerApp::new();
+    let mut transport = InMemoryTransport::new();
+    let mut alice = connect_player(&mut server, &mut transport, 41, "Alice");
+
+    alice
+        .start_training(&mut transport)
+        .expect("start training");
+    server.pump_transport(&mut transport);
+    let start_events = alice
+        .drain_events(&mut transport)
+        .expect("training start events should decode");
+    let training_id = start_events
+        .iter()
+        .find_map(|event| match event {
+            ServerControlEvent::TrainingStarted { training_id } => Some(*training_id),
+            _ => None,
+        })
+        .expect("training start event should be emitted");
+    let start_snapshot = arena_state_snapshot(&start_events)
+        .expect("training should immediately broadcast a snapshot");
+    assert_eq!(start_snapshot.mode, game_net::ArenaSessionMode::Training);
+    assert_eq!(start_snapshot.phase, game_net::ArenaMatchPhase::Combat);
+    assert_eq!(
+        start_snapshot.training_metrics,
+        Some(game_net::TrainingMetricsSnapshot {
+            damage_done: 0,
+            healing_done: 0,
+            elapsed_ms: 0,
+        })
+    );
+
+    let player_id = alice.player_id().expect("training player id");
+    let ranger_tree = SkillTree::new("Ranger").expect("ranger tree");
+    alice
+        .choose_skill(&mut transport, skill(ranger_tree.clone(), 4))
+        .expect("training ward skill");
+    server.pump_transport(&mut transport);
+    let _ = alice
+        .drain_events(&mut transport)
+        .expect("skill choice events should decode");
+
+    let (spawn_x, spawn_y, preserved_explored) = {
+        let runtime = server
+            .training_sessions
+            .get_mut(&training_id)
+            .expect("training runtime should exist");
+        let start_state = runtime
+            .world
+            .player_state(player_id)
+            .expect("training player state");
+        let mut explored = runtime
+            .explored_tiles
+            .get(&player_id)
+            .expect("training explored mask should exist")
+            .clone();
+        if let Some(first_byte) = explored.first_mut() {
+            *first_byte |= 0x03;
+        }
+        runtime.explored_tiles.insert(player_id, explored.clone());
+        runtime.metrics = TrainingMetrics {
+            damage_done: 900,
+            healing_done: 250,
+            elapsed_ms: 7000,
+        };
+        runtime.combat_frame_index = 77;
+        runtime
+            .world
+            .update_aim(player_id, 1, 0)
+            .expect("aim should update");
+        runtime
+            .world
+            .submit_input(
+                player_id,
+                game_sim::MovementIntent::new(1, 0).expect("movement intent"),
+            )
+            .expect("movement input should apply");
+        let _ = runtime.world.tick(game_sim::COMBAT_FRAME_MS);
+        runtime
+            .world
+            .submit_input(player_id, game_sim::MovementIntent::zero())
+            .expect("stop input should apply");
+        runtime
+            .world
+            .queue_cast(player_id, 4)
+            .expect("ward cast should queue");
+        let _ = runtime.world.tick(game_sim::COMBAT_FRAME_MS);
+        assert!(
+            runtime
+                .world
+                .deployables()
+                .into_iter()
+                .any(|deployable| deployable.kind == game_sim::ArenaDeployableKind::Ward),
+            "training should allow spawning temporary authored deployables before reset"
+        );
+        (start_state.x, start_state.y, explored)
+    };
+
+    alice
+        .reset_training_session(&mut transport)
+        .expect("reset training");
+    server.pump_transport(&mut transport);
+    let reset_events = alice
+        .drain_events(&mut transport)
+        .expect("training reset events should decode");
+    let reset_snapshot = arena_state_snapshot(&reset_events)
+        .expect("reset should rebroadcast the training snapshot");
+    assert_eq!(reset_snapshot.mode, game_net::ArenaSessionMode::Training);
+    assert_eq!(
+        reset_snapshot.training_metrics,
+        Some(game_net::TrainingMetricsSnapshot {
+            damage_done: 0,
+            healing_done: 0,
+            elapsed_ms: 0,
+        })
+    );
+
+    let runtime = server
+        .training_sessions
+        .get(&training_id)
+        .expect("training runtime should survive reset");
+    assert_eq!(runtime.metrics, TrainingMetrics::default());
+    assert_eq!(
+        runtime.combat_frame_index, 77,
+        "resetting training should clear metrics and state without rewinding the session frame index"
+    );
+    assert_eq!(
+        runtime.explored_tiles.get(&player_id),
+        Some(&preserved_explored),
+        "resetting training should preserve the explored training footprint"
+    );
+    let reset_state = runtime
+        .world
+        .player_state(player_id)
+        .expect("training player should still exist");
+    assert_eq!(
+        (reset_state.x, reset_state.y),
+        (spawn_x, spawn_y),
+        "training reset should return the player to the authored spawn"
+    );
+    let deployables = runtime.world.deployables();
+    assert_eq!(
+        deployables.len(),
+        2,
+        "training reset should clear temporary deployables without rebuilding away the dummies"
+    );
+    let reset_full_dummy = deployables
+        .iter()
+        .find(|deployable| deployable.kind == game_sim::ArenaDeployableKind::TrainingDummyResetFull)
+        .expect("reset-full dummy should remain");
+    assert_eq!(reset_full_dummy.hit_points, reset_full_dummy.max_hit_points);
+    let execute_dummy = deployables
+        .iter()
+        .find(|deployable| deployable.kind == game_sim::ArenaDeployableKind::TrainingDummyExecute)
+        .expect("execute dummy should remain");
+    assert!(
+        execute_dummy.hit_points > 0 && execute_dummy.hit_points < execute_dummy.max_hit_points,
+        "execute dummy should return to its low-health execute state after a reset"
+    );
+}
+
+#[test]
 fn durable_combat_logs_capture_advanced_mechanics_event_detail() {
     let path = temp_path("server-app-advanced-combat-log");
     let combat_log_path = companion_combat_log_path(&path);

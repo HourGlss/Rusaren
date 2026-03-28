@@ -1497,11 +1497,13 @@ pub async fn run_probe(config: ProbeConfig) -> ProbeResult<ProbeOutcome> {
     for label in labels.into_iter().take(config.players_per_match) {
         logger.info("client_connecting", json!({ "client": label }))?;
         let client = LiveClient::connect(&config.origin, label, config.connect_timeout).await?;
+        let team_a_anchor = map.team_a_anchors.first().copied().unwrap_or((-400, 0));
+        let team_b_anchor = map.team_b_anchors.first().copied().unwrap_or((400, 0));
         clients.push(ProbeClientState::new(
             label,
             client,
-            map.team_a_anchor,
-            map.team_b_anchor,
+            team_a_anchor,
+            team_b_anchor,
         ));
     }
 

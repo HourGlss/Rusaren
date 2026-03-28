@@ -374,6 +374,12 @@ pub enum ArenaMapObstacleKind {
     Shrub,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ArenaMapFeatureKind {
+    TrainingDummyResetFull,
+    TrainingDummyExecute,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ArenaMapObstacle {
     pub kind: ArenaMapObstacleKind,
@@ -384,6 +390,13 @@ pub struct ArenaMapObstacle {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ArenaMapFeature {
+    pub kind: ArenaMapFeatureKind,
+    pub center_x: i16,
+    pub center_y: i16,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ArenaMapDefinition {
     pub map_id: String,
     pub width_tiles: u16,
@@ -391,9 +404,11 @@ pub struct ArenaMapDefinition {
     pub tile_units: u16,
     pub width_units: u16,
     pub height_units: u16,
-    pub team_a_anchor: (i16, i16),
-    pub team_b_anchor: (i16, i16),
+    pub footprint_mask: Vec<u8>,
+    pub team_a_anchors: Vec<(i16, i16)>,
+    pub team_b_anchors: Vec<(i16, i16)>,
     pub obstacles: Vec<ArenaMapObstacle>,
+    pub features: Vec<ArenaMapFeature>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -429,7 +444,9 @@ impl MechanicCatalog {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GameContent {
     skills: SkillCatalog,
-    map: ArenaMapDefinition,
+    maps: BTreeMap<String, ArenaMapDefinition>,
+    default_map_id: String,
+    training_map_id: Option<String>,
     mechanics: MechanicCatalog,
 }
 
@@ -456,16 +473,56 @@ impl GameContent {
             .collect::<Vec<_>>();
         let skills = load_skill_catalog_from_pairs_with_mechanics(&owned_pairs, &mechanics)?;
 
-        let map_path = root.join("maps").join("prototype_arena.txt");
-        let map_text = fs::read_to_string(&map_path).map_err(|error| ContentError::Io {
-            path: map_path.clone(),
-            message: error.to_string(),
-        })?;
-        let map = parse_ascii_map(&map_path.display().to_string(), &map_text)?;
+        let maps_dir = root.join("maps");
+        let mut map_paths = fs::read_dir(&maps_dir)
+            .map_err(|error| ContentError::Io {
+                path: maps_dir.clone(),
+                message: error.to_string(),
+            })?
+            .filter_map(|entry| entry.ok().map(|value| value.path()))
+            .filter(|path| {
+                path.extension()
+                    .and_then(|extension| extension.to_str())
+                    .is_some_and(|extension| extension.eq_ignore_ascii_case("txt"))
+            })
+            .collect::<Vec<_>>();
+        map_paths.sort();
+        if map_paths.is_empty() {
+            return Err(ContentError::Validation {
+                source: maps_dir.display().to_string(),
+                message: String::from("no ASCII map files were found"),
+            });
+        }
+
+        let mut maps = BTreeMap::new();
+        for path in map_paths {
+            let map_text = fs::read_to_string(&path).map_err(|error| ContentError::Io {
+                path: path.clone(),
+                message: error.to_string(),
+            })?;
+            let map = parse_ascii_map(&path.display().to_string(), &map_text)?;
+            if maps.insert(map.map_id.clone(), map).is_some() {
+                return Err(ContentError::Validation {
+                    source: path.display().to_string(),
+                    message: String::from("duplicate map id"),
+                });
+            }
+        }
+        if !maps.contains_key("prototype_arena") {
+            return Err(ContentError::Validation {
+                source: maps_dir.display().to_string(),
+                message: String::from("maps must include prototype_arena.txt"),
+            });
+        }
+        let training_map_id = maps
+            .contains_key("training_arena")
+            .then_some(String::from("training_arena"));
 
         Ok(Self {
             skills,
-            map,
+            maps,
+            default_map_id: String::from("prototype_arena"),
+            training_map_id,
             mechanics,
         })
     }
@@ -476,8 +533,26 @@ impl GameContent {
     }
 
     #[must_use]
-    pub const fn map(&self) -> &ArenaMapDefinition {
-        &self.map
+    pub fn map(&self) -> &ArenaMapDefinition {
+        self.maps
+            .get(&self.default_map_id)
+            .expect("default map id should always exist")
+    }
+
+    #[must_use]
+    pub fn training_map(&self) -> Option<&ArenaMapDefinition> {
+        self.training_map_id
+            .as_ref()
+            .and_then(|map_id| self.maps.get(map_id))
+    }
+
+    #[must_use]
+    pub fn map_by_id(&self, map_id: &str) -> Option<&ArenaMapDefinition> {
+        self.maps.get(map_id)
+    }
+
+    pub fn maps(&self) -> impl Iterator<Item = &ArenaMapDefinition> {
+        self.maps.values()
     }
 
     #[must_use]

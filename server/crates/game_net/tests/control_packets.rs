@@ -5,12 +5,13 @@ use game_domain::{
     SkillTree, TeamSide, MAX_PLAYER_NAME_LEN,
 };
 use game_net::{
-    ArenaCombatTextEntry, ArenaCombatTextStyle, ArenaDeltaSnapshot, ArenaEffectKind,
-    ArenaEffectSnapshot, ArenaMatchPhase, ArenaObstacleKind, ArenaObstacleSnapshot,
-    ArenaPlayerSnapshot, ArenaStateSnapshot, ArenaStatusKind, ArenaStatusSnapshot, ChannelId,
-    ClientControlCommand, CombatSummaryLine, LobbyDirectoryEntry, LobbySnapshotPhase,
-    LobbySnapshotPlayer, MatchSummarySnapshot, PacketError, PacketHeader, PacketKind,
-    RoundSummarySnapshot, ServerControlEvent, SkillCatalogEntry,
+    ArenaCombatTextEntry, ArenaCombatTextStyle, ArenaDeltaSnapshot, ArenaDeployableKind,
+    ArenaDeployableSnapshot, ArenaEffectKind, ArenaEffectSnapshot, ArenaMatchPhase,
+    ArenaObstacleKind, ArenaObstacleSnapshot, ArenaPlayerSnapshot, ArenaSessionMode,
+    ArenaStateSnapshot, ArenaStatusKind, ArenaStatusSnapshot, ChannelId, ClientControlCommand,
+    CombatSummaryLine, LobbyDirectoryEntry, LobbySnapshotPhase, LobbySnapshotPlayer,
+    MatchSummarySnapshot, PacketError, PacketHeader, PacketKind, RoundSummarySnapshot,
+    ServerControlEvent, SkillCatalogEntry, TrainingMetricsSnapshot,
 };
 
 fn player_id(raw: u32) -> PlayerId {
@@ -69,6 +70,7 @@ fn client_control_command_round_trips_all_variants() {
             lobby_id: lobby_id(3),
         },
         ClientControlCommand::LeaveGameLobby,
+        ClientControlCommand::StartTraining,
         ClientControlCommand::SelectTeam {
             team: TeamSide::TeamA,
         },
@@ -83,6 +85,7 @@ fn client_control_command_round_trips_all_variants() {
             tree: SkillTree::new("Druid").expect("custom tree"),
             tier: 1,
         },
+        ClientControlCommand::ResetTrainingSession,
         ClientControlCommand::QuitToCentralLobby,
     ];
 
@@ -129,7 +132,7 @@ fn client_control_command_rejects_invalid_ids_enums_and_trailing_bytes() {
 
     let header = PacketHeader::new(ChannelId::Control, PacketKind::ControlCommand, 0, 3, 1, 1)
         .expect("header");
-    let packet = header.encode(&[5, 9, 0]);
+    let packet = header.encode(&[6, 9, 0]);
     assert_eq!(
         ClientControlCommand::decode_packet(&packet),
         Err(PacketError::InvalidEncodedTeam(9))
@@ -277,6 +280,9 @@ fn server_control_event_round_trips_all_scalar_variants() {
             match_id: MatchId::new(9).expect("match id"),
             round: RoundNumber::new(1).expect("round"),
             skill_pick_seconds: 25,
+        },
+        ServerControlEvent::TrainingStarted {
+            training_id: MatchId::new(11).expect("training id"),
         },
         ServerControlEvent::SkillChosen {
             player_id: player_id(7),
@@ -445,9 +451,11 @@ fn arena_status_kinds_round_trip_for_all_runtime_statuses() {
     for (index, kind) in statuses.into_iter().enumerate() {
         let event = ServerControlEvent::ArenaDeltaSnapshot {
             snapshot: ArenaDeltaSnapshot {
+                mode: ArenaSessionMode::Match,
                 phase: ArenaMatchPhase::Combat,
                 phase_seconds_remaining: None,
                 tile_units: 50,
+                footprint_tiles: vec![0b0011_1111, 0b0000_0011],
                 visible_tiles: vec![0b0011_1111, 0b0000_0011],
                 explored_tiles: vec![0b1111_1111, 0b0000_1111],
                 obstacles: vec![ArenaObstacleSnapshot {
@@ -457,7 +465,18 @@ fn arena_status_kinds_round_trip_for_all_runtime_statuses() {
                     half_width: 92,
                     half_height: 92,
                 }],
-                deployables: vec![],
+                deployables: vec![ArenaDeployableSnapshot {
+                    id: 41,
+                    owner: player_id(7),
+                    team: TeamSide::TeamA,
+                    kind: ArenaDeployableKind::TrainingDummyExecute,
+                    x: 40,
+                    y: -120,
+                    radius: 28,
+                    hit_points: 450,
+                    max_hit_points: 10000,
+                    remaining_ms: 0,
+                }],
                 players: vec![ArenaPlayerSnapshot {
                     player_id: player_id(7),
                     player_name: player_name("Alice"),
@@ -495,6 +514,11 @@ fn arena_status_kinds_round_trip_for_all_runtime_statuses() {
                     }],
                 }],
                 projectiles: vec![],
+                training_metrics: Some(TrainingMetricsSnapshot {
+                    damage_done: 3200,
+                    healing_done: 700,
+                    elapsed_ms: 45_000,
+                }),
             },
         };
 
@@ -575,11 +599,13 @@ fn server_control_event_round_trips_arena_combat_text_batch() {
 fn sample_full_arena_snapshot_event() -> ServerControlEvent {
     ServerControlEvent::ArenaStateSnapshot {
         snapshot: ArenaStateSnapshot {
+            mode: ArenaSessionMode::Training,
             phase: ArenaMatchPhase::Combat,
             phase_seconds_remaining: None,
             width: 1800,
             height: 1200,
             tile_units: 50,
+            footprint_tiles: vec![0b0011_1111, 0b0000_0011],
             visible_tiles: vec![0b0011_1111, 0b0000_0011],
             explored_tiles: vec![0b1111_1111, 0b0000_1111],
             obstacles: vec![
@@ -598,7 +624,32 @@ fn sample_full_arena_snapshot_event() -> ServerControlEvent {
                     half_height: 70,
                 },
             ],
-            deployables: vec![],
+            deployables: vec![
+                ArenaDeployableSnapshot {
+                    id: 51,
+                    owner: player_id(7),
+                    team: TeamSide::TeamA,
+                    kind: ArenaDeployableKind::TrainingDummyResetFull,
+                    x: -120,
+                    y: 80,
+                    radius: 28,
+                    hit_points: 10000,
+                    max_hit_points: 10000,
+                    remaining_ms: 0,
+                },
+                ArenaDeployableSnapshot {
+                    id: 52,
+                    owner: player_id(7),
+                    team: TeamSide::TeamA,
+                    kind: ArenaDeployableKind::TrainingDummyExecute,
+                    x: 140,
+                    y: 80,
+                    radius: 28,
+                    hit_points: 450,
+                    max_hit_points: 10000,
+                    remaining_ms: 0,
+                },
+            ],
             players: vec![ArenaPlayerSnapshot {
                 player_id: player_id(7),
                 player_name: player_name("Alice"),
@@ -636,6 +687,11 @@ fn sample_full_arena_snapshot_event() -> ServerControlEvent {
                 }],
             }],
             projectiles: vec![],
+            training_metrics: Some(TrainingMetricsSnapshot {
+                damage_done: 1200,
+                healing_done: 300,
+                elapsed_ms: 30_000,
+            }),
         },
     }
 }
@@ -643,9 +699,11 @@ fn sample_full_arena_snapshot_event() -> ServerControlEvent {
 fn sample_delta_arena_snapshot_event() -> ServerControlEvent {
     ServerControlEvent::ArenaDeltaSnapshot {
         snapshot: ArenaDeltaSnapshot {
+            mode: ArenaSessionMode::Training,
             phase: ArenaMatchPhase::Combat,
             phase_seconds_remaining: None,
             tile_units: 50,
+            footprint_tiles: vec![0b0011_1111, 0b0000_0011],
             visible_tiles: vec![0b0011_1111, 0b0000_0011],
             explored_tiles: vec![0b1111_1111, 0b0000_1111],
             obstacles: vec![ArenaObstacleSnapshot {
@@ -655,7 +713,18 @@ fn sample_delta_arena_snapshot_event() -> ServerControlEvent {
                 half_width: 70,
                 half_height: 70,
             }],
-            deployables: vec![],
+            deployables: vec![ArenaDeployableSnapshot {
+                id: 61,
+                owner: player_id(7),
+                team: TeamSide::TeamA,
+                kind: ArenaDeployableKind::TrainingDummyExecute,
+                x: 140,
+                y: 80,
+                radius: 28,
+                hit_points: 400,
+                max_hit_points: 10000,
+                remaining_ms: 0,
+            }],
             players: vec![ArenaPlayerSnapshot {
                 player_id: player_id(7),
                 player_name: player_name("Alice"),
@@ -693,6 +762,11 @@ fn sample_delta_arena_snapshot_event() -> ServerControlEvent {
                 }],
             }],
             projectiles: vec![],
+            training_metrics: Some(TrainingMetricsSnapshot {
+                damage_done: 1800,
+                healing_done: 320,
+                elapsed_ms: 31_200,
+            }),
         },
     }
 }
@@ -770,10 +844,11 @@ fn server_control_event_rejects_bad_payloads_and_unknown_variants() {
 
 #[test]
 fn server_control_event_rejects_invalid_arena_kinds() {
-    let mut arena_payload = vec![19, 3, 0];
+    let mut arena_payload = vec![19, 1, 3, 0];
     arena_payload.extend_from_slice(&1800_u16.to_le_bytes());
     arena_payload.extend_from_slice(&1200_u16.to_le_bytes());
     arena_payload.extend_from_slice(&50_u16.to_le_bytes());
+    arena_payload.extend_from_slice(&0_u16.to_le_bytes());
     arena_payload.extend_from_slice(&0_u16.to_le_bytes());
     arena_payload.extend_from_slice(&0_u16.to_le_bytes());
     arena_payload.extend_from_slice(&1_u16.to_le_bytes());
@@ -783,6 +858,9 @@ fn server_control_event_rejects_invalid_arena_kinds() {
     arena_payload.extend_from_slice(&32_u16.to_le_bytes());
     arena_payload.extend_from_slice(&32_u16.to_le_bytes());
     arena_payload.extend_from_slice(&0_u16.to_le_bytes());
+    arena_payload.extend_from_slice(&0_u16.to_le_bytes());
+    arena_payload.extend_from_slice(&0_u16.to_le_bytes());
+    arena_payload.push(0);
     let header = PacketHeader::new(
         ChannelId::Snapshot,
         PacketKind::FullSnapshot,

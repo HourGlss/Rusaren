@@ -143,6 +143,11 @@ impl HeadlessClient {
         self.send_control(transport, ClientControlCommand::LeaveGameLobby)
     }
 
+    /// Starts a solo training session from the central lobby.
+    pub fn start_training(&mut self, transport: &mut InMemoryTransport) -> Result<(), PacketError> {
+        self.send_control(transport, ClientControlCommand::StartTraining)
+    }
+
     /// Selects a team inside the current game lobby.
     pub fn select_team(
         &mut self,
@@ -174,6 +179,14 @@ impl HeadlessClient {
                 tier: choice.tier,
             },
         )
+    }
+
+    /// Resets the current training session metrics and dummy state.
+    pub fn reset_training_session(
+        &mut self,
+        transport: &mut InMemoryTransport,
+    ) -> Result<(), PacketError> {
+        self.send_control(transport, ClientControlCommand::ResetTrainingSession)
     }
 
     /// Requests a return from results or match flow to the central lobby.

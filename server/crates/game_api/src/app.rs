@@ -12,7 +12,9 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use game_content::{ArenaMapDefinition, GameContent};
-use game_domain::{LobbyId, MatchId, PlayerId, PlayerName, PlayerRecord, TeamAssignment, TeamSide};
+use game_domain::{
+    LobbyId, MatchId, PlayerId, PlayerName, PlayerRecord, SkillChoice, TeamAssignment, TeamSide,
+};
 use game_lobby::{Lobby, LobbyEvent, LobbyPhase};
 use game_match::MatchSession;
 use game_net::{SequenceTracker, ServerControlEvent};
@@ -63,6 +65,7 @@ enum PlayerLocation {
     CentralLobby,
     GameLobby(LobbyId),
     Match(MatchId),
+    Training(MatchId),
     Results(MatchId),
 }
 
@@ -124,6 +127,34 @@ impl MatchRuntime {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct TrainingMetrics {
+    damage_done: u32,
+    healing_done: u32,
+    elapsed_ms: u32,
+}
+
+#[derive(Debug)]
+struct TrainingRuntime {
+    participant: TeamAssignment,
+    loadout: [Option<SkillChoice>; 5],
+    world: SimulationWorld,
+    explored_tiles: BTreeMap<PlayerId, Vec<u8>>,
+    combat_frame_index: u32,
+    metrics: TrainingMetrics,
+}
+
+impl TrainingRuntime {
+    fn rebuild_world(&mut self, content: &GameContent) {
+        self.world = build_training_world(&self.participant, &self.loadout, content);
+    }
+
+    fn reset_session(&mut self) {
+        self.world.reset_training_session();
+        self.metrics = TrainingMetrics::default();
+    }
+}
+
 /// Errors returned while opening the server app's persistent stores.
 #[derive(Debug)]
 pub enum ServerAppPersistenceError {
@@ -172,6 +203,7 @@ pub struct ServerApp {
     players: BTreeMap<PlayerId, ConnectedPlayer>,
     game_lobbies: BTreeMap<LobbyId, GameLobbyRuntime>,
     matches: BTreeMap<MatchId, MatchRuntime>,
+    training_sessions: BTreeMap<MatchId, TrainingRuntime>,
 }
 
 impl Default for ServerApp {
@@ -270,6 +302,7 @@ impl ServerApp {
             players: BTreeMap::new(),
             game_lobbies: BTreeMap::new(),
             matches: BTreeMap::new(),
+            training_sessions: BTreeMap::new(),
         }
     }
 
@@ -504,6 +537,12 @@ impl ServerApp {
                 self.players.remove(&player_id);
                 self.remove_player_connection(player_id);
                 self.cleanup_finished_match(match_id);
+            }
+            PlayerLocation::Training(training_id) => {
+                self.players.remove(&player_id);
+                self.remove_player_connection(player_id);
+                self.cleanup_finished_training(training_id);
+                self.broadcast_lobby_directory_snapshot(transport);
             }
             PlayerLocation::Results(match_id) => {
                 self.players.remove(&player_id);
@@ -911,6 +950,51 @@ fn build_world(
     ) {
         Ok(world) => world,
         Err(error) => panic!("valid match roster should build a simulation world: {error}"),
+    }
+}
+
+fn build_training_world(
+    participant: &TeamAssignment,
+    loadout: &[Option<SkillChoice>; 5],
+    content: &GameContent,
+) -> SimulationWorld {
+    let map = content
+        .training_map()
+        .unwrap_or_else(|| panic!("training world requires an authored training map"));
+    match SimulationWorld::new(
+        vec![build_player_seed(participant.clone(), loadout, content)],
+        map,
+    ) {
+        Ok(world) => world,
+        Err(error) => panic!("valid training loadout should build a simulation world: {error}"),
+    }
+}
+
+fn build_player_seed(
+    assignment: TeamAssignment,
+    loadout: &[Option<SkillChoice>; 5],
+    content: &GameContent,
+) -> SimPlayerSeed {
+    let primary_tree = loadout[0]
+        .as_ref()
+        .map(|choice| choice.tree.clone())
+        .unwrap_or(game_domain::SkillTree::Warrior);
+    let melee = if let Some(melee) = content.skills().melee_for(&primary_tree) {
+        melee.clone()
+    } else if let Some(melee) = content.skills().melee_for(&game_domain::SkillTree::Warrior) {
+        melee.clone()
+    } else {
+        panic!("validated content should always define warrior melee");
+    };
+    SimPlayerSeed {
+        assignment,
+        hit_points: DEFAULT_HIT_POINTS,
+        melee,
+        skills: std::array::from_fn(|index| {
+            loadout[index]
+                .as_ref()
+                .and_then(|choice| content.skills().resolve(choice).cloned())
+        }),
     }
 }
 

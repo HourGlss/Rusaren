@@ -165,6 +165,9 @@ impl ServerApp {
             ClientControlCommand::LeaveGameLobby => {
                 self.handle_leave_game_lobby(transport, sender_id);
             }
+            ClientControlCommand::StartTraining => {
+                self.handle_start_training(transport, sender_id);
+            }
             ClientControlCommand::SelectTeam { team } => {
                 self.handle_select_team(transport, sender_id, team);
             }
@@ -173,6 +176,9 @@ impl ServerApp {
             }
             ClientControlCommand::ChooseSkill { tree, tier } => {
                 self.handle_choose_skill(transport, sender_id, tree, tier);
+            }
+            ClientControlCommand::ResetTrainingSession => {
+                self.handle_reset_training_session(transport, sender_id);
             }
             ClientControlCommand::QuitToCentralLobby => {
                 self.handle_quit_to_central_lobby(transport, sender_id);
@@ -240,5 +246,4 @@ impl ServerApp {
         );
         self.send_lobby_directory_snapshot(transport, player_id);
     }
-
 }

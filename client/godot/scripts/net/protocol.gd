@@ -2,7 +2,7 @@ extends RefCounted
 class_name RarenaProtocol
 
 const PACKET_MAGIC := 0x5241
-const PROTOCOL_VERSION := 5
+const PROTOCOL_VERSION := 6
 const HEADER_LEN := 16
 const MAX_PLAYER_NAME_LEN := 24
 const MAX_MESSAGE_BYTES := 200
@@ -297,8 +297,25 @@ class ByteCursor:
 				return "Barrier"
 			5:
 				return "Aura"
+			6:
+				return "TrainingDummyResetFull"
+			7:
+				return "TrainingDummyExecute"
 			_:
 				error_message = "encoded arena deployable kind %d is invalid" % raw
+				return null
+
+	func read_arena_session_mode() -> Variant:
+		var raw = read_u8()
+		if has_error():
+			return null
+		match raw:
+			1:
+				return "Match"
+			2:
+				return "Training"
+			_:
+				error_message = "encoded arena session mode %d is invalid" % raw
 				return null
 
 	func read_arena_effect_kind() -> Variant:
@@ -475,15 +492,17 @@ static func encode_client_command(
 			_push_u32(body, lobby_id)
 		"LeaveGameLobby":
 			body.append(4)
+		"StartTraining":
+			body.append(5)
 		"SelectTeam":
 			var team_name := String(payload.get("team", ""))
 			var team_code := _team_code(team_name)
 			if team_code == -1:
 				return _error("team must be Team A or Team B")
-			body.append(5)
+			body.append(6)
 			body.append(team_code)
 		"SetReady":
-			body.append(6)
+			body.append(7)
 			body.append(READY_READY if bool(payload.get("ready", false)) else READY_NOT_READY)
 		"ChooseSkill":
 			var tree_name := String(payload.get("tree", ""))
@@ -498,11 +517,13 @@ static func encode_client_command(
 				])
 			if tier < 1 or tier > 5:
 				return _error("skill tier must be between 1 and 5")
-			body.append(7)
+			body.append(8)
 			_push_string(body, tree_name)
 			body.append(tier)
+		"ResetTrainingSession":
+			body.append(9)
 		"QuitToCentralLobby":
-			body.append(8)
+			body.append(10)
 		_:
 			return _error("unsupported client control command %s" % command_type)
 
@@ -879,11 +900,13 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 				"players": players,
 			}
 		19:
+			var full_mode = cursor.read_arena_session_mode()
 			var full_phase = cursor.read_arena_match_phase()
 			var full_phase_seconds = cursor.read_optional_u8()
 			var width = cursor.read_u16()
 			var height = cursor.read_u16()
 			var tile_units = cursor.read_u16()
+			var footprint_tiles: PackedByteArray = cursor.read_blob("footprint_tiles")
 			var visible_tiles: PackedByteArray = cursor.read_blob("visible_tiles")
 			var explored_tiles: PackedByteArray = cursor.read_blob("explored_tiles")
 			var obstacle_count = cursor.read_u16()
@@ -961,26 +984,34 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 					"y": projectile_y,
 					"radius": projectile_radius,
 				})
+			var training_metrics = _decode_training_metrics(cursor)
+			if cursor.has_error():
+				return _error(cursor.error_message)
 			event = {
 				"type": "ArenaStateSnapshot",
 				"snapshot": {
+					"mode": full_mode,
 					"phase": full_phase,
 					"phase_seconds_remaining": full_phase_seconds,
 					"width": width,
 					"height": height,
 					"tile_units": tile_units,
+					"footprint_tiles": footprint_tiles,
 					"visible_tiles": visible_tiles,
 					"explored_tiles": explored_tiles,
 					"obstacles": obstacles,
 					"deployables": deployables,
 					"players": players,
 					"projectiles": projectiles,
+					"training_metrics": training_metrics,
 				},
 			}
 		20:
+			var delta_mode = cursor.read_arena_session_mode()
 			var delta_phase = cursor.read_arena_match_phase()
 			var delta_phase_seconds = cursor.read_optional_u8()
 			var delta_tile_units = cursor.read_u16()
+			var delta_footprint_tiles: PackedByteArray = cursor.read_blob("footprint_tiles")
 			var delta_visible_tiles: PackedByteArray = cursor.read_blob("visible_tiles")
 			var delta_explored_tiles: PackedByteArray = cursor.read_blob("explored_tiles")
 			var delta_obstacle_count = cursor.read_u16()
@@ -1058,18 +1089,24 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 					"y": delta_projectile_y,
 					"radius": delta_projectile_radius,
 				})
+			var delta_training_metrics = _decode_training_metrics(cursor)
+			if cursor.has_error():
+				return _error(cursor.error_message)
 			event = {
 				"type": "ArenaDeltaSnapshot",
 				"snapshot": {
+					"mode": delta_mode,
 					"phase": delta_phase,
 					"phase_seconds_remaining": delta_phase_seconds,
 					"tile_units": delta_tile_units,
+					"footprint_tiles": delta_footprint_tiles,
 					"visible_tiles": delta_visible_tiles,
 					"explored_tiles": delta_explored_tiles,
 					"obstacles": delta_obstacles,
 					"deployables": delta_deployables,
 					"players": delta_players,
 					"projectiles": delta_projectiles,
+					"training_metrics": delta_training_metrics,
 				},
 			}
 		21:
@@ -1136,6 +1173,14 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 				"type": "ArenaCombatTextBatch",
 				"entries": combat_text_entries,
 			}
+		25:
+			var training_id = cursor.read_match_id()
+			if cursor.has_error():
+				return _error(cursor.error_message)
+			event = {
+				"type": "TrainingStarted",
+				"training_id": training_id,
+			}
 		_:
 			return _error("unknown server event %d" % kind)
 
@@ -1177,6 +1222,19 @@ static func _decode_summary_lines(cursor: ByteCursor) -> Variant:
 			"cc_hits": cc_hits,
 		})
 	return lines
+
+
+static func _decode_training_metrics(cursor: ByteCursor) -> Variant:
+	var has_metrics = cursor.read_bool()
+	if cursor.has_error():
+		return null
+	if not has_metrics:
+		return {}
+	return {
+		"damage_done": cursor.read_u32(),
+		"healing_done": cursor.read_u32(),
+		"elapsed_ms": cursor.read_u32(),
+	}
 
 
 static func _decode_equipped_skill_trees(cursor: ByteCursor) -> Variant:

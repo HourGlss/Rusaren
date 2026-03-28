@@ -39,6 +39,7 @@ var local_skill_loadout: Array[Dictionary] = []
 var local_round_skill_locked := false
 var round_summary := {}
 var match_summary := {}
+var arena_mode := "Match"
 var arena_width := 0
 var arena_height := 0
 var arena_tile_units := 0
@@ -50,8 +51,10 @@ var arena_projectiles: Array[Dictionary] = []
 var render_projectiles: Array[Dictionary] = []
 var arena_effects: Array[Dictionary] = []
 var local_combat_texts: Array[Dictionary] = []
+var footprint_tiles := PackedByteArray()
 var visible_tiles := PackedByteArray()
 var explored_tiles := PackedByteArray()
+var training_metrics := {}
 
 func _is_rendered_deployable_kind(kind_name: String) -> bool:
 	return kind_name != "Aura"
@@ -238,6 +241,7 @@ func apply_server_event(event: Dictionary) -> void:
 			banner_message = countdown_label
 			_append_event(countdown_label)
 		"MatchStarted":
+			arena_mode = "Match"
 			screen = "match"
 			current_match_id = int(event.get("match_id", 0))
 			current_round = int(event.get("round", 0))
@@ -255,6 +259,22 @@ func apply_server_event(event: Dictionary) -> void:
 				current_match_id,
 				current_round,
 			])
+		"TrainingStarted":
+			arena_mode = "Training"
+			screen = "match"
+			current_match_id = int(event.get("training_id", 0))
+			current_round = 0
+			match_phase = "combat"
+			_reset_local_skill_progress()
+			local_round_skill_locked = false
+			round_summary.clear()
+			match_summary.clear()
+			_clear_arena_state()
+			phase_label = "Training Grounds"
+			countdown_label = "Choose skills freely, then test on the dummies."
+			lobby_locked = false
+			banner_message = "Training session #%d started." % current_match_id
+			_append_event("Training session #%d started." % current_match_id)
 		"SkillChosen":
 			var skill_player_id := int(event.get("player_id", 0))
 			var skill_member := _ensure_roster_entry(skill_player_id)
@@ -262,9 +282,10 @@ func apply_server_event(event: Dictionary) -> void:
 			var tier := int(event.get("tier", 0))
 			skill_member["skill"] = skill_name_for(tree_name, tier)
 			if skill_player_id == local_player_id and tree_name != "":
-				local_skill_progress[tree_name] = tier
+				local_skill_progress[tree_name] = max(tier, int(local_skill_progress.get(tree_name, 0)))
 				_remember_local_skill_choice(tree_name, tier, skill_member["skill"])
-				local_round_skill_locked = true
+				if not is_training_mode():
+					local_round_skill_locked = true
 			banner_message = "%s locked %s." % [_display_name(skill_player_id), skill_member["skill"]]
 			_append_event("%s locked %s." % [_display_name(skill_player_id), skill_member["skill"]])
 		"PreCombatStarted":
@@ -325,12 +346,15 @@ func apply_server_event(event: Dictionary) -> void:
 			_append_event("Server error: %s" % banner_message)
 		"ArenaStateSnapshot":
 			var snapshot: Dictionary = event.get("snapshot", {})
+			arena_mode = String(snapshot.get("mode", arena_mode))
 			_apply_arena_phase(snapshot)
 			arena_width = int(snapshot.get("width", 0))
 			arena_height = int(snapshot.get("height", 0))
 			arena_tile_units = int(snapshot.get("tile_units", 0))
+			footprint_tiles = snapshot.get("footprint_tiles", PackedByteArray())
 			visible_tiles = snapshot.get("visible_tiles", PackedByteArray())
 			explored_tiles = snapshot.get("explored_tiles", PackedByteArray())
+			training_metrics = (snapshot.get("training_metrics", {}) as Dictionary).duplicate(true)
 			arena_obstacles.clear()
 			for obstacle_data in snapshot.get("obstacles", []):
 				arena_obstacles.append((obstacle_data as Dictionary).duplicate(true))
@@ -343,10 +367,13 @@ func apply_server_event(event: Dictionary) -> void:
 			_replace_arena_projectiles(snapshot.get("projectiles", []))
 		"ArenaDeltaSnapshot":
 			var delta_snapshot: Dictionary = event.get("snapshot", {})
+			arena_mode = String(delta_snapshot.get("mode", arena_mode))
 			_apply_arena_phase(delta_snapshot)
 			arena_tile_units = int(delta_snapshot.get("tile_units", arena_tile_units))
+			footprint_tiles = delta_snapshot.get("footprint_tiles", footprint_tiles)
 			visible_tiles = delta_snapshot.get("visible_tiles", PackedByteArray())
 			explored_tiles = delta_snapshot.get("explored_tiles", PackedByteArray())
+			training_metrics = (delta_snapshot.get("training_metrics", training_metrics) as Dictionary).duplicate(true)
 			arena_obstacles.clear()
 			for obstacle_delta in delta_snapshot.get("obstacles", []):
 				arena_obstacles.append((obstacle_delta as Dictionary).duplicate(true))
@@ -516,10 +543,14 @@ func match_summary_text() -> String:
 
 
 func lobby_note() -> String:
-	return "Click an open lobby in the directory or enter a manual lobby ID. Use Menu for your alias, record, roster, and event views while the backend keeps directory, roster, and arena state authoritative."
+	return "Click an open lobby in the directory, enter a manual lobby ID, or start a solo training session. Use Menu for your alias, record, roster, and event views while the backend keeps directory, roster, and arena state authoritative."
 
 
 func can_join_or_create_lobby() -> bool:
+	return transport_state == "open" and screen == "central"
+
+
+func can_start_training() -> bool:
 	return transport_state == "open" and screen == "central"
 
 
@@ -532,6 +563,8 @@ func can_leave_lobby() -> bool:
 
 
 func can_choose_skill() -> bool:
+	if is_training_mode():
+		return transport_state == "open" and screen == "match"
 	return (
 		transport_state == "open"
 		and screen == "match"
@@ -552,6 +585,8 @@ func next_skill_tier_for(tree_name: String) -> int:
 
 
 func can_choose_skill_option(tree_name: String, tier: int) -> bool:
+	if is_training_mode():
+		return transport_state == "open" and screen == "match" and tier >= 1 and tier <= 5
 	return can_choose_skill() and tier == next_skill_tier_for(tree_name)
 
 
@@ -638,12 +673,20 @@ func can_quit_results() -> bool:
 	return transport_state == "open" and screen == "results"
 
 
+func can_reset_training() -> bool:
+	return transport_state == "open" and is_training_mode()
+
+
+func can_quit_arena() -> bool:
+	return transport_state == "open" and (screen == "results" or is_training_mode())
+
+
 func can_send_combat_input() -> bool:
 	var player := local_arena_player()
 	return (
 		transport_state == "open"
 		and screen == "match"
-		and match_phase == "combat"
+		and (match_phase == "combat" or is_training_mode())
 		and not player.is_empty()
 		and bool(player.get("alive", false))
 	)
@@ -806,6 +849,12 @@ func arena_tile_height() -> int:
 	return int(arena_height / arena_tile_units)
 
 
+func is_tile_in_footprint(column: int, row: int) -> bool:
+	if footprint_tiles.is_empty():
+		return true
+	return _mask_has_tile(footprint_tiles, column, row)
+
+
 func is_tile_visible(column: int, row: int) -> bool:
 	return _mask_has_tile(visible_tiles, column, row)
 
@@ -833,6 +882,11 @@ func advance_visuals(delta: float) -> void:
 func _apply_arena_phase(snapshot: Dictionary) -> void:
 	var phase_name := String(snapshot.get("phase", ""))
 	if phase_name.is_empty():
+		return
+	if String(snapshot.get("mode", arena_mode)) == "Training":
+		match_phase = "combat"
+		phase_label = "Training Grounds"
+		countdown_label = "Training live"
 		return
 	var seconds_remaining := int(snapshot.get("phase_seconds_remaining", 0))
 	match phase_name:
@@ -966,6 +1020,7 @@ func _reset_local_skill_progress() -> void:
 
 
 func _clear_arena_state() -> void:
+	arena_mode = "Match"
 	arena_width = 0
 	arena_height = 0
 	arena_tile_units = 0
@@ -977,13 +1032,21 @@ func _clear_arena_state() -> void:
 	render_projectiles.clear()
 	arena_effects.clear()
 	local_combat_texts.clear()
+	footprint_tiles = PackedByteArray()
 	visible_tiles = PackedByteArray()
 	explored_tiles = PackedByteArray()
+	training_metrics.clear()
 
 
 func _remember_local_skill_choice(tree_name: String, tier: int, skill_name: String) -> void:
-	for choice in local_skill_loadout:
-		if String(choice.get("tree", "")) == tree_name and int(choice.get("tier", 0)) == tier:
+	for index in range(local_skill_loadout.size()):
+		var choice: Dictionary = local_skill_loadout[index]
+		if int(choice.get("tier", 0)) == tier:
+			local_skill_loadout[index] = {
+				"tree": tree_name,
+				"tier": tier,
+				"skill_name": skill_name,
+			}
 			return
 	local_skill_loadout.append({
 		"tree": tree_name,
@@ -1096,6 +1159,26 @@ func _mask_has_tile(mask: PackedByteArray, column: int, row: int) -> bool:
 	if byte_index < 0 or byte_index >= mask.size():
 		return false
 	return (int(mask[byte_index]) & (1 << bit_index)) != 0
+
+
+func is_training_mode() -> bool:
+	return screen == "match" and arena_mode == "Training"
+
+
+func training_metrics_text() -> String:
+	if not is_training_mode():
+		return ""
+	var elapsed_ms := int(training_metrics.get("elapsed_ms", 0))
+	var elapsed_seconds := maxf(float(elapsed_ms) / 1000.0, 0.001)
+	var damage_done := int(training_metrics.get("damage_done", 0))
+	var healing_done := int(training_metrics.get("healing_done", 0))
+	return "Training metrics: dmg %d  |  heal %d  |  DPS %.1f  |  HPS %.1f  |  time %.1fs" % [
+		damage_done,
+		healing_done,
+		float(damage_done) / elapsed_seconds,
+		float(healing_done) / elapsed_seconds,
+		elapsed_seconds,
+	]
 
 
 func _effect_ttl_seconds(kind_name: String) -> float:
