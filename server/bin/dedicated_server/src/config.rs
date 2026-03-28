@@ -9,6 +9,7 @@ use game_sim::COMBAT_FRAME_MS;
 pub(crate) struct ServerConfig {
     pub bind_address: String,
     pub record_store_path: PathBuf,
+    pub combat_log_path: PathBuf,
     pub content_root: PathBuf,
     pub web_client_root: PathBuf,
     pub tick_interval: Duration,
@@ -18,11 +19,16 @@ pub(crate) struct ServerConfig {
 
 impl ServerConfig {
     pub(crate) fn from_env() -> Result<Self, String> {
+        let record_store_path = env::var_os("RARENA_RECORD_STORE_PATH")
+            .map_or_else(default_record_store_path, PathBuf::from);
         Ok(Self {
             bind_address: env::var("RARENA_BIND")
                 .unwrap_or_else(|_| String::from("127.0.0.1:3000")),
-            record_store_path: env::var_os("RARENA_RECORD_STORE_PATH")
-                .map_or_else(default_record_store_path, PathBuf::from),
+            combat_log_path: env::var_os("RARENA_COMBAT_LOG_PATH").map_or_else(
+                || companion_combat_log_path(&record_store_path),
+                PathBuf::from,
+            ),
+            record_store_path,
             content_root: env::var_os("RARENA_CONTENT_ROOT")
                 .map_or_else(default_content_root, PathBuf::from),
             web_client_root: env::var_os("RARENA_WEB_CLIENT_ROOT")
@@ -32,6 +38,19 @@ impl ServerConfig {
             admin_auth: parse_admin_auth_from_env()?,
         })
     }
+}
+
+pub(crate) fn companion_combat_log_path(record_store_path: &std::path::Path) -> PathBuf {
+    let stem = record_store_path
+        .file_stem()
+        .and_then(std::ffi::OsStr::to_str)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("player_records");
+    let file_name = format!("{stem}.combat.sqlite");
+    record_store_path.parent().map_or_else(
+        || PathBuf::from(file_name.clone()),
+        |parent| parent.join(file_name.clone()),
+    )
 }
 
 pub(crate) fn default_record_store_path() -> PathBuf {

@@ -4,8 +4,8 @@ use game_api::WebRtcRuntimeConfig;
 use game_sim::COMBAT_FRAME_MS;
 
 use crate::config::{
-    parse_admin_auth_from_env, parse_csv_urls, parse_tick_interval, parse_turn_ttl,
-    parse_webrtc_config_from_env,
+    companion_combat_log_path, parse_admin_auth_from_env, parse_csv_urls, parse_tick_interval,
+    parse_turn_ttl, parse_webrtc_config_from_env,
 };
 use crate::demo::run_demo;
 use crate::logging::LogFormat;
@@ -132,6 +132,15 @@ fn parse_log_format_from_env_accepts_pretty_and_json_and_rejects_unknown_values(
     assert_eq!(
         LogFormat::parse("xml").expect_err("unknown log formats should be rejected"),
         "unsupported RARENA_LOG_FORMAT 'xml'; expected 'pretty' or 'json'"
+    );
+}
+
+#[test]
+fn companion_combat_log_path_stays_beside_the_record_store() {
+    let record_store = std::path::PathBuf::from("/app/server/var/player_records.tsv");
+    assert_eq!(
+        companion_combat_log_path(&record_store),
+        std::path::PathBuf::from("/app/server/var/player_records.combat.sqlite")
     );
 }
 
