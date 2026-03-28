@@ -64,7 +64,7 @@ $campaignRoot = Join-Path $campaignBaseRoot $normalizedRunId
 New-Item -ItemType Directory -Force -Path $campaignRoot | Out-Null
 
 $commands = @()
-for ($index = 1; $index -le $ShardCount; $index += 1) {
+for ($index = 0; $index -lt $ShardCount; $index += 1) {
     $shard = "{0}/{1}" -f $index, $ShardCount
     $parts = @(
         "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/run-mutants-shard.ps1"

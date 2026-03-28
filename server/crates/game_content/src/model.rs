@@ -64,6 +64,8 @@ pub struct BehaviorSchema {
 pub struct StatusSchema {
     pub numeric_fields: BTreeMap<String, NumericFieldRule>,
     pub max_stacks: StackRule,
+    pub expire_payload: PayloadFieldRule,
+    pub dispel_payload: PayloadFieldRule,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -83,6 +85,19 @@ pub enum StatusKind {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DispelScope {
+    Positive,
+    Negative,
+    All,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DispelDefinition {
+    pub scope: DispelScope,
+    pub max_statuses: u8,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StatusDefinition {
     pub kind: StatusKind,
     pub duration_ms: u16,
@@ -90,14 +105,17 @@ pub struct StatusDefinition {
     pub magnitude: u16,
     pub max_stacks: u8,
     pub trigger_duration_ms: Option<u16>,
+    pub expire_payload: Option<Box<EffectPayload>>,
+    pub dispel_payload: Option<Box<EffectPayload>>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EffectPayload {
     pub kind: CombatValueKind,
     pub amount: u16,
     pub status: Option<StatusDefinition>,
     pub interrupt_silence_duration_ms: Option<u16>,
+    pub dispel: Option<DispelDefinition>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -113,7 +131,7 @@ pub struct MeleeDefinition {
     pub payload: EffectPayload,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SkillBehavior {
     Projectile {
         cooldown_ms: u16,
@@ -166,6 +184,17 @@ pub enum SkillBehavior {
         mana_cost: u16,
         distance: u16,
         effect: SkillEffectKind,
+    },
+    Channel {
+        cooldown_ms: u16,
+        cast_time_ms: u16,
+        mana_cost: u16,
+        range: u16,
+        radius: u16,
+        duration_ms: u16,
+        tick_interval_ms: u16,
+        effect: SkillEffectKind,
+        payload: EffectPayload,
     },
     Passive {
         player_speed_bps: u16,
@@ -233,7 +262,7 @@ pub enum SkillBehavior {
 
 impl SkillBehavior {
     #[must_use]
-    pub const fn cooldown_ms(self) -> u16 {
+    pub const fn cooldown_ms(&self) -> u16 {
         match self {
             Self::Projectile { cooldown_ms, .. }
             | Self::Beam { cooldown_ms, .. }
@@ -241,17 +270,18 @@ impl SkillBehavior {
             | Self::Burst { cooldown_ms, .. }
             | Self::Nova { cooldown_ms, .. }
             | Self::Teleport { cooldown_ms, .. }
+            | Self::Channel { cooldown_ms, .. }
             | Self::Summon { cooldown_ms, .. }
             | Self::Ward { cooldown_ms, .. }
             | Self::Trap { cooldown_ms, .. }
             | Self::Barrier { cooldown_ms, .. }
-            | Self::Aura { cooldown_ms, .. } => cooldown_ms,
+            | Self::Aura { cooldown_ms, .. } => *cooldown_ms,
             Self::Passive { .. } => 0,
         }
     }
 
     #[must_use]
-    pub const fn cast_time_ms(self) -> u16 {
+    pub const fn cast_time_ms(&self) -> u16 {
         match self {
             Self::Projectile { cast_time_ms, .. }
             | Self::Beam { cast_time_ms, .. }
@@ -259,17 +289,18 @@ impl SkillBehavior {
             | Self::Burst { cast_time_ms, .. }
             | Self::Nova { cast_time_ms, .. }
             | Self::Teleport { cast_time_ms, .. }
+            | Self::Channel { cast_time_ms, .. }
             | Self::Summon { cast_time_ms, .. }
             | Self::Ward { cast_time_ms, .. }
             | Self::Trap { cast_time_ms, .. }
             | Self::Barrier { cast_time_ms, .. }
-            | Self::Aura { cast_time_ms, .. } => cast_time_ms,
+            | Self::Aura { cast_time_ms, .. } => *cast_time_ms,
             Self::Passive { .. } => 0,
         }
     }
 
     #[must_use]
-    pub const fn mana_cost(self) -> u16 {
+    pub const fn mana_cost(&self) -> u16 {
         match self {
             Self::Projectile { mana_cost, .. }
             | Self::Beam { mana_cost, .. }
@@ -277,11 +308,12 @@ impl SkillBehavior {
             | Self::Burst { mana_cost, .. }
             | Self::Nova { mana_cost, .. }
             | Self::Teleport { mana_cost, .. }
+            | Self::Channel { mana_cost, .. }
             | Self::Summon { mana_cost, .. }
             | Self::Ward { mana_cost, .. }
             | Self::Trap { mana_cost, .. }
             | Self::Barrier { mana_cost, .. }
-            | Self::Aura { mana_cost, .. } => mana_cost,
+            | Self::Aura { mana_cost, .. } => *mana_cost,
             Self::Passive { .. } => 0,
         }
     }

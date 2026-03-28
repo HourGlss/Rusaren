@@ -58,15 +58,34 @@ function Normalize-ShardLabel {
 
     $trimmed = $Value.Trim()
     if ($trimmed -notmatch '^\d+/\d+$') {
-        throw "Shard must be in the form N/M, for example 1/8."
+        throw "Shard must be in the form N/M, for example 0/8."
     }
 
     return $trimmed.Replace('/', '-of-')
 }
 
+function Assert-ValidShardDescriptor {
+    param([string]$Value)
+
+    $trimmed = $Value.Trim()
+    if ($trimmed -notmatch '^(?<index>\d+)/(?<count>\d+)$') {
+        throw "Shard must be in the form N/M, for example 0/8."
+    }
+
+    $index = [int]$Matches["index"]
+    $count = [int]$Matches["count"]
+    if ($count -le 0) {
+        throw "Shard count must be greater than zero."
+    }
+    if ($index -lt 0 -or $index -ge $count) {
+        throw ("Shard index must be zero-based and strictly less than the shard count; got {0}/{1}." -f $index, $count)
+    }
+}
+
 $normalizedRunId = Normalize-RunId -Value $RunId
 $campaignBaseRoot = Resolve-CampaignBaseRoot -Candidate $OutputRoot
 $campaignRoot = Join-Path $campaignBaseRoot $normalizedRunId
+Assert-ValidShardDescriptor -Value $Shard
 $shardLabel = Normalize-ShardLabel -Value $Shard
 $shardRoot = Join-Path (Join-Path $campaignRoot "shards") $shardLabel
 

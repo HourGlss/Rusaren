@@ -303,6 +303,80 @@ fn visibility_helper_boundaries_and_shared_shrubs_are_precise() {
         (150, 0),
         &[pillar],
     ));
+
+    assert!(!ServerApp::point_is_visible_to_viewer(
+        (0, 0),
+        (70, 0),
+        &[shared_shrub],
+    ));
+    assert!(!ServerApp::point_is_visible_to_viewer(
+        (20, 0),
+        (70, 0),
+        &[shared_shrub],
+    ));
+    assert!(!ServerApp::point_is_visible_to_viewer(
+        (70, 0),
+        (20, 0),
+        &[shared_shrub],
+    ));
+
+    let single_tile_top_left = game_sim::ArenaObstacle {
+        kind: game_sim::ArenaObstacleKind::Pillar,
+        center_x: -150,
+        center_y: -150,
+        half_width: 49,
+        half_height: 49,
+    };
+    let mut top_left_mask = ServerApp::blank_visibility_mask(&map);
+    ServerApp::set_mask_bit(&mut top_left_mask, 0);
+    assert!(ServerApp::mask_intersects_obstacle(
+        &map,
+        &top_left_mask,
+        &single_tile_top_left
+    ));
+    let mut wrong_top_row_mask = ServerApp::blank_visibility_mask(&map);
+    ServerApp::set_mask_bit(&mut wrong_top_row_mask, 1);
+    assert!(!ServerApp::mask_intersects_obstacle(
+        &map,
+        &wrong_top_row_mask,
+        &single_tile_top_left
+    ));
+    let mut wrong_left_column_mask = ServerApp::blank_visibility_mask(&map);
+    ServerApp::set_mask_bit(&mut wrong_left_column_mask, 4);
+    assert!(!ServerApp::mask_intersects_obstacle(
+        &map,
+        &wrong_left_column_mask,
+        &single_tile_top_left
+    ));
+
+    let single_tile_bottom_right = game_sim::ArenaObstacle {
+        kind: game_sim::ArenaObstacleKind::Pillar,
+        center_x: 150,
+        center_y: 150,
+        half_width: 49,
+        half_height: 49,
+    };
+    let mut bottom_right_mask = ServerApp::blank_visibility_mask(&map);
+    ServerApp::set_mask_bit(&mut bottom_right_mask, 15);
+    assert!(ServerApp::mask_intersects_obstacle(
+        &map,
+        &bottom_right_mask,
+        &single_tile_bottom_right
+    ));
+    let mut wrong_bottom_row_mask = ServerApp::blank_visibility_mask(&map);
+    ServerApp::set_mask_bit(&mut wrong_bottom_row_mask, 14);
+    assert!(!ServerApp::mask_intersects_obstacle(
+        &map,
+        &wrong_bottom_row_mask,
+        &single_tile_bottom_right
+    ));
+    let mut wrong_right_column_mask = ServerApp::blank_visibility_mask(&map);
+    ServerApp::set_mask_bit(&mut wrong_right_column_mask, 11);
+    assert!(!ServerApp::mask_intersects_obstacle(
+        &map,
+        &wrong_right_column_mask,
+        &single_tile_bottom_right
+    ));
 }
 
 #[test]
@@ -434,6 +508,91 @@ fn snapshot_filters_include_visible_non_owned_entities_and_repair_explored_masks
     }));
 }
 
+#[test]
+fn deployable_snapshots_always_include_owned_and_only_visible_foreign_entities() {
+    let content = GameContent::bundled().expect("bundled content");
+    let map = content.map().clone();
+    let ranger_tree = SkillTree::new("Ranger").expect("ranger tree");
+    let alice_id = manual_player_id(1);
+    let bob_id = manual_player_id(2);
+    let mut runtime = manual_runtime(
+        &content,
+        vec![
+            manual_seed(
+                &content,
+                1,
+                "Alice",
+                TeamSide::TeamA,
+                ranger_tree.clone(),
+                [None, None, None, Some(skill(ranger_tree.clone(), 4)), None],
+            ),
+            manual_seed(
+                &content,
+                2,
+                "Bob",
+                TeamSide::TeamB,
+                ranger_tree.clone(),
+                [None, None, None, Some(skill(ranger_tree.clone(), 4)), None],
+            ),
+        ],
+    );
+
+    runtime.world.update_aim(alice_id, 1, 0).expect("alice aim");
+    runtime.world.queue_cast(alice_id, 4).expect("alice ward");
+    let _ = runtime.world.tick(COMBAT_FRAME_MS);
+
+    runtime.world.update_aim(bob_id, -1, 0).expect("bob aim");
+    runtime.world.queue_cast(bob_id, 4).expect("bob ward");
+    let _ = runtime.world.tick(COMBAT_FRAME_MS);
+
+    let deployables = runtime.world.deployables();
+    let alice_ward = deployables
+        .iter()
+        .copied()
+        .find(|deployable| deployable.owner == alice_id)
+        .expect("alice ward");
+    let bob_ward = deployables
+        .iter()
+        .copied()
+        .find(|deployable| deployable.owner == bob_id)
+        .expect("bob ward");
+
+    let hidden_snapshot = ServerApp::arena_deployables_snapshot(
+        &runtime,
+        alice_id,
+        &map,
+        &ServerApp::blank_visibility_mask(&map),
+    );
+    assert!(
+        hidden_snapshot
+            .iter()
+            .any(|deployable| deployable.owner == alice_id),
+        "owners should always receive their own deployables"
+    );
+    assert!(
+        hidden_snapshot
+            .iter()
+            .all(|deployable| deployable.owner != bob_id),
+        "foreign deployables should stay hidden without a visible tile"
+    );
+
+    let mut visible_mask = ServerApp::blank_visibility_mask(&map);
+    let bob_tile = ServerApp::tile_index_for_point(&map, bob_ward.x, bob_ward.y)
+        .expect("bob ward tile should exist");
+    ServerApp::set_mask_bit(&mut visible_mask, bob_tile);
+    let visible_snapshot =
+        ServerApp::arena_deployables_snapshot(&runtime, alice_id, &map, &visible_mask);
+    assert!(visible_snapshot
+        .iter()
+        .any(|deployable| deployable.id == alice_ward.id && deployable.owner == alice_id));
+    assert!(
+        visible_snapshot
+            .iter()
+            .any(|deployable| deployable.id == bob_ward.id && deployable.owner == bob_id),
+        "foreign deployables should appear once their tile is visible"
+    );
+}
+
 fn manual_player_id(raw: u32) -> PlayerId {
     PlayerId::new(raw).expect("valid player id")
 }
@@ -464,9 +623,8 @@ fn manual_seed(
             .melee_for(&primary_tree)
             .expect("melee should exist")
             .clone(),
-        skills: choices.map(|choice| {
-            choice.and_then(|picked| content.skills().resolve(&picked).cloned())
-        }),
+        skills: choices
+            .map(|choice| choice.and_then(|picked| content.skills().resolve(&picked).cloned())),
     }
 }
 
@@ -475,7 +633,10 @@ fn manual_runtime(content: &GameContent, seeds: Vec<game_sim::SimPlayerSeed>) ->
         .iter()
         .map(|seed| seed.assignment.clone())
         .collect::<Vec<_>>();
-    let participants = roster.iter().map(|assignment| assignment.player_id).collect();
+    let participants = roster
+        .iter()
+        .map(|assignment| assignment.player_id)
+        .collect();
     let session = MatchSession::new(
         MatchId::new(1).expect("match id"),
         roster.clone(),
@@ -519,11 +680,11 @@ fn content_with_reveal_only_field(
     fs::write(root.join("maps").join("prototype_arena.txt"), map_text).expect("map override");
     let mage_path = root.join("skills").join("mage.yaml");
     let mage_yaml = fs::read_to_string(&mage_path).expect("mage yaml");
-    let patched = mage_yaml.replace(
-        "amount: 4\n        status:",
-        "amount: 0\n        status:",
+    let patched = mage_yaml.replace("amount: 4\n        status:", "amount: 0\n        status:");
+    assert_ne!(
+        patched, mage_yaml,
+        "test mage reveal field patch should apply"
     );
-    assert_ne!(patched, mage_yaml, "test mage reveal field patch should apply");
     fs::write(&mage_path, patched).expect("patched mage yaml");
     let content = GameContent::load_from_root(&root).expect("custom content");
     (content, root)
@@ -588,14 +749,9 @@ fn allied_wards_extend_visibility_masks_and_enemy_snapshots() {
         .expect("ward should queue");
     let _ = runtime.world.tick(COMBAT_FRAME_MS);
     assert!(
-        runtime
-            .world
-            .deployables()
-            .into_iter()
-            .any(|deployable| {
-                deployable.owner == alice_id
-                    && deployable.kind == game_sim::ArenaDeployableKind::Ward
-            }),
+        runtime.world.deployables().into_iter().any(|deployable| {
+            deployable.owner == alice_id && deployable.kind == game_sim::ArenaDeployableKind::Ward
+        }),
         "the ward cast should create a deployable vision source"
     );
 
@@ -660,10 +816,7 @@ fn stealthed_players_stay_hidden_until_a_reveal_effect_lands() {
         "the rogue should gain stealth after the aura pulses"
     );
 
-    runtime
-        .world
-        .update_aim(bob_id, -1, 0)
-        .expect("bob aim");
+    runtime.world.update_aim(bob_id, -1, 0).expect("bob aim");
     runtime
         .world
         .submit_input(

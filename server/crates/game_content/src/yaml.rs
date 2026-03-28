@@ -36,6 +36,10 @@ pub(super) struct MechanicSchemaYaml {
     #[serde(default)]
     pub(super) payload: PayloadRuleYaml,
     #[serde(default)]
+    pub(super) expire_payload: PayloadRuleYaml,
+    #[serde(default)]
+    pub(super) dispel_payload: PayloadRuleYaml,
+    #[serde(default)]
     pub(super) allowed_effects: Vec<String>,
     #[serde(default)]
     pub(super) max_stacks: StackRuleYaml,
@@ -98,6 +102,14 @@ pub(super) struct EffectPayloadYaml {
     pub(super) amount: Option<u16>,
     pub(super) status: Option<StatusYaml>,
     pub(super) interrupt_silence_duration_ms: Option<u16>,
+    pub(super) dispel: Option<DispelYaml>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct DispelYaml {
+    pub(super) scope: String,
+    pub(super) max_statuses: Option<u8>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -109,6 +121,8 @@ pub(super) struct StatusYaml {
     pub(super) magnitude: u16,
     pub(super) max_stacks: Option<u8>,
     pub(super) trigger_duration_ms: Option<u16>,
+    pub(super) expire_payload: Option<Box<EffectPayloadYaml>>,
+    pub(super) dispel_payload: Option<Box<EffectPayloadYaml>>,
 }
 
 #[derive(Clone, Debug, Deserialize)]

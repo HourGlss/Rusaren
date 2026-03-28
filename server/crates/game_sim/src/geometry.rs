@@ -2,12 +2,18 @@ use crate::{ArenaObstacle, ArenaObstacleKind};
 
 #[must_use]
 pub const fn obstacle_blocks_movement(obstacle: &ArenaObstacle) -> bool {
-    matches!(obstacle.kind, ArenaObstacleKind::Pillar | ArenaObstacleKind::Barrier)
+    matches!(
+        obstacle.kind,
+        ArenaObstacleKind::Pillar | ArenaObstacleKind::Barrier
+    )
 }
 
 #[must_use]
 pub const fn obstacle_blocks_projectiles(obstacle: &ArenaObstacle) -> bool {
-    matches!(obstacle.kind, ArenaObstacleKind::Pillar | ArenaObstacleKind::Barrier)
+    matches!(
+        obstacle.kind,
+        ArenaObstacleKind::Pillar | ArenaObstacleKind::Barrier
+    )
 }
 
 #[must_use]

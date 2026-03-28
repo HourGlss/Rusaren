@@ -165,6 +165,8 @@ fn parse_status_schema(
         return Ok(StatusSchema {
             numeric_fields: BTreeMap::new(),
             max_stacks: StackRule::One,
+            expire_payload: PayloadFieldRule::Forbidden,
+            dispel_payload: PayloadFieldRule::Forbidden,
         });
     };
 
@@ -177,6 +179,8 @@ fn parse_status_schema(
             .map(|(field, rule)| (field.clone(), parse_numeric_rule(*rule)))
             .collect(),
         max_stacks: parse_stack_rule(yaml.max_stacks),
+        expire_payload: parse_payload_rule(yaml.expire_payload),
+        dispel_payload: parse_payload_rule(yaml.dispel_payload),
     })
 }
 

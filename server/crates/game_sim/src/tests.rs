@@ -107,7 +107,7 @@ fn projectile_frame_budget(speed: u16, range: u16) -> usize {
     usize::from(range).div_ceil(travel_per_frame) + 3
 }
 
-fn cast_resolution_frame_budget(behavior: SkillBehavior) -> usize {
+fn cast_resolution_frame_budget(behavior: &SkillBehavior) -> usize {
     1 + usize::from(behavior.cast_time_ms().div_ceil(COMBAT_FRAME_MS))
 }
 
@@ -115,7 +115,7 @@ fn activate_skill_cast(
     world: &mut SimulationWorld,
     attacker_id: PlayerId,
     slot: u8,
-    behavior: SkillBehavior,
+    behavior: &SkillBehavior,
 ) -> Vec<SimulationEvent> {
     world
         .queue_cast(attacker_id, slot)
@@ -128,15 +128,27 @@ fn activate_skill_cast(
     events
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn resolve_skill_cast(
     world: &mut SimulationWorld,
     attacker_id: PlayerId,
     slot: u8,
     behavior: SkillBehavior,
 ) -> Vec<SimulationEvent> {
-    let mut events = activate_skill_cast(world, attacker_id, slot, behavior);
-    if let SkillBehavior::Projectile { speed, range, .. } = behavior {
-        events.extend(collect_ticks(world, projectile_frame_budget(speed, range)));
+    let mut events = activate_skill_cast(world, attacker_id, slot, &behavior);
+    match behavior {
+        SkillBehavior::Projectile { speed, range, .. } => {
+            events.extend(collect_ticks(world, projectile_frame_budget(speed, range)));
+        }
+        SkillBehavior::Channel {
+            tick_interval_ms, ..
+        } => {
+            events.extend(collect_ticks(
+                world,
+                usize::from(tick_interval_ms / COMBAT_FRAME_MS + 2),
+            ));
+        }
+        _ => {}
     }
     events
 }
@@ -196,16 +208,17 @@ fn status_applied_to(events: &[SimulationEvent], target: PlayerId, kind: StatusK
     })
 }
 
-fn behavior_payload(behavior: SkillBehavior) -> Option<game_content::EffectPayload> {
+fn behavior_payload(behavior: &SkillBehavior) -> Option<game_content::EffectPayload> {
     match behavior {
         SkillBehavior::Projectile { payload, .. }
         | SkillBehavior::Beam { payload, .. }
         | SkillBehavior::Burst { payload, .. }
         | SkillBehavior::Nova { payload, .. }
+        | SkillBehavior::Channel { payload, .. }
         | SkillBehavior::Summon { payload, .. }
         | SkillBehavior::Trap { payload, .. }
-        | SkillBehavior::Aura { payload, .. } => Some(payload),
-        SkillBehavior::Dash { payload, .. } => payload,
+        | SkillBehavior::Aura { payload, .. } => Some(payload.clone()),
+        SkillBehavior::Dash { payload, .. } => payload.clone(),
         SkillBehavior::Teleport { .. }
         | SkillBehavior::Passive { .. }
         | SkillBehavior::Ward { .. }

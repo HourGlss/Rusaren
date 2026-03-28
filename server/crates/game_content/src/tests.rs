@@ -80,14 +80,24 @@ fn bundled_content_covers_the_implemented_registry_surface() {
     let content = GameContent::bundled().expect("bundled content should load");
     let coverage = collect_authored_registry_surface(&content);
 
-    for mechanic in content.mechanics().behaviors.iter().filter(|mechanic| mechanic.implemented) {
+    for mechanic in content
+        .mechanics()
+        .behaviors
+        .iter()
+        .filter(|mechanic| mechanic.implemented)
+    {
         assert!(
             coverage.behaviors.contains(mechanic.id.as_str()),
             "implemented behavior {} should appear in authored skills",
             mechanic.id
         );
     }
-    for mechanic in content.mechanics().statuses.iter().filter(|mechanic| mechanic.implemented) {
+    for mechanic in content
+        .mechanics()
+        .statuses
+        .iter()
+        .filter(|mechanic| mechanic.implemented)
+    {
         assert!(
             coverage.statuses.contains(mechanic.id.as_str()),
             "implemented status {} should appear in authored skills",
@@ -115,41 +125,70 @@ fn collect_authored_registry_surface(content: &GameContent) -> AuthoredRegistryC
     };
 
     for skill in content.skills().all() {
-        collect_behavior_registry_coverage(skill.behavior, &mut coverage);
+        collect_behavior_registry_coverage(&skill.behavior, &mut coverage);
     }
 
     coverage
 }
 
+#[allow(clippy::too_many_lines)]
 fn collect_behavior_registry_coverage(
-    behavior: SkillBehavior,
+    behavior: &SkillBehavior,
     coverage: &mut AuthoredRegistryCoverage,
 ) {
     match behavior {
         SkillBehavior::Projectile { payload, .. } => {
             coverage.behaviors.insert("projectile");
-            collect_payload_registry_coverage(payload, &mut coverage.behaviors, &mut coverage.statuses);
+            collect_payload_registry_coverage(
+                payload,
+                &mut coverage.behaviors,
+                &mut coverage.statuses,
+            );
         }
         SkillBehavior::Beam { payload, .. } => {
             coverage.behaviors.insert("beam");
-            collect_payload_registry_coverage(payload, &mut coverage.behaviors, &mut coverage.statuses);
+            collect_payload_registry_coverage(
+                payload,
+                &mut coverage.behaviors,
+                &mut coverage.statuses,
+            );
         }
         SkillBehavior::Dash { payload, .. } => {
             coverage.behaviors.insert("dash");
             if let Some(payload) = payload {
-                collect_payload_registry_coverage(payload, &mut coverage.behaviors, &mut coverage.statuses);
+                collect_payload_registry_coverage(
+                    payload,
+                    &mut coverage.behaviors,
+                    &mut coverage.statuses,
+                );
             }
         }
         SkillBehavior::Burst { payload, .. } => {
             coverage.behaviors.insert("burst");
-            collect_payload_registry_coverage(payload, &mut coverage.behaviors, &mut coverage.statuses);
+            collect_payload_registry_coverage(
+                payload,
+                &mut coverage.behaviors,
+                &mut coverage.statuses,
+            );
         }
         SkillBehavior::Nova { payload, .. } => {
             coverage.behaviors.insert("nova");
-            collect_payload_registry_coverage(payload, &mut coverage.behaviors, &mut coverage.statuses);
+            collect_payload_registry_coverage(
+                payload,
+                &mut coverage.behaviors,
+                &mut coverage.statuses,
+            );
         }
         SkillBehavior::Teleport { .. } => {
             coverage.behaviors.insert("teleport");
+        }
+        SkillBehavior::Channel { payload, .. } => {
+            coverage.behaviors.insert("channel");
+            collect_payload_registry_coverage(
+                payload,
+                &mut coverage.behaviors,
+                &mut coverage.statuses,
+            );
         }
         SkillBehavior::Passive {
             player_speed_bps,
@@ -158,49 +197,64 @@ fn collect_behavior_registry_coverage(
             cast_time_bps,
         } => {
             coverage.behaviors.insert("passive");
-            if player_speed_bps > 0 {
+            if *player_speed_bps > 0 {
                 coverage.passive_fields.insert("player_speed_bps");
             }
-            if projectile_speed_bps > 0 {
+            if *projectile_speed_bps > 0 {
                 coverage.passive_fields.insert("projectile_speed_bps");
             }
-            if cooldown_bps > 0 {
+            if *cooldown_bps > 0 {
                 coverage.passive_fields.insert("cooldown_bps");
             }
-            if cast_time_bps > 0 {
+            if *cast_time_bps > 0 {
                 coverage.passive_fields.insert("cast_time_bps");
             }
         }
         SkillBehavior::Summon { payload, .. } => {
             coverage.behaviors.insert("summon");
-            collect_payload_registry_coverage(payload, &mut coverage.behaviors, &mut coverage.statuses);
+            collect_payload_registry_coverage(
+                payload,
+                &mut coverage.behaviors,
+                &mut coverage.statuses,
+            );
         }
         SkillBehavior::Ward { .. } => {
             coverage.behaviors.insert("ward");
         }
         SkillBehavior::Trap { payload, .. } => {
             coverage.behaviors.insert("trap");
-            collect_payload_registry_coverage(payload, &mut coverage.behaviors, &mut coverage.statuses);
+            collect_payload_registry_coverage(
+                payload,
+                &mut coverage.behaviors,
+                &mut coverage.statuses,
+            );
         }
         SkillBehavior::Barrier { .. } => {
             coverage.behaviors.insert("barrier");
         }
         SkillBehavior::Aura { payload, .. } => {
             coverage.behaviors.insert("aura");
-            collect_payload_registry_coverage(payload, &mut coverage.behaviors, &mut coverage.statuses);
+            collect_payload_registry_coverage(
+                payload,
+                &mut coverage.behaviors,
+                &mut coverage.statuses,
+            );
         }
     }
 }
 
 fn collect_payload_registry_coverage(
-    payload: EffectPayload,
+    payload: &EffectPayload,
     behaviors: &mut BTreeSet<&'static str>,
     statuses: &mut BTreeSet<&'static str>,
 ) {
     if payload.interrupt_silence_duration_ms.is_some() {
         behaviors.insert("interrupt");
     }
-    if let Some(status) = payload.status {
+    if payload.dispel.is_some() {
+        behaviors.insert("dispel");
+    }
+    if let Some(status) = &payload.status {
         statuses.insert(match status.kind {
             StatusKind::Poison => "poison",
             StatusKind::Hot => "hot",
@@ -517,7 +571,8 @@ skills:
         kind: damage
         amount: 2
 ";
-    let parsed = parse_skill_yaml("skills/mage.yaml", summon).expect("summon behavior should parse");
+    let parsed =
+        parse_skill_yaml("skills/mage.yaml", summon).expect("summon behavior should parse");
     assert!(matches!(
         parsed.skills[0].behavior,
         SkillBehavior::Summon {
@@ -568,7 +623,7 @@ skills:
           duration_ms: 3000
           tick_interval_ms: 1000
           magnitude: 4
-          max_stacks: 2
+          max_stacks: 0
   - tier: 2
     id: cleric_two
     name: Two
@@ -625,7 +680,7 @@ skills:
     assert!(matches!(
         parse_skill_yaml("skills/cleric.yaml", invalid_hot),
         Err(ContentError::Validation { message, .. })
-            if message == "status 'Hot' max_stacks must be exactly one"
+            if message == "status 'Hot' max_stacks must be greater than zero"
     ));
 
     let invalid_root = r"

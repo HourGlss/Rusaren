@@ -8,7 +8,7 @@ mod planner;
 mod probe;
 
 pub use cli::CliArgs;
-pub use probe::{run_probe, ProbeConfig, ProbeOutcome};
+pub use probe::{run_probe, ProbeConfig, ProbeMechanicObservation, ProbeOutcome};
 
 use std::fmt;
 

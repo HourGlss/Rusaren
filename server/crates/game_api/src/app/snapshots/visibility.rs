@@ -31,14 +31,17 @@ impl ServerApp {
         for row in 0..usize::from(map.height_tiles) {
             for column in 0..usize::from(map.width_tiles) {
                 let tile_center = Self::tile_center_units(map, column, row);
-                if vision_sources.iter().any(|(source_position, vision_radius)| {
-                    Self::point_is_visible_from_source(
-                        *source_position,
-                        tile_center,
-                        runtime.world.obstacles(),
-                        *vision_radius,
-                    )
-                }) {
+                if vision_sources
+                    .iter()
+                    .any(|(source_position, vision_radius)| {
+                        Self::point_is_visible_from_source(
+                            *source_position,
+                            tile_center,
+                            runtime.world.obstacles(),
+                            *vision_radius,
+                        )
+                    })
+                {
                     let tile_index = row * usize::from(map.width_tiles) + column;
                     Self::set_mask_bit(&mut visible_tiles, tile_index);
                 }

@@ -16,9 +16,9 @@ use game_net::{
     ArenaDeltaSnapshot, ArenaDeployableKind, ArenaDeployableSnapshot, ArenaEffectKind,
     ArenaEffectSnapshot, ArenaMatchPhase, ArenaObstacleKind, ArenaObstacleSnapshot,
     ArenaPlayerSnapshot, ArenaProjectileSnapshot, ArenaStateSnapshot, ArenaStatusKind,
-    ArenaStatusSnapshot, ChannelId, ClientControlCommand, LobbyDirectoryEntry,
-    LobbySnapshotPhase, LobbySnapshotPlayer, PacketHeader, PacketKind, ServerControlEvent,
-    SkillCatalogEntry, ValidatedInputFrame, BUTTON_CAST, BUTTON_PRIMARY,
+    ArenaStatusSnapshot, ChannelId, ClientControlCommand, LobbyDirectoryEntry, LobbySnapshotPhase,
+    LobbySnapshotPlayer, PacketHeader, PacketKind, ServerControlEvent, SkillCatalogEntry,
+    ValidatedInputFrame, BUTTON_CAST, BUTTON_PRIMARY,
 };
 
 const PROTOTYPE_ARENA_ASCII: &str = include_str!("../../../content/maps/prototype_arena.txt");

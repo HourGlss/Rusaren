@@ -59,23 +59,23 @@ skills:
           magnitude: 16
           max_stacks: 5
   - tier: 4
-    id: cleric_truth_lance
-    name: Truth Lance
-    description: A straight burst of revelation that strips concealment from anyone it touches.
+    id: cleric_cleanse_prayer
+    name: Cleanse Prayer
+    description: A focused blessing that lifts one harmful effect from the first ally it reaches.
     behavior:
       kind: beam
       effect: beam
       cooldown_ms: 2200
+      cast_time_ms: 300
       mana_cost: 30
-      range: 420
+      range: 320
       radius: 24
       payload:
-        kind: damage
-        amount: 10
-        status:
-          kind: reveal
-          duration_ms: 1600
-          magnitude: 0
+        kind: heal
+        amount: 8
+        dispel:
+          scope: negative
+          max_statuses: 1
   - tier: 5
     id: cleric_sanctuary_hymn
     name: Sanctuary Hymn

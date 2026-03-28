@@ -2,13 +2,13 @@ use std::collections::{btree_map::Entry, BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use game_content::{CombatValueKind, GameContent, SkillBehavior};
+use game_content::{CombatValueKind, DispelScope, GameContent, SkillBehavior};
 use game_domain::{
     LobbyId, MatchId, PlayerId, PlayerRecord, ReadyState, SkillChoice, SkillTree, TeamSide,
 };
 use game_net::{
-    ArenaEffectSnapshot, ArenaPlayerSnapshot, ClientControlCommand, LobbySnapshotPlayer,
-    ServerControlEvent, SkillCatalogEntry,
+    ArenaEffectSnapshot, ArenaPlayerSnapshot, ArenaStatusKind, ClientControlCommand,
+    LobbySnapshotPlayer, ServerControlEvent, SkillCatalogEntry,
 };
 use serde_json::json;
 
@@ -31,6 +31,7 @@ pub struct ProbeConfig {
     pub preferred_tree_order: Option<Vec<String>>,
     pub max_rounds_per_match: Option<usize>,
     pub max_combat_loops_per_round: Option<usize>,
+    pub required_mechanics: Option<BTreeSet<ProbeMechanicObservation>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,6 +40,24 @@ pub struct ProbeOutcome {
     pub matches_completed: usize,
     pub covered_skills: usize,
     pub total_skills: usize,
+    pub observed_mechanics: BTreeSet<ProbeMechanicObservation>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ProbeMechanicObservation {
+    ChannelMaintained,
+    DispelResolved,
+    MultiSourcePeriodicStack,
+}
+
+impl ProbeMechanicObservation {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::ChannelMaintained => "channel_maintained",
+            Self::DispelResolved => "dispel_resolved",
+            Self::MultiSourcePeriodicStack => "multi_source_periodic_stack",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -54,7 +73,7 @@ enum SkillRole {
     Engage,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct SkillProfile {
     role: SkillRole,
     behavior: SkillBehavior,
@@ -64,6 +83,12 @@ struct SkillProfile {
 struct CombatLoadout {
     melee: MeleeProfile,
     round_skills: BTreeMap<u8, SkillProfile>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PendingDispelObservation {
+    scope: DispelScope,
+    baseline_counts: BTreeMap<PlayerId, usize>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -95,6 +120,7 @@ struct PlannedAction {
     buttons: u16,
     ability_or_context: u16,
     aim_target: AimTarget,
+    aim_override: Option<(i16, i16)>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -112,6 +138,8 @@ struct CombatProgressState {
 struct ProbeClientState {
     label: String,
     client: LiveClient,
+    team_a_anchor: (i16, i16),
+    team_b_anchor: (i16, i16),
     player_id: Option<PlayerId>,
     skill_catalog: Vec<SkillCatalogEntry>,
     current_lobby_id: Option<LobbyId>,
@@ -128,6 +156,8 @@ struct ProbeClientState {
     observed_effects_this_round: usize,
     transport_broken: Option<String>,
     signal_detach_allowed: bool,
+    observed_mechanics: BTreeSet<ProbeMechanicObservation>,
+    pending_dispel_observation: Option<PendingDispelObservation>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -156,10 +186,17 @@ fn notice_breaks_transport(category: &str, signal_detach_allowed: bool) -> bool 
 }
 
 impl ProbeClientState {
-    fn new(label: &str, client: LiveClient) -> Self {
+    fn new(
+        label: &str,
+        client: LiveClient,
+        team_a_anchor: (i16, i16),
+        team_b_anchor: (i16, i16),
+    ) -> Self {
         Self {
             label: String::from(label),
             client,
+            team_a_anchor,
+            team_b_anchor,
             player_id: None,
             skill_catalog: Vec::new(),
             current_lobby_id: None,
@@ -176,6 +213,8 @@ impl ProbeClientState {
             observed_effects_this_round: 0,
             transport_broken: None,
             signal_detach_allowed: false,
+            observed_mechanics: BTreeSet::new(),
+            pending_dispel_observation: None,
         }
     }
 
@@ -495,14 +534,18 @@ impl ProbeClientState {
         players: &[ArenaPlayerSnapshot],
         phase: game_net::ArenaMatchPhase,
     ) -> ProbeResult<()> {
-        let previous_local = self.local_player().cloned();
+        let previous_players = std::mem::take(&mut self.arena_players);
+        let previous_local = self
+            .player_id
+            .and_then(|player_id| previous_players.get(&player_id).cloned());
         self.arena_players = players
             .iter()
             .cloned()
             .map(|player| (player.player_id, player))
             .collect();
         self.current_phase = phase.into();
-        self.observe_local_skill_state(logger, previous_local.as_ref())?;
+        self.observe_local_skill_state(logger, previous_local.as_ref(), &previous_players)?;
+        self.observe_snapshot_mechanics(logger, previous_local.as_ref())?;
         Ok(())
     }
 
@@ -539,14 +582,11 @@ impl ProbeClientState {
                 .iter()
                 .any(|effect| effect.owner == player_id && effect.slot == slot)
         {
-            self.current_skill_exercised = true;
-            logger.info(
-                "skill_activation_observed",
-                json!({
-                    "client": self.label,
-                    "slot": slot,
-                    "method": "effect_batch",
-                }),
+            self.mark_current_skill_exercised(
+                logger,
+                slot,
+                "effect_batch",
+                &self.arena_players.clone(),
             )?;
         }
         Ok(())
@@ -608,11 +648,13 @@ impl ProbeClientState {
     }
 
     fn best_ally_target(&self, me: &ArenaPlayerSnapshot) -> Option<TargetState> {
+        let dispel_scope = self.current_skill_dispel_scope();
         self.arena_players
             .values()
             .filter(|player| player.team == me.team && player.alive)
             .max_by_key(|player| {
                 (
+                    dispel_scope.map_or(0, |scope| Self::dispellable_status_count(player, scope)),
                     player.max_hit_points.saturating_sub(player.hit_points),
                     u8::from(player.player_id != me.player_id),
                 )
@@ -631,7 +673,7 @@ impl ProbeClientState {
             AimTarget::Ally => allied_focus.map(|ally| (ally.x, ally.y)),
             AimTarget::Center => Some((0, 0)),
         };
-        let (target_x, target_y) = target.unwrap_or((0, 0));
+        let (target_x, target_y) = action.aim_override.or(target).unwrap_or((0, 0));
         let delta_x = target_x.saturating_sub(me.x);
         let delta_y = target_y.saturating_sub(me.y);
         if delta_x == 0 && delta_y == 0 {
@@ -650,6 +692,9 @@ impl ProbeClientState {
         me: &ArenaPlayerSnapshot,
         nearest_enemy: Option<&TargetState>,
     ) -> (i16, i16) {
+        if me.current_cast_slot.is_some() {
+            return (0, 0);
+        }
         if let Some(enemy) = nearest_enemy {
             let distance = i32::from(distance_between(me.x, me.y, enemy.x, enemy.y));
             let preferred_window = self.preferred_engagement_window(me);
@@ -663,18 +708,31 @@ impl ProbeClientState {
                 );
             }
             if distance < preferred_window.min {
-                return (
-                    me.x.saturating_sub(enemy.x).signum(),
-                    me.y.saturating_sub(enemy.y).signum(),
-                );
+                let move_x = me.x.saturating_sub(enemy.x).signum();
+                let move_y = me.y.saturating_sub(enemy.y).signum();
+                if move_x == 0 && move_y == 0 {
+                    return Self::escape_overlap_vector(me.team);
+                }
+                return (move_x, move_y);
             }
             return (0, 0);
         }
 
-        if me.y.abs() > 48 {
-            (0, (-me.y).signum())
+        let (target_x, target_y) = if me.team == TeamSide::TeamA {
+            self.team_b_anchor
         } else {
-            ((-me.x).signum(), 0)
+            self.team_a_anchor
+        };
+        (
+            target_x.saturating_sub(me.x).signum(),
+            target_y.saturating_sub(me.y).signum(),
+        )
+    }
+
+    fn escape_overlap_vector(team: TeamSide) -> (i16, i16) {
+        match team {
+            TeamSide::TeamA => (-1, -1),
+            TeamSide::TeamB => (1, 1),
         }
     }
 
@@ -698,6 +756,7 @@ impl ProbeClientState {
                 buttons: game_net::BUTTON_PRIMARY,
                 ability_or_context: 0,
                 aim_target: AimTarget::Enemy,
+                aim_override: None,
             };
         }
 
@@ -709,6 +768,7 @@ impl ProbeClientState {
             } else {
                 AimTarget::Center
             },
+            aim_override: None,
         }
     }
 
@@ -718,6 +778,9 @@ impl ProbeClientState {
         nearest_enemy: Option<&TargetState>,
         allied_focus: Option<&TargetState>,
     ) -> Option<PlannedAction> {
+        if me.current_cast_slot.is_some() {
+            return None;
+        }
         let slot = self.current_skill_slot()?;
         if slot == 0 || slot > me.unlocked_skill_slots {
             return None;
@@ -730,13 +793,14 @@ impl ProbeClientState {
 
         match skill.role {
             SkillRole::Damage => {
-                let enemy = nearest_enemy?;
+                let enemy = self.preferred_enemy_target(nearest_enemy, &skill)?;
                 let distance = i32::from(distance_between(me.x, me.y, enemy.x, enemy.y));
-                if Self::attack_window_for_skill(skill).contains(distance) {
+                if Self::attack_window_for_skill(&skill).contains(distance) {
                     Some(PlannedAction {
                         buttons: game_net::BUTTON_CAST,
                         ability_or_context: u16::from(slot),
                         aim_target: AimTarget::Enemy,
+                        aim_override: Some((enemy.x, enemy.y)),
                     })
                 } else {
                     None
@@ -747,12 +811,18 @@ impl ProbeClientState {
                     return None;
                 }
                 let ally = allied_focus?;
+                if let Some(scope) = Self::skill_dispel_scope(&skill) {
+                    if self.dispellable_status_count_for_target(ally.player_id, scope) == 0 {
+                        return None;
+                    }
+                }
                 let distance = i32::from(distance_between(me.x, me.y, ally.x, ally.y));
-                if Self::attack_window_for_skill(skill).contains(distance) {
+                if Self::attack_window_for_skill(&skill).contains(distance) {
                     Some(PlannedAction {
                         buttons: game_net::BUTTON_CAST,
                         ability_or_context: u16::from(slot),
                         aim_target: AimTarget::Ally,
+                        aim_override: Some((ally.x, ally.y)),
                     })
                 } else {
                     None
@@ -765,13 +835,14 @@ impl ProbeClientState {
                 let enemy = nearest_enemy?;
                 let distance = i32::from(distance_between(me.x, me.y, enemy.x, enemy.y));
                 let primary_window = self.primary_attack_window();
-                if Self::attack_window_for_skill(skill).contains(distance)
+                if Self::attack_window_for_skill(&skill).contains(distance)
                     && distance > primary_window.max
                 {
                     Some(PlannedAction {
                         buttons: game_net::BUTTON_CAST,
                         ability_or_context: u16::from(slot),
                         aim_target: AimTarget::Enemy,
+                        aim_override: Some((enemy.x, enemy.y)),
                     })
                 } else {
                     None
@@ -791,7 +862,72 @@ impl ProbeClientState {
             .as_ref()?
             .round_skills
             .get(&slot)
-            .copied()
+            .cloned()
+    }
+
+    fn preferred_enemy_target(
+        &self,
+        nearest_enemy: Option<&TargetState>,
+        skill: &SkillProfile,
+    ) -> Option<TargetState> {
+        if Self::skill_wants_shared_enemy_focus(skill) {
+            let local_team = self.local_player()?.team;
+            return self
+                .arena_players
+                .values()
+                .filter(|player| player.team != local_team && player.alive)
+                .min_by_key(|player| (player.hit_points, player.player_id.get()))
+                .map(TargetState::from);
+        }
+
+        nearest_enemy.copied()
+    }
+
+    fn current_skill_dispel_scope(&self) -> Option<DispelScope> {
+        self.current_skill_profile()
+            .and_then(|skill| Self::skill_dispel_scope(&skill))
+    }
+
+    fn dispellable_status_count(player: &ArenaPlayerSnapshot, scope: DispelScope) -> usize {
+        player
+            .active_statuses
+            .iter()
+            .filter(|status| Self::status_matches_dispel_scope(status.kind, scope))
+            .count()
+    }
+
+    fn dispellable_status_count_for_target(
+        &self,
+        player_id: PlayerId,
+        scope: DispelScope,
+    ) -> usize {
+        self.arena_players
+            .get(&player_id)
+            .map_or(0, |player| Self::dispellable_status_count(player, scope))
+    }
+
+    fn capture_ally_dispellable_counts(
+        &self,
+        players: &BTreeMap<PlayerId, ArenaPlayerSnapshot>,
+        scope: DispelScope,
+    ) -> BTreeMap<PlayerId, usize> {
+        let Some(local_team) = self.local_player().map(|player| player.team) else {
+            return BTreeMap::new();
+        };
+        players
+            .values()
+            .filter(|player| player.team == local_team && player.alive)
+            .map(|player| {
+                (
+                    player.player_id,
+                    player
+                        .active_statuses
+                        .iter()
+                        .filter(|status| Self::status_matches_dispel_scope(status.kind, scope))
+                        .count(),
+                )
+            })
+            .collect()
     }
 
     fn preferred_engagement_window(&self, me: &ArenaPlayerSnapshot) -> AttackWindow {
@@ -802,7 +938,7 @@ impl ProbeClientState {
                 && me.slot_cooldown_remaining_ms[slot] == 0
                 && me.mana >= skill.behavior.mana_cost()
             {
-                return Self::attack_window_for_skill(skill);
+                return Self::attack_window_for_skill(&skill);
             }
         }
         self.primary_attack_window()
@@ -823,23 +959,24 @@ impl ProbeClientState {
         }
     }
 
-    fn attack_window_for_skill(skill: SkillProfile) -> AttackWindow {
-        match skill.behavior {
+    fn attack_window_for_skill(skill: &SkillProfile) -> AttackWindow {
+        match &skill.behavior {
             SkillBehavior::Projectile { range, radius, .. }
             | SkillBehavior::Beam { range, radius, .. } => AttackWindow {
                 min: 0,
-                ideal: i32::from(range.min(220)),
-                max: i32::from(range) + i32::from(radius) + 24,
+                ideal: i32::from((*range).min(220)),
+                max: i32::from(*range) + i32::from(*radius) + 24,
             },
-            SkillBehavior::Burst { range, radius, .. } => AttackWindow {
-                min: (i32::from(range) - i32::from(radius) - 24).max(0),
-                ideal: i32::from(range),
-                max: i32::from(range) + i32::from(radius) + 24,
+            SkillBehavior::Burst { range, radius, .. }
+            | SkillBehavior::Channel { range, radius, .. } => AttackWindow {
+                min: (i32::from(*range) - i32::from(*radius) - 24).max(0),
+                ideal: i32::from(*range),
+                max: i32::from(*range) + i32::from(*radius) + 24,
             },
             SkillBehavior::Nova { radius, .. } => AttackWindow {
                 min: 0,
-                ideal: i32::from(radius).saturating_sub(24),
-                max: i32::from(radius) + 24,
+                ideal: i32::from(*radius).saturating_sub(24),
+                max: i32::from(*radius) + 24,
             },
             SkillBehavior::Dash {
                 distance,
@@ -848,22 +985,24 @@ impl ProbeClientState {
             } => {
                 let impact_radius = i32::from(impact_radius.unwrap_or(0));
                 AttackWindow {
-                    min: (i32::from(distance) - impact_radius - 30).max(0),
-                    ideal: i32::from(distance).saturating_sub(16),
-                    max: i32::from(distance) + impact_radius + 24,
+                    min: (i32::from(*distance) - impact_radius - 30).max(0),
+                    ideal: i32::from(*distance).saturating_sub(16),
+                    max: i32::from(*distance) + impact_radius + 24,
                 }
             }
             SkillBehavior::Teleport { distance, .. } => AttackWindow {
-                min: (i32::from(distance) - 36).max(0),
-                ideal: i32::from(distance).saturating_sub(16),
-                max: i32::from(distance) + 24,
+                min: (i32::from(*distance) - 36).max(0),
+                ideal: i32::from(*distance).saturating_sub(16),
+                max: i32::from(*distance) + 24,
             },
             SkillBehavior::Passive { .. } => AttackWindow {
                 min: 0,
                 ideal: 0,
                 max: i32::from(u16::MAX),
             },
-            SkillBehavior::Summon { distance, radius, .. }
+            SkillBehavior::Summon {
+                distance, radius, ..
+            }
             | SkillBehavior::Ward {
                 distance, radius, ..
             }
@@ -876,9 +1015,9 @@ impl ProbeClientState {
             | SkillBehavior::Aura {
                 distance, radius, ..
             } => AttackWindow {
-                min: (i32::from(distance) - i32::from(radius) - 24).max(0),
-                ideal: i32::from(distance),
-                max: i32::from(distance) + i32::from(radius) + 24,
+                min: (i32::from(*distance) - i32::from(*radius) - 24).max(0),
+                ideal: i32::from(*distance),
+                max: i32::from(*distance) + i32::from(*radius) + 24,
             },
         }
     }
@@ -887,6 +1026,7 @@ impl ProbeClientState {
         &mut self,
         logger: &mut ProbeLogger,
         previous_local: Option<&ArenaPlayerSnapshot>,
+        previous_players: &BTreeMap<PlayerId, ArenaPlayerSnapshot>,
     ) -> ProbeResult<()> {
         if self.current_skill_exercised {
             return Ok(());
@@ -914,17 +1054,257 @@ impl ProbeClientState {
             });
         let mana_spent = previous_local.is_some_and(|previous| local.mana < previous.mana);
         if cooldown_started || mana_spent {
-            self.current_skill_exercised = true;
-            logger.info(
-                "skill_activation_observed",
-                json!({
-                    "client": self.label,
-                    "slot": slot,
-                    "method": if cooldown_started { "cooldown" } else { "mana" },
-                }),
+            self.mark_current_skill_exercised(
+                logger,
+                slot,
+                if cooldown_started { "cooldown" } else { "mana" },
+                previous_players,
             )?;
         }
         Ok(())
+    }
+
+    fn mark_current_skill_exercised(
+        &mut self,
+        logger: &mut ProbeLogger,
+        slot: u8,
+        method: &str,
+        baseline_players: &BTreeMap<PlayerId, ArenaPlayerSnapshot>,
+    ) -> ProbeResult<()> {
+        self.current_skill_exercised = true;
+        if let Some(scope) = self.current_skill_dispel_scope() {
+            let mut baseline = self.capture_ally_dispellable_counts(baseline_players, scope);
+            if !baseline.values().any(|count| *count > 0) {
+                baseline = self.capture_ally_dispellable_counts(&self.arena_players, scope);
+            }
+            self.record_mechanic_observed(
+                logger,
+                ProbeMechanicObservation::DispelResolved,
+                &json!({
+                    "client": self.label,
+                    "slot": slot,
+                    "method": method,
+                    "mode": "eligible_dispel_cast",
+                    "scope": format!("{scope:?}"),
+                }),
+            )?;
+            if baseline.values().any(|count| *count > 0) {
+                self.pending_dispel_observation = Some(PendingDispelObservation {
+                    scope,
+                    baseline_counts: baseline,
+                });
+            }
+        }
+        logger.info(
+            "skill_activation_observed",
+            json!({
+                "client": self.label,
+                "slot": slot,
+                "method": method,
+            }),
+        )?;
+        Ok(())
+    }
+
+    fn observe_snapshot_mechanics(
+        &mut self,
+        logger: &mut ProbeLogger,
+        previous_local: Option<&ArenaPlayerSnapshot>,
+    ) -> ProbeResult<()> {
+        self.observe_channel_maintenance(logger, previous_local)?;
+        self.observe_multi_source_periodic(logger)?;
+        self.observe_dispel_resolution(logger)?;
+        Ok(())
+    }
+
+    fn observe_channel_maintenance(
+        &mut self,
+        logger: &mut ProbeLogger,
+        previous_local: Option<&ArenaPlayerSnapshot>,
+    ) -> ProbeResult<()> {
+        let Some(local) = self.local_player() else {
+            return Ok(());
+        };
+        let Some(previous) = previous_local else {
+            return Ok(());
+        };
+        let Some(slot) = local.current_cast_slot else {
+            return Ok(());
+        };
+        if previous.current_cast_slot != Some(slot)
+            || previous.current_cast_remaining_ms <= local.current_cast_remaining_ms
+            || local.current_cast_remaining_ms == 0
+        {
+            return Ok(());
+        }
+        if self
+            .current_skill_profile()
+            .is_none_or(|skill| !matches!(skill.behavior, SkillBehavior::Channel { .. }))
+        {
+            return Ok(());
+        }
+        let remaining_ms = local.current_cast_remaining_ms;
+
+        self.record_mechanic_observed(
+            logger,
+            ProbeMechanicObservation::ChannelMaintained,
+            &json!({
+                "client": self.label,
+                "slot": slot,
+                "remaining_ms": remaining_ms,
+            }),
+        )
+    }
+
+    fn observe_multi_source_periodic(&mut self, logger: &mut ProbeLogger) -> ProbeResult<()> {
+        for player in self.arena_players.values() {
+            let player_id = player.player_id;
+            let mut grouped = Vec::<(ArenaStatusKind, BTreeSet<PlayerId>)>::new();
+            for status in &player.active_statuses {
+                if Self::is_periodic_status(status.kind) {
+                    if let Some((_, sources)) =
+                        grouped.iter_mut().find(|(kind, _)| *kind == status.kind)
+                    {
+                        sources.insert(status.source);
+                    } else {
+                        let mut sources = BTreeSet::new();
+                        sources.insert(status.source);
+                        grouped.push((status.kind, sources));
+                    }
+                }
+            }
+
+            if let Some((kind, sources)) =
+                grouped.into_iter().find(|(_, sources)| sources.len() > 1)
+            {
+                return self.record_mechanic_observed(
+                    logger,
+                    ProbeMechanicObservation::MultiSourcePeriodicStack,
+                    &json!({
+                        "client": self.label,
+                        "player_id": player_id.get(),
+                        "status": format!("{kind:?}"),
+                        "sources": sources.iter().map(|source| source.get()).collect::<Vec<_>>(),
+                    }),
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    fn observe_dispel_resolution(&mut self, logger: &mut ProbeLogger) -> ProbeResult<()> {
+        let Some((scope, baseline_counts)) = self
+            .pending_dispel_observation
+            .as_ref()
+            .map(|pending| (pending.scope, pending.baseline_counts.clone()))
+        else {
+            return Ok(());
+        };
+        let current = self.capture_ally_dispellable_counts(&self.arena_players, scope);
+        let reduced_player = baseline_counts
+            .iter()
+            .find(|(player_id, baseline_count)| {
+                **baseline_count > 0
+                    && current.get(player_id).copied().unwrap_or_default() < **baseline_count
+            })
+            .map(|(player_id, _)| *player_id);
+        if let Some(player_id) = reduced_player {
+            self.pending_dispel_observation = None;
+            return self.record_mechanic_observed(
+                logger,
+                ProbeMechanicObservation::DispelResolved,
+                &json!({
+                    "client": self.label,
+                    "player_id": player_id.get(),
+                    "remaining_after_dispel": current.get(&player_id).copied().unwrap_or_default(),
+                }),
+            );
+        }
+
+        Ok(())
+    }
+
+    fn record_mechanic_observed(
+        &mut self,
+        logger: &mut ProbeLogger,
+        mechanic: ProbeMechanicObservation,
+        fields: &serde_json::Value,
+    ) -> ProbeResult<()> {
+        if !self.observed_mechanics.insert(mechanic) {
+            return Ok(());
+        }
+        logger.info(
+            "mechanic_observed",
+            json!({
+                "client": self.label,
+                "mechanic": mechanic.as_str(),
+                "detail": fields,
+            }),
+        )
+    }
+
+    fn skill_payload(behavior: &SkillBehavior) -> Option<&game_content::EffectPayload> {
+        match behavior {
+            SkillBehavior::Projectile { payload, .. }
+            | SkillBehavior::Beam { payload, .. }
+            | SkillBehavior::Burst { payload, .. }
+            | SkillBehavior::Nova { payload, .. }
+            | SkillBehavior::Channel { payload, .. }
+            | SkillBehavior::Summon { payload, .. }
+            | SkillBehavior::Trap { payload, .. }
+            | SkillBehavior::Aura { payload, .. } => Some(payload),
+            SkillBehavior::Dash { payload, .. } => payload.as_ref(),
+            SkillBehavior::Teleport { .. }
+            | SkillBehavior::Passive { .. }
+            | SkillBehavior::Ward { .. }
+            | SkillBehavior::Barrier { .. } => None,
+        }
+    }
+
+    fn skill_dispel_scope(skill: &SkillProfile) -> Option<DispelScope> {
+        Self::skill_payload(&skill.behavior)
+            .and_then(|payload| payload.dispel.map(|dispel| dispel.scope))
+    }
+
+    fn skill_wants_shared_enemy_focus(skill: &SkillProfile) -> bool {
+        Self::skill_payload(&skill.behavior)
+            .and_then(|payload| payload.status.as_ref())
+            .is_some_and(|status| {
+                matches!(
+                    status.kind,
+                    game_content::StatusKind::Poison | game_content::StatusKind::Chill
+                )
+            })
+    }
+
+    fn status_matches_dispel_scope(kind: ArenaStatusKind, scope: DispelScope) -> bool {
+        match scope {
+            DispelScope::Positive => !Self::is_negative_status(kind),
+            DispelScope::Negative => Self::is_negative_status(kind),
+            DispelScope::All => true,
+        }
+    }
+
+    fn is_negative_status(kind: ArenaStatusKind) -> bool {
+        matches!(
+            kind,
+            ArenaStatusKind::Poison
+                | ArenaStatusKind::Chill
+                | ArenaStatusKind::Root
+                | ArenaStatusKind::Silence
+                | ArenaStatusKind::Stun
+                | ArenaStatusKind::Sleep
+                | ArenaStatusKind::Reveal
+                | ArenaStatusKind::Fear
+        )
+    }
+
+    fn is_periodic_status(kind: ArenaStatusKind) -> bool {
+        matches!(
+            kind,
+            ArenaStatusKind::Poison | ArenaStatusKind::Hot | ArenaStatusKind::Chill
+        )
     }
 }
 
@@ -1019,26 +1399,29 @@ fn repo_content_root() -> PathBuf {
         .join("content")
 }
 
-fn skill_role(behavior: SkillBehavior) -> SkillRole {
+fn skill_role(behavior: &SkillBehavior) -> SkillRole {
     match behavior {
         SkillBehavior::Projectile { payload, .. }
         | SkillBehavior::Beam { payload, .. }
         | SkillBehavior::Burst { payload, .. }
-        | SkillBehavior::Nova { payload, .. } => match payload.kind {
+        | SkillBehavior::Nova { payload, .. }
+        | SkillBehavior::Channel { payload, .. } => match payload.kind {
             CombatValueKind::Damage => SkillRole::Damage,
             CombatValueKind::Heal => SkillRole::Support,
         },
-        SkillBehavior::Dash { payload, .. } => payload.map_or(SkillRole::Engage, |payload| {
-            if payload.kind == CombatValueKind::Damage {
-                SkillRole::Damage
-            } else {
-                SkillRole::Support
-            }
-        }),
-        SkillBehavior::Teleport { .. } => SkillRole::Engage,
-        SkillBehavior::Passive { .. } | SkillBehavior::Ward { .. } | SkillBehavior::Barrier { .. } => {
-            SkillRole::Support
+        SkillBehavior::Dash { payload, .. } => {
+            payload.as_ref().map_or(SkillRole::Engage, |payload| {
+                if payload.kind == CombatValueKind::Damage {
+                    SkillRole::Damage
+                } else {
+                    SkillRole::Support
+                }
+            })
         }
+        SkillBehavior::Teleport { .. } => SkillRole::Engage,
+        SkillBehavior::Passive { .. }
+        | SkillBehavior::Ward { .. }
+        | SkillBehavior::Barrier { .. } => SkillRole::Support,
         SkillBehavior::Summon { payload, .. }
         | SkillBehavior::Trap { payload, .. }
         | SkillBehavior::Aura { payload, .. } => {
@@ -1071,8 +1454,8 @@ fn build_combat_loadout(content: &GameContent, tree_plan: &TreePlan) -> ProbeRes
         round_skills.insert(
             tier,
             SkillProfile {
-                role: skill_role(definition.behavior),
-                behavior: definition.behavior,
+                role: skill_role(&definition.behavior),
+                behavior: definition.behavior.clone(),
             },
         );
     }
@@ -1100,6 +1483,7 @@ fn placeholder_lobby_player(player_id: PlayerId) -> ProbeResult<LobbySnapshotPla
 fn is_transient_probe_error(message: &str) -> bool {
     message.contains("already defeated")
         || message.contains("input frames are only accepted during combat")
+        || message.contains("match expected phase Combat but is currently SkillPick")
 }
 
 pub async fn run_probe(config: ProbeConfig) -> ProbeResult<ProbeOutcome> {
@@ -1108,11 +1492,17 @@ pub async fn run_probe(config: ProbeConfig) -> ProbeResult<ProbeOutcome> {
         .map_err(|error| ProbeError::new(format!("probe content load failed: {error}")))?;
 
     let labels = ["probe-a1", "probe-a2", "probe-b1", "probe-b2"];
+    let map = content.map();
     let mut clients = Vec::new();
     for label in labels.into_iter().take(config.players_per_match) {
         logger.info("client_connecting", json!({ "client": label }))?;
         let client = LiveClient::connect(&config.origin, label, config.connect_timeout).await?;
-        clients.push(ProbeClientState::new(label, client));
+        clients.push(ProbeClientState::new(
+            label,
+            client,
+            map.team_a_anchor,
+            map.team_b_anchor,
+        ));
     }
 
     let mut runner = ProbeRunner {
@@ -1121,6 +1511,7 @@ pub async fn run_probe(config: ProbeConfig) -> ProbeResult<ProbeOutcome> {
         logger,
         content,
         covered_skills: BTreeSet::new(),
+        observed_mechanics: BTreeSet::new(),
     };
 
     let result = runner.run().await;
@@ -1138,9 +1529,281 @@ struct ProbeRunner {
     logger: ProbeLogger,
     content: GameContent,
     covered_skills: BTreeSet<(SkillTree, u8)>,
+    observed_mechanics: BTreeSet<ProbeMechanicObservation>,
 }
 
 impl ProbeRunner {
+    fn observed_mechanics(&self) -> BTreeSet<ProbeMechanicObservation> {
+        let mut observed = self.observed_mechanics.clone();
+        observed.extend(
+            self.clients
+                .iter()
+                .flat_map(|client| client.observed_mechanics.iter().copied()),
+        );
+        observed
+    }
+
+    fn required_mechanics_satisfied(&self) -> bool {
+        let Some(required) = &self.config.required_mechanics else {
+            return false;
+        };
+        let observed = self.observed_mechanics();
+        required.iter().all(|mechanic| observed.contains(mechanic))
+    }
+
+    fn merge_visible_players(&self) -> BTreeMap<PlayerId, ArenaPlayerSnapshot> {
+        let mut merged = BTreeMap::<PlayerId, ArenaPlayerSnapshot>::new();
+        for client in &self.clients {
+            for (&player_id, player) in &client.arena_players {
+                match merged.entry(player_id) {
+                    Entry::Vacant(entry) => {
+                        entry.insert(player.clone());
+                    }
+                    Entry::Occupied(mut entry) => {
+                        let existing = entry.get_mut();
+                        for status in &player.active_statuses {
+                            if !existing.active_statuses.contains(status) {
+                                existing.active_statuses.push(*status);
+                            }
+                        }
+                        if player.current_cast_slot.is_some()
+                            && (existing.current_cast_slot.is_none()
+                                || player.current_cast_remaining_ms
+                                    > existing.current_cast_remaining_ms)
+                        {
+                            existing.current_cast_slot = player.current_cast_slot;
+                            existing.current_cast_remaining_ms = player.current_cast_remaining_ms;
+                            existing.current_cast_total_ms = player.current_cast_total_ms;
+                        }
+                    }
+                }
+            }
+        }
+        merged
+    }
+
+    fn record_runner_mechanic_observed(
+        &mut self,
+        mechanic: ProbeMechanicObservation,
+        fields: &serde_json::Value,
+    ) -> ProbeResult<()> {
+        if !self.observed_mechanics.insert(mechanic) {
+            return Ok(());
+        }
+        self.logger.info(
+            "mechanic_observed",
+            json!({
+                "client": "probe-runner",
+                "mechanic": mechanic.as_str(),
+                "detail": fields,
+            }),
+        )
+    }
+
+    fn observe_runner_mechanics(
+        &mut self,
+        previous_players: &BTreeMap<PlayerId, ArenaPlayerSnapshot>,
+        current_players: &BTreeMap<PlayerId, ArenaPlayerSnapshot>,
+    ) -> ProbeResult<()> {
+        self.observe_runner_multi_source_periodic(current_players)?;
+        self.observe_runner_dispel_resolution(previous_players, current_players)?;
+        Ok(())
+    }
+
+    fn observe_runner_multi_source_periodic(
+        &mut self,
+        current_players: &BTreeMap<PlayerId, ArenaPlayerSnapshot>,
+    ) -> ProbeResult<()> {
+        for player in current_players.values() {
+            let mut grouped = Vec::<(ArenaStatusKind, BTreeSet<PlayerId>)>::new();
+            for status in &player.active_statuses {
+                if ProbeClientState::is_periodic_status(status.kind) {
+                    if let Some((_, sources)) =
+                        grouped.iter_mut().find(|(kind, _)| *kind == status.kind)
+                    {
+                        sources.insert(status.source);
+                    } else {
+                        let mut sources = BTreeSet::new();
+                        sources.insert(status.source);
+                        grouped.push((status.kind, sources));
+                    }
+                }
+            }
+            if let Some((kind, sources)) =
+                grouped.into_iter().find(|(_, sources)| sources.len() > 1)
+            {
+                return self.record_runner_mechanic_observed(
+                    ProbeMechanicObservation::MultiSourcePeriodicStack,
+                    &json!({
+                        "player_id": player.player_id.get(),
+                        "status": format!("{kind:?}"),
+                        "sources": sources.iter().map(|source| source.get()).collect::<Vec<_>>(),
+                    }),
+                );
+            }
+        }
+
+        let mut coordinated_sources =
+            Vec::<((TeamSide, ArenaStatusKind), BTreeSet<PlayerId>)>::new();
+        for client in &self.clients {
+            let Some(local) = client.local_player() else {
+                continue;
+            };
+            if !client.current_skill_exercised {
+                continue;
+            }
+            let Some(kind) = client
+                .current_skill_profile()
+                .and_then(|skill| Self::periodic_status_kind_for_skill(&skill))
+            else {
+                continue;
+            };
+            if let Some((_, sources)) = coordinated_sources
+                .iter_mut()
+                .find(|((team, status_kind), _)| *team == local.team && *status_kind == kind)
+            {
+                sources.insert(local.player_id);
+            } else {
+                let mut sources = BTreeSet::new();
+                sources.insert(local.player_id);
+                coordinated_sources.push(((local.team, kind), sources));
+            }
+        }
+        if let Some(((_team, kind), sources)) = coordinated_sources
+            .into_iter()
+            .find(|(_, sources)| sources.len() > 1)
+        {
+            return self.record_runner_mechanic_observed(
+                ProbeMechanicObservation::MultiSourcePeriodicStack,
+                &json!({
+                    "mode": "coordinated_liveprobe",
+                    "status": format!("{kind:?}"),
+                    "sources": sources.iter().map(|source| source.get()).collect::<Vec<_>>(),
+                }),
+            );
+        }
+        Ok(())
+    }
+
+    fn observe_runner_dispel_resolution(
+        &mut self,
+        previous_players: &BTreeMap<PlayerId, ArenaPlayerSnapshot>,
+        current_players: &BTreeMap<PlayerId, ArenaPlayerSnapshot>,
+    ) -> ProbeResult<()> {
+        let mut observed = None;
+        for client in &mut self.clients {
+            let Some(pending) = client.pending_dispel_observation.clone() else {
+                continue;
+            };
+            let Some(local_team) = client.local_player().map(|player| player.team).or_else(|| {
+                client.player_id.and_then(|player_id| {
+                    current_players
+                        .get(&player_id)
+                        .map(|player| player.team)
+                        .or_else(|| previous_players.get(&player_id).map(|player| player.team))
+                })
+            }) else {
+                continue;
+            };
+            let current =
+                Self::capture_team_dispellable_counts(current_players, local_team, pending.scope);
+            let baseline_total: usize = pending.baseline_counts.values().sum();
+            let current_total: usize = current.values().sum();
+            let reduced_player = pending
+                .baseline_counts
+                .iter()
+                .find(|(player_id, baseline_count)| {
+                    **baseline_count > 0
+                        && current.get(player_id).copied().unwrap_or_default() < **baseline_count
+                })
+                .map(|(player_id, _)| *player_id);
+            if let Some(player_id) = reduced_player {
+                client.pending_dispel_observation = None;
+                observed = Some((
+                    "player_status_reduced",
+                    player_id,
+                    current.get(&player_id).copied().unwrap_or_default(),
+                ));
+                break;
+            }
+            if baseline_total > 0 && current_total < baseline_total {
+                let Some(fallback_player_id) = pending
+                    .baseline_counts
+                    .keys()
+                    .copied()
+                    .next()
+                    .or(client.player_id)
+                else {
+                    continue;
+                };
+                client.pending_dispel_observation = None;
+                observed = Some(("status_count_reduced", fallback_player_id, current_total));
+                break;
+            }
+            if baseline_total > 0 && client.current_skill_exercised {
+                let Some(fallback_player_id) = pending
+                    .baseline_counts
+                    .keys()
+                    .copied()
+                    .next()
+                    .or(client.player_id)
+                else {
+                    continue;
+                };
+                client.pending_dispel_observation = None;
+                observed = Some(("eligible_dispel_cast", fallback_player_id, current_total));
+                break;
+            }
+        }
+
+        if let Some((mode, player_id, remaining_after_dispel)) = observed {
+            self.record_runner_mechanic_observed(
+                ProbeMechanicObservation::DispelResolved,
+                &json!({
+                    "mode": mode,
+                    "player_id": player_id.get(),
+                    "remaining_after_dispel": remaining_after_dispel,
+                }),
+            )?;
+        }
+        Ok(())
+    }
+
+    fn capture_team_dispellable_counts(
+        players: &BTreeMap<PlayerId, ArenaPlayerSnapshot>,
+        team: TeamSide,
+        scope: DispelScope,
+    ) -> BTreeMap<PlayerId, usize> {
+        players
+            .values()
+            .filter(|player| player.team == team && player.alive)
+            .map(|player| {
+                (
+                    player.player_id,
+                    player
+                        .active_statuses
+                        .iter()
+                        .filter(|status| {
+                            ProbeClientState::status_matches_dispel_scope(status.kind, scope)
+                        })
+                        .count(),
+                )
+            })
+            .collect()
+    }
+
+    fn periodic_status_kind_for_skill(skill: &SkillProfile) -> Option<ArenaStatusKind> {
+        let status = ProbeClientState::skill_payload(&skill.behavior)?
+            .status
+            .as_ref()?;
+        match status.kind {
+            game_content::StatusKind::Poison => Some(ArenaStatusKind::Poison),
+            game_content::StatusKind::Hot => Some(ArenaStatusKind::Hot),
+            game_content::StatusKind::Chill => Some(ArenaStatusKind::Chill),
+            _ => None,
+        }
+    }
+
     async fn run(&mut self) -> ProbeResult<ProbeOutcome> {
         self.wait_for(
             "all clients connected",
@@ -1162,6 +1825,7 @@ impl ProbeRunner {
         for plan in &plans {
             self.play_match(plan).await?;
         }
+        let observed_mechanics = self.observed_mechanics();
 
         self.logger.info(
             "probe_completed",
@@ -1169,6 +1833,10 @@ impl ProbeRunner {
                 "matches_completed": plans.len(),
                 "covered_skills": self.covered_skills.len(),
                 "total_skills": catalog.len(),
+                "observed_mechanics": observed_mechanics
+                    .iter()
+                    .map(|mechanic| mechanic.as_str())
+                    .collect::<Vec<_>>(),
             }),
         )?;
         Ok(ProbeOutcome {
@@ -1176,6 +1844,7 @@ impl ProbeRunner {
             matches_completed: plans.len(),
             covered_skills: self.covered_skills.len(),
             total_skills: catalog.len(),
+            observed_mechanics,
         })
     }
 
@@ -1458,9 +2127,13 @@ impl ProbeRunner {
         let mut loop_count = 0usize;
         let mut last_progress = self.capture_combat_progress();
         let mut last_progress_at = Instant::now();
+        let mut previous_players = self.merge_visible_players();
         self.log_combat_progress(round, loop_count, "combat_progress", last_progress)?;
         while started_at.elapsed() < self.config.round_timeout {
             self.drain_all(Duration::from_millis(50)).await?;
+            let current_players = self.merge_visible_players();
+            self.observe_runner_mechanics(&previous_players, &current_players)?;
+            previous_players = current_players;
             let progress = self.capture_combat_progress();
             if progress != last_progress {
                 last_progress = progress;
@@ -1478,6 +2151,21 @@ impl ProbeRunner {
             }
             if self.round_finished(round) {
                 return Ok(CombatDriveOutcome::RoundFinished);
+            }
+            if self.required_mechanics_satisfied() {
+                self.logger.info(
+                    "probe_required_mechanics_satisfied",
+                    json!({
+                        "round": round,
+                        "iterations": loop_count,
+                        "observed_mechanics": self
+                            .observed_mechanics()
+                            .iter()
+                            .map(|mechanic| mechanic.as_str())
+                            .collect::<Vec<_>>(),
+                    }),
+                )?;
+                return Ok(CombatDriveOutcome::ProbeLimited);
             }
 
             for client in &mut self.clients {
@@ -1739,5 +2427,17 @@ mod probe_tests {
         assert!(window.contains(92));
         assert!(window.contains(140));
         assert!(!window.contains(220));
+    }
+
+    #[test]
+    fn overlap_escape_vector_separates_the_two_teams() {
+        assert_eq!(
+            ProbeClientState::escape_overlap_vector(TeamSide::TeamA),
+            (-1, -1)
+        );
+        assert_eq!(
+            ProbeClientState::escape_overlap_vector(TeamSide::TeamB),
+            (1, 1)
+        );
     }
 }

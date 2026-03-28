@@ -131,8 +131,7 @@ impl ServerApp {
             Self::build_visibility_masks(runtime, viewer_id, map)?;
         let obstacles =
             Self::arena_obstacles_snapshot(runtime.world.obstacles(), map, &explored_tiles);
-        let deployables =
-            Self::arena_deployables_snapshot(runtime, viewer_id, map, &visible_tiles);
+        let deployables = Self::arena_deployables_snapshot(runtime, viewer_id, map, &visible_tiles);
         let players = Self::arena_players_snapshot(runtime, viewer_id, map, &visible_tiles);
         let projectiles = Self::arena_projectiles_snapshot(runtime, viewer_id, map, &visible_tiles);
         let (phase, phase_seconds_remaining) = Self::arena_match_phase_snapshot(&runtime.session);
@@ -163,8 +162,7 @@ impl ServerApp {
             Self::build_visibility_masks(runtime, viewer_id, map)?;
         let obstacles =
             Self::arena_obstacles_snapshot(runtime.world.obstacles(), map, &explored_tiles);
-        let deployables =
-            Self::arena_deployables_snapshot(runtime, viewer_id, map, &visible_tiles);
+        let deployables = Self::arena_deployables_snapshot(runtime, viewer_id, map, &visible_tiles);
         let players = Self::arena_players_snapshot(runtime, viewer_id, map, &visible_tiles);
         let projectiles = Self::arena_projectiles_snapshot(runtime, viewer_id, map, &visible_tiles);
         let (phase, phase_seconds_remaining) = Self::arena_match_phase_snapshot(&runtime.session);

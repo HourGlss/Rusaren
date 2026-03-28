@@ -1,9 +1,8 @@
 use super::{
     point_distance_sq, point_distance_units, round_f32_to_i32, saturating_i16, segment_distance_sq,
     travel_distance_units, truncate_line_to_obstacles, ArenaEffect, ArenaEffectKind,
-    CombatValueKind, MovementIntent, PlayerId, ProjectileState, SimulationEvent,
-    SimulationWorld, StatusDefinition, StatusInstance, StatusKind, TargetEntity,
-    PLAYER_RADIUS_UNITS,
+    CombatValueKind, MovementIntent, PlayerId, ProjectileState, SimulationEvent, SimulationWorld,
+    StatusDefinition, StatusInstance, StatusKind, TargetEntity, PLAYER_RADIUS_UNITS,
 };
 
 impl SimulationWorld {
@@ -13,6 +12,11 @@ impl SimulationWorld {
 
     fn deployable_overlap_radius(radius: u16, deployable_radius: u16) -> u16 {
         radius.saturating_add(deployable_radius)
+    }
+
+    #[cfg(test)]
+    pub(super) fn test_deployable_overlap_radius(radius: u16, deployable_radius: u16) -> u16 {
+        Self::deployable_overlap_radius(radius, deployable_radius)
     }
 
     pub(super) fn advance_projectiles(&mut self, delta_ms: u16, events: &mut Vec<SimulationEvent>) {
@@ -142,6 +146,8 @@ impl SimulationWorld {
                             magnitude: 0,
                             max_stacks: 1,
                             trigger_duration_ms: None,
+                            expire_payload: None,
+                            dispel_payload: None,
                         },
                     ) {
                         events.push(event);
@@ -150,12 +156,18 @@ impl SimulationWorld {
             }
         }
 
+        if let Some(dispel) = payload.dispel {
+            events.extend(self.apply_dispel_internal(source, targets, dispel));
+        }
+
         if let Some(status) = payload.status {
             for target in targets {
                 let TargetEntity::Player(target_player_id) = *target else {
                     continue;
                 };
-                if let Some(event) = self.apply_status(source, target_player_id, slot, status) {
+                if let Some(event) =
+                    self.apply_status(source, target_player_id, slot, status.clone())
+                {
                     events.push(event);
                 }
             }
@@ -186,9 +198,9 @@ impl SimulationWorld {
                         continue;
                     }
 
-                    player
-                        .statuses
-                        .retain(|status| status.kind != StatusKind::Sleep && status.kind != StatusKind::Stealth);
+                    player.statuses.retain(|status| {
+                        status.kind != StatusKind::Sleep && status.kind != StatusKind::Stealth
+                    });
                     let damage = self.consume_shields(player_id, amount);
                     if damage == 0 {
                         continue;
@@ -276,6 +288,11 @@ impl SimulationWorld {
         remaining_damage
     }
 
+    #[cfg(test)]
+    pub(super) fn test_consume_shields(&mut self, player_id: PlayerId, amount: u16) -> u16 {
+        self.consume_shields(player_id, amount)
+    }
+
     pub(super) fn apply_healing_internal(
         &mut self,
         source: PlayerId,
@@ -311,6 +328,67 @@ impl SimulationWorld {
         events
     }
 
+    fn apply_dispel_internal(
+        &mut self,
+        _source: PlayerId,
+        targets: &[TargetEntity],
+        dispel: game_content::DispelDefinition,
+    ) -> Vec<SimulationEvent> {
+        let mut pending_payloads = Vec::new();
+        for target in targets {
+            let TargetEntity::Player(player_id) = *target else {
+                continue;
+            };
+            let Some(player) = self.players.get_mut(&player_id) else {
+                continue;
+            };
+            if !player.alive {
+                continue;
+            }
+
+            let mut eligible = player
+                .statuses
+                .iter()
+                .enumerate()
+                .filter(|(_, status)| Self::status_matches_dispel(status.kind, dispel.scope))
+                .map(|(index, status)| (index, status.remaining_ms))
+                .collect::<Vec<_>>();
+            eligible.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+            let remove_indices = eligible
+                .into_iter()
+                .take(usize::from(dispel.max_statuses))
+                .map(|(index, _)| index)
+                .collect::<Vec<_>>();
+            if remove_indices.is_empty() {
+                continue;
+            }
+
+            let mut retained = Vec::with_capacity(player.statuses.len());
+            for (index, status) in std::mem::take(&mut player.statuses).into_iter().enumerate() {
+                if remove_indices.contains(&index) {
+                    if let Some(payload) = status.dispel_payload {
+                        pending_payloads.push((status.source, player_id, status.slot, *payload));
+                    }
+                } else {
+                    retained.push(status);
+                }
+            }
+            player.statuses = retained;
+        }
+
+        let mut events = Vec::new();
+        for (payload_source, target, slot, payload) in pending_payloads {
+            events.extend(self.apply_payload(
+                payload_source,
+                slot,
+                &[TargetEntity::Player(target)],
+                payload,
+            ));
+        }
+        events
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
     pub(super) fn apply_status(
         &mut self,
         source: PlayerId,
@@ -332,9 +410,16 @@ impl SimulationWorld {
             existing.tick_progress_ms = 0;
             existing.magnitude = definition.magnitude;
             existing.trigger_duration_ms = definition.trigger_duration_ms;
+            existing
+                .expire_payload
+                .clone_from(&definition.expire_payload);
+            existing
+                .dispel_payload
+                .clone_from(&definition.dispel_payload);
             if definition.kind == StatusKind::Shield {
-                existing.shield_remaining =
-                    existing.shield_remaining.saturating_add(definition.magnitude);
+                existing.shield_remaining = existing
+                    .shield_remaining
+                    .saturating_add(definition.magnitude);
             }
             stacks_after = existing.stacks;
         } else {
@@ -354,6 +439,8 @@ impl SimulationWorld {
                 } else {
                     0
                 },
+                expire_payload: definition.expire_payload.clone(),
+                dispel_payload: definition.dispel_payload.clone(),
             });
         }
 
@@ -373,6 +460,8 @@ impl SimulationWorld {
                     magnitude: 0,
                     max_stacks: 1,
                     trigger_duration_ms: None,
+                    expire_payload: None,
+                    dispel_payload: None,
                 },
             );
         }
@@ -448,7 +537,10 @@ impl SimulationWorld {
             let point = (player.x, player.y);
             let distance_sq = segment_distance_sq(start, end, point);
             if distance_sq <= threshold_sq {
-                candidates.push((TargetEntity::Player(*player_id), point_distance_sq(start, point)));
+                candidates.push((
+                    TargetEntity::Player(*player_id),
+                    point_distance_sq(start, point),
+                ));
             }
         }
         if include_deployables {

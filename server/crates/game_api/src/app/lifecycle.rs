@@ -77,9 +77,7 @@ impl ServerApp {
             }
         }
 
-        if matches!(runtime.session.phase(), MatchPhase::SkillPick { .. })
-            && !matches!(runtime.session.phase(), MatchPhase::MatchEnd { .. })
-        {
+        if matches!(runtime.session.phase(), MatchPhase::SkillPick { .. }) {
             runtime.rebuild_world(content);
         }
 

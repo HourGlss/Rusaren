@@ -25,7 +25,7 @@ Buildable now:
 - persistent player records under `server/var/player_records.tsv`
 - local quality scripts under `server/scripts`
 - GitHub Actions quality workflows plus Godot web export and deploy smoke workflows
-- scheduled mutation-testing shards over the packet, lobby, match, app, and simulation core
+- scheduled mutation-testing shards over ingress, protocol, visibility, match-flow, and simulation core logic
 - a focused packet-ingress mutation smoke path that exercises `game_net::ingress` directly and catches exact-limit packet-boundary regressions
 
 Not implemented yet:
@@ -33,6 +33,7 @@ Not implemented yet:
 - planned mechanic families like summons, barriers, traps, wards, shields, stealth, reveal, taunt, and fear are now captured in YAML, but they are not yet bound to live authored skills
 - more aggressive snapshot compression beyond the current full-vs-delta split
 - the full 1.0 Godot gameplay presentation bar: HUD polish, stronger spell visuals, and always-readable health and mana display in crowded fights
+- the planned `0.9` combat-readability layer: player-only scrolling combat text, round and match summary screens with running totals, concentric per-skill class-color rings, client-relative team borders, and thin positive/negative status halos outside the player token
 - rustdoc/API guidance that is complete enough for an external client or bot author to play through the game protocol without Godot
 - advanced vision features beyond the current per-player fog-of-war, explored-tile memory, and shrub sight blocking
 
@@ -96,6 +97,18 @@ Adding more classes is now mostly centralized around:
 
 The UI and network catalog path now follow backend-authored class names and skill IDs instead of a fixed four-class wire enum.
 That means classes using the existing runtime mechanic set can now be added without touching protocol or frontend registries.
+
+The planned `0.9` player-token rendering language is:
+- skill slot `1` colors the player center
+- skill slots `2` through `5` add outward rings in pick order
+- unpicked future slots render as black rings
+- the outer team border is client-relative: your own team is dark blue and the opposing team is red
+- thin status halos sit just outside the team ring, with negative effects on the left and positive effects on the right
+- when multiple effects share one side, they split into distinct stacked sections ordered by remaining duration, longest at the top and shortest at the bottom
+
+Class-color sourcing for that visual language is fixed as:
+- WoW-style class colors for the closest analogue classes: Warrior, Mage, Rogue, Paladin, Druid, Ranger using Hunter's color, and Cleric using Priest's color
+- the Glasbey et al. 2007 categorical-color approach for non-WoW classes and future class growth, with the reserved palette documented under `shared/docs/classes/README.md`
 
 Open the Godot shell:
 
@@ -227,6 +240,7 @@ $env:RARENA_MUTANTS_BUILD_TIMEOUT='60'
 That command is intentionally narrow and meant for local hardening of packet-boundary logic.
 The broader mutation-testing slice runs in the scheduled GitHub Actions workflow.
 If `F:\game_tests` exists on this machine, `./scripts/quality.ps1 mutants` now automatically uses it for mutation scratch space and Cargo build output to avoid exhausting the system drive.
+For longer mutation work, prefer the campaign helper scripts in `server/README.md` and narrow the run with `-Package`, `-TestPackage`, and `-File` so `0.9.1` hardening stays focused on ingress, protocol, visibility, and simulation rules instead of broad app-loop timeouts.
 
 Install the configured quality tools:
 
@@ -379,6 +393,7 @@ cd server
 ```
 
 That task uses `server/.cargo/mutants.toml` and writes its output under `server/target/reports/mutants/`.
+When you need a longer campaign, use the shard helpers from `server/README.md`. Their shard syntax is zero-based (`0/8` through `7/8`), and the current release-line guidance is to run focused file/package slices rather than a whole-workspace campaign until the `1.0.0` freeze.
 
 Run the local Docker deploy smoke path:
 

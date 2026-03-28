@@ -207,16 +207,13 @@ fn mana_regen_and_exact_skill_cost_boundaries_are_precise() {
 #[allow(clippy::too_many_lines)]
 fn passive_skills_reduce_cast_times_cooldowns_and_improve_move_speed() {
     let content = content();
-    let warrior_tree = SkillTree::Warrior;
+    let cleric_tree = SkillTree::Cleric;
+    let bard_tree = SkillTree::new("Bard").expect("bard tree");
+    let mage_tree = SkillTree::Mage;
     let baseline_skill = content
         .skills()
-        .resolve(&choice(warrior_tree.clone(), 3))
-        .expect("warrior cast skill")
-        .clone();
-    let _passive_skill = content
-        .skills()
-        .resolve(&choice(warrior_tree.clone(), 5))
-        .expect("warrior passive skill")
+        .resolve(&choice(cleric_tree.clone(), 1))
+        .expect("cleric cast skill")
         .clone();
 
     let mut baseline_world = world(
@@ -226,7 +223,7 @@ fn passive_skills_reduce_cast_times_cooldowns_and_improve_move_speed() {
             1,
             "Baseline",
             TeamSide::TeamA,
-            warrior_tree.clone(),
+            cleric_tree.clone(),
             &baseline_skill,
         )],
     );
@@ -237,8 +234,14 @@ fn passive_skills_reduce_cast_times_cooldowns_and_improve_move_speed() {
             1,
             "Passive",
             TeamSide::TeamA,
-            warrior_tree.clone(),
-            [Some(choice(warrior_tree.clone(), 3)), Some(choice(warrior_tree.clone(), 5)), None, None, None],
+            cleric_tree.clone(),
+            [
+                Some(choice(cleric_tree.clone(), 1)),
+                Some(choice(bard_tree.clone(), 2)),
+                Some(choice(mage_tree.clone(), 5)),
+                None,
+                None,
+            ],
         )],
     );
 
@@ -253,8 +256,12 @@ fn passive_skills_reduce_cast_times_cooldowns_and_improve_move_speed() {
         );
     }
 
-    baseline_world.queue_cast(player_id(1), 1).expect("baseline cast");
-    passive_world.queue_cast(player_id(1), 1).expect("passive cast");
+    baseline_world
+        .queue_cast(player_id(1), 1)
+        .expect("baseline cast");
+    passive_world
+        .queue_cast(player_id(1), 1)
+        .expect("passive cast");
     let _ = baseline_world.tick(COMBAT_FRAME_MS);
     let _ = passive_world.tick(COMBAT_FRAME_MS);
 
@@ -285,7 +292,7 @@ fn passive_skills_reduce_cast_times_cooldowns_and_improve_move_speed() {
             1,
             "Baseline",
             TeamSide::TeamA,
-            warrior_tree.clone(),
+            cleric_tree.clone(),
             &baseline_skill,
         )],
     );
@@ -296,11 +303,11 @@ fn passive_skills_reduce_cast_times_cooldowns_and_improve_move_speed() {
             1,
             "Passive",
             TeamSide::TeamA,
-            warrior_tree.clone(),
+            mage_tree.clone(),
             [
-                Some(choice(warrior_tree.clone(), 3)),
-                Some(choice(warrior_tree.clone(), 5)),
-                None,
+                Some(choice(SkillTree::Cleric, 1)),
+                Some(choice(bard_tree, 2)),
+                Some(choice(mage_tree, 5)),
                 None,
                 None,
             ],
@@ -366,7 +373,13 @@ fn passive_skills_increase_projectile_speed() {
             "Passive",
             TeamSide::TeamA,
             mage_tree.clone(),
-            [Some(choice(mage_tree.clone(), 1)), None, None, None, Some(choice(mage_tree.clone(), 5))],
+            [
+                Some(choice(mage_tree.clone(), 1)),
+                None,
+                None,
+                None,
+                Some(choice(mage_tree.clone(), 5)),
+            ],
         )],
     );
 
@@ -381,8 +394,12 @@ fn passive_skills_increase_projectile_speed() {
         );
     }
 
-    baseline_world.queue_cast(player_id(1), 1).expect("baseline cast");
-    passive_world.queue_cast(player_id(1), 1).expect("passive cast");
+    baseline_world
+        .queue_cast(player_id(1), 1)
+        .expect("baseline cast");
+    passive_world
+        .queue_cast(player_id(1), 1)
+        .expect("passive cast");
     let _ = baseline_world.tick(COMBAT_FRAME_MS);
     let _ = passive_world.tick(COMBAT_FRAME_MS);
 

@@ -32,9 +32,21 @@ Use the helper scripts when a full cargo-mutants run would take hours and needs 
 
 1. Create a campaign plan:
    `pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/plan-mutants.ps1 -RunId cast-passives -ShardCount 8`
-2. Run one shard at a time:
-   `pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/run-mutants-shard.ps1 -RunId cast-passives -Shard 1/8`
+2. Run one zero-based shard at a time:
+   `pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/run-mutants-shard.ps1 -RunId cast-passives -Shard 0/8`
 3. Rebuild the aggregate summary at any time:
    `pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/summarize-mutants.ps1 -RunId cast-passives`
 
 Each campaign writes isolated shard output plus a merged `summary.md`, `summary.json`, `missed.txt`, and `timeout.txt` under `target/reports/mutants-campaigns/<run-id>/`.
+The helper scripts validate zero-based shard descriptors, isolate each shard into its own scratch root and Cargo target directory, and ignore invalid shard folders during summary generation.
+
+For `0.9.1` mutation hardening, prefer focused package and file filters instead of whole-workspace reruns that spend hours in top-level app timeouts.
+
+- Visibility logic:
+  `pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/plan-mutants.ps1 -RunId visibility-pass -ShardCount 2 -Jobs 1 -Package game_api -TestPackage game_api -File crates/game_api/src/app/snapshots/visibility.rs`
+- Ingress and packet boundaries:
+  `pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/plan-mutants.ps1 -RunId ingress-pass -ShardCount 2 -Jobs 1 -Package game_net -TestPackage game_net -File crates/game_net/src/ingress.rs`
+- Sim walkability and arena rules:
+  `pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/plan-mutants.ps1 -RunId sim-core-pass -ShardCount 2 -Jobs 1 -Package game_sim -TestPackage game_sim -File crates/game_sim/src/lib.rs`
+
+The default `server/.cargo/mutants.toml` slice is intentionally biased toward gameplay, ingress, visibility, and protocol logic. Display-only error formatter files are left out of that default pass so release-line hardening time stays on higher-value rules.

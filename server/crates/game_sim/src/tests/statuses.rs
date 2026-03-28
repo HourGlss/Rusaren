@@ -1,9 +1,15 @@
 use super::*;
 
+fn poison_impact_frames(speed: u16, distance_units: u16) -> usize {
+    let travel_per_frame = usize::from(travel_distance_units(speed, COMBAT_FRAME_MS).max(1));
+    usize::from(distance_units).div_ceil(travel_per_frame) + 1
+}
+
 #[test]
+#[allow(clippy::too_many_lines)]
 fn poison_and_hot_tick_with_expected_stacking_behavior() {
     let content = content();
-    let mut world = world(
+    let mut poison_world = world(
         &content,
         vec![
             seed(
@@ -19,60 +25,98 @@ fn poison_and_hot_tick_with_expected_stacking_behavior() {
                 2,
                 "Bob",
                 TeamSide::TeamB,
-                SkillTree::new("Druid").expect("druid tree"),
-                [
-                    None,
-                    None,
-                    Some(choice(SkillTree::new("Druid").expect("druid tree"), 3)),
-                    None,
-                    None,
-                ],
+                SkillTree::Warrior,
+                [None, None, None, None, None],
             ),
         ],
     );
     {
-        let alice = world.players.get_mut(&player_id(1)).expect("alice");
+        let alice = poison_world.players.get_mut(&player_id(1)).expect("alice");
         alice.x = -400;
         alice.y = 0;
         alice.aim_x = 100;
         alice.aim_y = 0;
-        let bob = world.players.get_mut(&player_id(2)).expect("bob");
+        let bob = poison_world.players.get_mut(&player_id(2)).expect("bob");
         bob.x = -240;
         bob.y = 0;
-        bob.aim_x = 0;
-        bob.aim_y = 1;
-        bob.hit_points = 70;
     }
 
-    world.queue_cast(player_id(1), 1).expect("poison cast");
-    let _ = world.tick(COMBAT_FRAME_MS);
-    for _ in 0..8 {
-        let _ = world.tick(COMBAT_FRAME_MS);
-    }
-    let poison_statuses = world.statuses_for(player_id(2)).expect("statuses");
+    let poison_skill = poison_world
+        .players
+        .get(&player_id(1))
+        .and_then(|player| player.skills[0].clone())
+        .expect("poison should be equipped");
+    let SkillBehavior::Projectile {
+        speed: poison_speed,
+        ..
+    } = poison_skill.behavior
+    else {
+        panic!("rogue tier one should remain a projectile");
+    };
+    let _ = activate_skill_cast(&mut poison_world, player_id(1), 1, &poison_skill.behavior);
+    let _ = collect_ticks(&mut poison_world, poison_impact_frames(poison_speed, 160));
+    let poison_statuses = poison_world.statuses_for(player_id(2)).expect("statuses");
     assert!(poison_statuses
         .iter()
         .any(|status| status.kind == StatusKind::Poison));
-    let damaged_hit_points = world.player_state(player_id(2)).expect("bob").hit_points;
-    assert!(damaged_hit_points < 70);
+    let damaged_hit_points = poison_world
+        .player_state(player_id(2))
+        .expect("bob")
+        .hit_points;
+    assert!(damaged_hit_points < 100);
 
-    let hot_skill = world
+    let druid_tree = SkillTree::new("Druid").expect("druid tree");
+    let mut hot_world = world(
+        &content,
+        vec![
+            seed(
+                &content,
+                1,
+                "Briar",
+                TeamSide::TeamA,
+                druid_tree.clone(),
+                [None, None, Some(choice(druid_tree, 3)), None, None],
+            ),
+            seed(
+                &content,
+                2,
+                "Ally",
+                TeamSide::TeamA,
+                SkillTree::Warrior,
+                [None, None, None, None, None],
+            ),
+        ],
+    );
+    {
+        let briar = hot_world.players.get_mut(&player_id(1)).expect("briar");
+        briar.x = -420;
+        briar.y = 0;
+        briar.aim_x = 100;
+        briar.aim_y = 0;
+        let ally = hot_world.players.get_mut(&player_id(2)).expect("ally");
+        ally.x = -300;
+        ally.y = 0;
+        ally.hit_points = 70;
+    }
+
+    let hot_skill = hot_world
         .players
-        .get(&player_id(2))
+        .get(&player_id(1))
         .and_then(|player| player.skills[2].clone())
         .expect("hot should be equipped");
-    let _ = resolve_skill_cast(&mut world, player_id(2), 3, hot_skill.behavior);
-    let _ = collect_ticks(&mut world, 10);
-    let hot_statuses = world.statuses_for(player_id(2)).expect("statuses");
+    let _ = resolve_skill_cast(&mut hot_world, player_id(1), 3, hot_skill.behavior);
+    let _ = collect_ticks(&mut hot_world, 10);
+    let hot_statuses = hot_world.statuses_for(player_id(2)).expect("statuses");
     assert!(hot_statuses
         .iter()
         .any(|status| status.kind == StatusKind::Hot));
-    let bob = world.player_state(player_id(2)).expect("bob");
-    assert!(bob.hit_points > damaged_hit_points);
+    let ally = hot_world.player_state(player_id(2)).expect("ally");
+    assert!(ally.hit_points > 70);
 }
 
 #[test]
-fn poison_stacks_and_hot_refreshes_from_the_same_source() {
+#[allow(clippy::too_many_lines)]
+fn poison_and_hot_stack_from_the_same_source() {
     let content = content();
     let mut poison_world = world(
         &content,
@@ -106,14 +150,21 @@ fn poison_stacks_and_hot_refreshes_from_the_same_source() {
         bob.y = 0;
     }
 
+    let poison_skill = poison_world
+        .players
+        .get(&player_id(1))
+        .and_then(|player| player.skills[0].clone())
+        .expect("poison should be equipped");
+    let SkillBehavior::Projectile {
+        speed: poison_speed,
+        ..
+    } = poison_skill.behavior
+    else {
+        panic!("rogue tier one should remain a projectile");
+    };
     for _ in 0..2 {
-        poison_world
-            .queue_cast(player_id(1), 1)
-            .expect("poison cast");
-        let _ = poison_world.tick(COMBAT_FRAME_MS);
-        for _ in 0..8 {
-            let _ = poison_world.tick(COMBAT_FRAME_MS);
-        }
+        let _ = activate_skill_cast(&mut poison_world, player_id(1), 1, &poison_skill.behavior);
+        let _ = collect_ticks(&mut poison_world, poison_impact_frames(poison_speed, 160));
     }
 
     let poison_statuses = poison_world.statuses_for(player_id(2)).expect("statuses");
@@ -123,26 +174,38 @@ fn poison_stacks_and_hot_refreshes_from_the_same_source() {
         .expect("poison should exist");
     assert_eq!(poison.stacks, 2);
 
+    let druid_tree = SkillTree::new("Druid").expect("druid tree");
     let mut hot_world = world(
         &content,
-        vec![seed(
-            &content,
-            1,
-            "Druid",
-            TeamSide::TeamA,
-            SkillTree::new("Druid").expect("druid tree"),
-            [
-                None,
-                None,
-                Some(choice(SkillTree::new("Druid").expect("druid tree"), 3)),
-                None,
-                None,
-            ],
-        )],
+        vec![
+            seed(
+                &content,
+                1,
+                "Druid",
+                TeamSide::TeamA,
+                druid_tree.clone(),
+                [None, None, Some(choice(druid_tree, 3)), None, None],
+            ),
+            seed(
+                &content,
+                2,
+                "Ally",
+                TeamSide::TeamA,
+                SkillTree::Warrior,
+                [None, None, None, None, None],
+            ),
+        ],
     );
     {
-        let cleric = hot_world.players.get_mut(&player_id(1)).expect("cleric");
-        cleric.hit_points = 80;
+        let druid = hot_world.players.get_mut(&player_id(1)).expect("druid");
+        druid.x = -420;
+        druid.y = 0;
+        druid.aim_x = 100;
+        druid.aim_y = 0;
+        let ally = hot_world.players.get_mut(&player_id(2)).expect("ally");
+        ally.x = -300;
+        ally.y = 0;
+        ally.hit_points = 80;
     }
 
     let hot_skill = hot_world
@@ -150,10 +213,10 @@ fn poison_stacks_and_hot_refreshes_from_the_same_source() {
         .get(&player_id(1))
         .and_then(|player| player.skills[2].clone())
         .expect("hot should be equipped");
-    let _ = resolve_skill_cast(&mut hot_world, player_id(1), 3, hot_skill.behavior);
+    let _ = resolve_skill_cast(&mut hot_world, player_id(1), 3, hot_skill.behavior.clone());
     let _ = collect_ticks(&mut hot_world, 18);
     let hot_before_refresh = hot_world
-        .statuses_for(player_id(1))
+        .statuses_for(player_id(2))
         .expect("statuses")
         .into_iter()
         .find(|status| status.kind == StatusKind::Hot)
@@ -162,14 +225,14 @@ fn poison_stacks_and_hot_refreshes_from_the_same_source() {
     for _ in 0..4 {
         let _ = hot_world.tick(COMBAT_FRAME_MS);
     }
-    let _ = resolve_skill_cast(&mut hot_world, player_id(1), 3, hot_skill.behavior);
+    let _ = resolve_skill_cast(&mut hot_world, player_id(1), 3, hot_skill.behavior.clone());
     let hot_after_refresh = hot_world
-        .statuses_for(player_id(1))
+        .statuses_for(player_id(2))
         .expect("statuses")
         .into_iter()
         .find(|status| status.kind == StatusKind::Hot)
         .expect("hot should exist after refresh");
-    assert_eq!(hot_after_refresh.stacks, 1);
+    assert_eq!(hot_after_refresh.stacks, 2);
     assert!(hot_after_refresh.remaining_ms >= hot_before_refresh.remaining_ms);
 }
 
@@ -228,26 +291,38 @@ fn poison_and_hot_remove_themselves_after_their_authored_durations() {
         "poison should expire after its duration"
     );
 
+    let druid_tree = SkillTree::new("Druid").expect("druid tree");
     let mut hot_world = world(
         &content,
-        vec![seed(
-            &content,
-            1,
-            "Druid",
-            TeamSide::TeamA,
-            SkillTree::new("Druid").expect("druid tree"),
-            [
-                None,
-                None,
-                Some(choice(SkillTree::new("Druid").expect("druid tree"), 3)),
-                None,
-                None,
-            ],
-        )],
+        vec![
+            seed(
+                &content,
+                1,
+                "Druid",
+                TeamSide::TeamA,
+                druid_tree.clone(),
+                [None, None, Some(choice(druid_tree, 3)), None, None],
+            ),
+            seed(
+                &content,
+                2,
+                "Ally",
+                TeamSide::TeamA,
+                SkillTree::Warrior,
+                [None, None, None, None, None],
+            ),
+        ],
     );
     {
-        let cleric = hot_world.players.get_mut(&player_id(1)).expect("cleric");
-        cleric.hit_points = 70;
+        let druid = hot_world.players.get_mut(&player_id(1)).expect("druid");
+        druid.x = -420;
+        druid.y = 0;
+        druid.aim_x = 100;
+        druid.aim_y = 0;
+        let ally = hot_world.players.get_mut(&player_id(2)).expect("ally");
+        ally.x = -300;
+        ally.y = 0;
+        ally.hit_points = 70;
     }
     let hot_skill = hot_world
         .players
@@ -258,11 +333,416 @@ fn poison_and_hot_remove_themselves_after_their_authored_durations() {
     let _ = collect_ticks(&mut hot_world, 90);
     assert!(
         hot_world
-            .statuses_for(player_id(1))
+            .statuses_for(player_id(2))
             .expect("statuses")
             .iter()
             .all(|status| status.kind != StatusKind::Hot),
         "hot should expire after its duration"
+    );
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn multi_source_hot_and_chill_coexist_without_collapsing_into_one_shared_stack() {
+    let content = content();
+    let druid_tree = SkillTree::new("Druid").expect("druid tree");
+    let mut hot_world = world(
+        &content,
+        vec![
+            seed(
+                &content,
+                1,
+                "DruidOne",
+                TeamSide::TeamA,
+                druid_tree.clone(),
+                [None, None, Some(choice(druid_tree.clone(), 3)), None, None],
+            ),
+            seed(
+                &content,
+                2,
+                "DruidTwo",
+                TeamSide::TeamA,
+                druid_tree.clone(),
+                [None, None, Some(choice(druid_tree, 3)), None, None],
+            ),
+            seed(
+                &content,
+                3,
+                "Ally",
+                TeamSide::TeamA,
+                SkillTree::Warrior,
+                [None, None, None, None, None],
+            ),
+        ],
+    );
+    set_player_pose(&mut hot_world, player_id(1), -500, -60, 200, 60);
+    set_player_pose(&mut hot_world, player_id(2), -500, 60, 200, -60);
+    set_player_pose(
+        &mut hot_world,
+        player_id(3),
+        -300,
+        0,
+        TEST_AIM_X,
+        TEST_AIM_Y,
+    );
+    hot_world
+        .players
+        .get_mut(&player_id(3))
+        .expect("ally")
+        .hit_points = 70;
+
+    let hot_one = hot_world
+        .players
+        .get(&player_id(1))
+        .and_then(|player| player.skills[2].clone())
+        .expect("first hot");
+    let hot_two = hot_world
+        .players
+        .get(&player_id(2))
+        .and_then(|player| player.skills[2].clone())
+        .expect("second hot");
+    let _ = resolve_skill_cast(&mut hot_world, player_id(1), 3, hot_one.behavior);
+    let _ = resolve_skill_cast(&mut hot_world, player_id(2), 3, hot_two.behavior);
+
+    let hot_statuses = hot_world
+        .statuses_for(player_id(3))
+        .expect("statuses")
+        .into_iter()
+        .filter(|status| status.kind == StatusKind::Hot)
+        .collect::<Vec<_>>();
+    assert_eq!(hot_statuses.len(), 2);
+    assert_ne!(hot_statuses[0].source, hot_statuses[1].source);
+    assert!(hot_statuses.iter().all(|status| status.stacks == 1));
+
+    let mut chill_world = world(
+        &content,
+        vec![
+            seed(
+                &content,
+                1,
+                "MageOne",
+                TeamSide::TeamA,
+                SkillTree::Mage,
+                [None, None, Some(choice(SkillTree::Mage, 3)), None, None],
+            ),
+            seed(
+                &content,
+                2,
+                "MageTwo",
+                TeamSide::TeamA,
+                SkillTree::Mage,
+                [None, None, Some(choice(SkillTree::Mage, 3)), None, None],
+            ),
+            seed(
+                &content,
+                3,
+                "Enemy",
+                TeamSide::TeamB,
+                SkillTree::Warrior,
+                [None, None, None, None, None],
+            ),
+        ],
+    );
+    set_player_pose(&mut chill_world, player_id(1), -340, -40, 120, 40);
+    set_player_pose(&mut chill_world, player_id(2), -340, 40, 120, -40);
+    set_player_pose(
+        &mut chill_world,
+        player_id(3),
+        -80,
+        0,
+        -TEST_AIM_X,
+        TEST_AIM_Y,
+    );
+
+    let chill_one = chill_world
+        .players
+        .get(&player_id(1))
+        .and_then(|player| player.skills[2].clone())
+        .expect("first chill");
+    let chill_two = chill_world
+        .players
+        .get(&player_id(2))
+        .and_then(|player| player.skills[2].clone())
+        .expect("second chill");
+    let _ = resolve_skill_cast(&mut chill_world, player_id(1), 3, chill_one.behavior);
+    let _ = resolve_skill_cast(&mut chill_world, player_id(2), 3, chill_two.behavior);
+
+    let chill_statuses = chill_world
+        .statuses_for(player_id(3))
+        .expect("statuses")
+        .into_iter()
+        .filter(|status| status.kind == StatusKind::Chill)
+        .collect::<Vec<_>>();
+    assert_eq!(chill_statuses.len(), 2);
+    assert_ne!(chill_statuses[0].source, chill_statuses[1].source);
+    assert!(
+        chill_world
+            .statuses_for(player_id(3))
+            .expect("statuses")
+            .iter()
+            .all(|status| status.kind != StatusKind::Root),
+        "separate chill sources should coexist without prematurely forcing the shared root trigger"
+    );
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn dispel_removes_negative_effects_and_lifebloom_blooms_on_dispel_or_expire() {
+    let content = content();
+    let druid_tree = SkillTree::new("Druid").expect("druid tree");
+    let mut cleanse_world = world(
+        &content,
+        vec![
+            seed_with_slot_one_skill(
+                &content,
+                1,
+                "Rogue",
+                TeamSide::TeamB,
+                SkillTree::Rogue,
+                content
+                    .skills()
+                    .resolve(&choice(SkillTree::Rogue, 1))
+                    .expect("rogue poison"),
+            ),
+            seed_with_slot_one_skill(
+                &content,
+                2,
+                "Cleric",
+                TeamSide::TeamA,
+                SkillTree::Cleric,
+                content
+                    .skills()
+                    .resolve(&choice(SkillTree::Cleric, 4))
+                    .expect("cleric cleanse"),
+            ),
+            seed(
+                &content,
+                3,
+                "Ally",
+                TeamSide::TeamA,
+                SkillTree::Warrior,
+                [None, None, None, None, None],
+            ),
+        ],
+    );
+    set_player_pose(
+        &mut cleanse_world,
+        player_id(1),
+        -500,
+        0,
+        TEST_AIM_X,
+        TEST_AIM_Y,
+    );
+    set_player_pose(&mut cleanse_world, player_id(2), -420, 80, 120, -80);
+    set_player_pose(
+        &mut cleanse_world,
+        player_id(3),
+        -300,
+        0,
+        TEST_AIM_X,
+        TEST_AIM_Y,
+    );
+
+    let poison_skill = cleanse_world
+        .players
+        .get(&player_id(1))
+        .and_then(|player| player.skills[0].clone())
+        .expect("poison");
+    let SkillBehavior::Projectile {
+        speed: poison_speed,
+        ..
+    } = poison_skill.behavior
+    else {
+        panic!("rogue poison should remain a projectile");
+    };
+    let _ = activate_skill_cast(&mut cleanse_world, player_id(1), 1, &poison_skill.behavior);
+    let _ = collect_ticks(&mut cleanse_world, poison_impact_frames(poison_speed, 200));
+    assert!(
+        cleanse_world
+            .statuses_for(player_id(3))
+            .expect("statuses")
+            .iter()
+            .any(|status| status.kind == StatusKind::Poison),
+        "the ally should be poisoned before the cleanse lands"
+    );
+
+    set_player_pose(&mut cleanse_world, player_id(2), -420, 80, 120, -80);
+    let cleanse_skill = cleanse_world
+        .players
+        .get(&player_id(2))
+        .and_then(|player| player.skills[0].clone())
+        .expect("cleanse");
+    let cleanse_events =
+        resolve_skill_cast(&mut cleanse_world, player_id(2), 1, cleanse_skill.behavior);
+    assert!(
+        healing_to(&cleanse_events, player_id(3)).is_some(),
+        "cleanse should still count as a heal"
+    );
+    assert!(
+        cleanse_world
+            .statuses_for(player_id(3))
+            .expect("statuses")
+            .iter()
+            .all(|status| status.kind != StatusKind::Poison),
+        "the negative dispel should remove poison from the ally"
+    );
+
+    let mut lifebloom_world = world(
+        &content,
+        vec![
+            seed(
+                &content,
+                1,
+                "Druid",
+                TeamSide::TeamA,
+                druid_tree.clone(),
+                [None, None, Some(choice(druid_tree.clone(), 3)), None, None],
+            ),
+            seed(
+                &content,
+                2,
+                "Ally",
+                TeamSide::TeamA,
+                SkillTree::Warrior,
+                [None, None, None, None, None],
+            ),
+        ],
+    );
+    set_player_pose(
+        &mut lifebloom_world,
+        player_id(1),
+        -420,
+        0,
+        TEST_AIM_X,
+        TEST_AIM_Y,
+    );
+    set_player_pose(
+        &mut lifebloom_world,
+        player_id(2),
+        -300,
+        0,
+        TEST_AIM_X,
+        TEST_AIM_Y,
+    );
+    lifebloom_world
+        .players
+        .get_mut(&player_id(2))
+        .expect("ally")
+        .hit_points = 60;
+
+    let lifebloom_skill = lifebloom_world
+        .players
+        .get(&player_id(1))
+        .and_then(|player| player.skills[2].clone())
+        .expect("lifebloom");
+    let _ = resolve_skill_cast(
+        &mut lifebloom_world,
+        player_id(1),
+        3,
+        lifebloom_skill.behavior.clone(),
+    );
+    let dispel_events = lifebloom_world.apply_payload(
+        player_id(1),
+        4,
+        &[TargetEntity::Player(player_id(2))],
+        game_content::EffectPayload {
+            kind: CombatValueKind::Heal,
+            amount: 0,
+            status: None,
+            interrupt_silence_duration_ms: None,
+            dispel: Some(game_content::DispelDefinition {
+                scope: game_content::DispelScope::Positive,
+                max_statuses: 1,
+            }),
+        },
+    );
+    assert!(
+        dispel_events.iter().any(|event| matches!(
+            event,
+            SimulationEvent::HealingApplied { target, amount, .. }
+                if *target == player_id(2) && *amount == 12
+        )),
+        "dispel-triggered blooms should emit their authored heal payload"
+    );
+    assert!(
+        lifebloom_world
+            .statuses_for(player_id(2))
+            .expect("statuses")
+            .iter()
+            .all(|status| status.kind != StatusKind::Hot),
+        "the positive dispel should remove the hot it just bloomed"
+    );
+
+    let mut expire_world = world(
+        &content,
+        vec![
+            seed(
+                &content,
+                1,
+                "Druid",
+                TeamSide::TeamA,
+                druid_tree,
+                [
+                    None,
+                    None,
+                    Some(choice(SkillTree::new("Druid").expect("druid tree"), 3)),
+                    None,
+                    None,
+                ],
+            ),
+            seed(
+                &content,
+                2,
+                "Ally",
+                TeamSide::TeamA,
+                SkillTree::Warrior,
+                [None, None, None, None, None],
+            ),
+        ],
+    );
+    set_player_pose(
+        &mut expire_world,
+        player_id(1),
+        -420,
+        0,
+        TEST_AIM_X,
+        TEST_AIM_Y,
+    );
+    set_player_pose(
+        &mut expire_world,
+        player_id(2),
+        -300,
+        0,
+        TEST_AIM_X,
+        TEST_AIM_Y,
+    );
+    expire_world
+        .players
+        .get_mut(&player_id(2))
+        .expect("ally")
+        .hit_points = 60;
+    let expire_skill = expire_world
+        .players
+        .get(&player_id(1))
+        .and_then(|player| player.skills[2].clone())
+        .expect("lifebloom");
+    let _ = resolve_skill_cast(&mut expire_world, player_id(1), 3, expire_skill.behavior);
+    let expire_events = collect_ticks(&mut expire_world, 40);
+    assert!(
+        expire_events.iter().any(|event| matches!(
+            event,
+            SimulationEvent::HealingApplied { target, amount, .. }
+                if *target == player_id(2) && *amount == 12
+        )),
+        "expiration-triggered blooms should emit their authored heal payload"
+    );
+    assert!(
+        expire_world
+            .statuses_for(player_id(2))
+            .expect("statuses")
+            .iter()
+            .all(|status| status.kind != StatusKind::Hot),
+        "the hot should be gone after its bloom-on-expire fires"
     );
 }
 
@@ -342,7 +822,13 @@ fn haste_increases_movement_speed_and_expires_cleanly() {
                 "Bard",
                 TeamSide::TeamA,
                 SkillTree::new("Bard").expect("bard tree"),
-                [None, None, None, Some(choice(SkillTree::new("Bard").expect("bard tree"), 4)), None],
+                [
+                    None,
+                    None,
+                    None,
+                    Some(choice(SkillTree::new("Bard").expect("bard tree"), 4)),
+                    None,
+                ],
             ),
             seed(
                 &content,
@@ -863,10 +1349,11 @@ fn shield_stacks_and_absorbs_damage_before_hit_points() {
         .get(&player_id(1))
         .and_then(|player| player.skills[0].clone())
         .expect("shield skill");
-    let first_cast = resolve_skill_cast(&mut world, player_id(1), 1, shield_skill.behavior);
+    let first_cast = resolve_skill_cast(&mut world, player_id(1), 1, shield_skill.behavior.clone());
     assert!(status_applied_to(&first_cast, player_id(1), StatusKind::Shield).is_some());
     let _ = collect_ticks(&mut world, 20);
-    let second_cast = resolve_skill_cast(&mut world, player_id(1), 1, shield_skill.behavior);
+    let second_cast =
+        resolve_skill_cast(&mut world, player_id(1), 1, shield_skill.behavior.clone());
     assert_eq!(
         status_applied_to(&second_cast, player_id(1), StatusKind::Shield),
         Some(2)
@@ -877,7 +1364,7 @@ fn shield_stacks_and_absorbs_damage_before_hit_points() {
         .get(&player_id(2))
         .and_then(|player| player.skills[0].clone())
         .expect("warrior beam");
-    let first_hit = resolve_skill_cast(&mut world, player_id(2), 1, beam_skill.behavior);
+    let first_hit = resolve_skill_cast(&mut world, player_id(2), 1, beam_skill.behavior.clone());
     assert_eq!(
         world.player_state(player_id(1)).expect("cleric").hit_points,
         100,
@@ -898,7 +1385,7 @@ fn shield_stacks_and_absorbs_damage_before_hit_points() {
     );
 
     let _ = collect_ticks(&mut world, 11);
-    let second_hit = resolve_skill_cast(&mut world, player_id(2), 1, beam_skill.behavior);
+    let second_hit = resolve_skill_cast(&mut world, player_id(2), 1, beam_skill.behavior.clone());
     assert!(
         damage_to(&second_hit, player_id(1)).is_some(),
         "later hits should spill through once the stacked shields are exhausted"
@@ -975,7 +1462,8 @@ fn stealth_blocks_targeting_and_breaks_on_actions() {
         .get(&player_id(2))
         .and_then(|player| player.skills[0].clone())
         .expect("projectile skill");
-    let projectile_events = resolve_skill_cast(&mut world, player_id(2), 1, projectile_skill.behavior);
+    let projectile_events =
+        resolve_skill_cast(&mut world, player_id(2), 1, projectile_skill.behavior);
     assert!(
         damage_to(&projectile_events, player_id(1)).is_none(),
         "stealthed players should not be hittable by ordinary targeted projectiles"

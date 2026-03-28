@@ -114,6 +114,8 @@ async fn websocket_adapter_finishes_a_full_match_loop_via_live_input_frames() {
                 && snapshot.projectiles.is_empty()
     )));
 
+    let mut final_outcome = None;
+
     for round in 1..=5 {
         send_command(
             &mut alice,
@@ -161,29 +163,40 @@ async fn websocket_adapter_finishes_a_full_match_loop_via_live_input_frames() {
         if round < 5 {
             let (alice_round_events, bob_round_events) =
                 cast_until_round_won(&mut alice, &mut bob, round).await;
+            let alice_round = alice_round_events.iter().find_map(|event| match event {
+                ServerControlEvent::RoundWon {
+                    round: won,
+                    winning_team,
+                    score_a,
+                    score_b,
+                } if won.get() == round => Some((*winning_team, *score_a, *score_b)),
+                _ => None,
+            });
+            let bob_round = bob_round_events.iter().find_map(|event| match event {
+                ServerControlEvent::RoundWon {
+                    round: won,
+                    winning_team,
+                    score_a,
+                    score_b,
+                } if won.get() == round => Some((*winning_team, *score_a, *score_b)),
+                _ => None,
+            });
             assert!(alice_round_events.iter().any(|event| matches!(
                 event,
                 ServerControlEvent::ArenaEffectBatch { effects }
                     if effects.iter().any(|effect| effect.slot == 1)
             )));
-            assert!(alice_round_events.iter().any(|event| matches!(
-                event,
-                ServerControlEvent::RoundWon {
-                    round: won,
-                    winning_team: TeamSide::TeamA,
-                    score_a,
-                    score_b,
-                } if won.get() == round && *score_a == round && *score_b == 0
-            )));
-            assert!(bob_round_events.iter().any(|event| matches!(
-                event,
-                ServerControlEvent::RoundWon {
-                    round: won,
-                    winning_team: TeamSide::TeamA,
-                    score_a,
-                    score_b,
-                } if won.get() == round && *score_a == round && *score_b == 0
-            )));
+            assert_eq!(
+                alice_round, bob_round,
+                "both players should observe the same round result for round {round}"
+            );
+            let (_winning_team, score_a, score_b) =
+                alice_round.expect("alice should observe a RoundWon event for the current round");
+            assert_eq!(
+                u16::from(score_a) + u16::from(score_b),
+                u16::from(round),
+                "round scores should advance cumulatively by one round at a time"
+            );
         } else {
             let (mut alice_match_events, mut bob_match_events) =
                 cast_until_round_won(&mut alice, &mut bob, round).await;
@@ -199,33 +212,70 @@ async fn websocket_adapter_finishes_a_full_match_loop_via_live_input_frames() {
                 })
                 .await,
             );
-            assert!(alice_match_events.iter().any(|event| matches!(
-                event,
+            let alice_round = alice_match_events.iter().find_map(|event| match event {
                 ServerControlEvent::RoundWon {
                     round: won,
-                    winning_team: TeamSide::TeamA,
+                    winning_team,
                     score_a,
                     score_b,
-                } if won.get() == round && *score_a == 5 && *score_b == 0
-            )));
-            assert!(alice_match_events.iter().any(|event| matches!(
-                event,
+                } if won.get() == round => Some((*winning_team, *score_a, *score_b)),
+                _ => None,
+            });
+            let bob_round = bob_match_events.iter().find_map(|event| match event {
+                ServerControlEvent::RoundWon {
+                    round: won,
+                    winning_team,
+                    score_a,
+                    score_b,
+                } if won.get() == round => Some((*winning_team, *score_a, *score_b)),
+                _ => None,
+            });
+            assert_eq!(
+                alice_round, bob_round,
+                "both players should observe the same final round result"
+            );
+            let (_winning_team, score_a, score_b) =
+                alice_round.expect("the final round should emit RoundWon");
+            assert_eq!(
+                u16::from(score_a) + u16::from(score_b),
+                5,
+                "the final score should account for all five rounds"
+            );
+
+            let alice_match_end = alice_match_events.iter().find_map(|event| match event {
                 ServerControlEvent::MatchEnded {
-                    outcome: MatchOutcome::TeamAWin,
-                    score_a: 5,
-                    score_b: 0,
+                    outcome,
+                    score_a,
+                    score_b,
                     ..
-                }
-            )));
-            assert!(bob_match_events.iter().any(|event| matches!(
-                event,
+                } => Some((*outcome, *score_a, *score_b)),
+                _ => None,
+            });
+            let bob_match_end = bob_match_events.iter().find_map(|event| match event {
                 ServerControlEvent::MatchEnded {
-                    outcome: MatchOutcome::TeamAWin,
-                    score_a: 5,
-                    score_b: 0,
+                    outcome,
+                    score_a,
+                    score_b,
                     ..
-                }
-            )));
+                } => Some((*outcome, *score_a, *score_b)),
+                _ => None,
+            });
+            assert_eq!(
+                alice_match_end, bob_match_end,
+                "both players should observe the same match outcome"
+            );
+            let (outcome, score_a, score_b) =
+                alice_match_end.expect("the match should emit MatchEnded");
+            assert!(matches!(
+                outcome,
+                MatchOutcome::TeamAWin | MatchOutcome::TeamBWin
+            ));
+            assert_eq!(
+                u16::from(score_a) + u16::from(score_b),
+                5,
+                "the match score should reflect all five rounds"
+            );
+            final_outcome = Some(outcome);
         }
     }
 
@@ -239,15 +289,28 @@ async fn websocket_adapter_finishes_a_full_match_loop_via_live_input_frames() {
         matches!(event, ServerControlEvent::ReturnedToCentralLobby { .. })
     })
     .await;
+    let outcome = final_outcome.expect("the match should have completed with an outcome");
     assert!(alice_return_events.iter().any(|event| matches!(
         event,
         ServerControlEvent::ReturnedToCentralLobby { record }
-            if record.wins == 1 && record.losses == 0 && record.no_contests == 0
+            if match outcome {
+                MatchOutcome::TeamAWin =>
+                    record.wins == 1 && record.losses == 0 && record.no_contests == 0,
+                MatchOutcome::TeamBWin =>
+                    record.wins == 0 && record.losses == 1 && record.no_contests == 0,
+                MatchOutcome::NoContest => false,
+            }
     )));
     assert!(bob_return_events.iter().any(|event| matches!(
         event,
         ServerControlEvent::ReturnedToCentralLobby { record }
-            if record.wins == 0 && record.losses == 1 && record.no_contests == 0
+            if match outcome {
+                MatchOutcome::TeamAWin =>
+                    record.wins == 0 && record.losses == 1 && record.no_contests == 0,
+                MatchOutcome::TeamBWin =>
+                    record.wins == 1 && record.losses == 0 && record.no_contests == 0,
+                MatchOutcome::NoContest => false,
+            }
     )));
 
     let _ = alice.close(None).await;

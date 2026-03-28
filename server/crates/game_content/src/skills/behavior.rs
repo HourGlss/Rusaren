@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 
-use crate::yaml::{EffectPayloadYaml, SkillBehaviorYaml, StatusYaml};
+use crate::yaml::{DispelYaml, EffectPayloadYaml, SkillBehaviorYaml, StatusYaml};
 use crate::{
-    BehaviorSchema, CombatValueKind, ContentError, EffectPayload, MechanicCatalog,
-    NumericFieldRule, PayloadFieldRule, SkillBehavior, SkillEffectKind, StackRule,
+    BehaviorSchema, CombatValueKind, ContentError, DispelDefinition, DispelScope, EffectPayload,
+    MechanicCatalog, NumericFieldRule, PayloadFieldRule, SkillBehavior, SkillEffectKind, StackRule,
     StatusDefinition, StatusKind,
 };
 
@@ -159,20 +159,28 @@ fn dispatch_skill_behavior(
     mana_cost: u16,
 ) -> Result<SkillBehavior, ContentError> {
     match yaml.kind.as_str() {
-        "projectile" | "beam" | "dash" | "burst" | "nova" => {
-            parse_direct_skill_behavior(
-                source,
-                yaml,
-                mechanics,
-                schema,
-                fields,
-                effect,
-                cooldown_ms,
-                mana_cost,
-            )
-        }
+        "projectile" | "beam" | "dash" | "burst" | "nova" => parse_direct_skill_behavior(
+            source,
+            yaml,
+            mechanics,
+            schema,
+            fields,
+            effect,
+            cooldown_ms,
+            mana_cost,
+        ),
         "teleport" => parse_teleport_behavior(
             source,
+            fields,
+            effect,
+            require_present_u16(source, "cooldown_ms", Some(cooldown_ms))?,
+            mana_cost,
+        ),
+        "channel" => parse_channel_behavior(
+            source,
+            yaml,
+            mechanics,
+            schema,
             fields,
             effect,
             require_present_u16(source, "cooldown_ms", Some(cooldown_ms))?,
@@ -209,19 +217,54 @@ fn parse_direct_skill_behavior(
     let cooldown_ms = require_present_u16(source, "cooldown_ms", Some(cooldown_ms))?;
     match yaml.kind.as_str() {
         "projectile" => parse_projectile_behavior(
-            source, yaml, mechanics, schema, fields, effect, cooldown_ms, mana_cost,
+            source,
+            yaml,
+            mechanics,
+            schema,
+            fields,
+            effect,
+            cooldown_ms,
+            mana_cost,
         ),
         "beam" => parse_beam_behavior(
-            source, yaml, mechanics, schema, fields, effect, cooldown_ms, mana_cost,
+            source,
+            yaml,
+            mechanics,
+            schema,
+            fields,
+            effect,
+            cooldown_ms,
+            mana_cost,
         ),
         "dash" => parse_dash_behavior(
-            source, yaml, mechanics, schema, fields, effect, cooldown_ms, mana_cost,
+            source,
+            yaml,
+            mechanics,
+            schema,
+            fields,
+            effect,
+            cooldown_ms,
+            mana_cost,
         ),
         "burst" => parse_burst_behavior(
-            source, yaml, mechanics, schema, fields, effect, cooldown_ms, mana_cost,
+            source,
+            yaml,
+            mechanics,
+            schema,
+            fields,
+            effect,
+            cooldown_ms,
+            mana_cost,
         ),
         "nova" => parse_nova_behavior(
-            source, yaml, mechanics, schema, fields, effect, cooldown_ms, mana_cost,
+            source,
+            yaml,
+            mechanics,
+            schema,
+            fields,
+            effect,
+            cooldown_ms,
+            mana_cost,
         ),
         other => Err(ContentError::Validation {
             source: String::from(source),
@@ -243,15 +286,36 @@ fn parse_deployable_skill_behavior(
     let cooldown_ms = require_present_u16(source, "cooldown_ms", Some(cooldown_ms))?;
     match yaml.kind.as_str() {
         "summon" => parse_summon_behavior(
-            source, yaml, mechanics, schema, fields, effect, cooldown_ms, mana_cost,
+            source,
+            yaml,
+            mechanics,
+            schema,
+            fields,
+            effect,
+            cooldown_ms,
+            mana_cost,
         ),
         "ward" => parse_ward_behavior(source, fields, effect, cooldown_ms, mana_cost),
         "trap" => parse_trap_behavior(
-            source, yaml, mechanics, schema, fields, effect, cooldown_ms, mana_cost,
+            source,
+            yaml,
+            mechanics,
+            schema,
+            fields,
+            effect,
+            cooldown_ms,
+            mana_cost,
         ),
         "barrier" => parse_barrier_behavior(source, fields, effect, cooldown_ms, mana_cost),
         "aura" => parse_aura_behavior(
-            source, yaml, mechanics, schema, fields, effect, cooldown_ms, mana_cost,
+            source,
+            yaml,
+            mechanics,
+            schema,
+            fields,
+            effect,
+            cooldown_ms,
+            mana_cost,
         ),
         other => Err(ContentError::Validation {
             source: String::from(source),
@@ -386,6 +450,29 @@ fn parse_teleport_behavior(
     })
 }
 
+fn parse_channel_behavior(
+    source: &str,
+    yaml: &SkillBehaviorYaml,
+    mechanics: &MechanicCatalog,
+    schema: &BehaviorSchema,
+    fields: BehaviorNumericFields,
+    effect: SkillEffectKind,
+    cooldown_ms: u16,
+    mana_cost: u16,
+) -> Result<SkillBehavior, ContentError> {
+    Ok(SkillBehavior::Channel {
+        cooldown_ms,
+        cast_time_ms: fields.cast_time_ms.unwrap_or(0),
+        mana_cost,
+        range: fields.range.unwrap_or(0),
+        radius: require_present_u16(source, "radius", fields.radius)?,
+        duration_ms: require_present_u16(source, "duration_ms", fields.duration_ms)?,
+        tick_interval_ms: require_present_u16(source, "tick_interval_ms", fields.tick_interval_ms)?,
+        effect,
+        payload: parse_behavior_payload(source, yaml.payload.clone(), schema.payload, mechanics)?,
+    })
+}
+
 fn parse_passive_behavior(
     source: &str,
     fields: BehaviorNumericFields,
@@ -394,10 +481,7 @@ fn parse_passive_behavior(
     let projectile_speed_bps = fields.projectile_speed_bps.unwrap_or(0);
     let cooldown_bps = fields.cooldown_bps.unwrap_or(0);
     let cast_time_bps = fields.cast_time_bps.unwrap_or(0);
-    if player_speed_bps == 0
-        && projectile_speed_bps == 0
-        && cooldown_bps == 0
-        && cast_time_bps == 0
+    if player_speed_bps == 0 && projectile_speed_bps == 0 && cooldown_bps == 0 && cast_time_bps == 0
     {
         return Err(ContentError::Validation {
             source: String::from(source),
@@ -431,11 +515,7 @@ fn parse_summon_behavior(
         duration_ms: require_present_u16(source, "duration_ms", fields.duration_ms)?,
         hit_points: require_present_u16(source, "hit_points", fields.hit_points)?,
         range: require_present_u16(source, "range", fields.range)?,
-        tick_interval_ms: require_present_u16(
-            source,
-            "tick_interval_ms",
-            fields.tick_interval_ms,
-        )?,
+        tick_interval_ms: require_present_u16(source, "tick_interval_ms", fields.tick_interval_ms)?,
         effect,
         payload: parse_behavior_payload(source, yaml.payload.clone(), schema.payload, mechanics)?,
     })
@@ -520,11 +600,7 @@ fn parse_aura_behavior(
         radius: require_present_u16(source, "radius", fields.radius)?,
         duration_ms: require_present_u16(source, "duration_ms", fields.duration_ms)?,
         hit_points: fields.hit_points,
-        tick_interval_ms: require_present_u16(
-            source,
-            "tick_interval_ms",
-            fields.tick_interval_ms,
-        )?,
+        tick_interval_ms: require_present_u16(source, "tick_interval_ms", fields.tick_interval_ms)?,
         effect,
         payload: parse_behavior_payload(source, yaml.payload.clone(), schema.payload, mechanics)?,
     })
@@ -553,10 +629,21 @@ pub(super) fn parse_payload(
         Some(value) => Some(value),
         None => None,
     };
-    if amount == 0 && yaml.status.is_none() && interrupt_silence_duration_ms.is_none() {
+    let dispel = yaml
+        .dispel
+        .as_ref()
+        .map(|definition| parse_dispel(source, field, definition))
+        .transpose()?;
+    if amount == 0
+        && yaml.status.is_none()
+        && interrupt_silence_duration_ms.is_none()
+        && dispel.is_none()
+    {
         return Err(ContentError::Validation {
             source: String::from(source),
-            message: format!("{field} must provide a positive amount, a status, or an interrupt"),
+            message: format!(
+                "{field} must provide a positive amount, a status, an interrupt, or a dispel"
+            ),
         });
     }
 
@@ -569,6 +656,36 @@ pub(super) fn parse_payload(
             .map(|status| parse_status(source, status, mechanics))
             .transpose()?,
         interrupt_silence_duration_ms,
+        dispel,
+    })
+}
+
+fn parse_dispel(
+    source: &str,
+    field: &str,
+    yaml: &DispelYaml,
+) -> Result<DispelDefinition, ContentError> {
+    let scope = match yaml.scope.as_str() {
+        "positive" => DispelScope::Positive,
+        "negative" => DispelScope::Negative,
+        "all" => DispelScope::All,
+        other => {
+            return Err(ContentError::Validation {
+                source: String::from(source),
+                message: format!("{field}.dispel.scope has unknown value '{other}'"),
+            });
+        }
+    };
+    let max_statuses = yaml.max_statuses.unwrap_or(1);
+    if max_statuses == 0 {
+        return Err(ContentError::Validation {
+            source: String::from(source),
+            message: format!("{field}.dispel.max_statuses must be greater than zero"),
+        });
+    }
+    Ok(DispelDefinition {
+        scope,
+        max_statuses,
     })
 }
 
@@ -637,6 +754,20 @@ fn parse_status(
         yaml.max_stacks.unwrap_or(1),
         schema.max_stacks,
     )?;
+    let expire_payload = parse_optional_status_payload(
+        source,
+        yaml.expire_payload.clone().map(|payload| *payload),
+        "status.expire_payload",
+        schema.expire_payload,
+        mechanics,
+    )?;
+    let dispel_payload = parse_optional_status_payload(
+        source,
+        yaml.dispel_payload.clone().map(|payload| *payload),
+        "status.dispel_payload",
+        schema.dispel_payload,
+        mechanics,
+    )?;
 
     Ok(StatusDefinition {
         kind,
@@ -645,6 +776,8 @@ fn parse_status(
         magnitude,
         max_stacks,
         trigger_duration_ms,
+        expire_payload: expire_payload.map(Box::new),
+        dispel_payload: dispel_payload.map(Box::new),
     })
 }
 
@@ -803,6 +936,30 @@ fn parse_optional_behavior_payload(
                 return Err(ContentError::Validation {
                     source: String::from(source),
                     message: String::from("behavior.payload is not valid for this mechanic"),
+                });
+            }
+            Ok(None)
+        }
+    }
+}
+
+fn parse_optional_status_payload(
+    source: &str,
+    payload: Option<EffectPayloadYaml>,
+    field: &str,
+    rule: PayloadFieldRule,
+    mechanics: &MechanicCatalog,
+) -> Result<Option<EffectPayload>, ContentError> {
+    match rule {
+        PayloadFieldRule::Required => parse_payload(source, payload, field, mechanics).map(Some),
+        PayloadFieldRule::Optional => payload
+            .map(|payload| parse_payload(source, Some(payload), field, mechanics))
+            .transpose(),
+        PayloadFieldRule::Forbidden => {
+            if payload.is_some() {
+                return Err(ContentError::Validation {
+                    source: String::from(source),
+                    message: format!("{field} is not valid for this mechanic"),
                 });
             }
             Ok(None)

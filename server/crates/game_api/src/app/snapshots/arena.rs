@@ -82,7 +82,10 @@ impl ServerApp {
         visible_tiles: &[u8],
     ) -> Vec<ArenaPlayerSnapshot> {
         let unlocked_skill_slots = runtime.session.current_round().get();
-        let viewer_team = runtime.world.player_state(viewer_id).map(|state| state.team);
+        let viewer_team = runtime
+            .world
+            .player_state(viewer_id)
+            .map(|state| state.team);
         runtime
             .roster
             .iter()

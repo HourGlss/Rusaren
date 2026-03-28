@@ -83,6 +83,70 @@ fn app_error_display_and_connected_player_sequences_are_precise() {
     assert_eq!(DebugOverlayMode::from_raw(2), Ok(DebugOverlayMode::Auth));
     assert_eq!(DebugOverlayMode::from_raw(3), Ok(DebugOverlayMode::Both));
     assert!(DebugOverlayMode::from_raw(9).is_err());
+    assert_eq!(DebugOverlayMode::Off.as_str(), "off");
+    assert_eq!(DebugOverlayMode::Render.as_str(), "render");
+    assert_eq!(DebugOverlayMode::Auth.as_str(), "auth");
+    assert_eq!(DebugOverlayMode::Both.as_str(), "both");
+}
+
+#[test]
+fn debug_overlay_labels_and_population_counts_track_runtime_state() {
+    let mut server = ServerApp::new();
+    let mut transport = InMemoryTransport::new();
+    assert_eq!(server.connected_player_count(), 0);
+    assert_eq!(server.bound_connection_count(), 0);
+    assert_eq!(server.central_lobby_player_count(), 0);
+    assert_eq!(server.active_lobby_count(), 0);
+    assert_eq!(server.active_match_count(), 0);
+
+    let (mut alice, mut bob) = connect_pair(&mut server, &mut transport);
+    assert_eq!(server.connected_player_count(), 2);
+    assert_eq!(server.bound_connection_count(), 2);
+    assert_eq!(server.central_lobby_player_count(), 2);
+    assert_eq!(server.active_lobby_count(), 0);
+    assert_eq!(server.active_match_count(), 0);
+
+    alice
+        .create_game_lobby(&mut transport)
+        .expect("create lobby");
+    server.pump_transport(&mut transport);
+    let lobby_id = lobby_id_from(&alice.drain_events(&mut transport).expect("create events"));
+    let _ = bob
+        .drain_events(&mut transport)
+        .expect("bob directory update");
+    assert_eq!(server.connected_player_count(), 2);
+    assert_eq!(server.bound_connection_count(), 2);
+    assert_eq!(server.central_lobby_player_count(), 1);
+    assert_eq!(server.active_lobby_count(), 1);
+    assert_eq!(server.active_match_count(), 0);
+
+    bob.join_game_lobby(&mut transport, lobby_id)
+        .expect("join lobby");
+    server.pump_transport(&mut transport);
+    let _ = alice
+        .drain_events(&mut transport)
+        .expect("alice join events");
+    let _ = bob.drain_events(&mut transport).expect("bob join events");
+    assert_eq!(server.connected_player_count(), 2);
+    assert_eq!(server.bound_connection_count(), 2);
+    assert_eq!(server.central_lobby_player_count(), 0);
+    assert_eq!(server.active_lobby_count(), 1);
+    assert_eq!(server.active_match_count(), 0);
+
+    let mut match_server = ServerApp::new();
+    let mut match_transport = InMemoryTransport::new();
+    let (mut match_alice, mut match_bob) = connect_pair(&mut match_server, &mut match_transport);
+    let _ = launch_match(
+        &mut match_server,
+        &mut match_transport,
+        &mut match_alice,
+        &mut match_bob,
+    );
+    assert_eq!(match_server.connected_player_count(), 2);
+    assert_eq!(match_server.bound_connection_count(), 2);
+    assert_eq!(match_server.central_lobby_player_count(), 0);
+    assert_eq!(match_server.active_lobby_count(), 0);
+    assert_eq!(match_server.active_match_count(), 1);
 }
 
 #[test]

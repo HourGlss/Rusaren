@@ -13,8 +13,8 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use game_content::{
-    ArenaMapDefinition, CombatValueKind, MeleeDefinition, SkillBehavior, SkillDefinition,
-    StatusDefinition, StatusKind,
+    ArenaMapDefinition, CombatValueKind, DispelScope, EffectPayload, MeleeDefinition,
+    SkillBehavior, SkillDefinition, StatusDefinition, StatusKind,
 };
 use game_domain::{PlayerId, TeamAssignment, TeamSide};
 
@@ -337,6 +337,8 @@ struct StatusInstance {
     max_stacks: u8,
     trigger_duration_ms: Option<u16>,
     shield_remaining: u16,
+    expire_payload: Option<Box<EffectPayload>>,
+    dispel_payload: Option<Box<EffectPayload>>,
 }
 
 #[derive(Clone, Debug)]
@@ -346,6 +348,20 @@ struct PendingCast {
     remaining_ms: u16,
     total_ms: u16,
     just_started: bool,
+    mode: ActiveCastMode,
+}
+
+#[derive(Clone, Debug)]
+enum ActiveCastMode {
+    Windup,
+    Channel {
+        range: u16,
+        radius: u16,
+        tick_interval_ms: u16,
+        tick_progress_ms: u16,
+        effect_kind: ArenaEffectKind,
+        payload: EffectPayload,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -386,7 +402,7 @@ struct DeployableState {
     behavior: DeployableBehavior,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 enum DeployableBehavior {
     Summon {
         range: u16,
@@ -574,6 +590,17 @@ impl SimulationWorld {
         Ok(())
     }
 
+    pub fn cancel_active_cast(&mut self, player_id: PlayerId) -> Result<bool, SimulationError> {
+        let player = self
+            .players
+            .get_mut(&player_id)
+            .ok_or(SimulationError::PlayerMissing(player_id))?;
+        if !player.alive {
+            return Err(SimulationError::PlayerAlreadyDefeated(player_id));
+        }
+        Ok(player.active_cast.take().is_some())
+    }
+
     pub fn tick(&mut self, delta_ms: u16) -> Vec<SimulationEvent> {
         let mut events = Vec::new();
         self.advance_cooldowns(delta_ms);
@@ -596,7 +623,10 @@ impl SimulationWorld {
                     .get(index)
                     .and_then(|skill| {
                         skill.as_ref().map(|value| {
-                            self.effective_skill_cooldown_ms(player_id, value.behavior.cooldown_ms())
+                            self.effective_skill_cooldown_ms(
+                                player_id,
+                                value.behavior.cooldown_ms(),
+                            )
                         })
                     })
                     .unwrap_or(0)
@@ -747,7 +777,8 @@ impl SimulationWorld {
     }
 
     fn scale_speed_units(base_speed: u16, bonus_bps: u16) -> u16 {
-        let scaled = u32::from(base_speed).saturating_mul(10_000_u32 + u32::from(bonus_bps)) / 10_000;
+        let scaled =
+            u32::from(base_speed).saturating_mul(10_000_u32 + u32::from(bonus_bps)) / 10_000;
         u16::try_from(scaled).unwrap_or(u16::MAX)
     }
 
@@ -764,14 +795,19 @@ impl SimulationWorld {
     }
 
     fn effective_projectile_speed(&self, player_id: PlayerId, base_speed: u16) -> u16 {
-        Self::scale_speed_units(base_speed, self.passive_modifiers_for(player_id).projectile_speed)
+        Self::scale_speed_units(
+            base_speed,
+            self.passive_modifiers_for(player_id).projectile_speed,
+        )
     }
 
     fn effective_move_modifier_bps(&self, player_id: PlayerId, statuses: &[StatusInstance]) -> i16 {
         let status_modifier = total_move_modifier_bps(statuses);
-        let passive_bonus = i16::try_from(self.passive_modifiers_for(player_id).player_speed)
-            .unwrap_or(i16::MAX);
-        status_modifier.saturating_add(passive_bonus).clamp(-8_000, 9_000)
+        let passive_bonus =
+            i16::try_from(self.passive_modifiers_for(player_id).player_speed).unwrap_or(i16::MAX);
+        status_modifier
+            .saturating_add(passive_bonus)
+            .clamp(-8_000, 9_000)
     }
 
     fn combat_obstacles(&self) -> Vec<ArenaObstacle> {
@@ -845,6 +881,27 @@ impl SimulationWorld {
         self.players
             .get(&player_id)
             .is_some_and(|player| player.statuses.iter().any(|status| status.kind == kind))
+    }
+
+    const fn status_matches_dispel(kind: StatusKind, scope: DispelScope) -> bool {
+        match scope {
+            DispelScope::Positive => matches!(
+                kind,
+                StatusKind::Hot | StatusKind::Haste | StatusKind::Shield | StatusKind::Stealth
+            ),
+            DispelScope::Negative => matches!(
+                kind,
+                StatusKind::Poison
+                    | StatusKind::Chill
+                    | StatusKind::Root
+                    | StatusKind::Silence
+                    | StatusKind::Stun
+                    | StatusKind::Sleep
+                    | StatusKind::Reveal
+                    | StatusKind::Fear
+            ),
+            DispelScope::All => true,
+        }
     }
 
     fn can_enemy_target_player(&self, attacker: PlayerId, target: PlayerId) -> bool {

@@ -92,6 +92,7 @@ impl CliArgs {
             preferred_tree_order: None,
             max_rounds_per_match: self.max_rounds,
             max_combat_loops_per_round: None,
+            required_mechanics: None,
         }
     }
 

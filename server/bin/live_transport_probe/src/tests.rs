@@ -1,14 +1,16 @@
 use std::fs;
 use std::path::PathBuf;
+use std::sync::OnceLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use game_api::{spawn_dev_server_with_options, DevServerOptions, WebRtcRuntimeConfig};
 use game_domain::SkillTree;
 use game_net::SkillCatalogEntry;
 use tokio::net::TcpListener;
+use tokio::sync::Mutex;
 
 use crate::planner::build_match_plans;
-use crate::{run_probe, ProbeConfig};
+use crate::{run_probe, ProbeConfig, ProbeMechanicObservation};
 
 fn temp_path(label: &str, suffix: &str) -> PathBuf {
     let unique = SystemTime::now()
@@ -45,6 +47,11 @@ fn temp_web_client_root() -> PathBuf {
     root
 }
 
+fn live_probe_test_mutex() -> &'static Mutex<()> {
+    static LIVE_PROBE_TEST_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
+    LIVE_PROBE_TEST_MUTEX.get_or_init(|| Mutex::new(()))
+}
+
 async fn start_server_fast() -> (game_api::DevServerHandle, String) {
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
@@ -66,6 +73,125 @@ async fn start_server_fast() -> (game_api::DevServerHandle, String) {
     .expect("server should spawn");
     let base_url = format!("ws://{}", server.local_addr());
     (server, base_url)
+}
+
+async fn run_probe_with_fresh_server(
+    config: ProbeConfig,
+) -> crate::ProbeResult<crate::ProbeOutcome> {
+    let (server, base_url) = start_server_fast().await;
+    let outcome = run_probe(ProbeConfig {
+        origin: base_url,
+        ..config
+    })
+    .await;
+    server.shutdown().await;
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    outcome
+}
+
+async fn run_probe_until_mechanic_observed(
+    config: ProbeConfig,
+    mechanic: ProbeMechanicObservation,
+    max_attempts: usize,
+) -> crate::ProbeResult<crate::ProbeOutcome> {
+    let mut last_outcome = None;
+    for attempt in 0..max_attempts {
+        let outcome = run_probe_with_fresh_server(config.clone()).await?;
+        if outcome.observed_mechanics.contains(&mechanic) {
+            return Ok(outcome);
+        }
+        last_outcome = Some(outcome);
+        if attempt + 1 < max_attempts {
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+    }
+
+    if let Some(outcome) = last_outcome {
+        return Err(crate::ProbeError::new(format!(
+            "probe did not observe {} after {} attempts; last observed mechanics: {:?}",
+            mechanic.as_str(),
+            max_attempts,
+            outcome
+                .observed_mechanics
+                .iter()
+                .map(|observed| observed.as_str())
+                .collect::<Vec<_>>()
+        )));
+    }
+
+    Err(crate::ProbeError::new(
+        "probe retry loop produced no outcome",
+    ))
+}
+
+fn periodic_probe_config(output_path: PathBuf) -> ProbeConfig {
+    ProbeConfig {
+        origin: String::new(),
+        output_path,
+        max_games: Some(1),
+        connect_timeout: Duration::from_secs(15),
+        stage_timeout: Duration::from_secs(20),
+        round_timeout: Duration::from_secs(90),
+        match_timeout: Duration::from_secs(120),
+        input_cadence: Duration::from_millis(80),
+        players_per_match: 3,
+        preferred_tree_order: Some(vec![
+            String::from("Cleric"),
+            String::from("Rogue"),
+            String::from("Necromancer"),
+        ]),
+        max_rounds_per_match: Some(1),
+        max_combat_loops_per_round: Some(180),
+        required_mechanics: Some(
+            [ProbeMechanicObservation::MultiSourcePeriodicStack]
+                .into_iter()
+                .collect(),
+        ),
+    }
+}
+
+fn dispel_probe_config(output_path: PathBuf) -> ProbeConfig {
+    ProbeConfig {
+        origin: String::new(),
+        output_path,
+        max_games: Some(1),
+        connect_timeout: Duration::from_secs(15),
+        stage_timeout: Duration::from_secs(20),
+        round_timeout: Duration::from_secs(90),
+        match_timeout: Duration::from_secs(300),
+        input_cadence: Duration::from_millis(80),
+        players_per_match: 2,
+        preferred_tree_order: Some(vec![String::from("Cleric"), String::from("Mage")]),
+        max_rounds_per_match: Some(4),
+        max_combat_loops_per_round: Some(240),
+        required_mechanics: Some(
+            [ProbeMechanicObservation::DispelResolved]
+                .into_iter()
+                .collect(),
+        ),
+    }
+}
+
+fn channel_probe_config(output_path: PathBuf) -> ProbeConfig {
+    ProbeConfig {
+        origin: String::new(),
+        output_path,
+        max_games: Some(1),
+        connect_timeout: Duration::from_secs(15),
+        stage_timeout: Duration::from_secs(20),
+        round_timeout: Duration::from_secs(60),
+        match_timeout: Duration::from_secs(360),
+        input_cadence: Duration::from_millis(80),
+        players_per_match: 2,
+        preferred_tree_order: Some(vec![String::from("Warrior"), String::from("Ranger")]),
+        max_rounds_per_match: Some(5),
+        max_combat_loops_per_round: Some(260),
+        required_mechanics: Some(
+            [ProbeMechanicObservation::ChannelMaintained]
+                .into_iter()
+                .collect(),
+        ),
+    }
 }
 
 #[test]
@@ -104,6 +230,7 @@ fn planner_covers_all_trees_and_fills_the_last_match() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn live_probe_completes_one_real_webrtc_match_against_the_dev_server() {
+    let _guard = live_probe_test_mutex().lock().await;
     let (server, base_url) = start_server_fast().await;
     let output_path = temp_path("probe-log", "jsonl");
     let outcome = run_probe(ProbeConfig {
@@ -124,6 +251,7 @@ async fn live_probe_completes_one_real_webrtc_match_against_the_dev_server() {
         ]),
         max_rounds_per_match: Some(1),
         max_combat_loops_per_round: Some(25),
+        required_mechanics: None,
     })
     .await
     .expect("probe should complete");
@@ -133,4 +261,57 @@ async fn live_probe_completes_one_real_webrtc_match_against_the_dev_server() {
     assert!(fs::metadata(output_path).is_ok());
 
     server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn live_probe_exercises_periodic_stacks_against_the_dev_server() {
+    let _guard = live_probe_test_mutex().lock().await;
+    let periodic_output_path = temp_path("probe-periodic-log", "jsonl");
+    let periodic_outcome = run_probe_until_mechanic_observed(
+        periodic_probe_config(periodic_output_path.clone()),
+        ProbeMechanicObservation::MultiSourcePeriodicStack,
+        3,
+    )
+    .await
+    .expect("probe should exercise multi-source periodic stacking");
+
+    assert_eq!(periodic_outcome.matches_completed, 1);
+    assert!(fs::metadata(periodic_output_path).is_ok());
+    assert!(periodic_outcome
+        .observed_mechanics
+        .contains(&ProbeMechanicObservation::MultiSourcePeriodicStack));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn live_probe_exercises_dispels_against_the_dev_server() {
+    let _guard = live_probe_test_mutex().lock().await;
+    let dispel_outcome = run_probe_until_mechanic_observed(
+        dispel_probe_config(temp_path("probe-dispel-log", "jsonl")),
+        ProbeMechanicObservation::DispelResolved,
+        4,
+    )
+    .await
+    .expect("probe should exercise dispel resolution");
+
+    assert_eq!(dispel_outcome.matches_completed, 1);
+    assert!(dispel_outcome
+        .observed_mechanics
+        .contains(&ProbeMechanicObservation::DispelResolved));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn live_probe_exercises_channels_against_the_dev_server() {
+    let _guard = live_probe_test_mutex().lock().await;
+    let channel_outcome = run_probe_until_mechanic_observed(
+        channel_probe_config(temp_path("probe-channel-log", "jsonl")),
+        ProbeMechanicObservation::ChannelMaintained,
+        4,
+    )
+    .await
+    .expect("probe should exercise channel maintenance");
+
+    assert_eq!(channel_outcome.matches_completed, 1);
+    assert!(channel_outcome
+        .observed_mechanics
+        .contains(&ProbeMechanicObservation::ChannelMaintained));
 }

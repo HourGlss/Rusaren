@@ -9,7 +9,10 @@ output = "target/reports/mutants"
 skip_calls_defaults = true
 
 examine_globs = [
-  "crates/game_domain/src/error.rs",
+  # Keep the default mutation slice focused on gameplay, ingress, visibility,
+  # protocol, and match-flow logic. Display-only formatter files stay out of
+  # the release-line pass so long campaigns do not burn time on low-value
+  # mutants.
   "crates/game_domain/src/ids.rs",
   "crates/game_domain/src/player.rs",
   "crates/game_domain/src/round.rs",
@@ -18,7 +21,6 @@ examine_globs = [
   "crates/game_match/src/accessors.rs",
   "crates/game_match/src/flow.rs",
   "crates/game_match/src/types.rs",
-  "crates/game_net/src/error.rs",
   "crates/game_net/src/header.rs",
   "crates/game_net/src/input.rs",
   "crates/game_net/src/packet_types.rs",

@@ -365,6 +365,37 @@ function Get-PreferredMutationScratchRoot {
     return $null
 }
 
+function Get-MutationScratchLabel {
+    $parts = @()
+
+    if (-not [string]::IsNullOrWhiteSpace($env:RARENA_MUTANTS_OUTPUT_DIR)) {
+        $resolvedOutputDir = $env:RARENA_MUTANTS_OUTPUT_DIR
+        if (-not [System.IO.Path]::IsPathRooted($resolvedOutputDir)) {
+            $resolvedOutputDir = Join-Path $repoRoot $resolvedOutputDir
+        }
+
+        $resolvedOutputDir = [System.IO.Path]::GetFullPath($resolvedOutputDir)
+        $parts += Split-Path -Path $resolvedOutputDir -Leaf
+        $parts += Split-Path -Path (Split-Path -Path $resolvedOutputDir -Parent) -Leaf
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($env:RARENA_MUTANTS_SHARD)) {
+        $parts += $env:RARENA_MUTANTS_SHARD
+    }
+
+    if ($parts.Count -eq 0) {
+        return "default"
+    }
+
+    $label = ($parts -join "-")
+    $label = [regex]::Replace($label, '[^A-Za-z0-9._-]+', '-').Trim('-')
+    if ([string]::IsNullOrWhiteSpace($label)) {
+        return "default"
+    }
+
+    return $label
+}
+
 function Resolve-MutationOutputRoot {
     $defaultOutputRoot = Join-Path $serverRoot "target\reports\mutants"
     if ([string]::IsNullOrWhiteSpace($env:RARENA_MUTANTS_OUTPUT_DIR)) {
@@ -642,10 +673,16 @@ function Invoke-MutationTesting {
             $scratchRoot = Get-PreferredMutationScratchRoot
             if ($null -ne $scratchRoot) {
                 $mutantsScratchRoot = Join-Path $scratchRoot "mutants"
-                $mutantsTempRoot = Join-Path $mutantsScratchRoot "tmp"
-                $mutantsTargetRoot = Join-Path $mutantsScratchRoot "cargo-target"
+                $scratchLabel = Get-MutationScratchLabel
+                $mutantsRunScratchRoot = Join-Path $mutantsScratchRoot $scratchLabel
+                $mutantsTempRoot = Join-Path $mutantsRunScratchRoot "tmp"
+                $mutantsTargetRoot = Join-Path $mutantsRunScratchRoot "cargo-target"
                 if (Test-Path $mutantsTempRoot) {
                     Get-ChildItem -Path $mutantsTempRoot -Force -ErrorAction SilentlyContinue |
+                        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+                }
+                if (Test-Path $mutantsTargetRoot) {
+                    Get-ChildItem -Path $mutantsTargetRoot -Force -ErrorAction SilentlyContinue |
                         Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
                 }
                 New-Item -ItemType Directory -Force -Path $mutantsTempRoot | Out-Null
@@ -653,7 +690,7 @@ function Invoke-MutationTesting {
                 $env:TEMP = $mutantsTempRoot
                 $env:TMP = $mutantsTempRoot
                 $env:CARGO_TARGET_DIR = $mutantsTargetRoot
-                Write-Host "Using mutation scratch space under $mutantsScratchRoot"
+                Write-Host "Using mutation scratch space under $mutantsRunScratchRoot"
             }
             Write-Host "Mutation testing is running. Progress lines will appear as mutants finish."
             Write-Host "Live counts track completed mutants: CAUGHT / MISSED / TIMEOUT / UNVIABLE."

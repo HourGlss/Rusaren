@@ -6,8 +6,7 @@ use super::codec::{
     decode_bytes, read_arena_deployable_kind, read_arena_effect_kind, read_arena_match_phase,
     read_arena_obstacle_kind, read_arena_status_kind, read_bool, read_i16, read_lobby_id,
     read_lobby_snapshot_phase, read_optional_team, read_optional_u8, read_player_id,
-    read_player_name, read_player_record, read_ready_state, read_team, read_u16, read_u32,
-    read_u8,
+    read_player_name, read_player_record, read_ready_state, read_team, read_u16, read_u32, read_u8,
 };
 use super::server_types::{
     ArenaDeltaSnapshot, ArenaDeployableSnapshot, ArenaEffectSnapshot, ArenaObstacleSnapshot,

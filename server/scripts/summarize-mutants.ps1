@@ -152,6 +152,43 @@ function Get-MissedFileKey {
     return "<unknown>"
 }
 
+function Get-ShardDescriptor {
+    param([System.IO.DirectoryInfo]$ShardDirectory)
+
+    $runJsonPath = Join-Path $ShardDirectory.FullName "run.json"
+    if (Test-Path $runJsonPath) {
+        try {
+            $runDoc = Get-Content -Path $runJsonPath -Raw -ErrorAction SilentlyContinue | ConvertFrom-Json
+            if ($null -ne $runDoc -and -not [string]::IsNullOrWhiteSpace([string]$runDoc.shard)) {
+                return [string]$runDoc.shard
+            }
+        }
+        catch {
+        }
+    }
+
+    if ($ShardDirectory.Name -match '^(?<index>\d+)-of-(?<count>\d+)$') {
+        return ("{0}/{1}" -f $Matches["index"], $Matches["count"])
+    }
+
+    return $null
+}
+
+function Test-ValidShardDescriptor {
+    param([string]$Value)
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return $false
+    }
+    if ($Value -notmatch '^(?<index>\d+)/(?<count>\d+)$') {
+        return $false
+    }
+
+    $index = [int]$Matches["index"]
+    $count = [int]$Matches["count"]
+    return $count -gt 0 -and $index -ge 0 -and $index -lt $count
+}
+
 if ($PSCmdlet.ParameterSetName -eq "RunId") {
     $normalizedRunId = Normalize-RunId -Value $RunId
     $campaignBaseRoot = Resolve-CampaignBaseRoot -Candidate $OutputRoot
@@ -209,6 +246,10 @@ foreach ($shardDirectory in $shardDirectories) {
     $unviableCount = Read-OutcomeCount -MutantsOutRoot $mutantsOutRoot -Name "unviable"
     $totalCount = Read-TotalMutants -MutantsOutRoot $mutantsOutRoot
     $completedCount = $caughtCount + $missedCount + $timeoutCount + $unviableCount
+    $shardDescriptor = Get-ShardDescriptor -ShardDirectory $shardDirectory
+    if (-not (Test-ValidShardDescriptor -Value $shardDescriptor)) {
+        continue
+    }
     $status = if ($null -ne $totalCount -and $completedCount -eq $totalCount -and $totalCount -gt 0) {
         "completed"
     }
@@ -264,6 +305,8 @@ foreach ($shardDirectory in $shardDirectories) {
         log_path   = $logPath
     }
 }
+
+$aggregate.shard_count = $aggregate.shards.Count
 
 $topMissedFiles = @(
     $allMissed |

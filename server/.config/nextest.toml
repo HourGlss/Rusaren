@@ -7,5 +7,20 @@ slow-timeout = { period = "30s", terminate-after = 2 }
 filter = "test(websocket_adapter_finishes_a_full_match_loop_via_live_input_frames)"
 slow-timeout = { period = "60s", terminate-after = 2 }
 
+[[profile.default.overrides]]
+filter = "test(live_probe_exercises_periodic_stacks_against_the_dev_server)"
+slow-timeout = { period = "90s", terminate-after = 2 }
+retries = { count = 2, backoff = "fixed", delay = "1s" }
+
+[[profile.default.overrides]]
+filter = "test(live_probe_exercises_dispels_against_the_dev_server)"
+slow-timeout = { period = "90s", terminate-after = 2 }
+retries = { count = 2, backoff = "fixed", delay = "1s" }
+
+[[profile.default.overrides]]
+filter = "test(live_probe_exercises_channels_against_the_dev_server)"
+slow-timeout = { period = "120s", terminate-after = 2 }
+retries = { count = 3, backoff = "fixed", delay = "1s" }
+
 [profile.ci.junit]
 path = "target/nextest/ci-junit.xml"

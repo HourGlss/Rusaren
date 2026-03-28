@@ -24,10 +24,18 @@ fn shrub() -> ArenaObstacle {
     }
 }
 
+fn barrier() -> ArenaObstacle {
+    ArenaObstacle {
+        kind: ArenaObstacleKind::Barrier,
+        ..pillar()
+    }
+}
+
 #[test]
 fn obstacle_kind_rules_and_point_containment_are_exact() {
     let pillar = pillar();
     let shrub = shrub();
+    let barrier = barrier();
 
     assert!(obstacle_blocks_movement(&pillar));
     assert!(obstacle_blocks_projectiles(&pillar));
@@ -35,6 +43,9 @@ fn obstacle_kind_rules_and_point_containment_are_exact() {
     assert!(!obstacle_blocks_movement(&shrub));
     assert!(!obstacle_blocks_projectiles(&shrub));
     assert!(obstacle_blocks_vision(&shrub));
+    assert!(obstacle_blocks_movement(&barrier));
+    assert!(obstacle_blocks_projectiles(&barrier));
+    assert!(!obstacle_blocks_vision(&barrier));
 
     assert!(obstacle_contains_point(0, 0, &pillar));
     assert!(obstacle_contains_point(-50, 0, &pillar));
@@ -53,6 +64,10 @@ fn circle_and_segment_geometry_handle_edges_reverse_paths_and_inside_cases() {
 
     assert!(circle_intersects_rect(80, 0, 30, &pillar));
     assert!(!circle_intersects_rect(81, 0, 30, &pillar));
+    assert!(circle_intersects_rect(0, 80, 30, &pillar));
+    assert!(!circle_intersects_rect(0, 81, 30, &pillar));
+    assert!(circle_intersects_rect(80, 80, 43, &pillar));
+    assert!(!circle_intersects_rect(80, 80, 42, &pillar));
 
     assert_eq!(
         segment_rect_intersection_t((-100, 0), (100, 0), &pillar),
@@ -177,6 +192,8 @@ fn aim_projection_and_distance_helpers_return_exact_values() {
     assert_close(segment_distance_sq((0, 0), (10, 0), (-5, 0)), 25.0);
     assert_close(segment_distance_sq((0, 0), (10, 0), (15, 0)), 25.0);
     assert_close(segment_distance_sq((0, 0), (0, 0), (3, 4)), 25.0);
+    assert_close(segment_distance_sq((0, 0), (0, 10), (5, 5)), 25.0);
+    assert_close(segment_distance_sq((0, 0), (10, 10), (10, 0)), 50.0);
 }
 
 #[test]

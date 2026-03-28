@@ -47,6 +47,7 @@ impl SimulationWorld {
             }
 
             let mut pending_effects = Vec::new();
+            let mut pending_expire_payloads = Vec::new();
             {
                 let Some(player) = self.players.get_mut(&player_id) else {
                     continue;
@@ -68,6 +69,8 @@ impl SimulationWorld {
                     }
                     if status.remaining_ms > 0 {
                         retained_statuses.push(status);
+                    } else if let Some(payload) = status.expire_payload {
+                        pending_expire_payloads.push((status.source, status.slot, *payload));
                     }
                 }
                 player.statuses = retained_statuses;
@@ -100,6 +103,14 @@ impl SimulationWorld {
                     | StatusKind::Reveal
                     | StatusKind::Fear => {}
                 }
+            }
+            for (source, slot, payload) in pending_expire_payloads {
+                events.extend(self.apply_payload(
+                    source,
+                    slot,
+                    &[TargetEntity::Player(player_id)],
+                    payload,
+                ));
             }
         }
     }
@@ -252,7 +263,12 @@ impl SimulationWorld {
                                     radius: deployable.radius,
                                 },
                             });
-                            events.extend(self.apply_payload(deployable.owner, 0, &[target], *payload));
+                            events.extend(self.apply_payload(
+                                deployable.owner,
+                                0,
+                                &[target],
+                                payload.clone(),
+                            ));
                         }
                     }
                 }
@@ -263,7 +279,8 @@ impl SimulationWorld {
                         (deployable.x, deployable.y),
                         deployable.radius,
                     ) {
-                        let (target_x, target_y) = self.target_position(TargetEntity::Player(target));
+                        let (target_x, target_y) =
+                            self.target_position(TargetEntity::Player(target));
                         events.push(SimulationEvent::EffectSpawned {
                             effect: ArenaEffect {
                                 kind: ArenaEffectKind::Burst,
@@ -280,7 +297,7 @@ impl SimulationWorld {
                             deployable.owner,
                             0,
                             &[TargetEntity::Player(target)],
-                            *payload,
+                            payload.clone(),
                         ));
                         expired.push(deployable_id);
                     }
@@ -325,7 +342,12 @@ impl SimulationWorld {
                             None,
                             payload.kind == CombatValueKind::Damage,
                         );
-                        events.extend(self.apply_payload(deployable.owner, 0, &targets, *payload));
+                        events.extend(self.apply_payload(
+                            deployable.owner,
+                            0,
+                            &targets,
+                            payload.clone(),
+                        ));
                     }
                 }
             }
@@ -359,6 +381,11 @@ impl SimulationWorld {
         }
     }
 
+    #[cfg(test)]
+    pub(super) fn test_target_position(&self, target: TargetEntity) -> (i16, i16) {
+        self.target_position(target)
+    }
+
     fn find_enemy_player_near_point(
         &self,
         attacker: PlayerId,
@@ -372,9 +399,20 @@ impl SimulationWorld {
             .filter_map(|(player_id, player)| {
                 let overlap_radius = i32::from(radius.saturating_add(super::PLAYER_RADIUS_UNITS));
                 let distance_sq = super::point_distance_sq(point, (player.x, player.y));
-                (distance_sq <= overlap_radius * overlap_radius).then_some((*player_id, distance_sq))
+                (distance_sq <= overlap_radius * overlap_radius)
+                    .then_some((*player_id, distance_sq))
             })
             .min_by_key(|(_, distance_sq)| *distance_sq)
             .map(|(player_id, _)| player_id)
+    }
+
+    #[cfg(test)]
+    pub(super) fn test_find_enemy_player_near_point(
+        &self,
+        attacker: PlayerId,
+        point: (i16, i16),
+        radius: u16,
+    ) -> Option<PlayerId> {
+        self.find_enemy_player_near_point(attacker, point, radius)
     }
 }

@@ -362,8 +362,7 @@ fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) {
         let destination_path = dst.join(entry.file_name());
         if entry.file_type().expect("file type").is_dir() {
             copy_dir_all(&entry_path, &destination_path);
-        }
-        else {
+        } else {
             fs::copy(&entry_path, &destination_path).expect("file copy should succeed");
         }
     }

@@ -263,6 +263,30 @@ behaviors:
         projectile_speed_bps: forbidden
         cooldown_bps: forbidden
         cast_time_bps: forbidden
+  - id: channel
+    label: Channel
+    implemented: true
+    inspiration: "WoW tranquility, earthquake channels, and sustained caster ultimates"
+    notes: "A sustained caster-centered or aimed area effect that ticks while the caster remains still."
+    schema:
+      payload: required
+      allowed_effects: [nova, burst]
+      numeric_fields:
+        cooldown_ms: required
+        cast_time_ms: optional
+        mana_cost: optional
+        range: optional
+        radius: required
+        distance: forbidden
+        speed: forbidden
+        impact_radius: forbidden
+        duration_ms: required
+        hit_points: forbidden
+        tick_interval_ms: required
+        player_speed_bps: forbidden
+        projectile_speed_bps: forbidden
+        cooldown_bps: forbidden
+        cast_time_bps: forbidden
   - id: ward
     label: Ward
     implemented: true
@@ -320,6 +344,8 @@ statuses:
     notes: "A damaging periodic effect that stacks by source."
     schema:
       max_stacks: positive
+      expire_payload: optional
+      dispel_payload: optional
       numeric_fields:
         duration_ms: required
         tick_interval_ms: required
@@ -329,9 +355,11 @@ statuses:
     label: Heal Over Time
     implemented: true
     inspiration: "Cleric and healer maintenance spells"
-    notes: "A healing periodic effect that refreshes by source."
+    notes: "A healing periodic effect that stacks per authored source rules and can bloom on expire or dispel."
     schema:
-      max_stacks: one
+      max_stacks: positive
+      expire_payload: optional
+      dispel_payload: optional
       numeric_fields:
         duration_ms: required
         tick_interval_ms: required
@@ -344,6 +372,8 @@ statuses:
     notes: "A stacking slow that can trigger a follow-up root."
     schema:
       max_stacks: positive
+      expire_payload: optional
+      dispel_payload: optional
       numeric_fields:
         duration_ms: required
         tick_interval_ms: forbidden
@@ -356,6 +386,8 @@ statuses:
     notes: "Prevents movement while allowing other actions unless another status forbids them."
     schema:
       max_stacks: one
+      expire_payload: optional
+      dispel_payload: optional
       numeric_fields:
         duration_ms: required
         tick_interval_ms: forbidden
@@ -368,6 +400,8 @@ statuses:
     notes: "Improves movement speed for a limited duration."
     schema:
       max_stacks: one
+      expire_payload: optional
+      dispel_payload: optional
       numeric_fields:
         duration_ms: required
         tick_interval_ms: forbidden
@@ -380,6 +414,8 @@ statuses:
     notes: "Prevents skill casts while active."
     schema:
       max_stacks: one
+      expire_payload: optional
+      dispel_payload: optional
       numeric_fields:
         duration_ms: required
         tick_interval_ms: forbidden
@@ -392,6 +428,8 @@ statuses:
     notes: "Prevents movement and actions while active."
     schema:
       max_stacks: one
+      expire_payload: optional
+      dispel_payload: optional
       numeric_fields:
         duration_ms: required
         tick_interval_ms: forbidden
@@ -404,6 +442,8 @@ statuses:
     notes: "Behaves like a stun but is removed by any incoming damage from any source."
     schema:
       max_stacks: one
+      expire_payload: optional
+      dispel_payload: optional
       numeric_fields:
         duration_ms: required
         tick_interval_ms: forbidden
@@ -416,6 +456,8 @@ statuses:
     notes: "Absorbs incoming damage before hit points are reduced. Multiple applications stack."
     schema:
       max_stacks: positive
+      expire_payload: optional
+      dispel_payload: optional
       numeric_fields:
         duration_ms: required
         tick_interval_ms: forbidden
@@ -428,6 +470,8 @@ statuses:
     notes: "Removes the unit from enemy visibility and targeting until the unit takes damage or takes an action."
     schema:
       max_stacks: one
+      expire_payload: optional
+      dispel_payload: optional
       numeric_fields:
         duration_ms: required
         tick_interval_ms: forbidden
@@ -440,6 +484,8 @@ statuses:
     notes: "Temporarily exposes a stealthed unit to enemies as if it were not stealthed."
     schema:
       max_stacks: one
+      expire_payload: optional
+      dispel_payload: optional
       numeric_fields:
         duration_ms: required
         tick_interval_ms: forbidden
@@ -452,6 +498,8 @@ statuses:
     notes: "Forces movement directly away from the applier and blocks all actions for the duration."
     schema:
       max_stacks: one
+      expire_payload: optional
+      dispel_payload: optional
       numeric_fields:
         duration_ms: required
         tick_interval_ms: forbidden

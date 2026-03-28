@@ -350,7 +350,7 @@ fn every_authored_skill_hits_with_valid_geometry_and_resources() {
     let content = content();
 
     for skill in content.skills().all() {
-        if matches!(skill.behavior, SkillBehavior::Passive { .. }) {
+        if matches!(&skill.behavior, SkillBehavior::Passive { .. }) {
             continue;
         }
         let mut world = world(
@@ -374,7 +374,7 @@ fn every_authored_skill_hits_with_valid_geometry_and_resources() {
                 ),
             ],
         );
-        let payload = behavior_payload(skill.behavior);
+        let payload = behavior_payload(&skill.behavior);
         let attacker_id = player_id(1);
         let target_id = player_id(2);
 
@@ -387,9 +387,9 @@ fn every_authored_skill_hits_with_valid_geometry_and_resources() {
             TEST_AIM_Y,
         );
 
-        match skill.behavior {
+        match &skill.behavior {
             SkillBehavior::Projectile { range, .. } | SkillBehavior::Beam { range, .. } => {
-                let distance = i16::try_from(range.min(240)).unwrap_or(240);
+                let distance = i16::try_from((*range).min(240)).unwrap_or(240);
                 set_player_pose(
                     &mut world,
                     target_id,
@@ -405,7 +405,7 @@ fn every_authored_skill_hits_with_valid_geometry_and_resources() {
                     TEST_OPEN_LANE_Y,
                     TEST_AIM_X,
                     TEST_AIM_Y,
-                    range,
+                    *range,
                 );
                 set_player_pose(
                     &mut world,
@@ -417,7 +417,7 @@ fn every_authored_skill_hits_with_valid_geometry_and_resources() {
                 );
             }
             SkillBehavior::Nova { radius, .. } => {
-                let radius_offset = i16::try_from((radius / 2).max(40)).unwrap_or(40);
+                let radius_offset = i16::try_from((*radius / 2).max(40)).unwrap_or(40);
                 set_player_pose(
                     &mut world,
                     target_id,
@@ -435,7 +435,7 @@ fn every_authored_skill_hits_with_valid_geometry_and_resources() {
                     TEST_OPEN_LANE_Y,
                     TEST_AIM_X,
                     TEST_AIM_Y,
-                    distance,
+                    *distance,
                 );
                 set_player_pose(
                     &mut world,
@@ -446,7 +446,9 @@ fn every_authored_skill_hits_with_valid_geometry_and_resources() {
                     TEST_AIM_Y,
                 );
             }
-            SkillBehavior::Teleport { .. } | SkillBehavior::Ward { .. } | SkillBehavior::Barrier { .. } => {}
+            SkillBehavior::Teleport { .. }
+            | SkillBehavior::Ward { .. }
+            | SkillBehavior::Barrier { .. } => {}
             SkillBehavior::Aura {
                 distance,
                 hit_points,
@@ -459,7 +461,7 @@ fn every_authored_skill_hits_with_valid_geometry_and_resources() {
                         TEST_OPEN_LANE_Y,
                         TEST_AIM_X,
                         TEST_AIM_Y,
-                        distance,
+                        *distance,
                     );
                     set_player_pose(
                         &mut world,
@@ -470,7 +472,7 @@ fn every_authored_skill_hits_with_valid_geometry_and_resources() {
                         TEST_AIM_Y,
                     );
                 } else {
-                    let radius_offset = i16::try_from((radius / 2).max(40)).unwrap_or(40);
+                    let radius_offset = i16::try_from((*radius / 2).max(40)).unwrap_or(40);
                     set_player_pose(
                         &mut world,
                         target_id,
@@ -481,10 +483,32 @@ fn every_authored_skill_hits_with_valid_geometry_and_resources() {
                     );
                 }
             }
+            SkillBehavior::Channel { range, radius, .. } => {
+                let center = if *range == 0 {
+                    (TEST_ATTACKER_X, TEST_OPEN_LANE_Y)
+                } else {
+                    project_from_aim(
+                        TEST_ATTACKER_X,
+                        TEST_OPEN_LANE_Y,
+                        TEST_AIM_X,
+                        TEST_AIM_Y,
+                        *range,
+                    )
+                };
+                let radius_offset = i16::try_from((*radius / 2).max(40)).unwrap_or(40);
+                set_player_pose(
+                    &mut world,
+                    target_id,
+                    center.0 + radius_offset,
+                    center.1,
+                    -TEST_AIM_X,
+                    TEST_AIM_Y,
+                );
+            }
             SkillBehavior::Passive { .. } => unreachable!("passives are skipped above"),
         }
 
-        if let Some(payload) = payload {
+        if let Some(payload) = &payload {
             if payload.kind == CombatValueKind::Heal {
                 let target = world
                     .players
@@ -494,12 +518,7 @@ fn every_authored_skill_hits_with_valid_geometry_and_resources() {
             }
         }
 
-        let mut events = activate_skill_cast(&mut world, attacker_id, 1, skill.behavior);
-        assert!(
-            effect_spawned_by(&events, attacker_id, 1),
-            "{} should spawn a visible effect",
-            skill.id
-        );
+        let mut events = activate_skill_cast(&mut world, attacker_id, 1, &skill.behavior);
         let after_cast = world.player_state(attacker_id).expect("attacker");
         assert_eq!(
             after_cast.mana,
@@ -521,36 +540,54 @@ fn every_authored_skill_hits_with_valid_geometry_and_resources() {
             skill.id
         );
 
-        if let SkillBehavior::Projectile { speed, range, .. } = skill.behavior {
+        if let SkillBehavior::Projectile { speed, range, .. } = &skill.behavior {
             events.extend(collect_ticks(
                 &mut world,
-                projectile_frame_budget(speed, range),
+                projectile_frame_budget(*speed, *range),
             ));
         }
         if let SkillBehavior::Summon {
             tick_interval_ms,
             range: summon_range,
             ..
-        } = skill.behavior
+        } = &skill.behavior
         {
             let _ = summon_range;
             events.extend(collect_ticks(
                 &mut world,
-                usize::from(tick_interval_ms / COMBAT_FRAME_MS + 2),
+                usize::from(*tick_interval_ms / COMBAT_FRAME_MS + 2),
             ));
         }
-        if let SkillBehavior::Trap { .. } = skill.behavior {
+        if let SkillBehavior::Trap { .. } = &skill.behavior {
             events.extend(collect_ticks(&mut world, 3));
         }
-        if let SkillBehavior::Aura { tick_interval_ms, .. } = skill.behavior {
+        if let SkillBehavior::Aura {
+            tick_interval_ms, ..
+        } = &skill.behavior
+        {
             events.extend(collect_ticks(
                 &mut world,
-                usize::from(tick_interval_ms / COMBAT_FRAME_MS + 2),
+                usize::from(*tick_interval_ms / COMBAT_FRAME_MS + 2),
+            ));
+        }
+        if let SkillBehavior::Channel {
+            tick_interval_ms, ..
+        } = &skill.behavior
+        {
+            events.extend(collect_ticks(
+                &mut world,
+                usize::from(*tick_interval_ms / COMBAT_FRAME_MS + 2),
             ));
         }
 
+        assert!(
+            effect_spawned_by(&events, attacker_id, 1),
+            "{} should spawn a visible effect",
+            skill.id
+        );
+
         if matches!(
-            skill.behavior,
+            &skill.behavior,
             SkillBehavior::Summon { .. }
                 | SkillBehavior::Ward { .. }
                 | SkillBehavior::Trap { .. }
@@ -651,7 +688,7 @@ fn every_authored_skill_misses_targets_outside_its_effective_geometry() {
                 ),
             ],
         );
-        let payload = behavior_payload(skill.behavior);
+        let payload = behavior_payload(&skill.behavior);
         let attacker_id = player_id(1);
         let target_id = player_id(2);
         let starting_hit_points = match payload {
@@ -675,14 +712,14 @@ fn every_authored_skill_misses_targets_outside_its_effective_geometry() {
             target.hit_points = starting_hit_points;
         }
 
-        match skill.behavior {
+        match &skill.behavior {
             SkillBehavior::Projectile { radius, range, .. }
             | SkillBehavior::Beam { radius, range, .. } => {
                 set_player_pose(
                     &mut world,
                     target_id,
-                    TEST_ATTACKER_X + i16::try_from(range.min(240)).unwrap_or(240),
-                    TEST_OPEN_LANE_Y + miss_offset_units(radius),
+                    TEST_ATTACKER_X + i16::try_from((*range).min(240)).unwrap_or(240),
+                    TEST_OPEN_LANE_Y + miss_offset_units(*radius),
                     -TEST_AIM_X,
                     TEST_AIM_Y,
                 );
@@ -693,13 +730,13 @@ fn every_authored_skill_misses_targets_outside_its_effective_geometry() {
                     TEST_OPEN_LANE_Y,
                     TEST_AIM_X,
                     TEST_AIM_Y,
-                    range,
+                    *range,
                 );
                 set_player_pose(
                     &mut world,
                     target_id,
                     center.0,
-                    center.1 + miss_offset_units(radius),
+                    center.1 + miss_offset_units(*radius),
                     -TEST_AIM_X,
                     TEST_AIM_Y,
                 );
@@ -709,7 +746,7 @@ fn every_authored_skill_misses_targets_outside_its_effective_geometry() {
                     &mut world,
                     target_id,
                     TEST_ATTACKER_X,
-                    TEST_OPEN_LANE_Y + miss_offset_units(radius),
+                    TEST_OPEN_LANE_Y + miss_offset_units(*radius),
                     -TEST_AIM_X,
                     TEST_AIM_Y,
                 );
@@ -724,14 +761,35 @@ fn every_authored_skill_misses_targets_outside_its_effective_geometry() {
                     TEST_OPEN_LANE_Y,
                     TEST_AIM_X,
                     TEST_AIM_Y,
-                    distance,
+                    *distance,
                 );
-                let radius = impact_radius.unwrap_or(PLAYER_RADIUS_UNITS);
+                let radius = (*impact_radius).unwrap_or(PLAYER_RADIUS_UNITS);
                 set_player_pose(
                     &mut world,
                     target_id,
                     dash_end.0,
                     dash_end.1 + miss_offset_units(radius),
+                    -TEST_AIM_X,
+                    TEST_AIM_Y,
+                );
+            }
+            SkillBehavior::Channel { range, radius, .. } => {
+                let center = if *range == 0 {
+                    (TEST_ATTACKER_X, TEST_OPEN_LANE_Y)
+                } else {
+                    project_from_aim(
+                        TEST_ATTACKER_X,
+                        TEST_OPEN_LANE_Y,
+                        TEST_AIM_X,
+                        TEST_AIM_Y,
+                        *range,
+                    )
+                };
+                set_player_pose(
+                    &mut world,
+                    target_id,
+                    center.0,
+                    center.1 + miss_offset_units(*radius),
                     -TEST_AIM_X,
                     TEST_AIM_Y,
                 );
@@ -742,15 +800,26 @@ fn every_authored_skill_misses_targets_outside_its_effective_geometry() {
             | SkillBehavior::Ward { .. }
             | SkillBehavior::Trap { .. }
             | SkillBehavior::Barrier { .. }
-            | SkillBehavior::Aura { .. } => unreachable!("non-combat utility skills are skipped above"),
+            | SkillBehavior::Aura { .. } => {
+                unreachable!("non-combat utility skills are skipped above")
+            }
         }
 
         world.queue_cast(attacker_id, 1).expect("cast should queue");
         let mut events = world.tick(COMBAT_FRAME_MS);
-        if let SkillBehavior::Projectile { speed, range, .. } = skill.behavior {
+        if let SkillBehavior::Projectile { speed, range, .. } = &skill.behavior {
             events.extend(collect_ticks(
                 &mut world,
-                projectile_frame_budget(speed, range),
+                projectile_frame_budget(*speed, *range),
+            ));
+        }
+        if let SkillBehavior::Channel {
+            tick_interval_ms, ..
+        } = &skill.behavior
+        {
+            events.extend(collect_ticks(
+                &mut world,
+                usize::from(*tick_interval_ms / COMBAT_FRAME_MS + 2),
             ));
         }
 
@@ -845,5 +914,207 @@ fn targeting_helpers_ignore_attackers_dead_players_and_exclusions() {
         world.find_first_player_on_segment(player_id(1), (0, 0), (100, 0), 10),
         Some(player_id(3)),
         "off-axis targets within the stated radius should still count as beam or projectile hits"
+    );
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn damage_breaks_sleep_and_stealth_and_shields_absorb_precisely() {
+    let content = content();
+    let mut world = world(
+        &content,
+        vec![
+            seed(
+                &content,
+                1,
+                "Alice",
+                TeamSide::TeamA,
+                SkillTree::Mage,
+                [None, None, None, None, None],
+            ),
+            seed(
+                &content,
+                2,
+                "Bob",
+                TeamSide::TeamB,
+                SkillTree::Warrior,
+                [None, None, None, None, None],
+            ),
+        ],
+    );
+    set_player_pose(&mut world, player_id(1), 0, 0, TEST_AIM_X, TEST_AIM_Y);
+    set_player_pose(&mut world, player_id(2), 40, 0, TEST_AIM_X, TEST_AIM_Y);
+    {
+        let bob = world.players.get_mut(&player_id(2)).expect("bob");
+        bob.statuses.push(StatusInstance {
+            source: player_id(1),
+            slot: 1,
+            kind: StatusKind::Sleep,
+            stacks: 1,
+            remaining_ms: 1_000,
+            tick_interval_ms: None,
+            tick_progress_ms: 0,
+            magnitude: 0,
+            max_stacks: 1,
+            trigger_duration_ms: None,
+            shield_remaining: 0,
+            expire_payload: None,
+            dispel_payload: None,
+        });
+        bob.statuses.push(StatusInstance {
+            source: player_id(1),
+            slot: 2,
+            kind: StatusKind::Stealth,
+            stacks: 1,
+            remaining_ms: 1_000,
+            tick_interval_ms: None,
+            tick_progress_ms: 0,
+            magnitude: 0,
+            max_stacks: 1,
+            trigger_duration_ms: None,
+            shield_remaining: 0,
+            expire_payload: None,
+            dispel_payload: None,
+        });
+        bob.statuses.push(StatusInstance {
+            source: player_id(1),
+            slot: 3,
+            kind: StatusKind::Shield,
+            stacks: 2,
+            remaining_ms: 1_000,
+            tick_interval_ms: None,
+            tick_progress_ms: 0,
+            magnitude: 10,
+            max_stacks: 5,
+            trigger_duration_ms: None,
+            shield_remaining: 20,
+            expire_payload: None,
+            dispel_payload: None,
+        });
+    }
+
+    let absorbed_events =
+        world.apply_damage_internal(player_id(1), &[TargetEntity::Player(player_id(2))], 10);
+    assert!(
+        damage_to(&absorbed_events, player_id(2)).is_none(),
+        "fully absorbed hits should not report any applied damage"
+    );
+    let bob = world.player_state(player_id(2)).expect("bob");
+    assert_eq!(bob.hit_points, 100);
+    let statuses = world.statuses_for(player_id(2)).expect("statuses");
+    assert!(statuses
+        .iter()
+        .all(|status| status.kind != StatusKind::Sleep));
+    assert!(statuses
+        .iter()
+        .all(|status| status.kind != StatusKind::Stealth));
+    let shield = world.players[&player_id(2)]
+        .statuses
+        .iter()
+        .find(|status| status.kind == StatusKind::Shield)
+        .expect("shield should remain");
+    assert_eq!(shield.shield_remaining, 10);
+    assert_eq!(shield.stacks, 1);
+
+    let remaining_damage = world.test_consume_shields(player_id(2), 15);
+    assert_eq!(remaining_damage, 5);
+    assert!(
+        world
+            .statuses_for(player_id(2))
+            .expect("statuses")
+            .iter()
+            .all(|status| status.kind != StatusKind::Shield),
+        "shield should be removed once it is fully consumed"
+    );
+
+    let lethal_events =
+        world.apply_damage_internal(player_id(1), &[TargetEntity::Player(player_id(2))], 200);
+    assert!(lethal_events.iter().any(|event| matches!(
+        event,
+        SimulationEvent::DamageApplied { target, defeated, .. }
+            if *target == player_id(2) && *defeated
+    )));
+    let defeated = world.player_state(player_id(2)).expect("defeated bob");
+    assert!(!defeated.alive);
+    assert_eq!(defeated.hit_points, 0);
+    assert!(
+        world
+            .statuses_for(player_id(2))
+            .expect("statuses")
+            .is_empty(),
+        "defeat should clear all remaining statuses"
+    );
+}
+
+#[test]
+fn deployable_overlap_radius_and_target_helpers_include_exact_thresholds() {
+    let content = content();
+    let mut world = world(
+        &content,
+        vec![
+            seed(
+                &content,
+                1,
+                "Alice",
+                TeamSide::TeamA,
+                SkillTree::Mage,
+                [None, None, None, None, None],
+            ),
+            seed(
+                &content,
+                2,
+                "Bob",
+                TeamSide::TeamB,
+                SkillTree::Warrior,
+                [None, None, None, None, None],
+            ),
+            seed(
+                &content,
+                3,
+                "Cara",
+                TeamSide::TeamB,
+                SkillTree::Warrior,
+                [None, None, None, None, None],
+            ),
+        ],
+    );
+    assert_eq!(SimulationWorld::test_deployable_overlap_radius(10, 20), 30);
+
+    set_player_pose(&mut world, player_id(1), 0, 0, TEST_AIM_X, TEST_AIM_Y);
+    set_player_pose(&mut world, player_id(2), 25, 0, TEST_AIM_X, TEST_AIM_Y);
+    set_player_pose(&mut world, player_id(3), 90, 0, TEST_AIM_X, TEST_AIM_Y);
+    world.deployables.push(DeployableState {
+        id: 777,
+        owner: player_id(1),
+        team: TeamSide::TeamA,
+        kind: ArenaDeployableKind::Summon,
+        x: 30,
+        y: 0,
+        radius: 20,
+        hit_points: 30,
+        max_hit_points: 30,
+        remaining_ms: 1_000,
+        blocks_movement: false,
+        blocks_projectiles: false,
+        behavior: DeployableBehavior::Ward,
+    });
+
+    assert_eq!(
+        world.find_closest_target_near_point(player_id(1), (0, 0), 10, true),
+        Some(TargetEntity::Player(player_id(2))),
+        "players at the exact overlap threshold should still win nearest-target selection"
+    );
+    assert_eq!(
+        world.find_first_target_on_segment(player_id(1), (0, 0), (100, 0), 10, true),
+        Some(TargetEntity::Player(player_id(2))),
+        "segment targeting should prefer the nearest qualifying hit along the line"
+    );
+    assert_eq!(
+        world.find_targets_in_radius((0, 0), 10, Some(player_id(1)), true),
+        vec![
+            TargetEntity::Player(player_id(2)),
+            TargetEntity::Deployable(777)
+        ],
+        "radius targeting should include both players and deployables at the overlap threshold"
     );
 }

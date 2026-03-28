@@ -1,7 +1,8 @@
 use game_domain::{PlayerId, SkillChoice};
 use game_match::MatchPhase;
 use game_net::{
-    ServerControlEvent, ValidatedInputFrame, BUTTON_CAST, BUTTON_PRIMARY, BUTTON_QUIT_TO_LOBBY,
+    ServerControlEvent, ValidatedInputFrame, BUTTON_CANCEL, BUTTON_CAST, BUTTON_PRIMARY,
+    BUTTON_QUIT_TO_LOBBY,
 };
 use game_sim::MovementIntent;
 
@@ -176,6 +177,14 @@ impl ServerApp {
         sender_id: PlayerId,
         frame: &ValidatedInputFrame,
     ) -> Result<(), String> {
+        if frame.buttons & BUTTON_CANCEL != 0 {
+            runtime
+                .world
+                .cancel_active_cast(sender_id)
+                .map_err(|error| error.to_string())?;
+            return Ok(());
+        }
+
         if frame.buttons & BUTTON_PRIMARY != 0 {
             runtime
                 .world
