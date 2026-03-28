@@ -116,7 +116,16 @@ run_web_client_export() {
 }
 
 ensure_static_root() {
-    mkdir -p "${REPO_ROOT}/server/static/webclient"
+    local static_root="${REPO_ROOT}/server/static/webclient"
+    mkdir -p "${static_root}"
+
+    if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+        local export_user
+        export_user="$(resolve_export_user)"
+        local export_group
+        export_group="$(id -gn "${export_user}")"
+        chown -R "${export_user}:${export_group}" "${static_root}"
+    fi
 }
 
 build_web_client_if_requested() {
