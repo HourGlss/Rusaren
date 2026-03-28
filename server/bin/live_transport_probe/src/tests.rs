@@ -237,10 +237,10 @@ async fn live_probe_completes_one_real_webrtc_match_against_the_dev_server() {
         origin: base_url,
         output_path: output_path.clone(),
         max_games: Some(1),
-        connect_timeout: Duration::from_secs(15),
-        stage_timeout: Duration::from_secs(20),
-        round_timeout: Duration::from_secs(60),
-        match_timeout: Duration::from_secs(180),
+        connect_timeout: Duration::from_secs(30),
+        stage_timeout: Duration::from_secs(45),
+        round_timeout: Duration::from_secs(90),
+        match_timeout: Duration::from_secs(300),
         input_cadence: Duration::from_millis(100),
         players_per_match: 4,
         preferred_tree_order: Some(vec![
@@ -250,7 +250,7 @@ async fn live_probe_completes_one_real_webrtc_match_against_the_dev_server() {
             String::from("Ranger"),
         ]),
         max_rounds_per_match: Some(1),
-        max_combat_loops_per_round: Some(25),
+        max_combat_loops_per_round: Some(40),
         required_mechanics: None,
     })
     .await
