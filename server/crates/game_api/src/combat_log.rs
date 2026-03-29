@@ -4,10 +4,14 @@ use std::fmt;
 use std::fs;
 use std::io;
 use std::path::PathBuf;
+use std::sync::Mutex;
+use std::time::Instant;
 
 use game_domain::MatchId;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
+
+use crate::diagnostics::{RollingTimingStats, TimingStatsSnapshot};
 
 const COMBAT_LOG_SCHEMA_VERSION: u16 = 1;
 
@@ -354,6 +358,18 @@ impl std::error::Error for CombatLogStoreError {}
 #[derive(Debug)]
 pub struct CombatLogStore {
     connection: Connection,
+    path: Option<PathBuf>,
+    append_timings: Mutex<RollingTimingStats>,
+    query_timings: Mutex<RollingTimingStats>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub(crate) struct CombatLogStoreDiagnosticsSnapshot {
+    pub path: Option<String>,
+    pub file_bytes: Option<u64>,
+    pub event_count: u64,
+    pub append: TimingStatsSnapshot,
+    pub query: TimingStatsSnapshot,
 }
 
 impl CombatLogStore {
@@ -361,7 +377,7 @@ impl CombatLogStore {
     pub fn new_ephemeral() -> Result<Self, CombatLogStoreError> {
         let connection = Connection::open_in_memory()
             .map_err(|source| CombatLogStoreError::Open { path: None, source })?;
-        Self::initialize(connection)
+        Self::initialize(connection, None)
     }
 
     /// Opens or creates a persistent combat log store on disk.
@@ -374,13 +390,16 @@ impl CombatLogStore {
             })?;
         }
         let connection = Connection::open(&path).map_err(|source| CombatLogStoreError::Open {
-            path: Some(path),
+            path: Some(path.clone()),
             source,
         })?;
-        Self::initialize(connection)
+        Self::initialize(connection, Some(path))
     }
 
-    fn initialize(connection: Connection) -> Result<Self, CombatLogStoreError> {
+    fn initialize(
+        connection: Connection,
+        path: Option<PathBuf>,
+    ) -> Result<Self, CombatLogStoreError> {
         connection
             .execute_batch(
                 "
@@ -403,11 +422,17 @@ impl CombatLogStore {
                 context: "initializing schema",
                 source,
             })?;
-        Ok(Self { connection })
+        Ok(Self {
+            connection,
+            path,
+            append_timings: Mutex::new(RollingTimingStats::default()),
+            query_timings: Mutex::new(RollingTimingStats::default()),
+        })
     }
 
     /// Appends one durable combat event to the backing store.
     pub fn append(&mut self, entry: &CombatLogEntry) -> Result<(), CombatLogStoreError> {
+        let started_at = Instant::now();
         let json = serde_json::to_string(entry)
             .map_err(|source| CombatLogStoreError::Encode { source })?;
         self.connection
@@ -435,6 +460,9 @@ impl CombatLogStore {
                 context: "appending combat event",
                 source,
             })?;
+        if let Ok(mut timings) = self.append_timings.lock() {
+            timings.record_duration(started_at.elapsed());
+        }
         Ok(())
     }
 
@@ -443,6 +471,7 @@ impl CombatLogStore {
         &self,
         match_id: MatchId,
     ) -> Result<Vec<CombatLogEntry>, CombatLogStoreError> {
+        let started_at = Instant::now();
         let mut statement = self
             .connection
             .prepare(
@@ -477,7 +506,46 @@ impl CombatLogStore {
             entry.sequence = Some(sequence);
             events.push(entry);
         }
+        if let Ok(mut timings) = self.query_timings.lock() {
+            timings.record_duration(started_at.elapsed());
+        }
         Ok(events)
+    }
+
+    /// Returns the current operational diagnostics for the combat-log store.
+    #[must_use]
+    pub(crate) fn diagnostics_snapshot(&self) -> CombatLogStoreDiagnosticsSnapshot {
+        CombatLogStoreDiagnosticsSnapshot {
+            path: self.path.as_ref().map(|path| path.display().to_string()),
+            file_bytes: self
+                .path
+                .as_ref()
+                .and_then(|path| fs::metadata(path).ok())
+                .map(|metadata| metadata.len()),
+            event_count: self.event_count_untracked().unwrap_or(0),
+            append: self
+                .append_timings
+                .lock()
+                .map(|timings| timings.snapshot())
+                .unwrap_or_else(|_| RollingTimingStats::default().snapshot()),
+            query: self
+                .query_timings
+                .lock()
+                .map(|timings| timings.snapshot())
+                .unwrap_or_else(|_| RollingTimingStats::default().snapshot()),
+        }
+    }
+
+    fn event_count_untracked(&self) -> Result<u64, CombatLogStoreError> {
+        self.connection
+            .query_row("SELECT COUNT(*) FROM combat_events", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .map(|count| u64::try_from(count).unwrap_or(0))
+            .map_err(|source| CombatLogStoreError::Query {
+                context: "counting combat events",
+                source,
+            })
     }
 }
 

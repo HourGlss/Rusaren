@@ -11,12 +11,14 @@ const MENU_SECTION_LOADOUT := "loadout"
 const MENU_SECTION_RECORD := "record"
 const MENU_SECTION_ROSTER := "roster"
 const MENU_SECTION_EVENTS := "events"
+const MENU_SECTION_DIAGNOSTICS := "diagnostics"
 
 const MENU_ACTION_CHANGE_NAME := 1
 const MENU_ACTION_TRAINING_LOADOUT := 2
 const MENU_ACTION_PLAYER_RECORD := 3
 const MENU_ACTION_ROSTER_WATCH := 4
 const MENU_ACTION_EVENT_FEED := 5
+const MENU_ACTION_DIAGNOSTICS := 6
 
 const AUTO_RECONNECT_DELAY_SECONDS := 2.0
 const RANDOM_PLAYER_NAME_LENGTH := 10
@@ -38,6 +40,7 @@ var training_loadout_view: VBoxContainer
 var record_view: VBoxContainer
 var roster_view: VBoxContainer
 var event_view: VBoxContainer
+var diagnostics_view: VBoxContainer
 var banner_label: Label
 var status_label: Label
 var record_label: Label
@@ -61,6 +64,7 @@ var results_panel: PanelContainer
 var central_directory_log: RichTextLabel
 var roster_log: RichTextLabel
 var event_log: RichTextLabel
+var diagnostics_log: RichTextLabel
 var join_lobby_input: LineEdit
 var ready_button: Button
 var leave_lobby_button: Button
@@ -76,6 +80,7 @@ var reset_training_button: Button
 var quit_arena_button: Button
 var name_save_button: Button
 var name_randomize_button: Button
+var diagnostics_copy_button: Button
 var skill_pick_panel: PanelContainer
 var skill_pick_inline_host: VBoxContainer
 var training_loadout_host: VBoxContainer
@@ -113,7 +118,9 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
+	var visuals_started_us := Time.get_ticks_usec()
 	app_state.advance_visuals(delta)
+	app_state.record_client_timing("advance_visuals", Time.get_ticks_usec() - visuals_started_us)
 	transport.poll()
 	_tick_auto_connect(delta)
 	_drive_combat_input()
@@ -615,11 +622,13 @@ func _build_fullscreen_menu() -> Control:
 	record_view = _build_record_view()
 	roster_view = _build_roster_view()
 	event_view = _build_event_view()
+	diagnostics_view = _build_diagnostics_view()
 	body.add_child(name_menu_view)
 	body.add_child(training_loadout_view)
 	body.add_child(record_view)
 	body.add_child(roster_view)
 	body.add_child(event_view)
+	body.add_child(diagnostics_view)
 
 	return overlay
 
@@ -743,6 +752,32 @@ func _build_event_view() -> VBoxContainer:
 	event_log.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	event_log.add_theme_color_override("default_color", Color8(212, 214, 226))
 	view.add_child(event_log)
+
+	return view
+
+
+func _build_diagnostics_view() -> VBoxContainer:
+	var view := VBoxContainer.new()
+	view.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	view.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	view.add_theme_constant_override("separation", 12)
+
+	var note := Label.new()
+	note.text = "Structured client-side diagnostics for frame timing, packet flow, object counts, and transport state. Pair this with deploy/useful_log_collect.sh on the host."
+	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	note.add_theme_color_override("font_color", Color8(188, 200, 210))
+	view.add_child(note)
+
+	diagnostics_copy_button = _action_button("Copy Diagnostics", Color8(52, 94, 120))
+	diagnostics_copy_button.pressed.connect(_on_copy_diagnostics_pressed)
+	view.add_child(diagnostics_copy_button)
+
+	diagnostics_log = RichTextLabel.new()
+	diagnostics_log.fit_content = false
+	diagnostics_log.scroll_active = true
+	diagnostics_log.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	diagnostics_log.add_theme_color_override("default_color", Color8(222, 231, 237))
+	view.add_child(diagnostics_log)
 
 	return view
 
@@ -872,6 +907,7 @@ func _rebuild_menu_popup() -> void:
 	popup.add_item("Player Record", MENU_ACTION_PLAYER_RECORD)
 	popup.add_item("Roster Watch", MENU_ACTION_ROSTER_WATCH)
 	popup.add_item("Event Feed", MENU_ACTION_EVENT_FEED)
+	popup.add_item("Diagnostics", MENU_ACTION_DIAGNOSTICS)
 
 
 func _move_skill_catalog_to(host: Control) -> void:
@@ -894,6 +930,7 @@ func _open_fullscreen_menu(section: String) -> void:
 	record_view.visible = section == MENU_SECTION_RECORD
 	roster_view.visible = section == MENU_SECTION_ROSTER
 	event_view.visible = section == MENU_SECTION_EVENTS
+	diagnostics_view.visible = section == MENU_SECTION_DIAGNOSTICS
 
 	match section:
 		MENU_SECTION_NAME:
@@ -908,6 +945,8 @@ func _open_fullscreen_menu(section: String) -> void:
 			fullscreen_menu_title.text = "Roster Watch"
 		MENU_SECTION_EVENTS:
 			fullscreen_menu_title.text = "Event Feed"
+		MENU_SECTION_DIAGNOSTICS:
+			fullscreen_menu_title.text = "Diagnostics"
 		_:
 			fullscreen_menu_title.text = "Menu"
 
@@ -932,6 +971,8 @@ func _on_menu_option_selected(menu_id: int) -> void:
 			_open_fullscreen_menu(MENU_SECTION_ROSTER)
 		MENU_ACTION_EVENT_FEED:
 			_open_fullscreen_menu(MENU_SECTION_EVENTS)
+		MENU_ACTION_DIAGNOSTICS:
+			_open_fullscreen_menu(MENU_SECTION_DIAGNOSTICS)
 
 
 func _on_name_submitted(_text: String) -> void:
@@ -1171,11 +1212,33 @@ func _on_bootstrap_request_completed(
 
 func _on_packet_received(decoded_event: Dictionary) -> void:
 	var event_data: Dictionary = decoded_event.get("event", {})
+	var apply_started_us := Time.get_ticks_usec()
 	app_state.apply_server_event(event_data)
+	var header: Dictionary = decoded_event.get("header", {})
+	var packet_size := int(decoded_event.get("raw_packet_bytes", Protocol.HEADER_LEN + int(header.get("payload_len", 0))))
+	app_state.record_inbound_packet(
+		header,
+		String(event_data.get("type", "Unknown")),
+		packet_size,
+		int(decoded_event.get("decode_us", 0)),
+		Time.get_ticks_usec() - apply_started_us
+	)
 	_refresh_ui()
 
 
+func _on_copy_diagnostics_pressed() -> void:
+	var diagnostics_text := app_state.diagnostics_text(transport.telemetry_snapshot())
+	DisplayServer.clipboard_set(diagnostics_text)
+	app_state.announce_local("Copied the structured diagnostics report to the clipboard.")
+	_refresh_ui()
+
 func _refresh_ui() -> void:
+	var started_us := Time.get_ticks_usec()
+	_refresh_ui_impl()
+	app_state.record_client_timing("ui_refresh", Time.get_ticks_usec() - started_us)
+
+
+func _refresh_ui_impl() -> void:
 	var skill_catalog_signature := app_state.skill_catalog_signature()
 	if skill_catalog_signature != _rendered_skill_catalog_signature:
 		_rebuild_skill_buttons()
@@ -1235,6 +1298,8 @@ func _refresh_ui() -> void:
 	central_directory_log.text = app_state.lobby_directory_bbcode()
 	roster_log.text = "\n".join(app_state.roster_lines())
 	event_log.text = app_state.event_log_text()
+	if diagnostics_log != null:
+		diagnostics_log.text = app_state.diagnostics_text(transport.telemetry_snapshot())
 
 	create_lobby_button.disabled = not app_state.can_join_or_create_lobby()
 	join_lobby_button.disabled = not app_state.can_join_or_create_lobby()

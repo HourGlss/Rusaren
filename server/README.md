@@ -50,3 +50,38 @@ For `0.9.1` mutation hardening, prefer focused package and file filters instead 
   `pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/plan-mutants.ps1 -RunId sim-core-pass -ShardCount 2 -Jobs 1 -Package game_sim -TestPackage game_sim -File crates/game_sim/src/lib.rs`
 
 The default `server/.cargo/mutants.toml` slice is intentionally biased toward gameplay, ingress, visibility, and protocol logic. Display-only error formatter files are left out of that default pass so release-line hardening time stays on higher-value rules.
+
+## Lag And Desync Diagnostics
+Use the client diagnostics menu together with the host-side collector so every report includes frontend, transport, backend, database, and host evidence in a repeatable format.
+
+1. Reproduce the issue in the browser client.
+2. In the client shell, open `Menu -> Diagnostics` and copy the structured report.
+3. On the host, collect the server-side bundle:
+   `bash deploy/useful_log_collect.sh --output /tmp/rusaren-diagnostics.txt --bundle-dir /tmp/rusaren-diagnostics-bundle`
+4. Give the LLM both:
+   - the copied client diagnostics text
+   - `/tmp/rusaren-diagnostics.txt`
+   - the bundle directory contents, especially:
+     - `adminz.json`
+     - `metrics.prom`
+     - `docker-stats.txt`
+     - `filtered-logs.txt`
+     - `host.txt`
+
+The browser diagnostics report captures:
+- UI refresh timing
+- visual smoothing timing
+- packet decode timing
+- snapshot apply timing
+- arena draw timing
+- local object counts and footprint/visibility tile counts
+- control/snapshot packet counts and byte totals
+- current WebSocket and data-channel states
+
+The host-side bundle captures:
+- the same compact text summary as before
+- a structured `/adminz?format=json` snapshot
+- raw Prometheus metrics
+- Docker `ps` and `stats --no-stream`
+- filtered backend/Caddy/coturn logs
+- host load, uptime, memory, and root filesystem usage

@@ -161,5 +161,23 @@ async fn admin_dashboard_requires_basic_auth_and_renders_runtime_state() {
     assert!(authorized_body.contains("Connected players"));
     assert!(authorized_body.contains("Prometheus Snapshot"));
 
+    let (json_status, json_body) = http_get_with_headers(
+        &base_url,
+        "/adminz?format=json",
+        &[("Authorization", &auth_header)],
+    )
+    .await;
+    assert_eq!(json_status, 200);
+    let json_value: serde_json::Value =
+        serde_json::from_str(&json_body).expect("admin json should parse");
+    assert!(json_value.get("runtime").is_some());
+    assert!(json_value.get("app_diagnostics").is_some());
+    assert!(json_value
+        .pointer("/app_diagnostics/app/control_events/sent_packets")
+        .is_some());
+    assert!(json_value
+        .pointer("/app_diagnostics/combat_log/append/sample_count")
+        .is_some());
+
     server.shutdown().await;
 }

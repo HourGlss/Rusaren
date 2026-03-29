@@ -2,6 +2,7 @@ use game_domain::{LobbyId, MatchId, PlayerId};
 use game_net::ServerControlEvent;
 
 use super::{fill_random, AppTransport, ConnectionId, PlayerLocation, ServerApp};
+use crate::diagnostics::OutboundPacketKind;
 
 impl ServerApp {
     pub(super) fn send_error<T: AppTransport>(
@@ -58,10 +59,13 @@ impl ServerApp {
         seq: u32,
         event: ServerControlEvent,
     ) {
+        let packet_kind = OutboundPacketKind::from_event(&event);
         let packet = match event.encode_packet(seq, self.clock_seconds) {
             Ok(packet) => packet,
             Err(_) => return,
         };
+        self.diagnostics
+            .record_outbound_packet(packet_kind, packet.len());
         transport.send_to_client(connection_id, packet);
     }
 

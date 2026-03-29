@@ -55,12 +55,18 @@ var footprint_tiles := PackedByteArray()
 var visible_tiles := PackedByteArray()
 var explored_tiles := PackedByteArray()
 var training_metrics := {}
+var diagnostics := {}
+
+
+func _init() -> void:
+	_reset_diagnostics()
 
 func _is_rendered_deployable_kind(kind_name: String) -> bool:
 	return kind_name != "Aura"
 
 
 func prepare_for_connection(player_name: String) -> void:
+	_reset_diagnostics()
 	websocket_url = WebSocketConfigScript.new().runtime_default_url()
 	local_player_id = 0
 	local_player_name = player_name.strip_edges()
@@ -877,6 +883,142 @@ func advance_visuals(delta: float) -> void:
 		if ttl <= 0.0:
 			local_combat_texts.remove_at(index)
 	_smooth_render_state(delta)
+	_refresh_diagnostics_counts()
+
+
+func record_client_timing(metric_name: String, micros: int) -> void:
+	var timings: Dictionary = diagnostics.get("timings", {})
+	var bucket: Dictionary = timings.get(metric_name, _new_timing_bucket())
+	_record_timing_bucket(bucket, micros)
+	timings[metric_name] = bucket
+	diagnostics["timings"] = timings
+
+
+func record_inbound_packet(
+	header: Dictionary,
+	event_type: String,
+	packet_size: int,
+	decode_us: int,
+	apply_us: int
+) -> void:
+	var packet_stats: Dictionary = diagnostics.get("packets", {})
+	packet_stats["bytes_in_total"] = int(packet_stats.get("bytes_in_total", 0)) + packet_size
+	packet_stats["last_packet_bytes"] = packet_size
+	packet_stats["last_event_type"] = event_type
+	packet_stats["last_sim_tick"] = int(header.get("sim_tick", 0))
+	packet_stats["last_packet_kind"] = int(header.get("packet_kind", -1))
+	match event_type:
+		"ArenaStateSnapshot":
+			packet_stats["full_snapshots"] = int(packet_stats.get("full_snapshots", 0)) + 1
+		"ArenaDeltaSnapshot":
+			packet_stats["delta_snapshots"] = int(packet_stats.get("delta_snapshots", 0)) + 1
+		"ArenaEffectBatch":
+			packet_stats["effect_batches"] = int(packet_stats.get("effect_batches", 0)) + 1
+		"ArenaCombatTextBatch":
+			packet_stats["combat_text_batches"] = int(packet_stats.get("combat_text_batches", 0)) + 1
+		_:
+			packet_stats["control_events"] = int(packet_stats.get("control_events", 0)) + 1
+	diagnostics["packets"] = packet_stats
+	record_client_timing("packet_decode", decode_us)
+	record_client_timing("snapshot_apply", apply_us)
+	_refresh_diagnostics_counts()
+
+
+func record_arena_draw(draw_micros: int, arena_pixel_size: Vector2) -> void:
+	record_client_timing("arena_draw", draw_micros)
+	var render_stats: Dictionary = diagnostics.get("render", {})
+	render_stats["arena_pixels_w"] = int(round(arena_pixel_size.x))
+	render_stats["arena_pixels_h"] = int(round(arena_pixel_size.y))
+	diagnostics["render"] = render_stats
+
+
+func diagnostics_text(transport_snapshot: Dictionary) -> String:
+	var lines: Array[String] = []
+	lines.append("Client Diagnostics")
+	lines.append("  transport_state: %s" % transport_state)
+	lines.append("  screen: %s" % screen)
+	lines.append("  arena_mode: %s" % arena_mode)
+	lines.append("  match_phase: %s" % match_phase)
+	lines.append("  local_player_id: %d" % local_player_id)
+	lines.append("  current_match_id: %d" % current_match_id)
+	lines.append("  current_round: %d" % current_round)
+
+	lines.append("")
+	lines.append("Timing")
+	lines.append("  ui_refresh_ms: %s" % _timing_bucket_text(_diagnostic_timing("ui_refresh")))
+	lines.append("  advance_visuals_ms: %s" % _timing_bucket_text(_diagnostic_timing("advance_visuals")))
+	lines.append("  packet_decode_ms: %s" % _timing_bucket_text(_diagnostic_timing("packet_decode")))
+	lines.append("  snapshot_apply_ms: %s" % _timing_bucket_text(_diagnostic_timing("snapshot_apply")))
+	lines.append("  arena_draw_ms: %s" % _timing_bucket_text(_diagnostic_timing("arena_draw")))
+
+	var packet_stats: Dictionary = diagnostics.get("packets", {})
+	lines.append("")
+	lines.append("Packet Flow")
+	lines.append("  control_events: %d" % int(packet_stats.get("control_events", 0)))
+	lines.append("  full_snapshots: %d" % int(packet_stats.get("full_snapshots", 0)))
+	lines.append("  delta_snapshots: %d" % int(packet_stats.get("delta_snapshots", 0)))
+	lines.append("  effect_batches: %d" % int(packet_stats.get("effect_batches", 0)))
+	lines.append("  combat_text_batches: %d" % int(packet_stats.get("combat_text_batches", 0)))
+	lines.append("  bytes_in_total: %d" % int(packet_stats.get("bytes_in_total", 0)))
+	lines.append("  last_packet_bytes: %d" % int(packet_stats.get("last_packet_bytes", 0)))
+	lines.append("  last_event_type: %s" % String(packet_stats.get("last_event_type", "")))
+	lines.append("  last_sim_tick: %d" % int(packet_stats.get("last_sim_tick", 0)))
+
+	var object_stats: Dictionary = diagnostics.get("objects", {})
+	lines.append("")
+	lines.append("Scene Counts")
+	lines.append("  players: %d" % int(object_stats.get("players", 0)))
+	lines.append("  projectiles: %d" % int(object_stats.get("projectiles", 0)))
+	lines.append("  deployables: %d" % int(object_stats.get("deployables", 0)))
+	lines.append("  effects: %d" % int(object_stats.get("effects", 0)))
+	lines.append("  local_combat_texts: %d" % int(object_stats.get("combat_texts", 0)))
+
+	var tile_stats: Dictionary = diagnostics.get("tiles", {})
+	lines.append("")
+	lines.append("Arena Footprint")
+	lines.append("  arena_width_units: %d" % arena_width)
+	lines.append("  arena_height_units: %d" % arena_height)
+	lines.append("  tile_units: %d" % arena_tile_units)
+	lines.append("  footprint_tiles: %d" % int(tile_stats.get("footprint", 0)))
+	lines.append("  visible_tiles: %d" % int(tile_stats.get("visible", 0)))
+	lines.append("  explored_tiles: %d" % int(tile_stats.get("explored", 0)))
+
+	var render_stats: Dictionary = diagnostics.get("render", {})
+	lines.append("")
+	lines.append("Render Surface")
+	lines.append("  arena_pixels_w: %d" % int(render_stats.get("arena_pixels_w", 0)))
+	lines.append("  arena_pixels_h: %d" % int(render_stats.get("arena_pixels_h", 0)))
+
+	lines.append("")
+	lines.append("Transport")
+	lines.append("  signal_socket_state: %s" % String(transport_snapshot.get("signal_socket_state", "")))
+	lines.append("  control_channel_state: %s" % String(transport_snapshot.get("control_channel_state", "")))
+	lines.append("  input_channel_state: %s" % String(transport_snapshot.get("input_channel_state", "")))
+	lines.append("  snapshot_channel_state: %s" % String(transport_snapshot.get("snapshot_channel_state", "")))
+	lines.append("  signal_messages_in: %d" % int(transport_snapshot.get("signal_messages_in", 0)))
+	lines.append("  signal_messages_out: %d" % int(transport_snapshot.get("signal_messages_out", 0)))
+	lines.append("  signal_bytes_in: %d" % int(transport_snapshot.get("signal_bytes_in", 0)))
+	lines.append("  signal_bytes_out: %d" % int(transport_snapshot.get("signal_bytes_out", 0)))
+	lines.append("  control_packets_in: %d" % int(transport_snapshot.get("control_packets_in", 0)))
+	lines.append("  control_bytes_in: %d" % int(transport_snapshot.get("control_bytes_in", 0)))
+	lines.append("  snapshot_packets_in: %d" % int(transport_snapshot.get("snapshot_packets_in", 0)))
+	lines.append("  snapshot_bytes_in: %d" % int(transport_snapshot.get("snapshot_bytes_in", 0)))
+	lines.append("  control_packets_out: %d" % int(transport_snapshot.get("control_packets_out", 0)))
+	lines.append("  control_bytes_out: %d" % int(transport_snapshot.get("control_bytes_out", 0)))
+	lines.append("  input_packets_out: %d" % int(transport_snapshot.get("input_packets_out", 0)))
+	lines.append("  input_bytes_out: %d" % int(transport_snapshot.get("input_bytes_out", 0)))
+	lines.append("  transport_decode_ms: %s" % _timing_bucket_text(transport_snapshot.get("decode_timing", {})))
+	lines.append("  last_signal_close_code: %d" % int(transport_snapshot.get("last_signal_close_code", -1)))
+	lines.append("  last_signal_close_reason: %s" % String(transport_snapshot.get("last_signal_close_reason", "")))
+
+	if is_training_mode() and not training_metrics.is_empty():
+		lines.append("")
+		lines.append("Training Metrics")
+		lines.append("  damage_done: %d" % int(training_metrics.get("damage_done", 0)))
+		lines.append("  healing_done: %d" % int(training_metrics.get("healing_done", 0)))
+		lines.append("  elapsed_ms: %d" % int(training_metrics.get("elapsed_ms", 0)))
+
+	return "\n".join(lines)
 
 
 func _apply_arena_phase(snapshot: Dictionary) -> void:
@@ -1036,6 +1178,7 @@ func _clear_arena_state() -> void:
 	visible_tiles = PackedByteArray()
 	explored_tiles = PackedByteArray()
 	training_metrics.clear()
+	_refresh_diagnostics_counts()
 
 
 func _remember_local_skill_choice(tree_name: String, tier: int, skill_name: String) -> void:
@@ -1159,6 +1302,126 @@ func _mask_has_tile(mask: PackedByteArray, column: int, row: int) -> bool:
 	if byte_index < 0 or byte_index >= mask.size():
 		return false
 	return (int(mask[byte_index]) & (1 << bit_index)) != 0
+
+
+func _reset_diagnostics() -> void:
+	diagnostics = {
+		"timings": {
+			"ui_refresh": _new_timing_bucket(),
+			"advance_visuals": _new_timing_bucket(),
+			"packet_decode": _new_timing_bucket(),
+			"snapshot_apply": _new_timing_bucket(),
+			"arena_draw": _new_timing_bucket(),
+		},
+		"packets": {
+			"control_events": 0,
+			"full_snapshots": 0,
+			"delta_snapshots": 0,
+			"effect_batches": 0,
+			"combat_text_batches": 0,
+			"bytes_in_total": 0,
+			"last_packet_bytes": 0,
+			"last_event_type": "",
+			"last_sim_tick": 0,
+			"last_packet_kind": -1,
+		},
+		"objects": {
+			"players": 0,
+			"projectiles": 0,
+			"deployables": 0,
+			"effects": 0,
+			"combat_texts": 0,
+		},
+		"tiles": {
+			"footprint": 0,
+			"visible": 0,
+			"explored": 0,
+		},
+		"render": {
+			"arena_pixels_w": 0,
+			"arena_pixels_h": 0,
+		},
+	}
+
+
+func _new_timing_bucket() -> Dictionary:
+	return {
+		"count": 0,
+		"last_us": 0,
+		"max_us": 0,
+		"total_us": 0,
+		"recent_us": [],
+	}
+
+
+func _record_timing_bucket(bucket: Dictionary, micros: int) -> void:
+	var recent: Array = bucket.get("recent_us", [])
+	recent.append(micros)
+	while recent.size() > 120:
+		recent.remove_at(0)
+	bucket["recent_us"] = recent
+	bucket["count"] = int(bucket.get("count", 0)) + 1
+	bucket["last_us"] = micros
+	bucket["max_us"] = maxi(int(bucket.get("max_us", 0)), micros)
+	bucket["total_us"] = int(bucket.get("total_us", 0)) + micros
+
+
+func _diagnostic_timing(metric_name: String) -> Dictionary:
+	var timings: Dictionary = diagnostics.get("timings", {})
+	return timings.get(metric_name, _new_timing_bucket())
+
+
+func _timing_bucket_text(bucket: Dictionary) -> String:
+	var count := int(bucket.get("count", 0))
+	var recent: Array = (bucket.get("recent_us", []) as Array).duplicate()
+	recent.sort()
+	var last_ms := float(bucket.get("last_us", 0)) / 1000.0
+	var avg_ms := (float(bucket.get("total_us", 0)) / float(maxi(1, count))) / 1000.0
+	var max_ms := float(bucket.get("max_us", 0)) / 1000.0
+	var p50_ms := _percentile_ms(recent, 0.50)
+	var p95_ms := _percentile_ms(recent, 0.95)
+	return "last=%.3f avg=%.3f p50=%.3f p95=%.3f max=%.3f count=%d" % [
+		last_ms,
+		avg_ms,
+		p50_ms,
+		p95_ms,
+		max_ms,
+		count,
+	]
+
+
+func _percentile_ms(sorted_values: Array, quantile: float) -> float:
+	if sorted_values.is_empty():
+		return 0.0
+	var index := int(round((sorted_values.size() - 1) * quantile))
+	index = clampi(index, 0, sorted_values.size() - 1)
+	return float(sorted_values[index]) / 1000.0
+
+
+func _refresh_diagnostics_counts() -> void:
+	var object_stats: Dictionary = diagnostics.get("objects", {})
+	object_stats["players"] = arena_players.size()
+	object_stats["projectiles"] = arena_projectiles.size()
+	object_stats["deployables"] = arena_deployables.size()
+	object_stats["effects"] = arena_effects.size()
+	object_stats["combat_texts"] = local_combat_texts.size()
+	diagnostics["objects"] = object_stats
+
+	var tile_stats: Dictionary = diagnostics.get("tiles", {})
+	tile_stats["footprint"] = _mask_set_bit_count(footprint_tiles)
+	tile_stats["visible"] = _mask_set_bit_count(visible_tiles)
+	tile_stats["explored"] = _mask_set_bit_count(explored_tiles)
+	diagnostics["tiles"] = tile_stats
+
+
+func _mask_set_bit_count(mask: PackedByteArray) -> int:
+	var total := 0
+	for byte_value in mask:
+		var value := int(byte_value)
+		while value != 0:
+			total += value & 1
+			value >>= 1
+	return total
 
 
 func is_training_mode() -> bool:

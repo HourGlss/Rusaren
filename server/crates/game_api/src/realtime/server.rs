@@ -328,8 +328,17 @@ async fn metrics_export(State(state): State<DevServerState>) -> Response {
         .into_response()
 }
 
+#[derive(Debug, Default, serde::Deserialize)]
+struct AdminDashboardQuery {
+    format: Option<String>,
+}
+
 /// Serves a password-protected read-only admin dashboard for operators.
-async fn admin_dashboard(State(state): State<DevServerState>, headers: HeaderMap) -> Response {
+async fn admin_dashboard(
+    State(state): State<DevServerState>,
+    Query(query): Query<AdminDashboardQuery>,
+    headers: HeaderMap,
+) -> Response {
     if let Some(observability) = &state.observability {
         observability.record_http_request(crate::HttpRouteLabel::Admin);
     }
@@ -346,6 +355,21 @@ async fn admin_dashboard(State(state): State<DevServerState>, headers: HeaderMap
         .observability
         .as_ref()
         .map(crate::ServerObservability::render_prometheus);
+    if matches!(query.format.as_deref(), Some("json")) {
+        let response = AdminDiagnosticsResponse {
+            generated_unix_ms: std::time::SystemTime::now()
+                .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                .map(|duration: std::time::Duration| {
+                    u64::try_from(duration.as_millis().min(u128::from(u64::MAX)))
+                        .unwrap_or(u64::MAX)
+                })
+                .unwrap_or(0),
+            runtime: collect_admin_dashboard_stats(&runtime, state.observability.as_ref()),
+            app_diagnostics: runtime.app.diagnostics_snapshot(),
+            prometheus_text: metrics.clone(),
+        };
+        return Json(response).into_response();
+    }
     let body = render_admin_dashboard(&runtime, state.observability.as_ref(), metrics.as_deref());
     Html(body).into_response()
 }
@@ -422,6 +446,7 @@ fn unauthorized_admin_response() -> Response {
         .into_response()
 }
 
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
 struct AdminDashboardStats {
     connected_players: usize,
     bound_connections: usize,
@@ -440,6 +465,14 @@ struct AdminDashboardStats {
     websocket_rejections: u64,
     websocket_active: u64,
     recent_diagnostics: Vec<crate::observability::RecentDiagnosticEvent>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+struct AdminDiagnosticsResponse {
+    generated_unix_ms: u64,
+    runtime: AdminDashboardStats,
+    app_diagnostics: crate::app::ServerAppDiagnosticsSnapshot,
+    prometheus_text: Option<String>,
 }
 
 fn collect_admin_dashboard_stats(

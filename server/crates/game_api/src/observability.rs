@@ -5,10 +5,12 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+use serde::Serialize;
+
 const MAX_RECENT_DIAGNOSTICS: usize = 128;
 
 /// One recent low-volume diagnostic event captured for operator inspection.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct RecentDiagnosticEvent {
     /// Milliseconds elapsed since the server process started.
     pub elapsed_ms: u64,

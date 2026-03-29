@@ -61,6 +61,12 @@ func _assert_menu_opens_fullscreen_views() -> bool:
 	if not shell.event_view.visible or shell.record_view.visible or shell.roster_view.visible or shell.name_menu_view.visible:
 		success = _fail("event menu should only show the event view") and success
 
+	shell._open_fullscreen_menu("diagnostics")
+	if not shell.diagnostics_view.visible or shell.record_view.visible or shell.roster_view.visible or shell.event_view.visible or shell.name_menu_view.visible:
+		success = _fail("diagnostics menu should only show the diagnostics view") and success
+	elif shell.diagnostics_log == null or not shell.diagnostics_log.text.contains("Client Diagnostics"):
+		success = _fail("diagnostics menu should surface the structured client diagnostics report") and success
+
 	shell._open_fullscreen_menu("name")
 	if not shell.name_menu_view.visible or shell.record_view.visible or shell.roster_view.visible or shell.event_view.visible:
 		success = _fail("change-name menu should only show the name editor") and success
@@ -370,6 +376,8 @@ func _assert_training_shell_surfaces_live_loadout_and_reset_controls() -> bool:
 		success = _fail("training should surface the compact round-and-score header") and success
 	if not _popup_contains_item(shell.menu_button.get_popup(), "Training Loadout"):
 		success = _fail("training menu should expose the training loadout entry") and success
+	if not _popup_contains_item(shell.menu_button.get_popup(), "Diagnostics"):
+		success = _fail("menu should expose the diagnostics entry") and success
 
 	shell._open_fullscreen_menu("loadout")
 	if not shell.fullscreen_menu.visible or not shell.training_loadout_view.visible:

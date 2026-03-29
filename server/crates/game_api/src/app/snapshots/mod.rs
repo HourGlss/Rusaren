@@ -2,10 +2,12 @@ use game_net::{
     ArenaDeltaSnapshot, ArenaEffectSnapshot, ArenaSessionMode, ArenaStateSnapshot,
     LobbyDirectoryEntry, LobbySnapshotPhase, LobbySnapshotPlayer, ServerControlEvent,
 };
+use std::time::Instant;
 
 use super::{
     AppTransport, ArenaMapDefinition, LobbyId, LobbyPhase, MatchId, PlayerId, ServerApp, TeamSide,
 };
+use crate::diagnostics::{SnapshotBuildKind, SnapshotShapeSnapshot};
 
 mod arena;
 mod visibility;
@@ -126,6 +128,7 @@ impl ServerApp {
         viewer_id: PlayerId,
         map: &ArenaMapDefinition,
     ) -> Option<ArenaStateSnapshot> {
+        let started_at = Instant::now();
         let runtime = self.matches.get_mut(&match_id)?;
         let (visible_tiles, explored_tiles) = Self::build_visibility_masks(
             &runtime.world,
@@ -142,7 +145,7 @@ impl ServerApp {
             Self::arena_projectiles_snapshot(&runtime.world, viewer_id, map, &visible_tiles);
         let (phase, phase_seconds_remaining) = Self::arena_match_phase_snapshot(&runtime.session);
 
-        Some(ArenaStateSnapshot {
+        let snapshot = ArenaStateSnapshot {
             mode: ArenaSessionMode::Match,
             phase,
             phase_seconds_remaining,
@@ -157,7 +160,13 @@ impl ServerApp {
             players,
             projectiles,
             training_metrics: None,
-        })
+        };
+        self.diagnostics.record_snapshot_build(
+            SnapshotBuildKind::MatchFull,
+            started_at.elapsed(),
+            SnapshotShapeSnapshot::from_state_snapshot(&snapshot),
+        );
+        Some(snapshot)
     }
 
     pub(super) fn build_arena_delta_snapshot(
@@ -166,6 +175,7 @@ impl ServerApp {
         viewer_id: PlayerId,
         map: &ArenaMapDefinition,
     ) -> Option<ArenaDeltaSnapshot> {
+        let started_at = Instant::now();
         let runtime = self.matches.get_mut(&match_id)?;
         let (visible_tiles, explored_tiles) = Self::build_visibility_masks(
             &runtime.world,
@@ -182,7 +192,7 @@ impl ServerApp {
             Self::arena_projectiles_snapshot(&runtime.world, viewer_id, map, &visible_tiles);
         let (phase, phase_seconds_remaining) = Self::arena_match_phase_snapshot(&runtime.session);
 
-        Some(ArenaDeltaSnapshot {
+        let snapshot = ArenaDeltaSnapshot {
             mode: ArenaSessionMode::Match,
             phase,
             phase_seconds_remaining,
@@ -195,7 +205,13 @@ impl ServerApp {
             players,
             projectiles,
             training_metrics: None,
-        })
+        };
+        self.diagnostics.record_snapshot_build(
+            SnapshotBuildKind::MatchDelta,
+            started_at.elapsed(),
+            SnapshotShapeSnapshot::from_delta_snapshot(&snapshot),
+        );
+        Some(snapshot)
     }
 
     pub(super) fn build_training_state_snapshot(
@@ -204,6 +220,7 @@ impl ServerApp {
         viewer_id: PlayerId,
         map: &ArenaMapDefinition,
     ) -> Option<ArenaStateSnapshot> {
+        let started_at = Instant::now();
         let runtime = self.training_sessions.get_mut(&training_id)?;
         let (visible_tiles, explored_tiles) = Self::build_visibility_masks(
             &runtime.world,
@@ -220,7 +237,7 @@ impl ServerApp {
         let projectiles =
             Self::arena_projectiles_snapshot(&runtime.world, viewer_id, map, &visible_tiles);
 
-        Some(ArenaStateSnapshot {
+        let snapshot = ArenaStateSnapshot {
             mode: ArenaSessionMode::Training,
             phase: game_net::ArenaMatchPhase::Combat,
             phase_seconds_remaining: None,
@@ -235,7 +252,13 @@ impl ServerApp {
             players,
             projectiles,
             training_metrics: Some(Self::training_metrics_snapshot(runtime)),
-        })
+        };
+        self.diagnostics.record_snapshot_build(
+            SnapshotBuildKind::TrainingFull,
+            started_at.elapsed(),
+            SnapshotShapeSnapshot::from_state_snapshot(&snapshot),
+        );
+        Some(snapshot)
     }
 
     pub(super) fn build_training_delta_snapshot(
@@ -244,6 +267,7 @@ impl ServerApp {
         viewer_id: PlayerId,
         map: &ArenaMapDefinition,
     ) -> Option<ArenaDeltaSnapshot> {
+        let started_at = Instant::now();
         let runtime = self.training_sessions.get_mut(&training_id)?;
         let (visible_tiles, explored_tiles) = Self::build_visibility_masks(
             &runtime.world,
@@ -260,7 +284,7 @@ impl ServerApp {
         let projectiles =
             Self::arena_projectiles_snapshot(&runtime.world, viewer_id, map, &visible_tiles);
 
-        Some(ArenaDeltaSnapshot {
+        let snapshot = ArenaDeltaSnapshot {
             mode: ArenaSessionMode::Training,
             phase: game_net::ArenaMatchPhase::Combat,
             phase_seconds_remaining: None,
@@ -273,7 +297,13 @@ impl ServerApp {
             players,
             projectiles,
             training_metrics: Some(Self::training_metrics_snapshot(runtime)),
-        })
+        };
+        self.diagnostics.record_snapshot_build(
+            SnapshotBuildKind::TrainingDelta,
+            started_at.elapsed(),
+            SnapshotShapeSnapshot::from_delta_snapshot(&snapshot),
+        );
+        Some(snapshot)
     }
 
     pub(super) fn broadcast_arena_state_snapshot<T: AppTransport>(

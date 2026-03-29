@@ -52,6 +52,7 @@ func mouse_world_position() -> Vector2:
 
 
 func _draw() -> void:
+	var started_us := Time.get_ticks_usec()
 	var panel_rect := Rect2(Vector2.ZERO, size)
 	draw_rect(panel_rect, Color8(30, 26, 24))
 
@@ -60,6 +61,8 @@ func _draw() -> void:
 			panel_rect,
 			"Waiting for the authoritative arena snapshot..."
 		)
+		if app_state != null:
+			app_state.record_arena_draw(Time.get_ticks_usec() - started_us, Vector2.ZERO)
 		return
 
 	var arena_rect := _arena_rect()
@@ -74,6 +77,8 @@ func _draw() -> void:
 	_draw_players(arena_rect)
 	_draw_local_combat_texts(arena_rect)
 	_draw_border(arena_rect)
+	if app_state != null:
+		app_state.record_arena_draw(Time.get_ticks_usec() - started_us, arena_rect.size)
 
 
 func _draw_floor(arena_rect: Rect2) -> void:

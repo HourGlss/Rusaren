@@ -20,12 +20,18 @@ var _next_input_seq := 1
 var _opened_emitted := false
 var _signal_url := ""
 var _closing_requested := false
+var _telemetry := {}
+
+
+func _init() -> void:
+	_reset_telemetry()
 
 
 func open(url: String) -> bool:
 	close()
 	_signal_socket = WebSocketPeer.new()
 	_signal_url = url.strip_edges()
+	_reset_telemetry()
 	if _signal_url == "":
 		emit_signal("transport_error", "signaling url must not be empty")
 		_signal_socket = null
@@ -89,6 +95,7 @@ func send_control_command(command_type: String, payload: Dictionary = {}) -> boo
 		emit_signal("transport_error", "control data channel send failed with code %d" % error)
 		return false
 
+	_record_packet_traffic("control_packets_out", "control_bytes_out", int((encoded.get("packet", PackedByteArray()) as PackedByteArray).size()))
 	_next_control_seq += 1
 	return true
 
@@ -108,12 +115,43 @@ func send_input_frame(payload: Dictionary = {}, sim_tick: int = 0) -> bool:
 		emit_signal("transport_error", "input data channel send failed with code %d" % error)
 		return false
 
+	_record_packet_traffic("input_packets_out", "input_bytes_out", int((encoded.get("packet", PackedByteArray()) as PackedByteArray).size()))
 	_next_input_seq += 1
 	return true
 
 
 func is_open() -> bool:
 	return _channel_is_open(_control_channel)
+
+
+func telemetry_snapshot() -> Dictionary:
+	var snapshot := {
+		"transport_state": _transport_state,
+		"signal_url": _signal_url,
+		"signal_socket_state": _websocket_state_name(),
+		"control_channel_state": _data_channel_state_name(_control_channel),
+		"input_channel_state": _data_channel_state_name(_input_channel),
+		"snapshot_channel_state": _data_channel_state_name(_snapshot_channel),
+		"signal_messages_in": int(_telemetry.get("signal_messages_in", 0)),
+		"signal_messages_out": int(_telemetry.get("signal_messages_out", 0)),
+		"signal_bytes_in": int(_telemetry.get("signal_bytes_in", 0)),
+		"signal_bytes_out": int(_telemetry.get("signal_bytes_out", 0)),
+		"control_packets_in": int(_telemetry.get("control_packets_in", 0)),
+		"control_bytes_in": int(_telemetry.get("control_bytes_in", 0)),
+		"snapshot_packets_in": int(_telemetry.get("snapshot_packets_in", 0)),
+		"snapshot_bytes_in": int(_telemetry.get("snapshot_bytes_in", 0)),
+		"control_packets_out": int(_telemetry.get("control_packets_out", 0)),
+		"control_bytes_out": int(_telemetry.get("control_bytes_out", 0)),
+		"input_packets_out": int(_telemetry.get("input_packets_out", 0)),
+		"input_bytes_out": int(_telemetry.get("input_bytes_out", 0)),
+		"last_packet_kind": String(_telemetry.get("last_packet_kind", "")),
+		"last_packet_bytes": int(_telemetry.get("last_packet_bytes", 0)),
+		"last_sim_tick": int(_telemetry.get("last_sim_tick", 0)),
+		"last_signal_close_code": int(_telemetry.get("last_signal_close_code", -1)),
+		"last_signal_close_reason": String(_telemetry.get("last_signal_close_reason", "")),
+		"decode_timing": _timing_bucket_snapshot(_telemetry.get("decode_timing", _new_timing_bucket())),
+	}
+	return snapshot
 
 
 func _poll_signal_socket() -> void:
@@ -147,6 +185,7 @@ func _poll_signal_socket() -> void:
 
 	while _signal_socket.get_available_packet_count() > 0:
 		var packet := _signal_socket.get_packet()
+		_record_signal_in(packet)
 		if not _signal_socket.was_string_packet():
 			_fail_transport("binary websocket messages are not accepted on /ws")
 			return
@@ -174,8 +213,14 @@ func _poll_data_channel(data_channel: WebRTCDataChannel) -> void:
 
 	while data_channel.get_available_packet_count() > 0:
 		var packet := data_channel.get_packet()
+		var decode_started_us := Time.get_ticks_usec()
 		var decoded := Protocol.decode_server_event(packet)
+		var decode_us := Time.get_ticks_usec() - decode_started_us
+		_record_decode_timing(decode_us)
+		_record_inbound_channel_packet(data_channel, packet, decoded)
 		if decoded.get("ok", false):
+			decoded["decode_us"] = decode_us
+			decoded["raw_packet_bytes"] = packet.size()
 			emit_signal("packet_received", decoded)
 		else:
 			emit_signal("transport_error", String(decoded.get("error", "packet decode failed")))
@@ -359,6 +404,8 @@ func _send_signal_message(message: Dictionary) -> void:
 	var error := _signal_socket.send_text(json)
 	if error != OK:
 		_fail_transport("signaling websocket send failed with code %d" % error)
+		return
+	_record_signal_out(json.to_utf8_buffer())
 
 
 func _channel_is_open(channel: WebRTCDataChannel) -> bool:
@@ -422,6 +469,8 @@ func _ice_servers_to_godot_config(raw_servers: Variant) -> Array:
 func _fail_transport(reason: String) -> void:
 	if reason != "":
 		emit_signal("transport_error", reason)
+	_telemetry["last_signal_close_code"] = -1 if _signal_socket == null else _signal_socket.get_close_code()
+	_telemetry["last_signal_close_reason"] = "" if _signal_socket == null else _signal_socket.get_close_reason()
 	if _peer != null:
 		_peer.close()
 	_peer = null
@@ -442,4 +491,143 @@ func _set_transport_state(state_name: String) -> void:
 	if _transport_state == state_name:
 		return
 	_transport_state = state_name
+	_telemetry["transport_state"] = state_name
 	emit_signal("transport_state_changed", state_name)
+
+
+func _reset_telemetry() -> void:
+	_telemetry = {
+		"transport_state": _transport_state,
+		"signal_messages_in": 0,
+		"signal_messages_out": 0,
+		"signal_bytes_in": 0,
+		"signal_bytes_out": 0,
+		"control_packets_in": 0,
+		"control_bytes_in": 0,
+		"snapshot_packets_in": 0,
+		"snapshot_bytes_in": 0,
+		"control_packets_out": 0,
+		"control_bytes_out": 0,
+		"input_packets_out": 0,
+		"input_bytes_out": 0,
+		"last_packet_kind": "",
+		"last_packet_bytes": 0,
+		"last_sim_tick": 0,
+		"last_signal_close_code": -1,
+		"last_signal_close_reason": "",
+		"decode_timing": _new_timing_bucket(),
+	}
+
+
+func _new_timing_bucket() -> Dictionary:
+	return {
+		"count": 0,
+		"last_us": 0,
+		"max_us": 0,
+		"total_us": 0,
+		"recent_us": [],
+	}
+
+
+func _record_signal_in(packet: PackedByteArray) -> void:
+	_telemetry["signal_messages_in"] = int(_telemetry.get("signal_messages_in", 0)) + 1
+	_telemetry["signal_bytes_in"] = int(_telemetry.get("signal_bytes_in", 0)) + packet.size()
+
+
+func _record_signal_out(packet: PackedByteArray) -> void:
+	_telemetry["signal_messages_out"] = int(_telemetry.get("signal_messages_out", 0)) + 1
+	_telemetry["signal_bytes_out"] = int(_telemetry.get("signal_bytes_out", 0)) + packet.size()
+
+
+func _record_packet_traffic(packet_count_key: String, byte_count_key: String, bytes: int) -> void:
+	_telemetry[packet_count_key] = int(_telemetry.get(packet_count_key, 0)) + 1
+	_telemetry[byte_count_key] = int(_telemetry.get(byte_count_key, 0)) + bytes
+
+
+func _record_decode_timing(micros: int) -> void:
+	var bucket: Dictionary = _telemetry.get("decode_timing", _new_timing_bucket())
+	_record_timing_bucket(bucket, micros)
+	_telemetry["decode_timing"] = bucket
+
+
+func _record_timing_bucket(bucket: Dictionary, micros: int) -> void:
+	var recent: Array = bucket.get("recent_us", [])
+	recent.append(micros)
+	while recent.size() > 120:
+		recent.remove_at(0)
+	bucket["recent_us"] = recent
+	bucket["count"] = int(bucket.get("count", 0)) + 1
+	bucket["last_us"] = micros
+	bucket["max_us"] = maxi(int(bucket.get("max_us", 0)), micros)
+	bucket["total_us"] = int(bucket.get("total_us", 0)) + micros
+
+
+func _timing_bucket_snapshot(bucket: Dictionary) -> Dictionary:
+	var count := int(bucket.get("count", 0))
+	var recent: Array = (bucket.get("recent_us", []) as Array).duplicate()
+	recent.sort()
+	return {
+		"count": count,
+		"last_ms": float(bucket.get("last_us", 0)) / 1000.0,
+		"avg_ms": (float(bucket.get("total_us", 0)) / float(maxi(1, count))) / 1000.0,
+		"max_ms": float(bucket.get("max_us", 0)) / 1000.0,
+		"p50_ms": _percentile_ms(recent, 0.50),
+		"p95_ms": _percentile_ms(recent, 0.95),
+	}
+
+
+func _percentile_ms(sorted_values: Array, quantile: float) -> float:
+	if sorted_values.is_empty():
+		return 0.0
+	var index := int(round((sorted_values.size() - 1) * quantile))
+	index = clampi(index, 0, sorted_values.size() - 1)
+	return float(sorted_values[index]) / 1000.0
+
+
+func _record_inbound_channel_packet(
+	data_channel: WebRTCDataChannel,
+	packet: PackedByteArray,
+	decoded: Dictionary
+) -> void:
+	var header: Dictionary = decoded.get("header", {})
+	var packet_kind := int(header.get("packet_kind", -1))
+	_telemetry["last_packet_kind"] = str(packet_kind)
+	_telemetry["last_packet_bytes"] = packet.size()
+	_telemetry["last_sim_tick"] = int(header.get("sim_tick", 0))
+	match data_channel.get_label():
+		"control":
+			_record_packet_traffic("control_packets_in", "control_bytes_in", packet.size())
+		"snapshot":
+			_record_packet_traffic("snapshot_packets_in", "snapshot_bytes_in", packet.size())
+
+
+func _websocket_state_name() -> String:
+	if _signal_socket == null:
+		return "closed"
+	match _signal_socket.get_ready_state():
+		WebSocketPeer.STATE_CONNECTING:
+			return "connecting"
+		WebSocketPeer.STATE_OPEN:
+			return "open"
+		WebSocketPeer.STATE_CLOSING:
+			return "closing"
+		WebSocketPeer.STATE_CLOSED:
+			return "closed"
+		_:
+			return "unknown"
+
+
+func _data_channel_state_name(channel: WebRTCDataChannel) -> String:
+	if channel == null:
+		return "closed"
+	match channel.get_ready_state():
+		WebRTCDataChannel.STATE_CONNECTING:
+			return "connecting"
+		WebRTCDataChannel.STATE_OPEN:
+			return "open"
+		WebRTCDataChannel.STATE_CLOSING:
+			return "closing"
+		WebRTCDataChannel.STATE_CLOSED:
+			return "closed"
+		_:
+			return "unknown"

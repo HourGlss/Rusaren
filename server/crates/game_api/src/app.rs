@@ -32,9 +32,10 @@ use crate::{
     combat_log::{
         CombatLogCastCancelReason, CombatLogCastMode, CombatLogEntry, CombatLogEvent,
         CombatLogMissReason, CombatLogOutcome, CombatLogPhase, CombatLogRemovedStatus,
-        CombatLogStatusRemovedReason, CombatLogStore, CombatLogStoreError, CombatLogTargetKind,
-        CombatLogTeam, CombatLogTriggerReason,
+        CombatLogStatusRemovedReason, CombatLogStore, CombatLogStoreDiagnosticsSnapshot,
+        CombatLogStoreError, CombatLogTargetKind, CombatLogTeam, CombatLogTriggerReason,
     },
+    diagnostics::{AppDiagnostics, AppDiagnosticsSnapshot},
     transport::{AppTransport, ConnectionId},
     RecordStoreError,
 };
@@ -204,6 +205,7 @@ pub struct ServerApp {
     game_lobbies: BTreeMap<LobbyId, GameLobbyRuntime>,
     matches: BTreeMap<MatchId, MatchRuntime>,
     training_sessions: BTreeMap<MatchId, TrainingRuntime>,
+    diagnostics: AppDiagnostics,
 }
 
 impl Default for ServerApp {
@@ -303,6 +305,7 @@ impl ServerApp {
             game_lobbies: BTreeMap::new(),
             matches: BTreeMap::new(),
             training_sessions: BTreeMap::new(),
+            diagnostics: AppDiagnostics::default(),
         }
     }
 
@@ -345,6 +348,15 @@ impl ServerApp {
         match_id: MatchId,
     ) -> Result<Vec<CombatLogEntry>, CombatLogStoreError> {
         self.combat_log.events_for_match(match_id)
+    }
+
+    /// Returns a structured diagnostics snapshot for packet flow, snapshots, and the combat log.
+    #[must_use]
+    pub(crate) fn diagnostics_snapshot(&self) -> ServerAppDiagnosticsSnapshot {
+        ServerAppDiagnosticsSnapshot {
+            app: self.diagnostics.snapshot(),
+            combat_log: self.combat_log.diagnostics_snapshot(),
+        }
     }
 
     pub(super) fn append_match_log(
@@ -565,6 +577,12 @@ impl ServerApp {
             None => Ok(()),
         }
     }
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub(crate) struct ServerAppDiagnosticsSnapshot {
+    pub app: AppDiagnosticsSnapshot,
+    pub combat_log: CombatLogStoreDiagnosticsSnapshot,
 }
 
 fn companion_combat_log_path(record_store_path: &Path) -> PathBuf {

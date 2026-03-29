@@ -7,6 +7,7 @@
 mod app;
 mod combat_feedback;
 mod combat_log;
+mod diagnostics;
 mod observability;
 mod realtime;
 mod records;

@@ -10,15 +10,17 @@ BASE_URL="${BASE_URL:-}"
 SINCE="${SINCE:-20m}"
 TAIL="${TAIL:-200}"
 OUTPUT_FILE="${OUTPUT_FILE:-}"
+BUNDLE_DIR="${BUNDLE_DIR:-}"
 COMPOSE_ARGS=()
 
 usage() {
     cat <<'EOF'
-Usage: deploy/useful_log_collect.sh [--origin URL] [--env-file PATH] [--since WINDOW] [--tail COUNT] [--output PATH]
+Usage: deploy/useful_log_collect.sh [--origin URL] [--env-file PATH] [--since WINDOW] [--tail COUNT] [--output PATH] [--bundle-dir PATH]
 
 Collects a compact hosted-backend diagnostics report intended for copy/paste.
 By default it loads `~/rusaren-config/config.env` and the optional external
-Compose override for the current deploy user.
+Compose override for the current deploy user. When `--bundle-dir` is supplied,
+it also writes structured host, admin, metrics, and container artifacts there.
 EOF
 }
 
@@ -221,6 +223,56 @@ print_filtered_logs() {
     printf '%s\n' "${log_output}"
 }
 
+print_host_summary() {
+    printf 'time_utc: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    printf 'host: %s\n' "$(hostname)"
+    if [[ -f /proc/loadavg ]]; then
+        printf 'loadavg: %s\n' "$(cat /proc/loadavg)"
+    fi
+    if command -v uptime >/dev/null 2>&1; then
+        printf 'uptime: %s\n' "$(uptime)"
+    fi
+    if command -v free >/dev/null 2>&1; then
+        printf '\n[mem]\n'
+        free -h
+    fi
+    if command -v df >/dev/null 2>&1; then
+        printf '\n[df_root]\n'
+        df -h /
+    fi
+}
+
+print_docker_stats() {
+    docker stats --no-stream --format 'table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.NetIO}}\t{{.BlockIO}}' || true
+}
+
+fetch_admin_json() {
+    local base_url="$1"
+    if [[ -z "${RARENA_ADMIN_USERNAME:-}" || -z "${RARENA_ADMIN_PASSWORD:-}" ]]; then
+        return 0
+    fi
+    local basic_auth
+    basic_auth="$(printf '%s:%s' "${RARENA_ADMIN_USERNAME}" "${RARENA_ADMIN_PASSWORD}" | base64 | tr -d '\n')"
+    curl --silent --show-error --location --max-time 20 --insecure \
+        --header "Authorization: Basic ${basic_auth}" \
+        "${base_url}/adminz?format=json"
+}
+
+write_bundle_artifacts() {
+    local base_url="$1"
+    mkdir -p "${BUNDLE_DIR}"
+    generate_report > "${BUNDLE_DIR}/summary.txt"
+    compose ps > "${BUNDLE_DIR}/docker-compose-ps.txt" 2>&1 || true
+    print_public_probe_summary "${base_url}" > "${BUNDLE_DIR}/public-probes.txt"
+    print_admin_summary "${base_url}" > "${BUNDLE_DIR}/admin-summary.txt"
+    fetch_admin_json "${base_url}" > "${BUNDLE_DIR}/adminz.json" 2>&1 || true
+    curl --silent --show-error --location --max-time 20 --insecure \
+        "${base_url}/metrics" > "${BUNDLE_DIR}/metrics.prom" 2>&1 || true
+    print_filtered_logs > "${BUNDLE_DIR}/filtered-logs.txt"
+    print_host_summary > "${BUNDLE_DIR}/host.txt"
+    print_docker_stats > "${BUNDLE_DIR}/docker-stats.txt"
+}
+
 generate_report() {
     local base_url
     base_url="$(resolve_base_url)"
@@ -283,6 +335,11 @@ main() {
                 OUTPUT_FILE="$2"
                 shift 2
                 ;;
+            --bundle-dir)
+                [[ $# -ge 2 ]] || fatal "--bundle-dir requires a value"
+                BUNDLE_DIR="$2"
+                shift 2
+                ;;
             -h|--help)
                 usage
                 exit 0
@@ -300,6 +357,10 @@ main() {
         generate_report | tee "${OUTPUT_FILE}"
     else
         generate_report
+    fi
+    if [[ -n "${BUNDLE_DIR}" ]]; then
+        write_bundle_artifacts "$(resolve_base_url)"
+        printf '\n[useful-log-collect] wrote diagnostics bundle to %s\n' "${BUNDLE_DIR}"
     fi
 }
 
