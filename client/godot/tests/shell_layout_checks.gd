@@ -216,8 +216,8 @@ func _assert_skill_pick_layout_prioritizes_skill_buttons() -> bool:
 		success = _fail("skill button tooltips should use the authored description plus the mechanics summary") and success
 	elif shell.skill_buttons[0].tooltip_text.contains("Select "):
 		success = _fail("skill button tooltips should not fall back to generic select text") and success
-	var damage_color := shell.skill_buttons[0].get_theme_color("font_color")
-	var control_color := shell.skill_buttons[1].get_theme_color("font_color")
+	var damage_color: Color = shell.skill_buttons[0].get_theme_color("font_color")
+	var control_color: Color = shell.skill_buttons[1].get_theme_color("font_color")
 	if damage_color == control_color:
 		success = _fail("skill button labels should use category colors for readability") and success
 
@@ -348,10 +348,14 @@ func _assert_training_shell_surfaces_live_loadout_and_reset_controls() -> bool:
 
 	if not shell.match_panel.visible:
 		success = _fail("training should enter the match shell") and success
-	if not shell.skill_pick_panel.visible:
-		success = _fail("training should keep the live loadout catalog visible") and success
 	if not shell.combat_panel.visible:
 		success = _fail("training should also keep the combat panel visible") and success
+	if shell.skill_pick_panel.visible:
+		success = _fail("training should keep the loadout catalog behind a menu instead of pinning it into the shell") and success
+	if shell.training_loadout_button == null or not shell.training_loadout_button.visible:
+		success = _fail("training should expose a dedicated class loadout button") and success
+	elif shell.training_loadout_button.text != "Class Loadout":
+		success = _fail("training should label the loadout opener clearly") and success
 	if shell.training_metrics_label == null or not shell.training_metrics_label.visible:
 		success = _fail("training should surface the metrics label") and success
 	elif not shell.training_metrics_label.text.contains("DPS") or not shell.training_metrics_label.text.contains("dmg 420"):
@@ -360,8 +364,20 @@ func _assert_training_shell_surfaces_live_loadout_and_reset_controls() -> bool:
 		success = _fail("training should expose the reset action") and success
 	if shell.quit_arena_button == null or not shell.quit_arena_button.visible:
 		success = _fail("training should expose the quit-training action") and success
-	if shell.score_label.text != "Training Mode":
-		success = _fail("training should replace the normal scoreboard label") and success
+	elif shell.quit_arena_button.text != "Back To Lobby Select":
+		success = _fail("training should expose an explicit back-to-lobby button") and success
+	if shell.score_label.text != "Round 1, Team A 0 : 0 Team B":
+		success = _fail("training should surface the compact round-and-score header") and success
+	if not _popup_contains_item(shell.menu_button.get_popup(), "Training Loadout"):
+		success = _fail("training menu should expose the training loadout entry") and success
+
+	shell._open_fullscreen_menu("loadout")
+	if not shell.fullscreen_menu.visible or not shell.training_loadout_view.visible:
+		success = _fail("training loadout should open inside the fullscreen menu overlay") and success
+	if not shell.skill_pick_panel.visible:
+		success = _fail("opening the training loadout menu should surface the skill catalog") and success
+	if shell.skill_pick_panel.get_parent() != shell.training_loadout_host:
+		success = _fail("training loadout menu should host the skill catalog inside the overlay") and success
 	if shell.skill_buttons.is_empty() or not shell.skill_buttons[0].tooltip_text.contains("Training equip: replace slot 1 immediately."):
 		success = _fail("training skill tooltips should explain immediate slot replacement") and success
 
@@ -630,6 +646,13 @@ func _count_nodes_of_type(root: Node, script_type) -> int:
 	for child in root.get_children():
 		total += _count_nodes_of_type(child, script_type)
 	return total
+
+
+func _popup_contains_item(popup: PopupMenu, item_text: String) -> bool:
+	for index in range(popup.get_item_count()):
+		if popup.get_item_text(index) == item_text:
+			return true
+	return false
 
 
 func _fail(message: String) -> bool:

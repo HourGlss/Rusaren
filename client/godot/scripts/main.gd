@@ -7,14 +7,16 @@ const Protocol := preload("res://scripts/net/protocol.gd")
 const WebSocketConfigScript := preload("res://scripts/net/websocket_config.gd")
 
 const MENU_SECTION_NAME := "name"
+const MENU_SECTION_LOADOUT := "loadout"
 const MENU_SECTION_RECORD := "record"
 const MENU_SECTION_ROSTER := "roster"
 const MENU_SECTION_EVENTS := "events"
 
 const MENU_ACTION_CHANGE_NAME := 1
-const MENU_ACTION_PLAYER_RECORD := 2
-const MENU_ACTION_ROSTER_WATCH := 3
-const MENU_ACTION_EVENT_FEED := 4
+const MENU_ACTION_TRAINING_LOADOUT := 2
+const MENU_ACTION_PLAYER_RECORD := 3
+const MENU_ACTION_ROSTER_WATCH := 4
+const MENU_ACTION_EVENT_FEED := 5
 
 const AUTO_RECONNECT_DELAY_SECONDS := 2.0
 const RANDOM_PLAYER_NAME_LENGTH := 10
@@ -32,6 +34,7 @@ var menu_button: MenuButton
 var fullscreen_menu: Control
 var fullscreen_menu_title: Label
 var name_menu_view: VBoxContainer
+var training_loadout_view: VBoxContainer
 var record_view: VBoxContainer
 var roster_view: VBoxContainer
 var event_view: VBoxContainer
@@ -68,11 +71,14 @@ var start_training_button: Button
 var team_a_button: Button
 var team_b_button: Button
 var primary_attack_button: Button
+var training_loadout_button: Button
 var reset_training_button: Button
 var quit_arena_button: Button
 var name_save_button: Button
 var name_randomize_button: Button
 var skill_pick_panel: PanelContainer
+var skill_pick_inline_host: VBoxContainer
+var training_loadout_host: VBoxContainer
 var skill_pick_summary_label: Label
 var round_summary_log: RichTextLabel
 var skill_scroll: ScrollContainer
@@ -213,13 +219,8 @@ func _build_top_bar() -> Control:
 	_style_clickable(menu_button, Color8(53, 73, 94))
 	row.add_child(menu_button)
 
-	var popup := menu_button.get_popup()
-	popup.add_item("Change Name", MENU_ACTION_CHANGE_NAME)
-	popup.add_separator()
-	popup.add_item("Player Record", MENU_ACTION_PLAYER_RECORD)
-	popup.add_item("Roster Watch", MENU_ACTION_ROSTER_WATCH)
-	popup.add_item("Event Feed", MENU_ACTION_EVENT_FEED)
-	popup.id_pressed.connect(_on_menu_option_selected)
+	_rebuild_menu_popup()
+	menu_button.get_popup().id_pressed.connect(_on_menu_option_selected)
 
 	return row
 
@@ -398,28 +399,15 @@ func _build_lobby_panel() -> PanelContainer:
 
 func _build_match_panel() -> PanelContainer:
 	var panel := _make_panel(Color8(52, 39, 33), Color8(162, 112, 73))
+	panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	var body := panel.get_meta("body") as VBoxContainer
-
-	var title := Label.new()
-	title.text = "Match Shell"
-	title.add_theme_font_size_override("font_size", 22)
-	title.add_theme_color_override("font_color", Color8(248, 236, 224))
-	body.add_child(title)
-
-	phase_label = Label.new()
-	phase_label.add_theme_font_size_override("font_size", 18)
-	phase_label.add_theme_color_override("font_color", Color8(255, 216, 156))
-	body.add_child(phase_label)
+	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
 
 	score_label = Label.new()
-	score_label.add_theme_font_size_override("font_size", 16)
+	score_label.add_theme_font_size_override("font_size", 18)
 	score_label.add_theme_color_override("font_color", Color8(240, 241, 220))
+	score_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	body.add_child(score_label)
-
-	countdown_value_label = Label.new()
-	countdown_value_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	countdown_value_label.add_theme_color_override("font_color", Color8(203, 197, 192))
-	body.add_child(countdown_value_label)
 
 	skill_pick_panel = _make_panel(Color8(60, 47, 38), Color8(191, 135, 88))
 	var skill_pick_body := skill_pick_panel.get_meta("body") as VBoxContainer
@@ -461,7 +449,11 @@ func _build_match_panel() -> PanelContainer:
 	skill_scroll.add_child(skill_columns)
 	_rebuild_skill_buttons()
 
-	body.add_child(skill_pick_panel)
+	skill_pick_inline_host = VBoxContainer.new()
+	skill_pick_inline_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	skill_pick_inline_host.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	body.add_child(skill_pick_inline_host)
+	skill_pick_inline_host.add_child(skill_pick_panel)
 
 	combat_panel = VBoxContainer.new()
 	combat_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -469,23 +461,27 @@ func _build_match_panel() -> PanelContainer:
 	combat_panel.add_theme_constant_override("separation", 10)
 	body.add_child(combat_panel)
 
-	var placeholder := Label.new()
-	placeholder.text = "The first arena slice is live here: a mostly empty map, central shrub-encased pillars, authoritative snapshots, WASD movement, mouse aim, left-click melee, and authored combat skills on 1-5."
-	placeholder.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	placeholder.add_theme_color_override("font_color", Color8(179, 180, 174))
-	combat_panel.add_child(placeholder)
+	phase_label = Label.new()
+	phase_label.add_theme_font_size_override("font_size", 20)
+	phase_label.add_theme_color_override("font_color", Color8(255, 216, 156))
+	phase_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	combat_panel.add_child(phase_label)
+
+	countdown_value_label = Label.new()
+	countdown_value_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	countdown_value_label.add_theme_color_override("font_color", Color8(203, 197, 192))
+	countdown_value_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	combat_panel.add_child(countdown_value_label)
 
 	arena_view = ArenaViewScript.new()
-	arena_view.custom_minimum_size = Vector2(0, 460)
+	arena_view.custom_minimum_size = Vector2.ZERO
 	arena_view.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	arena_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	arena_view.set_client_state(app_state)
 	combat_panel.add_child(arena_view)
 
 	combat_hint_label = Label.new()
-	combat_hint_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	combat_hint_label.add_theme_color_override("font_color", Color8(214, 218, 208))
-	combat_panel.add_child(combat_hint_label)
+	combat_hint_label.visible = false
 
 	cooldown_summary_label = Label.new()
 	cooldown_summary_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -497,24 +493,22 @@ func _build_match_panel() -> PanelContainer:
 	training_metrics_label.add_theme_color_override("font_color", Color8(164, 232, 191))
 	combat_panel.add_child(training_metrics_label)
 
-	var combat_title := Label.new()
-	combat_title.text = "Combat controls"
-	combat_title.add_theme_color_override("font_color", Color8(244, 233, 216))
-	combat_panel.add_child(combat_title)
-
 	var combat_row := HBoxContainer.new()
 	combat_row.add_theme_constant_override("separation", 10)
 	combat_panel.add_child(combat_row)
 
 	primary_attack_button = _action_button("Primary Attack", Color8(120, 78, 34))
 	primary_attack_button.pressed.connect(_on_primary_attack_pressed)
-	combat_row.add_child(primary_attack_button)
+
+	training_loadout_button = _action_button("Class Loadout", Color8(74, 86, 116))
+	training_loadout_button.pressed.connect(_on_training_loadout_pressed)
+	combat_row.add_child(training_loadout_button)
 
 	reset_training_button = _action_button("Reset Training", Color8(56, 97, 76))
 	reset_training_button.pressed.connect(_on_reset_training_pressed)
 	combat_row.add_child(reset_training_button)
 
-	quit_arena_button = _action_button("Quit Training", Color8(102, 57, 28))
+	quit_arena_button = _action_button("Back To Lobby Select", Color8(102, 57, 28))
 	quit_arena_button.pressed.connect(_on_quit_arena_pressed)
 	combat_row.add_child(quit_arena_button)
 
@@ -617,10 +611,12 @@ func _build_fullscreen_menu() -> Control:
 	top_row.add_child(close_button)
 
 	name_menu_view = _build_name_menu_view()
+	training_loadout_view = _build_training_loadout_view()
 	record_view = _build_record_view()
 	roster_view = _build_roster_view()
 	event_view = _build_event_view()
 	body.add_child(name_menu_view)
+	body.add_child(training_loadout_view)
 	body.add_child(record_view)
 	body.add_child(roster_view)
 	body.add_child(event_view)
@@ -663,6 +659,26 @@ func _build_name_menu_view() -> VBoxContainer:
 	name_randomize_button = _action_button("Randomize", Color8(74, 86, 116))
 	name_randomize_button.pressed.connect(_on_randomize_name_pressed)
 	action_row.add_child(name_randomize_button)
+
+	return view
+
+
+func _build_training_loadout_view() -> VBoxContainer:
+	var view := VBoxContainer.new()
+	view.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	view.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	view.add_theme_constant_override("separation", 14)
+
+	var note := Label.new()
+	note.text = "Training loadout swaps are immediate. Pick any tier 1-5 skill to replace that slot without leaving the arena."
+	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	note.add_theme_color_override("font_color", Color8(188, 200, 210))
+	view.add_child(note)
+
+	training_loadout_host = VBoxContainer.new()
+	training_loadout_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	training_loadout_host.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	view.add_child(training_loadout_host)
 
 	return view
 
@@ -843,10 +859,38 @@ func _current_requested_player_name() -> String:
 	return _apply_player_name("" if player_name_input == null else player_name_input.text)
 
 
+func _rebuild_menu_popup() -> void:
+	if menu_button == null:
+		return
+
+	var popup := menu_button.get_popup()
+	popup.clear()
+	popup.add_item("Change Name", MENU_ACTION_CHANGE_NAME)
+	if app_state.screen == "match" and app_state.is_training_mode():
+		popup.add_item("Training Loadout", MENU_ACTION_TRAINING_LOADOUT)
+	popup.add_separator()
+	popup.add_item("Player Record", MENU_ACTION_PLAYER_RECORD)
+	popup.add_item("Roster Watch", MENU_ACTION_ROSTER_WATCH)
+	popup.add_item("Event Feed", MENU_ACTION_EVENT_FEED)
+
+
+func _move_skill_catalog_to(host: Control) -> void:
+	if skill_pick_panel == null or host == null:
+		return
+	if skill_pick_panel.get_parent() == host:
+		return
+
+	var current_parent := skill_pick_panel.get_parent()
+	if current_parent != null:
+		current_parent.remove_child(skill_pick_panel)
+	host.add_child(skill_pick_panel)
+
+
 func _open_fullscreen_menu(section: String) -> void:
 	_menu_section = section
 	fullscreen_menu.visible = true
 	name_menu_view.visible = section == MENU_SECTION_NAME
+	training_loadout_view.visible = section == MENU_SECTION_LOADOUT
 	record_view.visible = section == MENU_SECTION_RECORD
 	roster_view.visible = section == MENU_SECTION_ROSTER
 	event_view.visible = section == MENU_SECTION_EVENTS
@@ -856,6 +900,8 @@ func _open_fullscreen_menu(section: String) -> void:
 			fullscreen_menu_title.text = "Change Name"
 			player_name_input.grab_focus()
 			player_name_input.select_all()
+		MENU_SECTION_LOADOUT:
+			fullscreen_menu_title.text = "Training Loadout"
 		MENU_SECTION_RECORD:
 			fullscreen_menu_title.text = "Player Record"
 		MENU_SECTION_ROSTER:
@@ -865,16 +911,21 @@ func _open_fullscreen_menu(section: String) -> void:
 		_:
 			fullscreen_menu_title.text = "Menu"
 
+	_refresh_ui()
+
 
 func _close_fullscreen_menu() -> void:
 	_menu_section = ""
 	fullscreen_menu.visible = false
+	_refresh_ui()
 
 
 func _on_menu_option_selected(menu_id: int) -> void:
 	match menu_id:
 		MENU_ACTION_CHANGE_NAME:
 			_open_fullscreen_menu(MENU_SECTION_NAME)
+		MENU_ACTION_TRAINING_LOADOUT:
+			_open_fullscreen_menu(MENU_SECTION_LOADOUT)
 		MENU_ACTION_PLAYER_RECORD:
 			_open_fullscreen_menu(MENU_SECTION_RECORD)
 		MENU_ACTION_ROSTER_WATCH:
@@ -1035,6 +1086,10 @@ func _on_primary_attack_pressed() -> void:
 	_drive_combat_input()
 
 
+func _on_training_loadout_pressed() -> void:
+	_open_fullscreen_menu(MENU_SECTION_LOADOUT)
+
+
 func _on_transport_state_changed(state_name: String) -> void:
 	app_state.mark_transport_state(state_name)
 	_refresh_ui()
@@ -1124,6 +1179,7 @@ func _refresh_ui() -> void:
 	var skill_catalog_signature := app_state.skill_catalog_signature()
 	if skill_catalog_signature != _rendered_skill_catalog_signature:
 		_rebuild_skill_buttons()
+	_rebuild_menu_popup()
 
 	var requested_name := _current_requested_player_name()
 	var identity_text := requested_name
@@ -1149,10 +1205,17 @@ func _refresh_ui() -> void:
 	score_label.text = "Training Mode" if is_training else app_state.score_text()
 	countdown_value_label.text = app_state.countdown_label
 	var local_player := app_state.local_arena_player()
-	var unlocked_slots := int(local_player.get("unlocked_skill_slots", 0))
-	var alive_state := "alive" if bool(local_player.get("alive", false)) else "down"
 	var show_skill_pick := app_state.screen == "match" and app_state.match_phase == "skill_pick"
-	var show_skill_catalog := show_skill_pick or is_training
+	if _menu_section == MENU_SECTION_LOADOUT and not (app_state.screen == "match" and is_training):
+		_menu_section = ""
+		fullscreen_menu.visible = false
+	var show_training_loadout_menu := (
+		app_state.screen == "match"
+		and is_training
+		and fullscreen_menu.visible
+		and _menu_section == MENU_SECTION_LOADOUT
+	)
+	_move_skill_catalog_to(training_loadout_host if show_training_loadout_menu else skill_pick_inline_host)
 	if is_training:
 		skill_pick_summary_label.text = "Training loadout is live. Click any tier 1-5 skill to replace that slot immediately."
 	elif app_state.can_choose_skill():
@@ -1162,10 +1225,9 @@ func _refresh_ui() -> void:
 	else:
 		skill_pick_summary_label.text = "Skill picks appear here at the start of each round."
 	round_summary_log.text = app_state.round_summary_text()
-	if is_training:
-		combat_hint_label.text = "Training: WASD move, aim with the mouse, left click for melee, use 1-5 for skills, reset metrics and dummies without reloading the map, or quit back to central. Local state: %s." % alive_state
-	else:
-		combat_hint_label.text = "WASD move, aim with the mouse, left click for melee, and use 1-5 for combat skills. Unlocked slots: %d. Local state: %s." % [unlocked_slots, alive_state]
+	score_label.text = _match_header_text(is_training)
+	phase_label.text = _combat_state_heading()
+	countdown_value_label.text = _combat_countdown_text()
 	cooldown_summary_label.text = app_state.cooldown_summary_text()
 	training_metrics_label.text = app_state.training_metrics_text()
 	outcome_label.text = result_text
@@ -1183,8 +1245,7 @@ func _refresh_ui() -> void:
 	ready_button.text = app_state.ready_button_text()
 	leave_lobby_button.disabled = not app_state.can_leave_lobby()
 	quit_results_button.disabled = not app_state.can_quit_results()
-	primary_attack_button.disabled = not app_state.can_use_primary_attack()
-	primary_attack_button.text = "Primary Attack" if app_state.can_use_primary_attack() else "Primary Cooling"
+	training_loadout_button.disabled = not is_training
 	reset_training_button.disabled = not app_state.can_reset_training()
 	quit_arena_button.disabled = not app_state.can_quit_arena()
 	name_save_button.disabled = false
@@ -1230,11 +1291,14 @@ func _refresh_ui() -> void:
 	lobby_panel.visible = app_state.screen == "lobby"
 	match_panel.visible = app_state.screen == "match"
 	results_panel.visible = app_state.screen == "results"
-	skill_pick_panel.visible = app_state.screen == "match" and show_skill_catalog
+	skill_pick_panel.visible = app_state.screen == "match" and (show_skill_pick or show_training_loadout_menu)
 	combat_panel.visible = app_state.screen == "match" and (is_training or not show_skill_pick)
+	phase_label.visible = phase_label.text != ""
+	countdown_value_label.visible = countdown_value_label.text != ""
 	round_summary_log.visible = app_state.round_summary_text() != ""
 	match_summary_log.visible = app_state.match_summary_text() != ""
 	training_metrics_label.visible = is_training
+	training_loadout_button.visible = is_training
 	reset_training_button.visible = is_training
 	quit_arena_button.visible = is_training
 
@@ -1295,6 +1359,40 @@ func _rebuild_skill_buttons() -> void:
 			button.pressed.connect(_on_skill_pressed.bind(tree_name, tier))
 			column.add_child(button)
 			skill_buttons.append(button)
+
+
+func _match_header_text(_is_training: bool) -> String:
+	var round_number: int = maxi(1, app_state.current_round)
+	return "Round %d, Team A %d : %d Team B" % [round_number, app_state.score_a, app_state.score_b]
+
+
+func _combat_state_heading() -> String:
+	match app_state.match_phase:
+		"combat":
+			return "Combat Live"
+		"skill_pick":
+			return "Skill Pick"
+		"pre_combat":
+			return "Arena Unlocks"
+		"ended":
+			return "Round Complete"
+		_:
+			return ""
+
+
+func _combat_countdown_text() -> String:
+	var raw := app_state.countdown_label.strip_edges()
+	if raw == "":
+		return ""
+	match app_state.match_phase:
+		"combat":
+			return ""
+		"skill_pick":
+			return raw.replace("Skill Pick: ", "")
+		"pre_combat":
+			return raw.replace("Pre-Combat: ", "")
+		_:
+			return raw
 
 
 func _append_tooltip_note(base_text: String, note: String) -> String:

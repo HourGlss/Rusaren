@@ -1,7 +1,7 @@
 extends Control
 class_name ArenaView
 
-const PADDING := 22.0
+const PADDING := 8.0
 const PLAYER_RADIUS_UNITS := 28.0
 const FOG_EDGE_EXTENSION_RATIO := 0.52
 const FOG_EDGE_ALPHA_SCALE := 0.58
@@ -53,7 +53,7 @@ func mouse_world_position() -> Vector2:
 
 func _draw() -> void:
 	var panel_rect := Rect2(Vector2.ZERO, size)
-	draw_rect(panel_rect, Color8(235, 236, 239))
+	draw_rect(panel_rect, Color8(30, 26, 24))
 
 	if not has_arena_snapshot():
 		_draw_centered_text(
