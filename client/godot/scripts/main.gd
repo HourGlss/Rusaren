@@ -1239,11 +1239,15 @@ func _refresh_ui() -> void:
 
 
 func _refresh_ui_impl() -> void:
+	var diagnostics_panel_visible := fullscreen_menu.visible and _menu_section == MENU_SECTION_DIAGNOSTICS
+	var phase_started_us := Time.get_ticks_usec()
 	var skill_catalog_signature := app_state.skill_catalog_signature()
 	if skill_catalog_signature != _rendered_skill_catalog_signature:
 		_rebuild_skill_buttons()
 	_rebuild_menu_popup()
+	app_state.record_client_timing("ui_refresh_catalog", Time.get_ticks_usec() - phase_started_us)
 
+	phase_started_us = Time.get_ticks_usec()
 	var requested_name := _current_requested_player_name()
 	var identity_text := requested_name
 	if app_state.local_player_id > 0 and app_state.local_player_name != "":
@@ -1262,13 +1266,11 @@ func _refresh_ui_impl() -> void:
 	lobby_label.text = lobby_text
 	lobby_note_label.text = app_state.lobby_note()
 	team_label.text = "Current team: %s" % app_state.current_team()
-	lobby_roster_log.text = "\n".join(app_state.lobby_roster_lines())
 	phase_label.text = app_state.phase_label
 	var is_training := app_state.is_training_mode()
-	score_label.text = "Training Mode" if is_training else app_state.score_text()
-	countdown_value_label.text = app_state.countdown_label
-	var local_player := app_state.local_arena_player()
 	var show_skill_pick := app_state.screen == "match" and app_state.match_phase == "skill_pick"
+	score_label.text = _match_header_text(is_training)
+	countdown_value_label.text = _combat_countdown_text()
 	if _menu_section == MENU_SECTION_LOADOUT and not (app_state.screen == "match" and is_training):
 		_menu_section = ""
 		fullscreen_menu.visible = false
@@ -1287,20 +1289,32 @@ func _refresh_ui_impl() -> void:
 		skill_pick_summary_label.text = "Your pick is locked. Waiting for the round to leave the skill-pick phase."
 	else:
 		skill_pick_summary_label.text = "Skill picks appear here at the start of each round."
-	round_summary_log.text = app_state.round_summary_text()
-	score_label.text = _match_header_text(is_training)
 	phase_label.text = _combat_state_heading()
-	countdown_value_label.text = _combat_countdown_text()
 	cooldown_summary_label.text = app_state.cooldown_summary_text()
 	training_metrics_label.text = app_state.training_metrics_text()
 	outcome_label.text = result_text
-	match_summary_log.text = app_state.match_summary_text()
-	central_directory_log.text = app_state.lobby_directory_bbcode()
-	roster_log.text = "\n".join(app_state.roster_lines())
-	event_log.text = app_state.event_log_text()
-	if diagnostics_log != null:
-		diagnostics_log.text = app_state.diagnostics_text(transport.telemetry_snapshot())
+	lobby_roster_log.text = "\n".join(app_state.lobby_roster_lines())
+	app_state.record_client_timing("ui_refresh_labels", Time.get_ticks_usec() - phase_started_us)
 
+	phase_started_us = Time.get_ticks_usec()
+	var round_summary_text := app_state.round_summary_text()
+	var match_summary_text := app_state.match_summary_text()
+	var lobby_directory_text := app_state.lobby_directory_bbcode()
+	var roster_text := "\n".join(app_state.roster_lines())
+	var event_text := app_state.event_log_text()
+	round_summary_log.text = round_summary_text
+	match_summary_log.text = match_summary_text
+	central_directory_log.text = lobby_directory_text
+	roster_log.text = roster_text
+	event_log.text = event_text
+	app_state.record_client_timing("ui_refresh_logs", Time.get_ticks_usec() - phase_started_us)
+
+	phase_started_us = Time.get_ticks_usec()
+	if diagnostics_log != null and diagnostics_panel_visible:
+		diagnostics_log.text = app_state.diagnostics_text(transport.telemetry_snapshot())
+	app_state.record_client_timing("ui_refresh_diagnostics", Time.get_ticks_usec() - phase_started_us)
+
+	phase_started_us = Time.get_ticks_usec()
 	create_lobby_button.disabled = not app_state.can_join_or_create_lobby()
 	join_lobby_button.disabled = not app_state.can_join_or_create_lobby()
 	start_training_button.disabled = not app_state.can_start_training()
@@ -1350,7 +1364,9 @@ func _refresh_ui_impl() -> void:
 				tooltip_text,
 				"Skill selection is only available during your active skill-pick window."
 			)
+	app_state.record_client_timing("ui_refresh_buttons", Time.get_ticks_usec() - phase_started_us)
 
+	phase_started_us = Time.get_ticks_usec()
 	connection_panel.visible = app_state.screen == "central"
 	central_panel.visible = app_state.screen == "central"
 	lobby_panel.visible = app_state.screen == "lobby"
@@ -1360,12 +1376,13 @@ func _refresh_ui_impl() -> void:
 	combat_panel.visible = app_state.screen == "match" and (is_training or not show_skill_pick)
 	phase_label.visible = phase_label.text != ""
 	countdown_value_label.visible = countdown_value_label.text != ""
-	round_summary_log.visible = app_state.round_summary_text() != ""
-	match_summary_log.visible = app_state.match_summary_text() != ""
+	round_summary_log.visible = round_summary_text != ""
+	match_summary_log.visible = match_summary_text != ""
 	training_metrics_label.visible = is_training
 	training_loadout_button.visible = is_training
 	reset_training_button.visible = is_training
 	quit_arena_button.visible = is_training
+	app_state.record_client_timing("ui_refresh_visibility", Time.get_ticks_usec() - phase_started_us)
 
 
 func _rebuild_skill_buttons() -> void:

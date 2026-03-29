@@ -67,18 +67,43 @@ func _draw() -> void:
 
 	var arena_rect := _arena_rect()
 	draw_rect(arena_rect, ARENA_VOID_COLOR)
+	var phase_started_us := Time.get_ticks_usec()
 	_draw_floor(arena_rect)
+	_record_draw_phase("arena_draw_floor", phase_started_us)
+	phase_started_us = Time.get_ticks_usec()
 	_draw_grid(arena_rect)
+	_record_draw_phase("arena_draw_grid", phase_started_us)
+	phase_started_us = Time.get_ticks_usec()
 	_draw_obstacles(arena_rect)
+	_record_draw_phase("arena_draw_obstacles", phase_started_us)
+	phase_started_us = Time.get_ticks_usec()
 	_draw_visibility_overlay(arena_rect)
+	_record_draw_phase("arena_draw_visibility", phase_started_us)
+	phase_started_us = Time.get_ticks_usec()
 	_draw_effects(arena_rect)
+	_record_draw_phase("arena_draw_effects", phase_started_us)
+	phase_started_us = Time.get_ticks_usec()
 	_draw_deployables(arena_rect)
+	_record_draw_phase("arena_draw_deployables", phase_started_us)
+	phase_started_us = Time.get_ticks_usec()
 	_draw_projectiles(arena_rect)
+	_record_draw_phase("arena_draw_projectiles", phase_started_us)
+	phase_started_us = Time.get_ticks_usec()
 	_draw_players(arena_rect)
+	_record_draw_phase("arena_draw_players", phase_started_us)
+	phase_started_us = Time.get_ticks_usec()
 	_draw_local_combat_texts(arena_rect)
+	_record_draw_phase("arena_draw_combat_text", phase_started_us)
+	phase_started_us = Time.get_ticks_usec()
 	_draw_border(arena_rect)
+	_record_draw_phase("arena_draw_border", phase_started_us)
 	if app_state != null:
 		app_state.record_arena_draw(Time.get_ticks_usec() - started_us, arena_rect.size)
+
+
+func _record_draw_phase(metric_name: String, started_us: int) -> void:
+	if app_state != null:
+		app_state.record_client_timing(metric_name, Time.get_ticks_usec() - started_us)
 
 
 func _draw_floor(arena_rect: Rect2) -> void:

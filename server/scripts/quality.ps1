@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("all", "fmt", "lint", "hack", "test", "soak", "doc", "docs-artifacts", "coverage", "coverage-gate", "fuzz-coverage", "reports", "deny", "audit", "udeps", "miri", "complexity", "clean-code", "callgraph", "bench", "fuzz", "fuzz-build", "fuzz-live", "fuzz-merge", "mutants", "typos", "taplo", "zizmor", "verus")]
+    [ValidateSet("all", "fmt", "lint", "hack", "test", "frontend", "soak", "doc", "docs-artifacts", "coverage", "coverage-gate", "fuzz-coverage", "reports", "deny", "audit", "udeps", "miri", "complexity", "clean-code", "callgraph", "bench", "fuzz", "fuzz-build", "fuzz-live", "fuzz-merge", "mutants", "typos", "taplo", "zizmor", "verus")]
     [string]$Task = "all"
 )
 
@@ -354,6 +354,77 @@ function Invoke-SoakTests {
 
     Write-Host "cargo-nextest is not installed; falling back to cargo test for soak coverage."
     rustup run stable cargo test -p game_api --test soak_match_flow --all-features
+}
+
+function Get-GodotExecutable {
+    if (-not [string]::IsNullOrWhiteSpace($env:GODOT_BIN)) {
+        $configured = $env:GODOT_BIN
+        if (Test-Path $configured) {
+            return (Resolve-Path $configured).Path
+        }
+
+        $configuredCommand = Get-Command $configured -ErrorAction SilentlyContinue
+        if ($null -ne $configuredCommand) {
+            return $configuredCommand.Source
+        }
+
+        throw "GODOT_BIN was set, but '$configured' was not found."
+    }
+
+    if ($isWindowsHost) {
+        $portableConsole = Get-ChildItem -Path (Join-Path $repoRoot "Godot") -File -Filter "Godot*_console.exe" -ErrorAction SilentlyContinue |
+            Select-Object -First 1 -ExpandProperty FullName
+        if (-not [string]::IsNullOrWhiteSpace($portableConsole)) {
+            return $portableConsole
+        }
+
+        $bundledConsole = Get-ChildItem -Path (Join-Path $serverRoot "tools\godot") -Recurse -File -Filter "Godot*_console.exe" -ErrorAction SilentlyContinue |
+            Select-Object -First 1 -ExpandProperty FullName
+        if (-not [string]::IsNullOrWhiteSpace($bundledConsole)) {
+            return $bundledConsole
+        }
+
+        $installedConsole = Get-ChildItem -Path (Join-Path $env:ProgramFiles "Godot") -Recurse -File -Filter "Godot*_console.exe" -ErrorAction SilentlyContinue |
+            Select-Object -First 1 -ExpandProperty FullName
+        if (-not [string]::IsNullOrWhiteSpace($installedConsole)) {
+            return $installedConsole
+        }
+    }
+
+    foreach ($candidate in @("godot4", "godot-4", "godot")) {
+        $command = Get-Command $candidate -ErrorAction SilentlyContinue
+        if ($null -ne $command) {
+            return $command.Source
+        }
+    }
+
+    if (-not $isWindowsHost) {
+        foreach ($snapCandidate in @("/snap/bin/godot4", "/snap/bin/godot-4", "/snap/bin/godot")) {
+            if (Test-Path $snapCandidate) {
+                return $snapCandidate
+            }
+        }
+    }
+
+    throw "No Godot executable was found. Install Godot 4, set GODOT_BIN, or run the dedicated godot-web-smoke workflow."
+}
+
+function Invoke-FrontendChecks {
+    $godotExe = Get-GodotExecutable
+    $projectPath = Join-Path $repoRoot "client\godot"
+    $versionOutput = (& $godotExe --version 2>$null | Select-Object -First 1)
+    if ($versionOutput -match '(\d+)\.(\d+)') {
+        $godotMajor = [int]$matches[1]
+        $godotMinor = [int]$matches[2]
+        if ($godotMajor -lt 4 -or ($godotMajor -eq 4 -and $godotMinor -lt 1)) {
+            throw "Frontend checks require Godot 4.1+ because the WebRTC GDExtension bundle is built for 4.1+. Set GODOT_BIN to a compatible editor/runtime."
+        }
+    }
+
+    & $godotExe --headless --path $projectPath --quit
+    & $godotExe --headless --path $projectPath -s res://tests/protocol_checks.gd
+    & $godotExe --headless --path $projectPath -s res://tests/web_export_checks.gd
+    & $godotExe --headless --path $projectPath -s res://tests/shell_layout_checks.gd
 }
 
 function Get-PreferredMutationScratchRoot {
@@ -1181,6 +1252,7 @@ function Invoke-QualityTask {
                 rustup run stable cargo test --workspace --all-features
             }
         }
+        "frontend" { Invoke-FrontendChecks }
         "soak" { Invoke-SoakTests -HasNextest $hasNextest }
         "doc" { rustup run stable cargo xdoc }
         "docs-artifacts" { & (Join-Path $PSScriptRoot "build-docs.ps1") }

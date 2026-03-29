@@ -280,6 +280,7 @@ func _assert_decode_arena_state_snapshot() -> bool:
 	_push_i16(payload, -520)
 	_push_i16(payload, 220)
 	_push_u16(payload, 28)
+	payload.append(0)
 	var decoded := Protocol.decode_server_event(_encode_server_event_packet(payload, 8, 21))
 	if not bool(decoded.get("ok", false)):
 		return _fail("arena state snapshot should decode")
@@ -383,6 +384,7 @@ func _assert_decode_arena_delta_snapshot() -> bool:
 	payload.append(1)
 	_push_u16(payload, 1200)
 	_push_u16(payload, 0)
+	payload.append(0)
 	var decoded := Protocol.decode_server_event(_encode_server_event_packet(payload, 9, 22))
 	if not bool(decoded.get("ok", false)):
 		return _fail("arena delta snapshot should decode")

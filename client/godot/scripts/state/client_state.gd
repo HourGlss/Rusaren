@@ -946,10 +946,26 @@ func diagnostics_text(transport_snapshot: Dictionary) -> String:
 	lines.append("")
 	lines.append("Timing")
 	lines.append("  ui_refresh_ms: %s" % _timing_bucket_text(_diagnostic_timing("ui_refresh")))
+	lines.append("  ui_refresh_catalog_ms: %s" % _timing_bucket_text(_diagnostic_timing("ui_refresh_catalog")))
+	lines.append("  ui_refresh_labels_ms: %s" % _timing_bucket_text(_diagnostic_timing("ui_refresh_labels")))
+	lines.append("  ui_refresh_logs_ms: %s" % _timing_bucket_text(_diagnostic_timing("ui_refresh_logs")))
+	lines.append("  ui_refresh_diagnostics_ms: %s" % _timing_bucket_text(_diagnostic_timing("ui_refresh_diagnostics")))
+	lines.append("  ui_refresh_buttons_ms: %s" % _timing_bucket_text(_diagnostic_timing("ui_refresh_buttons")))
+	lines.append("  ui_refresh_visibility_ms: %s" % _timing_bucket_text(_diagnostic_timing("ui_refresh_visibility")))
 	lines.append("  advance_visuals_ms: %s" % _timing_bucket_text(_diagnostic_timing("advance_visuals")))
 	lines.append("  packet_decode_ms: %s" % _timing_bucket_text(_diagnostic_timing("packet_decode")))
 	lines.append("  snapshot_apply_ms: %s" % _timing_bucket_text(_diagnostic_timing("snapshot_apply")))
 	lines.append("  arena_draw_ms: %s" % _timing_bucket_text(_diagnostic_timing("arena_draw")))
+	lines.append("  arena_draw_floor_ms: %s" % _timing_bucket_text(_diagnostic_timing("arena_draw_floor")))
+	lines.append("  arena_draw_grid_ms: %s" % _timing_bucket_text(_diagnostic_timing("arena_draw_grid")))
+	lines.append("  arena_draw_obstacles_ms: %s" % _timing_bucket_text(_diagnostic_timing("arena_draw_obstacles")))
+	lines.append("  arena_draw_visibility_ms: %s" % _timing_bucket_text(_diagnostic_timing("arena_draw_visibility")))
+	lines.append("  arena_draw_effects_ms: %s" % _timing_bucket_text(_diagnostic_timing("arena_draw_effects")))
+	lines.append("  arena_draw_deployables_ms: %s" % _timing_bucket_text(_diagnostic_timing("arena_draw_deployables")))
+	lines.append("  arena_draw_projectiles_ms: %s" % _timing_bucket_text(_diagnostic_timing("arena_draw_projectiles")))
+	lines.append("  arena_draw_players_ms: %s" % _timing_bucket_text(_diagnostic_timing("arena_draw_players")))
+	lines.append("  arena_draw_combat_text_ms: %s" % _timing_bucket_text(_diagnostic_timing("arena_draw_combat_text")))
+	lines.append("  arena_draw_border_ms: %s" % _timing_bucket_text(_diagnostic_timing("arena_draw_border")))
 
 	var packet_stats: Dictionary = diagnostics.get("packets", {})
 	lines.append("")
@@ -1308,10 +1324,26 @@ func _reset_diagnostics() -> void:
 	diagnostics = {
 		"timings": {
 			"ui_refresh": _new_timing_bucket(),
+			"ui_refresh_catalog": _new_timing_bucket(),
+			"ui_refresh_labels": _new_timing_bucket(),
+			"ui_refresh_logs": _new_timing_bucket(),
+			"ui_refresh_diagnostics": _new_timing_bucket(),
+			"ui_refresh_buttons": _new_timing_bucket(),
+			"ui_refresh_visibility": _new_timing_bucket(),
 			"advance_visuals": _new_timing_bucket(),
 			"packet_decode": _new_timing_bucket(),
 			"snapshot_apply": _new_timing_bucket(),
 			"arena_draw": _new_timing_bucket(),
+			"arena_draw_floor": _new_timing_bucket(),
+			"arena_draw_grid": _new_timing_bucket(),
+			"arena_draw_obstacles": _new_timing_bucket(),
+			"arena_draw_visibility": _new_timing_bucket(),
+			"arena_draw_effects": _new_timing_bucket(),
+			"arena_draw_deployables": _new_timing_bucket(),
+			"arena_draw_projectiles": _new_timing_bucket(),
+			"arena_draw_players": _new_timing_bucket(),
+			"arena_draw_combat_text": _new_timing_bucket(),
+			"arena_draw_border": _new_timing_bucket(),
 		},
 		"packets": {
 			"control_events": 0,
