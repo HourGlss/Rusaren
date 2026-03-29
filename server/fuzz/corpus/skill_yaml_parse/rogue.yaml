@@ -2,7 +2,7 @@ tree: Rogue
 melee:
   id: rogue_dual_cut
   name: Dual Cut
-  description: A fast pair of short blades with high uptime.
+  description: Fast melee hit.
   cooldown_ms: 450
   range: 86
   radius: 38
@@ -14,7 +14,7 @@ skills:
   - tier: 1
     id: rogue_venom_shiv
     name: Venom Shiv
-    description: A quick knife toss that starts an attrition fight immediately.
+    description: Projectile damage that applies poison.
     behavior:
       kind: projectile
       effect: skill_shot
@@ -35,7 +35,7 @@ skills:
   - tier: 2
     id: rogue_veil_step
     name: Veil Step
-    description: A fast teleport used to break angles without colliding through the lane.
+    description: Teleport to the nearest valid point.
     behavior:
       kind: teleport
       effect: dash_trail
@@ -45,7 +45,7 @@ skills:
   - tier: 3
     id: rogue_lullwire_trap
     name: Lullwire Trap
-    description: A concealed tripwire that drops intruders into a fragile magical sleep.
+    description: Place a trap that applies sleep.
     behavior:
       kind: trap
       effect: burst
@@ -65,7 +65,7 @@ skills:
   - tier: 4
     id: rogue_nightcloak
     name: Nightcloak
-    description: A tight aura that repeatedly shrouds the rogue while staying in motion.
+    description: Aura that repeatedly applies stealth.
     behavior:
       kind: aura
       effect: nova
@@ -84,7 +84,7 @@ skills:
   - tier: 5
     id: rogue_assassins_tempo
     name: Assassin's Tempo
-    description: A passive edge that sharpens footwork and keeps kill windows opening faster.
+    description: Passive move speed and cooldown reduction.
     behavior:
       kind: passive
       effect: nova

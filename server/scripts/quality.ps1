@@ -180,7 +180,8 @@ function Invoke-WslBashCommand {
         throw "WSL is not available. Install a Linux distribution or set RARENA_WSL_DISTRO."
     }
 
-    & (Get-Command wsl.exe -ErrorAction SilentlyContinue).Source -d $distribution -- bash -lc $Script
+    $normalizedScript = $Script.Replace("`r`n", "`n").Replace("`r", "`n")
+    & (Get-Command wsl.exe -ErrorAction SilentlyContinue).Source -d $distribution -- bash -lc $normalizedScript
 }
 
 function Invoke-LiveFuzzNative {
