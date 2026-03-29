@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("all", "coverage", "complexity", "clean-code", "callgraph", "docs", "fuzz", "hardening")]
+    [ValidateSet("all", "coverage", "complexity", "clean-code", "callgraph", "docs", "fuzz", "hardening", "frontend")]
     [string]$Report = "all",
     [switch]$FailOnCommandFailure
 )
@@ -29,6 +29,7 @@ $callgraphRoot = Join-Path $reportsRoot "callgraph"
 $docsArtifactRoot = Join-Path $reportsRoot "docs"
 $rustdocArtifactRoot = Join-Path $reportsRoot "rustdoc"
 $hardeningRoot = Join-Path $reportsRoot "hardening"
+$frontendRoot = Join-Path $reportsRoot "frontend"
 
 function Escape-Html {
     param([AllowNull()][string]$Value)
@@ -3649,6 +3650,35 @@ function Invoke-DocsReport {
     }
 }
 
+function Invoke-FrontendReport {
+    try {
+        return & (Join-Path $PSScriptRoot "frontend-quality.ps1") -OutputRoot $frontendRoot
+    }
+    catch {
+        $errorMessage = $_.Exception.Message
+        $reportPath = Join-Path $frontendRoot "index.html"
+        $outputPath = Join-Path $frontendRoot "output.html"
+        $body = @"
+<h1>Frontend Quality Report Failed</h1>
+<div class="panel">
+  <p>The frontend GDScript quality report could not complete.</p>
+  <p><code>$(Escape-Html $errorMessage)</code></p>
+</div>
+<p class="footer"><a href="../index.html">Back to report index</a></p>
+"@
+        Write-ReportHtml -Path $reportPath -Title "Frontend Quality Report Failed" -Body $body
+        Write-ReportHtml -Path $outputPath -Title "Frontend Quality Report Failed" -Body $body
+
+        return [pscustomobject]@{
+            Name = "Frontend Quality"
+            Status = "failed"
+            Notes = @("Frontend quality analysis failed: $errorMessage")
+            IndexPath = "frontend/index.html"
+            ErrorMessage = $errorMessage
+        }
+    }
+}
+
 function Invoke-ReportGeneration {
     $commitShort = Get-GitValue -CommandArgs @("rev-parse", "--short", "HEAD") -Fallback "unknown"
     $commitLong = Get-GitValue -CommandArgs @("rev-parse", "HEAD") -Fallback "unknown"
@@ -3660,6 +3690,9 @@ function Invoke-ReportGeneration {
 
     $results = @()
     switch ($Report) {
+        "frontend" {
+            $results += Invoke-FrontendReport
+        }
         "coverage" {
             $results += Invoke-CoverageReport -SourceInventory $sourceInventory
         }
@@ -3683,6 +3716,7 @@ function Invoke-ReportGeneration {
             $results += Invoke-CleanCodeReport -SourceInventory $sourceInventory
             $results += Invoke-ComplexityReport -SourceInventory $sourceInventory
             $results += Invoke-HardeningQueueReport -SourceInventory $sourceInventory
+            $results += Invoke-FrontendReport
         }
         default {
             $results += Invoke-CoverageReport -SourceInventory $sourceInventory
@@ -3692,6 +3726,7 @@ function Invoke-ReportGeneration {
             $results += Invoke-CleanCodeReport -SourceInventory $sourceInventory
             $results += Invoke-ComplexityReport -SourceInventory $sourceInventory
             $results += Invoke-HardeningQueueReport -SourceInventory $sourceInventory
+            $results += Invoke-FrontendReport
         }
     }
 
@@ -3707,7 +3742,7 @@ function Invoke-ReportGeneration {
     )
     $overallScoreSummary = if ($scoredResults.Count -gt 0) {
         $averageScore = [double](($scoredResults | ForEach-Object { $_.ScoreSummary.Score } | Measure-Object -Average).Average)
-        New-ScoreSummary -Score $averageScore -Formula "Average of Coverage, Fuzzing, Docs, Clean Code, and Complexity scores" -Breakdown @()
+        New-ScoreSummary -Score $averageScore -Formula "Average of the generated scored reports" -Breakdown @()
     }
     else {
         $null

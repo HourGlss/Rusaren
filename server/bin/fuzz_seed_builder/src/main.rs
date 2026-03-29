@@ -15,10 +15,10 @@ use game_domain::{
 use game_net::{
     ArenaDeltaSnapshot, ArenaDeployableKind, ArenaDeployableSnapshot, ArenaEffectKind,
     ArenaEffectSnapshot, ArenaMatchPhase, ArenaObstacleKind, ArenaObstacleSnapshot,
-    ArenaPlayerSnapshot, ArenaProjectileSnapshot, ArenaStateSnapshot, ArenaStatusKind,
-    ArenaStatusSnapshot, ChannelId, ClientControlCommand, LobbyDirectoryEntry, LobbySnapshotPhase,
-    LobbySnapshotPlayer, PacketHeader, PacketKind, ServerControlEvent, SkillCatalogEntry,
-    ValidatedInputFrame, BUTTON_CAST, BUTTON_PRIMARY,
+    ArenaPlayerSnapshot, ArenaProjectileSnapshot, ArenaSessionMode, ArenaStateSnapshot,
+    ArenaStatusKind, ArenaStatusSnapshot, ChannelId, ClientControlCommand, LobbyDirectoryEntry,
+    LobbySnapshotPhase, LobbySnapshotPlayer, PacketHeader, PacketKind, ServerControlEvent,
+    SkillCatalogEntry, ValidatedInputFrame, BUTTON_CAST, BUTTON_PRIMARY,
 };
 
 const PROTOTYPE_ARENA_ASCII: &str = include_str!("../../../content/maps/prototype_arena.txt");
@@ -34,24 +34,36 @@ fn sample_skill_catalog() -> Vec<SkillCatalogEntry> {
             tier: 1,
             skill_id: String::from("warrior_t1_bash"),
             skill_name: String::from("Bash"),
+            skill_description: String::from("Deal damage in melee."),
+            skill_summary: String::from("Damage"),
+            ui_category: String::from("damage"),
         },
         SkillCatalogEntry {
             tree: SkillTree::Cleric,
             tier: 1,
             skill_id: String::from("cleric_t1_minor_heal"),
             skill_name: String::from("Minor Heal"),
+            skill_description: String::from("Restore allied health."),
+            skill_summary: String::from("Heal"),
+            ui_category: String::from("heal"),
         },
         SkillCatalogEntry {
             tree: SkillTree::Mage,
             tier: 1,
             skill_id: String::from("mage_t1_missile"),
             skill_name: String::from("Magic Missile"),
+            skill_description: String::from("Fire a ranged projectile."),
+            skill_summary: String::from("Damage"),
+            ui_category: String::from("damage"),
         },
         SkillCatalogEntry {
             tree: SkillTree::Rogue,
             tier: 1,
             skill_id: String::from("rogue_t1_stab"),
             skill_name: String::from("Stab"),
+            skill_description: String::from("Strike a nearby target."),
+            skill_summary: String::from("Damage"),
+            ui_category: String::from("damage"),
         },
     ]
 }
@@ -218,17 +230,20 @@ fn sample_arena_deployables() -> Result<Vec<ArenaDeployableSnapshot>, Box<dyn Er
 
 fn sample_arena_state_snapshot() -> Result<ArenaStateSnapshot, Box<dyn Error>> {
     Ok(ArenaStateSnapshot {
+        mode: ArenaSessionMode::Match,
         phase: ArenaMatchPhase::Combat,
         phase_seconds_remaining: None,
         width: 1800,
         height: 1200,
         tile_units: 50,
+        footprint_tiles: vec![],
         visible_tiles: vec![0b0011_1111, 0b0000_0011],
         explored_tiles: vec![0b1111_1111, 0b0000_1111],
         obstacles: sample_arena_obstacles(),
         players: sample_arena_players()?,
         projectiles: sample_arena_projectiles()?,
         deployables: sample_arena_deployables()?,
+        training_metrics: None,
     })
 }
 
@@ -263,9 +278,11 @@ fn sample_arena_state_snapshot_variant() -> Result<ArenaStateSnapshot, Box<dyn E
 
 fn sample_arena_delta_snapshot() -> Result<ArenaDeltaSnapshot, Box<dyn Error>> {
     Ok(ArenaDeltaSnapshot {
+        mode: ArenaSessionMode::Match,
         phase: ArenaMatchPhase::Combat,
         phase_seconds_remaining: None,
         tile_units: 50,
+        footprint_tiles: vec![],
         visible_tiles: vec![0b0011_1111, 0b0000_0011],
         explored_tiles: vec![0b1111_1111, 0b0000_1111],
         obstacles: vec![ArenaObstacleSnapshot {
@@ -331,6 +348,7 @@ fn sample_arena_delta_snapshot() -> Result<ArenaDeltaSnapshot, Box<dyn Error>> {
             max_hit_points: 24,
             remaining_ms: 2600,
         }],
+        training_metrics: None,
     })
 }
 

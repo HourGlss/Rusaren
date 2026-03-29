@@ -21,6 +21,7 @@ const MENU_ACTION_EVENT_FEED := 5
 const MENU_ACTION_DIAGNOSTICS := 6
 
 const AUTO_RECONNECT_DELAY_SECONDS := 2.0
+const PASSIVE_UI_REFRESH_INTERVAL_SECONDS := 0.10
 const RANDOM_PLAYER_NAME_LENGTH := 10
 const PLAYER_NAME_ALPHABET := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
@@ -92,6 +93,8 @@ var combat_panel: VBoxContainer
 var arena_view = null
 var skill_buttons: Array[Button] = []
 var _rendered_skill_catalog_signature := ""
+var _rendered_skill_button_state_signature := ""
+var _rendered_menu_popup_signature := ""
 var _next_client_input_tick := 1
 var _pending_primary_attack := false
 var _pending_cast_slot := 0
@@ -102,6 +105,7 @@ var _pending_bootstrap_url := ""
 var _menu_section := ""
 var _auto_connect_retry_seconds := -1.0
 var _name_rng := RandomNumberGenerator.new()
+var _passive_ui_refresh_remaining := 0.0
 
 
 func _ready() -> void:
@@ -124,7 +128,7 @@ func _process(delta: float) -> void:
 	transport.poll()
 	_tick_auto_connect(delta)
 	_drive_combat_input()
-	_refresh_ui()
+	_tick_passive_ui_refresh(delta)
 
 
 func _input(event: InputEvent) -> void:
@@ -908,6 +912,7 @@ func _rebuild_menu_popup() -> void:
 	popup.add_item("Roster Watch", MENU_ACTION_ROSTER_WATCH)
 	popup.add_item("Event Feed", MENU_ACTION_EVENT_FEED)
 	popup.add_item("Diagnostics", MENU_ACTION_DIAGNOSTICS)
+	_rendered_menu_popup_signature = _menu_popup_signature()
 
 
 func _move_skill_catalog_to(host: Control) -> void:
@@ -1236,6 +1241,7 @@ func _refresh_ui() -> void:
 	var started_us := Time.get_ticks_usec()
 	_refresh_ui_impl()
 	app_state.record_client_timing("ui_refresh", Time.get_ticks_usec() - started_us)
+	_passive_ui_refresh_remaining = PASSIVE_UI_REFRESH_INTERVAL_SECONDS
 
 
 func _refresh_ui_impl() -> void:
@@ -1244,7 +1250,9 @@ func _refresh_ui_impl() -> void:
 	var skill_catalog_signature := app_state.skill_catalog_signature()
 	if skill_catalog_signature != _rendered_skill_catalog_signature:
 		_rebuild_skill_buttons()
-	_rebuild_menu_popup()
+	var menu_popup_signature := _menu_popup_signature()
+	if menu_popup_signature != _rendered_menu_popup_signature:
+		_rebuild_menu_popup()
 	app_state.record_client_timing("ui_refresh_catalog", Time.get_ticks_usec() - phase_started_us)
 
 	phase_started_us = Time.get_ticks_usec()
@@ -1330,40 +1338,9 @@ func _refresh_ui_impl() -> void:
 	name_save_button.disabled = false
 	name_randomize_button.disabled = false
 
-	for button in skill_buttons:
-		var tree_name := String(button.get_meta("tree_name", ""))
-		var tier := int(button.get_meta("tier", 0))
-		var selectable := app_state.can_choose_skill_option(tree_name, tier)
-		var skill_name := app_state.skill_name_for(tree_name, tier)
-		var tooltip_text := app_state.skill_tooltip_for(tree_name, tier)
-		var category_color := _skill_button_font_color(app_state.skill_ui_category_for(tree_name, tier))
-		button.disabled = not selectable
-		button.text = "%d. %s" % [tier, skill_name]
-		_apply_skill_button_font_color(button, category_color)
-		if is_training:
-			button.tooltip_text = _append_tooltip_note(
-				tooltip_text,
-				"Training equip: replace slot %d immediately." % tier
-			)
-		elif app_state.can_choose_skill():
-			var next_tier := app_state.next_skill_tier_for(tree_name)
-			if next_tier == 0:
-				button.tooltip_text = _append_tooltip_note(
-					tooltip_text,
-					"%s is fully unlocked." % tree_name
-				)
-			elif tier == next_tier:
-				button.tooltip_text = _append_tooltip_note(tooltip_text, "Available now.")
-			else:
-				button.tooltip_text = _append_tooltip_note(
-					tooltip_text,
-					"Only tier %d is currently available for %s." % [next_tier, tree_name]
-				)
-		else:
-			button.tooltip_text = _append_tooltip_note(
-				tooltip_text,
-				"Skill selection is only available during your active skill-pick window."
-			)
+	var skill_button_state_signature := _skill_button_state_signature(is_training)
+	if skill_button_state_signature != _rendered_skill_button_state_signature:
+		_refresh_skill_buttons(is_training)
 	app_state.record_client_timing("ui_refresh_buttons", Time.get_ticks_usec() - phase_started_us)
 
 	phase_started_us = Time.get_ticks_usec()
@@ -1387,6 +1364,7 @@ func _refresh_ui_impl() -> void:
 
 func _rebuild_skill_buttons() -> void:
 	_rendered_skill_catalog_signature = app_state.skill_catalog_signature()
+	_rendered_skill_button_state_signature = ""
 	if skill_columns == null:
 		return
 
@@ -1436,11 +1414,89 @@ func _rebuild_skill_buttons() -> void:
 			var tier := int(entry.get("tier", 0))
 			var skill_name := String(entry.get("skill_name", "%s %d" % [tree_name, tier]))
 			var button := _action_button("%d. %s" % [tier, skill_name], Color8(74, 61, 52))
+			var tooltip_text := app_state.skill_tooltip_for(tree_name, tier)
+			var category_color := _skill_button_font_color(app_state.skill_ui_category_for(tree_name, tier))
 			button.set_meta("tree_name", tree_name)
 			button.set_meta("tier", tier)
+			button.set_meta("base_tooltip_text", tooltip_text)
 			button.pressed.connect(_on_skill_pressed.bind(tree_name, tier))
+			_apply_skill_button_font_color(button, category_color)
+			button.tooltip_text = tooltip_text
 			column.add_child(button)
 			skill_buttons.append(button)
+
+
+func _refresh_skill_buttons(is_training: bool) -> void:
+	var can_choose_skill := app_state.can_choose_skill()
+	for button in skill_buttons:
+		var tree_name := String(button.get_meta("tree_name", ""))
+		var tier := int(button.get_meta("tier", 0))
+		var base_tooltip_text := String(button.get_meta("base_tooltip_text", ""))
+		button.disabled = not app_state.can_choose_skill_option(tree_name, tier)
+		if is_training:
+			button.tooltip_text = _append_tooltip_note(
+				base_tooltip_text,
+				"Training equip: replace slot %d immediately." % tier
+			)
+		elif can_choose_skill:
+			var next_tier := app_state.next_skill_tier_for(tree_name)
+			if next_tier == 0:
+				button.tooltip_text = _append_tooltip_note(
+					base_tooltip_text,
+					"%s is fully unlocked." % tree_name
+				)
+			elif tier == next_tier:
+				button.tooltip_text = _append_tooltip_note(base_tooltip_text, "Available now.")
+			else:
+				button.tooltip_text = _append_tooltip_note(
+					base_tooltip_text,
+					"Only tier %d is currently available for %s." % [next_tier, tree_name]
+				)
+		else:
+			button.tooltip_text = _append_tooltip_note(
+				base_tooltip_text,
+				"Skill selection is only available during your active skill-pick window."
+			)
+	_rendered_skill_button_state_signature = _skill_button_state_signature(is_training)
+
+
+func _menu_popup_signature() -> String:
+	return "%s|%s" % [
+		app_state.screen,
+		str(app_state.is_training_mode()),
+	]
+
+
+func _skill_button_state_signature(is_training: bool) -> String:
+	var next_tiers: Array[String] = []
+	for tree_name in app_state.skill_tree_names():
+		next_tiers.append("%s:%d" % [tree_name, app_state.next_skill_tier_for(tree_name)])
+	return "%s|%s|%s|%s|%s|%s" % [
+		app_state.transport_state,
+		app_state.screen,
+		app_state.match_phase,
+		str(is_training),
+		str(app_state.local_round_skill_locked),
+		"|".join(next_tiers),
+	]
+
+
+func _tick_passive_ui_refresh(delta: float) -> void:
+	if not _needs_passive_ui_refresh():
+		_passive_ui_refresh_remaining = 0.0
+		return
+	_passive_ui_refresh_remaining -= delta
+	if _passive_ui_refresh_remaining > 0.0:
+		return
+	_refresh_ui()
+
+
+func _needs_passive_ui_refresh() -> bool:
+	return (
+		app_state.screen == "match"
+		or fullscreen_menu.visible
+		or _bootstrap_request_active
+	)
 
 
 func _match_header_text(_is_training: bool) -> String:

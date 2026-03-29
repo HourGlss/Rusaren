@@ -1,8 +1,8 @@
 use arbitrary::{Arbitrary, Unstructured};
 use game_net::{
     ArenaDeltaSnapshot, ArenaEffectSnapshot, ArenaObstacleSnapshot, ArenaPlayerSnapshot,
-    ArenaProjectileSnapshot, ArenaStateSnapshot, ArenaStatusSnapshot, LobbyDirectoryEntry,
-    LobbySnapshotPlayer, ServerControlEvent, SkillCatalogEntry,
+    ArenaProjectileSnapshot, ArenaSessionMode, ArenaStateSnapshot, ArenaStatusSnapshot,
+    LobbyDirectoryEntry, LobbySnapshotPlayer, ServerControlEvent, SkillCatalogEntry,
 };
 
 use super::common::{
@@ -37,6 +37,9 @@ impl FuzzSkillCatalogEntry {
             tier: normalize_skill_tier(self.tier),
             skill_id: sanitize_ascii_label(&self.skill_id, 24, "skill"),
             skill_name: sanitize_display_text(&self.skill_name, 32, "Skill"),
+            skill_description: String::from("Fuzz description"),
+            skill_summary: String::from("Fuzz summary"),
+            ui_category: String::from("utility"),
         }
     }
 }
@@ -258,11 +261,13 @@ struct FuzzArenaStateSnapshot {
 impl FuzzArenaStateSnapshot {
     fn into_real(self) -> ArenaStateSnapshot {
         ArenaStateSnapshot {
+            mode: ArenaSessionMode::Match,
             phase: self.phase.into_real(),
             phase_seconds_remaining: self.phase_seconds_remaining,
             width: self.width.max(1),
             height: self.height.max(1),
             tile_units: self.tile_units.max(1),
+            footprint_tiles: vec![],
             visible_tiles: truncate_bytes(self.visible_tiles, 16),
             explored_tiles: truncate_bytes(self.explored_tiles, 16),
             obstacles: take_vec(self.obstacles, MAX_OBSTACLES)
@@ -278,6 +283,7 @@ impl FuzzArenaStateSnapshot {
                 .into_iter()
                 .map(FuzzArenaProjectileSnapshot::into_real)
                 .collect(),
+            training_metrics: None,
         }
     }
 }
@@ -297,9 +303,11 @@ struct FuzzArenaDeltaSnapshot {
 impl FuzzArenaDeltaSnapshot {
     fn into_real(self) -> ArenaDeltaSnapshot {
         ArenaDeltaSnapshot {
+            mode: ArenaSessionMode::Match,
             phase: self.phase.into_real(),
             phase_seconds_remaining: self.phase_seconds_remaining,
             tile_units: self.tile_units.max(1),
+            footprint_tiles: vec![],
             visible_tiles: truncate_bytes(self.visible_tiles, 16),
             explored_tiles: truncate_bytes(self.explored_tiles, 16),
             obstacles: take_vec(self.obstacles, MAX_OBSTACLES)
@@ -315,6 +323,7 @@ impl FuzzArenaDeltaSnapshot {
                 .into_iter()
                 .map(FuzzArenaProjectileSnapshot::into_real)
                 .collect(),
+            training_metrics: None,
         }
     }
 }

@@ -161,6 +161,24 @@ On this machine, the equivalent command is:
 <GODOT_EXECUTABLE> --headless --path client\godot -s res://tests/shell_layout_checks.gd
 ```
 
+Run the Godot frontend smoke checks through the repo quality wrapper:
+
+```powershell
+cd server
+./scripts/quality.ps1 frontend
+```
+
+Generate the docs-backed Godot runtime GDScript quality report and A-F grade:
+
+```powershell
+cd server
+./scripts/quality.ps1 frontend-report
+```
+
+That writes the frontend summary and HTML report under:
+- `server/target/reports/frontend/summary.json`
+- `server/target/reports/frontend/index.html`
+
 Export the Godot web client into the Rust server static root:
 
 ```powershell
