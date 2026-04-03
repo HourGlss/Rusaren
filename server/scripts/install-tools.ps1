@@ -46,6 +46,34 @@ else {
     $workflowStableTools + $developerOnlyStableTools
 }
 
+function Install-CargoTool {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Tool
+    )
+
+    $cargoBinstall = Get-Command cargo-binstall -ErrorAction SilentlyContinue
+    if ($null -ne $cargoBinstall) {
+        try {
+            rustup run stable cargo binstall --no-confirm $Tool | Out-Host
+            return
+        }
+        catch {
+            Write-Warning "cargo-binstall failed for $Tool; falling back to cargo install."
+        }
+    }
+
+    rustup run stable cargo install --locked $Tool | Out-Host
+}
+
+function Ensure-CargoBinstall {
+    if ($null -ne (Get-Command cargo-binstall -ErrorAction SilentlyContinue)) {
+        return
+    }
+
+    rustup run stable cargo install --locked cargo-binstall | Out-Host
+}
+
 function Get-VerusAssetName {
     $os = [System.Runtime.InteropServices.RuntimeInformation]::OSDescription
     $architecture = [System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture
@@ -162,8 +190,12 @@ foreach ($component in $stableComponents) {
     rustup component add $component --toolchain stable | Out-Host
 }
 
+if ($QualityWorkflow) {
+    Ensure-CargoBinstall
+}
+
 foreach ($tool in $stableTools) {
-    rustup run stable cargo install --locked $tool | Out-Host
+    Install-CargoTool -Tool $tool
 }
 
 Install-Verus
