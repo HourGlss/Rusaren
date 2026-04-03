@@ -97,31 +97,78 @@ function Remove-DirectoryIfExists {
         [string]$Path
     )
 
-    for ($attempt = 1; $attempt -le 3; $attempt++) {
-        if (-not (Test-Path $Path)) {
+    function Clear-FileAttributesForRemoval {
+        param([string]$TreePath)
+
+        if (-not $isWindowsHost -or -not (Test-Path $TreePath)) {
             return
         }
 
         try {
-            Remove-Item -Recurse -Force -Path $Path -ErrorAction Stop
-            return
+            Get-ChildItem -Path $TreePath -Force -Recurse -ErrorAction SilentlyContinue |
+                ForEach-Object {
+                    try {
+                        $_.Attributes = [System.IO.FileAttributes]::Normal
+                    }
+                    catch {
+                    }
+                }
+            (Get-Item -LiteralPath $TreePath -Force -ErrorAction SilentlyContinue).Attributes = [System.IO.FileAttributes]::Directory
         }
-        catch [System.IO.FileNotFoundException] {
-            if (-not (Test-Path $Path)) {
-                return
-            }
+        catch {
         }
-        catch [System.Management.Automation.ItemNotFoundException] {
-            if (-not (Test-Path $Path)) {
-                return
-            }
-        }
-
-        Start-Sleep -Milliseconds (75 * $attempt)
     }
 
-    if (Test-Path $Path) {
-        Remove-Item -Recurse -Force -Path $Path -ErrorAction Stop
+    function Try-RemoveDirectoryTree {
+        param([string]$TreePath)
+
+        if (-not (Test-Path $TreePath)) {
+            return $true
+        }
+
+        Clear-FileAttributesForRemoval -TreePath $TreePath
+
+        try {
+            Remove-Item -Recurse -Force -LiteralPath $TreePath -ErrorAction Stop
+            return $true
+        }
+        catch {
+            $entries = @(
+                Get-ChildItem -LiteralPath $TreePath -Force -ErrorAction SilentlyContinue |
+                    Sort-Object -Property FullName -Descending
+            )
+            foreach ($entry in $entries) {
+                try {
+                    Remove-Item -Recurse -Force -LiteralPath $entry.FullName -ErrorAction SilentlyContinue
+                }
+                catch {
+                }
+            }
+
+            try {
+                Remove-Item -Recurse -Force -LiteralPath $TreePath -ErrorAction SilentlyContinue
+            }
+            catch {
+            }
+
+            return -not (Test-Path $TreePath)
+        }
+    }
+
+    for ($attempt = 1; $attempt -le 6; $attempt++) {
+        if (-not (Test-Path $Path)) {
+            return
+        }
+
+        if (Try-RemoveDirectoryTree -TreePath $Path) {
+            return
+        }
+
+        Start-Sleep -Milliseconds (150 * $attempt)
+    }
+
+    if (Test-Path $Path -and -not (Try-RemoveDirectoryTree -TreePath $Path)) {
+        throw "Failed to remove directory tree '$Path' after repeated attempts."
     }
 }
 

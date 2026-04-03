@@ -3,7 +3,7 @@
 use arbitrary::Arbitrary;
 use game_net::{
     ValidatedInputFrame, ALLOWED_BUTTONS_MASK, BUTTON_CANCEL, BUTTON_CAST, BUTTON_PRIMARY,
-    BUTTON_QUIT_TO_LOBBY, BUTTON_SECONDARY,
+    BUTTON_QUIT_TO_LOBBY, BUTTON_SECONDARY, BUTTON_SELF_CAST,
 };
 use libfuzzer_sys::fuzz_target;
 
@@ -33,6 +33,10 @@ impl FuzzInputFrame {
         if buttons == 0 {
             buttons = allowed_ordered_bits
                 [usize::from(self.buttons % (allowed_ordered_bits.len() as u16))];
+        }
+
+        if buttons & BUTTON_SELF_CAST != 0 {
+            buttons |= BUTTON_CAST;
         }
 
         let ability_or_context = if buttons & BUTTON_CAST != 0 {
