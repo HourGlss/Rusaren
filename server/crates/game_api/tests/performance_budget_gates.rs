@@ -196,6 +196,48 @@ fn choose_round_one_skills(
         .expect("right pre-combat events");
 }
 
+fn drain_active_match_clients(
+    clients: &mut [HeadlessClient],
+    transport: &mut InMemoryTransport,
+) {
+    for client in clients {
+        let _ = client
+            .drain_events(transport)
+            .expect("combat events should remain decodable");
+    }
+}
+
+fn assert_command_latency_budgets(command_latencies: &DurationSamples) {
+    assert!(
+        command_latencies.p95_ms() <= 50.0,
+        "command latency p95 exceeded budget: {:.3} ms",
+        command_latencies.p95_ms()
+    );
+    assert!(
+        command_latencies.p99_ms() <= 100.0,
+        "command latency p99 exceeded budget: {:.3} ms",
+        command_latencies.p99_ms()
+    );
+}
+
+fn assert_tick_latency_budgets(tick_latencies: &DurationSamples) {
+    assert!(
+        tick_latencies.p95_ms() <= 12.0,
+        "tick latency p95 exceeded budget: {:.3} ms",
+        tick_latencies.p95_ms()
+    );
+    assert!(
+        tick_latencies.p99_ms() <= 20.0,
+        "tick latency p99 exceeded budget: {:.3} ms",
+        tick_latencies.p99_ms()
+    );
+    assert!(
+        tick_latencies.max_ms() <= 32.0,
+        "tick latency max exceeded budget: {:.3} ms",
+        tick_latencies.max_ms()
+    );
+}
+
 #[cfg(target_os = "linux")]
 fn current_rss_mib() -> Option<f64> {
     let contents = std::fs::read_to_string("/proc/self/status").ok()?;
@@ -278,11 +320,7 @@ fn reference_load_scenarios_hold_tick_command_memory_and_capacity_budgets() {
 
     for _ in 0..30 {
         server.advance_millis(&mut transport, COMBAT_FRAME_MS);
-        for client in &mut clients[..MATCH_PAIR_COUNT * 2] {
-            let _ = client
-                .drain_events(&mut transport)
-                .expect("warmup combat events should remain decodable");
-        }
+        drain_active_match_clients(&mut clients[..MATCH_PAIR_COUNT * 2], &mut transport);
     }
 
     let mut tick_latencies = DurationSamples::default();
@@ -291,38 +329,11 @@ fn reference_load_scenarios_hold_tick_command_memory_and_capacity_budgets() {
         server.advance_millis(&mut transport, COMBAT_FRAME_MS);
         tick_latencies.record(started_at.elapsed());
 
-        for client in &mut clients[..MATCH_PAIR_COUNT * 2] {
-            let _ = client
-                .drain_events(&mut transport)
-                .expect("combat events should remain decodable");
-        }
+        drain_active_match_clients(&mut clients[..MATCH_PAIR_COUNT * 2], &mut transport);
     }
 
-    assert!(
-        command_latencies.p95_ms() <= 50.0,
-        "command latency p95 exceeded budget: {:.3} ms",
-        command_latencies.p95_ms()
-    );
-    assert!(
-        command_latencies.p99_ms() <= 100.0,
-        "command latency p99 exceeded budget: {:.3} ms",
-        command_latencies.p99_ms()
-    );
-    assert!(
-        tick_latencies.p95_ms() <= 12.0,
-        "tick latency p95 exceeded budget: {:.3} ms",
-        tick_latencies.p95_ms()
-    );
-    assert!(
-        tick_latencies.p99_ms() <= 20.0,
-        "tick latency p99 exceeded budget: {:.3} ms",
-        tick_latencies.p99_ms()
-    );
-    assert!(
-        tick_latencies.max_ms() <= 32.0,
-        "tick latency max exceeded budget: {:.3} ms",
-        tick_latencies.max_ms()
-    );
+    assert_command_latency_budgets(&command_latencies);
+    assert_tick_latency_budgets(&tick_latencies);
     if let Some(rss_mib) = current_rss_mib() {
         assert!(
             rss_mib <= 350.0,
