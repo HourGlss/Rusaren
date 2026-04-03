@@ -36,7 +36,7 @@ jobs:
           rustup component add clippy rustfmt llvm-tools-preview --toolchain stable
 
       - name: Install quality tools
-        run: ./scripts/install-tools.ps1
+        run: ./scripts/install-tools.ps1 -QualityWorkflow
 
       - name: Format
         run: ./scripts/quality.ps1 fmt

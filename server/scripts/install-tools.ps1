@@ -3,7 +3,8 @@ param(
     [switch]$IncludeNightly,
     [switch]$IncludeFuzzTools,
     [switch]$VerusOnly,
-    [switch]$CallgraphOnly
+    [switch]$CallgraphOnly,
+    [switch]$QualityWorkflow
 )
 
 $ErrorActionPreference = "Stop"
@@ -21,21 +22,29 @@ $isLinuxHost = $runtime::IsOSPlatform([System.Runtime.InteropServices.OSPlatform
 $isMacOSHost = $runtime::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::OSX)
 
 $stableComponents = @("clippy", "rustfmt", "llvm-tools-preview", "rust-analyzer")
-$stableTools = @(
+$workflowStableTools = @(
     "cargo-nextest",
     "cargo-llvm-cov",
     "cargo-deny",
     "cargo-audit",
     "cargo-fuzz",
     "cargo-hack",
-    "cargo-mutants",
-    "cargo-geiger",
     "mdbook",
     "rust-code-analysis-cli",
     "taplo-cli",
     "typos-cli",
     "zizmor"
 )
+$developerOnlyStableTools = @(
+    "cargo-mutants",
+    "cargo-geiger"
+)
+$stableTools = if ($QualityWorkflow) {
+    $workflowStableTools
+}
+else {
+    $workflowStableTools + $developerOnlyStableTools
+}
 
 function Get-VerusAssetName {
     $os = [System.Runtime.InteropServices.RuntimeInformation]::OSDescription
