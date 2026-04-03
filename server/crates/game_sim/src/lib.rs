@@ -457,9 +457,7 @@ struct SimPlayer {
     alive: bool,
     moving: bool,
     movement_intent: MovementIntent,
-    queued_primary: bool,
-    queued_cast_slot: Option<u8>,
-    queued_cast_self_target: bool,
+    queued_actions: QueuedActions,
     active_cast: Option<PendingCast>,
     melee: MeleeDefinition,
     skills: [Option<SkillDefinition>; 5],
@@ -470,6 +468,13 @@ struct SimPlayer {
     hard_cc_dr: CrowdControlDrState,
     movement_cc_dr: CrowdControlDrState,
     cast_cc_dr: CrowdControlDrState,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct QueuedActions {
+    primary: bool,
+    cast_slot: Option<u8>,
+    cast_self_target: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -650,9 +655,7 @@ impl SimulationWorld {
                         alive: true,
                         moving: false,
                         movement_intent: MovementIntent::zero(),
-                        queued_primary: false,
-                        queued_cast_slot: None,
-                        queued_cast_self_target: false,
+                        queued_actions: QueuedActions::default(),
                         active_cast: None,
                         melee: player.melee,
                         skills: player.skills,
@@ -749,7 +752,7 @@ impl SimulationWorld {
         if player.active_cast.is_some() {
             return Ok(());
         }
-        player.queued_primary = true;
+        player.queued_actions.primary = true;
         Ok(())
     }
 
@@ -780,8 +783,8 @@ impl SimulationWorld {
         if player.active_cast.is_some() {
             return Ok(());
         }
-        player.queued_cast_slot = Some(slot);
-        player.queued_cast_self_target = self_target;
+        player.queued_actions.cast_slot = Some(slot);
+        player.queued_actions.cast_self_target = self_target;
         Ok(())
     }
 
@@ -825,9 +828,7 @@ impl SimulationWorld {
             player.alive = true;
             player.moving = false;
             player.movement_intent = MovementIntent::zero();
-            player.queued_primary = false;
-            player.queued_cast_slot = None;
-            player.queued_cast_self_target = false;
+            player.queued_actions = QueuedActions::default();
             player.active_cast = None;
             player.primary_cooldown_remaining_ms = 0;
             player.slot_cooldown_remaining_ms = [0; 5];

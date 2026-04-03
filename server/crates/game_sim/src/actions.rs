@@ -2,9 +2,33 @@ use super::{
     arena_effect_kind, normalize_aim, project_from_aim, resolve_movement, round_f32_to_i32,
     saturating_i16, truncate_line_to_obstacles, ActiveCastMode, ArenaDeployableKind, ArenaEffect,
     ArenaEffectKind, DeployableBehavior, DeployableState, PendingCast, PlayerId, ProjectileState,
-    SimCastCancelReason, SimCastMode, SimMissReason, SimPlayerState, SimTargetKind,
+    QueuedActions, SimCastCancelReason, SimCastMode, SimMissReason, SimPlayerState, SimTargetKind,
     SimulationEvent, SimulationWorld, SkillBehavior, StatusKind, TargetEntity, PLAYER_RADIUS_UNITS,
 };
+
+#[derive(Clone, Copy, Debug)]
+struct CastExecution {
+    attacker: PlayerId,
+    attacker_state: SimPlayerState,
+    slot: u8,
+    self_target: bool,
+}
+
+#[derive(Clone, Debug)]
+struct AreaEffectExecution {
+    range: u16,
+    radius: u16,
+    effect_kind: ArenaEffectKind,
+    payload: game_content::EffectPayload,
+}
+
+#[derive(Clone, Debug)]
+struct DashExecution {
+    distance: u16,
+    effect_kind: ArenaEffectKind,
+    impact_radius: Option<u16>,
+    payload: Option<game_content::EffectPayload>,
+}
 
 fn behavior_label(behavior: &SkillBehavior) -> &'static str {
     match behavior {
@@ -88,37 +112,27 @@ impl SimulationWorld {
                         )
                     });
 
-            let queued_primary = self
+            let queued_actions = self
                 .players
                 .get(&player_id)
-                .is_some_and(|player| player.queued_primary);
-            let queued_cast_slot = self
-                .players
-                .get(&player_id)
-                .and_then(|player| player.queued_cast_slot);
-            let queued_cast_self_target = self
-                .players
-                .get(&player_id)
-                .is_some_and(|player| player.queued_cast_self_target);
+                .map_or_else(Default::default, |player| player.queued_actions);
 
-            if queued_primary && !actions_blocked {
+            if queued_actions.primary && !actions_blocked {
                 events.extend(self.resolve_primary_attack(player_id, snapshot));
             }
-            if let Some(slot) = queued_cast_slot {
+            if let Some(slot) = queued_actions.cast_slot {
                 if !casts_blocked {
                     events.extend(self.resolve_cast(
                         player_id,
                         snapshot,
                         slot,
-                        queued_cast_self_target,
+                        queued_actions.cast_self_target,
                     ));
                 }
             }
 
             if let Some(player) = self.players.get_mut(&player_id) {
-                player.queued_primary = false;
-                player.queued_cast_slot = None;
-                player.queued_cast_self_target = false;
+                player.queued_actions = QueuedActions::default();
             }
         }
     }
@@ -724,14 +738,18 @@ impl SimulationWorld {
         }
 
         self.cast_beam_skill(
-            attacker,
-            attacker_state,
-            slot,
-            self_target,
-            range,
-            radius,
-            arena_effect_kind(effect),
-            payload,
+            CastExecution {
+                attacker,
+                attacker_state,
+                slot,
+                self_target,
+            },
+            AreaEffectExecution {
+                range,
+                radius,
+                effect_kind: arena_effect_kind(effect),
+                payload,
+            },
         )
     }
 
@@ -755,14 +773,18 @@ impl SimulationWorld {
         }
 
         self.cast_dash_skill(
-            attacker,
-            attacker_state,
-            slot,
-            self_target,
-            distance,
-            arena_effect_kind(effect),
-            impact_radius,
-            payload,
+            CastExecution {
+                attacker,
+                attacker_state,
+                slot,
+                self_target,
+            },
+            DashExecution {
+                distance,
+                effect_kind: arena_effect_kind(effect),
+                impact_radius,
+                payload,
+            },
         )
     }
 
@@ -786,14 +808,18 @@ impl SimulationWorld {
         }
 
         self.cast_burst_skill(
-            attacker,
-            attacker_state,
-            slot,
-            self_target,
-            range,
-            radius,
-            arena_effect_kind(effect),
-            payload,
+            CastExecution {
+                attacker,
+                attacker_state,
+                slot,
+                self_target,
+            },
+            AreaEffectExecution {
+                range,
+                radius,
+                effect_kind: arena_effect_kind(effect),
+                payload,
+            },
         )
     }
 
@@ -1004,14 +1030,18 @@ impl SimulationWorld {
                         behavior: "channel",
                     });
                     events.extend(self.execute_channel_tick(
-                        player_id,
-                        attacker_state,
-                        slot,
-                        self_target,
-                        range,
-                        radius,
-                        effect_kind,
-                        payload.clone(),
+                        CastExecution {
+                            attacker: player_id,
+                            attacker_state,
+                            slot,
+                            self_target,
+                        },
+                        AreaEffectExecution {
+                            range,
+                            radius,
+                            effect_kind,
+                            payload: payload.clone(),
+                        },
                     ));
                 }
                 let channel_finished = self
@@ -1031,54 +1061,48 @@ impl SimulationWorld {
 
     fn execute_channel_tick(
         &mut self,
-        attacker: PlayerId,
-        attacker_state: SimPlayerState,
-        slot: u8,
-        self_target: bool,
-        range: u16,
-        radius: u16,
-        effect_kind: ArenaEffectKind,
-        payload: game_content::EffectPayload,
+        cast: CastExecution,
+        effect: AreaEffectExecution,
     ) -> Vec<SimulationEvent> {
-        let center = if self_target || range == 0 {
-            (attacker_state.x, attacker_state.y)
+        let center = if cast.self_target || effect.range == 0 {
+            (cast.attacker_state.x, cast.attacker_state.y)
         } else {
             let combat_obstacles = self.combat_obstacles();
             let desired_center = project_from_aim(
-                attacker_state.x,
-                attacker_state.y,
-                attacker_state.aim_x,
-                attacker_state.aim_y,
-                range,
+                cast.attacker_state.x,
+                cast.attacker_state.y,
+                cast.attacker_state.aim_x,
+                cast.attacker_state.aim_y,
+                effect.range,
             );
             truncate_line_to_obstacles(
-                (attacker_state.x, attacker_state.y),
+                (cast.attacker_state.x, cast.attacker_state.y),
                 desired_center,
                 &combat_obstacles,
             )
         };
         let mut events = vec![SimulationEvent::EffectSpawned {
             effect: ArenaEffect {
-                kind: effect_kind,
-                owner: attacker,
-                slot,
+                kind: effect.effect_kind,
+                owner: cast.attacker,
+                slot: cast.slot,
                 x: center.0,
                 y: center.1,
                 target_x: center.0,
                 target_y: center.1,
-                radius,
+                radius: effect.radius,
             },
         }];
         let targets = self.find_targets_in_radius(
             center,
-            radius,
+            effect.radius,
             None,
-            payload.kind == game_content::CombatValueKind::Damage,
+            effect.payload.kind == game_content::CombatValueKind::Damage,
         );
         if targets.is_empty() {
             events.push(SimulationEvent::ImpactMiss {
-                source: attacker,
-                slot,
+                source: cast.attacker,
+                slot: cast.slot,
                 reason: SimMissReason::NoTarget,
             });
         } else {
@@ -1092,14 +1116,14 @@ impl SimulationWorld {
                     }
                 };
                 events.push(SimulationEvent::ImpactHit {
-                    source: attacker,
-                    slot,
+                    source: cast.attacker,
+                    slot: cast.slot,
                     target_kind,
                     target_id,
                 });
             }
         }
-        events.extend(self.apply_payload(attacker, slot, &targets, payload));
+        events.extend(self.apply_payload(cast.attacker, cast.slot, &targets, effect.payload));
         events
     }
 
@@ -1171,106 +1195,94 @@ impl SimulationWorld {
         }]
     }
 
-    pub(super) fn cast_beam_skill(
+    fn cast_beam_skill(
         &mut self,
-        attacker: PlayerId,
-        attacker_state: SimPlayerState,
-        slot: u8,
-        self_target: bool,
-        range: u16,
-        radius: u16,
-        effect_kind: ArenaEffectKind,
-        payload: game_content::EffectPayload,
+        cast: CastExecution,
+        effect: AreaEffectExecution,
     ) -> Vec<SimulationEvent> {
-        if self_target {
-            let target = TargetEntity::Player(attacker);
+        if cast.self_target {
+            let target = TargetEntity::Player(cast.attacker);
             let mut events = vec![SimulationEvent::EffectSpawned {
                 effect: ArenaEffect {
-                    kind: effect_kind,
-                    owner: attacker,
-                    slot,
-                    x: attacker_state.x,
-                    y: attacker_state.y,
-                    target_x: attacker_state.x,
-                    target_y: attacker_state.y,
-                    radius,
+                    kind: effect.effect_kind,
+                    owner: cast.attacker,
+                    slot: cast.slot,
+                    x: cast.attacker_state.x,
+                    y: cast.attacker_state.y,
+                    target_x: cast.attacker_state.x,
+                    target_y: cast.attacker_state.y,
+                    radius: effect.radius,
                 },
             }];
-            Self::append_target_outcomes(&mut events, attacker, slot, &[target]);
-            events.extend(self.apply_payload(attacker, slot, &[target], payload));
+            Self::append_target_outcomes(&mut events, cast.attacker, cast.slot, &[target]);
+            events.extend(self.apply_payload(cast.attacker, cast.slot, &[target], effect.payload));
             return events;
         }
         let combat_obstacles = self.combat_obstacles();
         let desired_end = project_from_aim(
-            attacker_state.x,
-            attacker_state.y,
-            attacker_state.aim_x,
-            attacker_state.aim_y,
-            range,
+            cast.attacker_state.x,
+            cast.attacker_state.y,
+            cast.attacker_state.aim_x,
+            cast.attacker_state.aim_y,
+            effect.range,
         );
         let end = truncate_line_to_obstacles(
-            (attacker_state.x, attacker_state.y),
+            (cast.attacker_state.x, cast.attacker_state.y),
             desired_end,
             &combat_obstacles,
         );
         let mut events = vec![SimulationEvent::EffectSpawned {
             effect: ArenaEffect {
-                kind: effect_kind,
-                owner: attacker,
-                slot,
-                x: attacker_state.x,
-                y: attacker_state.y,
+                kind: effect.effect_kind,
+                owner: cast.attacker,
+                slot: cast.slot,
+                x: cast.attacker_state.x,
+                y: cast.attacker_state.y,
                 target_x: end.0,
                 target_y: end.1,
-                radius,
+                radius: effect.radius,
             },
         }];
 
         if let Some(target) = self.find_first_target_on_segment(
-            attacker,
-            (attacker_state.x, attacker_state.y),
+            cast.attacker,
+            (cast.attacker_state.x, cast.attacker_state.y),
             end,
-            radius,
-            payload.kind == game_content::CombatValueKind::Damage,
+            effect.radius,
+            effect.payload.kind == game_content::CombatValueKind::Damage,
         ) {
-            Self::append_target_outcomes(&mut events, attacker, slot, &[target]);
-            events.extend(self.apply_payload(attacker, slot, &[target], payload));
+            Self::append_target_outcomes(&mut events, cast.attacker, cast.slot, &[target]);
+            events.extend(self.apply_payload(cast.attacker, cast.slot, &[target], effect.payload));
         } else {
             events.push(SimulationEvent::ImpactMiss {
-                source: attacker,
-                slot,
+                source: cast.attacker,
+                slot: cast.slot,
                 reason: SimMissReason::NoTarget,
             });
         }
         events
     }
 
-    pub(super) fn cast_dash_skill(
+    fn cast_dash_skill(
         &mut self,
-        attacker: PlayerId,
-        attacker_state: SimPlayerState,
-        slot: u8,
-        self_target: bool,
-        distance: u16,
-        effect_kind: ArenaEffectKind,
-        impact_radius: Option<u16>,
-        payload: Option<game_content::EffectPayload>,
+        cast: CastExecution,
+        dash: DashExecution,
     ) -> Vec<SimulationEvent> {
         let combat_obstacles = self.combat_obstacles();
-        let desired = if self_target {
-            (attacker_state.x, attacker_state.y)
+        let desired = if cast.self_target {
+            (cast.attacker_state.x, cast.attacker_state.y)
         } else {
             project_from_aim(
-                attacker_state.x,
-                attacker_state.y,
-                attacker_state.aim_x,
-                attacker_state.aim_y,
-                distance,
+                cast.attacker_state.x,
+                cast.attacker_state.y,
+                cast.attacker_state.aim_x,
+                cast.attacker_state.aim_y,
+                dash.distance,
             )
         };
         let (resolved_x, resolved_y) = resolve_movement(
-            attacker_state.x,
-            attacker_state.y,
+            cast.attacker_state.x,
+            cast.attacker_state.y,
             i32::from(desired.0),
             i32::from(desired.1),
             self.arena_width_units,
@@ -1281,7 +1293,7 @@ impl SimulationWorld {
             &self.footprint_mask,
             &combat_obstacles,
         );
-        if let Some(player) = self.players.get_mut(&attacker) {
+        if let Some(player) = self.players.get_mut(&cast.attacker) {
             player.x = resolved_x;
             player.y = resolved_y;
             player.moving = false;
@@ -1290,85 +1302,83 @@ impl SimulationWorld {
         let mut events = vec![
             SimulationEvent::EffectSpawned {
                 effect: ArenaEffect {
-                    kind: effect_kind,
-                    owner: attacker,
-                    slot,
-                    x: attacker_state.x,
-                    y: attacker_state.y,
+                    kind: dash.effect_kind,
+                    owner: cast.attacker,
+                    slot: cast.slot,
+                    x: cast.attacker_state.x,
+                    y: cast.attacker_state.y,
                     target_x: resolved_x,
                     target_y: resolved_y,
                     radius: PLAYER_RADIUS_UNITS,
                 },
             },
             SimulationEvent::PlayerMoved {
-                player_id: attacker,
+                player_id: cast.attacker,
                 x: resolved_x,
                 y: resolved_y,
             },
         ];
 
-        if let (Some(radius), Some(payload)) = (impact_radius, payload) {
+        if let (Some(radius), Some(payload)) = (dash.impact_radius, dash.payload) {
             let targets = self.find_targets_in_radius(
                 (resolved_x, resolved_y),
                 radius,
-                if self_target { None } else { Some(attacker) },
+                if cast.self_target {
+                    None
+                } else {
+                    Some(cast.attacker)
+                },
                 payload.kind == game_content::CombatValueKind::Damage,
             );
-            Self::append_target_outcomes(&mut events, attacker, slot, &targets);
-            events.extend(self.apply_payload(attacker, slot, &targets, payload));
+            Self::append_target_outcomes(&mut events, cast.attacker, cast.slot, &targets);
+            events.extend(self.apply_payload(cast.attacker, cast.slot, &targets, payload));
         }
 
         events
     }
 
-    pub(super) fn cast_burst_skill(
+    fn cast_burst_skill(
         &mut self,
-        attacker: PlayerId,
-        attacker_state: SimPlayerState,
-        slot: u8,
-        self_target: bool,
-        range: u16,
-        radius: u16,
-        effect_kind: ArenaEffectKind,
-        payload: game_content::EffectPayload,
+        cast: CastExecution,
+        effect: AreaEffectExecution,
     ) -> Vec<SimulationEvent> {
-        let center = if self_target {
-            (attacker_state.x, attacker_state.y)
+        let center = if cast.self_target {
+            (cast.attacker_state.x, cast.attacker_state.y)
         } else {
             let combat_obstacles = self.combat_obstacles();
             let desired_center = project_from_aim(
-                attacker_state.x,
-                attacker_state.y,
-                attacker_state.aim_x,
-                attacker_state.aim_y,
-                range,
+                cast.attacker_state.x,
+                cast.attacker_state.y,
+                cast.attacker_state.aim_x,
+                cast.attacker_state.aim_y,
+                effect.range,
             );
             truncate_line_to_obstacles(
-                (attacker_state.x, attacker_state.y),
+                (cast.attacker_state.x, cast.attacker_state.y),
                 desired_center,
                 &combat_obstacles,
             )
         };
         let mut events = vec![SimulationEvent::EffectSpawned {
             effect: ArenaEffect {
-                kind: effect_kind,
-                owner: attacker,
-                slot,
+                kind: effect.effect_kind,
+                owner: cast.attacker,
+                slot: cast.slot,
                 x: center.0,
                 y: center.1,
                 target_x: center.0,
                 target_y: center.1,
-                radius,
+                radius: effect.radius,
             },
         }];
         let targets = self.find_targets_in_radius(
             center,
-            radius,
+            effect.radius,
             None,
-            payload.kind == game_content::CombatValueKind::Damage,
+            effect.payload.kind == game_content::CombatValueKind::Damage,
         );
-        Self::append_target_outcomes(&mut events, attacker, slot, &targets);
-        events.extend(self.apply_payload(attacker, slot, &targets, payload));
+        Self::append_target_outcomes(&mut events, cast.attacker, cast.slot, &targets);
+        events.extend(self.apply_payload(cast.attacker, cast.slot, &targets, effect.payload));
         events
     }
 
