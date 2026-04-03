@@ -7,6 +7,7 @@ const COMBAT_TEXT_LIFETIME_SECONDS := 1.18
 const PLAYER_RENDER_LERP_RATE := 11.0
 const PROJECTILE_RENDER_LERP_RATE := 15.0
 const RENDER_SNAP_DISTANCE_UNITS := 220.0
+const ClientStateViewScript := preload("res://scripts/state/client_state_view.gd")
 const WebSocketConfigScript := preload("res://scripts/net/websocket_config.gd")
 
 var websocket_url := WebSocketConfigScript.new().runtime_default_url()
@@ -56,6 +57,7 @@ var visible_tiles := PackedByteArray()
 var explored_tiles := PackedByteArray()
 var training_metrics := {}
 var diagnostics := {}
+var arena_render_revision := 1
 
 
 func _init() -> void:
@@ -137,7 +139,18 @@ func announce_local(message: String) -> void:
 
 func apply_server_event(event: Dictionary) -> void:
 	var event_type := String(event.get("type", "Unknown"))
+	if _apply_session_event(event_type, event):
+		return
+	if _apply_lobby_event(event_type, event):
+		return
+	if _apply_match_flow_event(event_type, event):
+		return
+	if _apply_arena_event(event_type, event):
+		return
+	_append_event("Unhandled event: %s" % event_type)
 
+
+func _apply_session_event(event_type: String, event: Dictionary) -> bool:
 	match event_type:
 		"Connected":
 			local_player_id = int(event.get("player_id", local_player_id))
@@ -159,6 +172,23 @@ func apply_server_event(event: Dictionary) -> void:
 			_clear_arena_state()
 			banner_message = "Connected as %s." % local_player_name
 			_append_event("Connected as %s (#%d)." % [local_player_name, local_player_id])
+			return true
+		"ReturnedToCentralLobby":
+			record = event.get("record", record)
+			_reset_to_central()
+			banner_message = "Returned to the central lobby."
+			_append_event("Returned to the central lobby.")
+			return true
+		"Error":
+			banner_message = String(event.get("message", "Unknown server error"))
+			_append_event("Server error: %s" % banner_message)
+			return true
+		_:
+			return false
+
+
+func _apply_lobby_event(event_type: String, event: Dictionary) -> bool:
+	match event_type:
 		"LobbyDirectorySnapshot":
 			lobby_directory = event.get("lobbies", []).duplicate(true)
 			var lobby_count := lobby_directory.size()
@@ -167,6 +197,7 @@ func apply_server_event(event: Dictionary) -> void:
 				"ies" if lobby_count != 1 else "y",
 			]
 			_append_event(banner_message)
+			return true
 		"GameLobbyCreated":
 			current_lobby_id = int(event.get("lobby_id", 0))
 			screen = "lobby"
@@ -174,42 +205,22 @@ func apply_server_event(event: Dictionary) -> void:
 			lobby_locked = false
 			banner_message = "Created lobby #%d." % current_lobby_id
 			_append_event("Created lobby #%d." % current_lobby_id)
+			return true
 		"GameLobbyJoined":
 			current_lobby_id = int(event.get("lobby_id", current_lobby_id))
 			screen = "lobby"
 			phase_label = "Game Lobby #%d" % current_lobby_id
 			var joined_player_id := int(event.get("player_id", 0))
 			var joined_name := local_player_name if joined_player_id == local_player_id else ""
-			var member := _ensure_roster_entry(joined_player_id, joined_name)
-			member["ready"] = "Not Ready"
-			member["skill"] = ""
+			var joined_member := _ensure_roster_entry(joined_player_id, joined_name)
+			joined_member["ready"] = "Not Ready"
+			joined_member["skill"] = ""
 			banner_message = "%s joined lobby #%d." % [_display_name(joined_player_id), current_lobby_id]
 			_append_event("%s joined lobby #%d." % [_display_name(joined_player_id), current_lobby_id])
+			return true
 		"GameLobbySnapshot":
-			current_lobby_id = int(event.get("lobby_id", current_lobby_id))
-			screen = "lobby"
-			roster.clear()
-			var players: Array = event.get("players", [])
-			for player_data in players:
-				var player_id := int(player_data.get("player_id", 0))
-				var member := _ensure_roster_entry(player_id, String(player_data.get("player_name", "")))
-				member["name"] = String(player_data.get("player_name", member["name"]))
-				member["record"] = player_data.get("record", {})
-				member["team"] = String(player_data.get("team", "Unassigned"))
-				member["ready"] = String(player_data.get("ready", "Not Ready"))
-				member["skill"] = "Awaiting next pick"
-			var phase: Dictionary = event.get("phase", {})
-			var phase_name := String(phase.get("name", "Open"))
-			var seconds_remaining := int(phase.get("seconds_remaining", 0))
-			lobby_locked = phase_name != "Open"
-			phase_label = "Game Lobby #%d" % current_lobby_id
-			if lobby_locked:
-				countdown_label = "Launch in %ds." % seconds_remaining
-				banner_message = "Lobby #%d is locked for launch." % current_lobby_id
-			else:
-				countdown_label = ""
-				banner_message = "Lobby #%d snapshot refreshed." % current_lobby_id
-			_append_event("Lobby #%d snapshot received with %d player(s)." % [current_lobby_id, players.size()])
+			_apply_lobby_snapshot(event)
+			return true
 		"GameLobbyLeft":
 			var left_player_id := int(event.get("player_id", 0))
 			if left_player_id == local_player_id:
@@ -219,20 +230,23 @@ func apply_server_event(event: Dictionary) -> void:
 				roster.erase(left_player_id)
 				banner_message = "%s left lobby #%d." % [_display_name(left_player_id), current_lobby_id]
 			_append_event("%s left lobby #%d." % [_display_name(left_player_id), current_lobby_id])
+			return true
 		"TeamSelected":
 			var team_player_id := int(event.get("player_id", 0))
-			var member := _ensure_roster_entry(team_player_id)
-			member["team"] = String(event.get("team", "Unassigned"))
+			var team_member := _ensure_roster_entry(team_player_id)
+			team_member["team"] = String(event.get("team", "Unassigned"))
 			if bool(event.get("ready_reset", false)):
-				member["ready"] = "Not Ready"
-			banner_message = "%s moved to %s." % [_display_name(team_player_id), member["team"]]
-			_append_event("%s moved to %s." % [_display_name(team_player_id), member["team"]])
+				team_member["ready"] = "Not Ready"
+			banner_message = "%s moved to %s." % [_display_name(team_player_id), team_member["team"]]
+			_append_event("%s moved to %s." % [_display_name(team_player_id), team_member["team"]])
+			return true
 		"ReadyChanged":
 			var ready_player_id := int(event.get("player_id", 0))
 			var ready_member := _ensure_roster_entry(ready_player_id)
 			ready_member["ready"] = String(event.get("ready", "Not Ready"))
 			banner_message = "%s is now %s." % [_display_name(ready_player_id), ready_member["ready"]]
 			_append_event("%s is now %s." % [_display_name(ready_player_id), ready_member["ready"]])
+			return true
 		"LaunchCountdownStarted":
 			lobby_locked = true
 			countdown_label = "Launch locks in %ds for %d players." % [
@@ -241,69 +255,96 @@ func apply_server_event(event: Dictionary) -> void:
 			]
 			banner_message = countdown_label
 			_append_event(countdown_label)
+			return true
 		"LaunchCountdownTick":
 			lobby_locked = true
 			countdown_label = "Launch in %ds." % int(event.get("seconds_remaining", 0))
 			banner_message = countdown_label
 			_append_event(countdown_label)
+			return true
+		_:
+			return false
+
+
+func _apply_lobby_snapshot(event: Dictionary) -> void:
+	current_lobby_id = int(event.get("lobby_id", current_lobby_id))
+	screen = "lobby"
+	roster.clear()
+	var players: Array = event.get("players", [])
+	for player_data in players:
+		var player_id := int(player_data.get("player_id", 0))
+		var member := _ensure_roster_entry(player_id, String(player_data.get("player_name", "")))
+		member["name"] = String(player_data.get("player_name", member["name"]))
+		member["record"] = player_data.get("record", {})
+		member["team"] = String(player_data.get("team", "Unassigned"))
+		member["ready"] = String(player_data.get("ready", "Not Ready"))
+		member["skill"] = "Awaiting next pick"
+	var phase: Dictionary = event.get("phase", {})
+	var phase_name := String(phase.get("name", "Open"))
+	var seconds_remaining := int(phase.get("seconds_remaining", 0))
+	lobby_locked = phase_name != "Open"
+	phase_label = "Game Lobby #%d" % current_lobby_id
+	if lobby_locked:
+		countdown_label = "Launch in %ds." % seconds_remaining
+		banner_message = "Lobby #%d is locked for launch." % current_lobby_id
+	else:
+		countdown_label = ""
+		banner_message = "Lobby #%d snapshot refreshed." % current_lobby_id
+	_append_event("Lobby #%d snapshot received with %d player(s)." % [current_lobby_id, players.size()])
+
+
+func _apply_match_flow_event(event_type: String, event: Dictionary) -> bool:
+	match event_type:
 		"MatchStarted":
-			arena_mode = "Match"
-			screen = "match"
-			current_match_id = int(event.get("match_id", 0))
-			current_round = int(event.get("round", 0))
-			match_phase = "skill_pick"
-			_reset_local_skill_progress()
-			local_round_skill_locked = false
-			round_summary.clear()
-			match_summary.clear()
-			_clear_arena_state()
-			phase_label = "Match #%d, Round %d" % [current_match_id, current_round]
-			countdown_label = "Choose one skill in %ds." % int(event.get("skill_pick_seconds", 0))
-			lobby_locked = false
-			banner_message = "Match #%d started." % current_match_id
-			_append_event("Match #%d started. Round %d skill pick is open." % [
-				current_match_id,
-				current_round,
-			])
+			_start_match_session(event)
+			return true
 		"TrainingStarted":
-			arena_mode = "Training"
-			screen = "match"
-			current_match_id = int(event.get("training_id", 0))
-			current_round = 0
-			match_phase = "combat"
-			_reset_local_skill_progress()
-			local_round_skill_locked = false
-			round_summary.clear()
-			match_summary.clear()
-			_clear_arena_state()
-			phase_label = "Training Grounds"
-			countdown_label = "Choose skills freely, then test on the dummies."
-			lobby_locked = false
-			banner_message = "Training session #%d started." % current_match_id
-			_append_event("Training session #%d started." % current_match_id)
+			_start_training_session(event)
+			return true
 		"SkillChosen":
-			var skill_player_id := int(event.get("player_id", 0))
-			var skill_member := _ensure_roster_entry(skill_player_id)
-			var tree_name := String(event.get("tree", "Unknown"))
-			var tier := int(event.get("tier", 0))
-			skill_member["skill"] = skill_name_for(tree_name, tier)
-			if skill_player_id == local_player_id and tree_name != "":
-				local_skill_progress[tree_name] = max(tier, int(local_skill_progress.get(tree_name, 0)))
-				_remember_local_skill_choice(tree_name, tier, skill_member["skill"])
-				if not is_training_mode():
-					local_round_skill_locked = true
-			banner_message = "%s locked %s." % [_display_name(skill_player_id), skill_member["skill"]]
-			_append_event("%s locked %s." % [_display_name(skill_player_id), skill_member["skill"]])
+			_apply_skill_chosen_event(event)
+			return true
+		"PreCombatStarted", "CombatStarted":
+			_apply_match_phase_event(event_type, event)
+			return true
+		"RoundWon", "RoundSummary", "MatchEnded", "MatchSummary":
+			_apply_match_result_event(event_type, event)
+			return true
+		_:
+			return false
+
+
+func _apply_skill_chosen_event(event: Dictionary) -> void:
+	var skill_player_id := int(event.get("player_id", 0))
+	var skill_member := _ensure_roster_entry(skill_player_id)
+	var tree_name := String(event.get("tree", "Unknown"))
+	var tier := int(event.get("tier", 0))
+	skill_member["skill"] = ClientStateViewScript.skill_name_for(skill_catalog, tree_name, tier)
+	if skill_player_id == local_player_id and tree_name != "":
+		local_skill_progress[tree_name] = max(tier, int(local_skill_progress.get(tree_name, 0)))
+		_remember_local_skill_choice(tree_name, tier, skill_member["skill"])
+		if not is_training_mode():
+			local_round_skill_locked = true
+	banner_message = "%s locked %s." % [_display_name(skill_player_id), skill_member["skill"]]
+	_append_event("%s locked %s." % [_display_name(skill_player_id), skill_member["skill"]])
+
+
+func _apply_match_phase_event(event_type: String, event: Dictionary) -> void:
+	match event_type:
 		"PreCombatStarted":
 			match_phase = "pre_combat"
 			countdown_label = "Arena unlocks in %ds." % int(event.get("seconds_remaining", 0))
-			banner_message = countdown_label
-			_append_event(countdown_label)
 		"CombatStarted":
 			match_phase = "combat"
-			countdown_label = "Combat is live. The shell can now send placeholder primary attacks."
-			banner_message = countdown_label
-			_append_event(countdown_label)
+			countdown_label = "Combat is live. The shell can now send primary attacks."
+		_:
+			return
+	banner_message = countdown_label
+	_append_event(countdown_label)
+
+
+func _apply_match_result_event(event_type: String, event: Dictionary) -> void:
+	match event_type:
 		"RoundWon":
 			match_phase = "skill_pick"
 			current_round = int(event.get("round", current_round))
@@ -312,6 +353,7 @@ func apply_server_event(event: Dictionary) -> void:
 			countdown_label = "Round %d ended. Choose the next skill when ready." % current_round
 			local_round_skill_locked = false
 			arena_effects.clear()
+			_mark_arena_render_dirty()
 			banner_message = "%s won round %d." % [
 				String(event.get("winning_team", "Unknown Team")),
 				current_round,
@@ -332,6 +374,7 @@ func apply_server_event(event: Dictionary) -> void:
 			score_a = int(event.get("score_a", score_a))
 			score_b = int(event.get("score_b", score_b))
 			arena_effects.clear()
+			_mark_arena_render_dirty()
 			outcome_label = "%s, %d-%d" % [
 				String(event.get("outcome", "Unknown")),
 				score_a,
@@ -342,54 +385,57 @@ func apply_server_event(event: Dictionary) -> void:
 		"MatchSummary":
 			match_summary = (event.get("summary", {}) as Dictionary).duplicate(true)
 			_append_event("Match summary received.")
-		"ReturnedToCentralLobby":
-			record = event.get("record", record)
-			_reset_to_central()
-			banner_message = "Returned to the central lobby."
-			_append_event("Returned to the central lobby.")
-		"Error":
-			banner_message = String(event.get("message", "Unknown server error"))
-			_append_event("Server error: %s" % banner_message)
+
+
+func _start_match_session(event: Dictionary) -> void:
+	arena_mode = "Match"
+	screen = "match"
+	current_match_id = int(event.get("match_id", 0))
+	current_round = int(event.get("round", 0))
+	match_phase = "skill_pick"
+	_reset_local_skill_progress()
+	local_round_skill_locked = false
+	round_summary.clear()
+	match_summary.clear()
+	_clear_arena_state()
+	_mark_arena_render_dirty()
+	phase_label = "Match #%d, Round %d" % [current_match_id, current_round]
+	countdown_label = "Choose one skill in %ds." % int(event.get("skill_pick_seconds", 0))
+	lobby_locked = false
+	banner_message = "Match #%d started." % current_match_id
+	_append_event("Match #%d started. Round %d skill pick is open." % [
+		current_match_id,
+		current_round,
+	])
+
+
+func _start_training_session(event: Dictionary) -> void:
+	arena_mode = "Training"
+	screen = "match"
+	current_match_id = int(event.get("training_id", 0))
+	current_round = 0
+	match_phase = "combat"
+	_reset_local_skill_progress()
+	local_round_skill_locked = false
+	round_summary.clear()
+	match_summary.clear()
+	_clear_arena_state()
+	_mark_arena_render_dirty()
+	phase_label = "Training Grounds"
+	countdown_label = "Choose skills freely, then test on the dummies."
+	lobby_locked = false
+	banner_message = "Training session #%d started." % current_match_id
+	_append_event("Training session #%d started." % current_match_id)
+
+
+func _apply_arena_event(event_type: String, event: Dictionary) -> bool:
+	match event_type:
 		"ArenaStateSnapshot":
-			var snapshot: Dictionary = event.get("snapshot", {})
-			arena_mode = String(snapshot.get("mode", arena_mode))
-			_apply_arena_phase(snapshot)
-			arena_width = int(snapshot.get("width", 0))
-			arena_height = int(snapshot.get("height", 0))
-			arena_tile_units = int(snapshot.get("tile_units", 0))
-			footprint_tiles = snapshot.get("footprint_tiles", PackedByteArray())
-			visible_tiles = snapshot.get("visible_tiles", PackedByteArray())
-			explored_tiles = snapshot.get("explored_tiles", PackedByteArray())
-			training_metrics = (snapshot.get("training_metrics", {}) as Dictionary).duplicate(true)
-			arena_obstacles.clear()
-			for obstacle_data in snapshot.get("obstacles", []):
-				arena_obstacles.append((obstacle_data as Dictionary).duplicate(true))
-			arena_deployables.clear()
-			for deployable_data in snapshot.get("deployables", []):
-				var deployable := (deployable_data as Dictionary).duplicate(true)
-				if _is_rendered_deployable_kind(String(deployable.get("kind", ""))):
-					arena_deployables.append(deployable)
-			_replace_arena_players(snapshot.get("players", []))
-			_replace_arena_projectiles(snapshot.get("projectiles", []))
+			_apply_full_arena_snapshot(event.get("snapshot", {}))
+			return true
 		"ArenaDeltaSnapshot":
-			var delta_snapshot: Dictionary = event.get("snapshot", {})
-			arena_mode = String(delta_snapshot.get("mode", arena_mode))
-			_apply_arena_phase(delta_snapshot)
-			arena_tile_units = int(delta_snapshot.get("tile_units", arena_tile_units))
-			footprint_tiles = delta_snapshot.get("footprint_tiles", footprint_tiles)
-			visible_tiles = delta_snapshot.get("visible_tiles", PackedByteArray())
-			explored_tiles = delta_snapshot.get("explored_tiles", PackedByteArray())
-			training_metrics = (delta_snapshot.get("training_metrics", training_metrics) as Dictionary).duplicate(true)
-			arena_obstacles.clear()
-			for obstacle_delta in delta_snapshot.get("obstacles", []):
-				arena_obstacles.append((obstacle_delta as Dictionary).duplicate(true))
-			arena_deployables.clear()
-			for deployable_delta in delta_snapshot.get("deployables", []):
-				var deployable := (deployable_delta as Dictionary).duplicate(true)
-				if _is_rendered_deployable_kind(String(deployable.get("kind", ""))):
-					arena_deployables.append(deployable)
-			_replace_arena_players(delta_snapshot.get("players", []))
-			_replace_arena_projectiles(delta_snapshot.get("projectiles", []))
+			_apply_delta_arena_snapshot(event.get("snapshot", {}))
+			return true
 		"ArenaEffectBatch":
 			for effect_data in event.get("effects", []):
 				var effect: Dictionary = (effect_data as Dictionary).duplicate(true)
@@ -397,11 +443,52 @@ func apply_server_event(event: Dictionary) -> void:
 				effect["ttl"] = ttl
 				effect["ttl_max"] = ttl
 				arena_effects.append(effect)
+			_mark_arena_render_dirty()
+			return true
 		"ArenaCombatTextBatch":
 			for entry_data in event.get("entries", []):
 				_queue_local_combat_text((entry_data as Dictionary).duplicate(true))
+			_mark_arena_render_dirty()
+			return true
 		_:
-			_append_event("Unhandled event: %s" % event_type)
+			return false
+
+
+func _apply_full_arena_snapshot(snapshot: Dictionary) -> void:
+	arena_mode = String(snapshot.get("mode", arena_mode))
+	_apply_arena_phase(snapshot)
+	arena_width = int(snapshot.get("width", 0))
+	arena_height = int(snapshot.get("height", 0))
+	arena_tile_units = int(snapshot.get("tile_units", 0))
+	footprint_tiles = snapshot.get("footprint_tiles", PackedByteArray())
+	visible_tiles = snapshot.get("visible_tiles", PackedByteArray())
+	explored_tiles = snapshot.get("explored_tiles", PackedByteArray())
+	_apply_arena_common(snapshot)
+
+
+func _apply_delta_arena_snapshot(snapshot: Dictionary) -> void:
+	arena_mode = String(snapshot.get("mode", arena_mode))
+	_apply_arena_phase(snapshot)
+	arena_tile_units = int(snapshot.get("tile_units", arena_tile_units))
+	footprint_tiles = snapshot.get("footprint_tiles", footprint_tiles)
+	visible_tiles = snapshot.get("visible_tiles", PackedByteArray())
+	explored_tiles = snapshot.get("explored_tiles", PackedByteArray())
+	_apply_arena_common(snapshot)
+
+
+func _apply_arena_common(snapshot: Dictionary) -> void:
+	training_metrics = (snapshot.get("training_metrics", training_metrics) as Dictionary).duplicate(true)
+	arena_obstacles.clear()
+	for obstacle_data in snapshot.get("obstacles", []):
+		arena_obstacles.append((obstacle_data as Dictionary).duplicate(true))
+	arena_deployables.clear()
+	for deployable_data in snapshot.get("deployables", []):
+		var deployable := (deployable_data as Dictionary).duplicate(true)
+		if _is_rendered_deployable_kind(String(deployable.get("kind", ""))):
+			arena_deployables.append(deployable)
+	_replace_arena_players(snapshot.get("players", []))
+	_replace_arena_projectiles(snapshot.get("projectiles", []))
+	_mark_arena_render_dirty()
 
 
 func ready_button_text() -> String:
@@ -425,299 +512,161 @@ func self_entry() -> Dictionary:
 
 
 func roster_lines() -> Array[String]:
-	var lines: Array[String] = []
-	var ids := roster.keys()
-	ids.sort()
-	for player_id in ids:
-		var member: Dictionary = roster[player_id]
-		lines.append("%s  |  %s  |  %s  |  %s" % [
-			member.get("name", "Player %d" % int(player_id)),
-			member.get("team", "Unassigned"),
-			member.get("ready", "Not Ready"),
-			member.get("skill", "No skill locked"),
-		])
-	if lines.is_empty():
-		lines.append("No tracked players yet.")
-	return lines
+	return ClientStateViewScript.roster_lines(roster)
 
 
 func lobby_roster_lines() -> Array[String]:
-	var lines: Array[String] = []
-	var ids := roster.keys()
-	ids.sort()
-	for player_id in ids:
-		var member: Dictionary = roster[player_id]
-		lines.append("%s  |  %s  |  %s" % [
-			member.get("name", "Player %d" % int(player_id)),
-			member.get("team", "Unassigned"),
-			member.get("ready", "Not Ready"),
-		])
-	if lines.is_empty():
-		lines.append("No players are currently in this lobby.")
-	return lines
+	return ClientStateViewScript.lobby_roster_lines(roster)
 
 
 func lobby_directory_lines() -> Array[String]:
-	var lines: Array[String] = []
-	for lobby in lobby_directory:
-		var phase: Dictionary = lobby.get("phase", {})
-		var phase_name := String(phase.get("name", "Open"))
-		var seconds_remaining := int(phase.get("seconds_remaining", 0))
-		var phase_text := phase_name
-		if phase_name == "Launch Countdown":
-			phase_text = "%s (%ds)" % [phase_name, seconds_remaining]
-		lines.append(
-			"Lobby #%d  |  players %d  |  A %d  B %d  |  ready %d  |  %s" % [
-				int(lobby.get("lobby_id", 0)),
-				int(lobby.get("player_count", 0)),
-				int(lobby.get("team_a_count", 0)),
-				int(lobby.get("team_b_count", 0)),
-				int(lobby.get("ready_count", 0)),
-				phase_text,
-			]
-		)
-	if lines.is_empty():
-		lines.append("No active game lobbies.")
-	return lines
+	return ClientStateViewScript.lobby_directory_lines(lobby_directory)
 
 
 func lobby_directory_bbcode() -> String:
-	var lines: Array[String] = []
-	for lobby in lobby_directory:
-		var lobby_id := int(lobby.get("lobby_id", 0))
-		var phase: Dictionary = lobby.get("phase", {})
-		var phase_name := String(phase.get("name", "Open"))
-		var seconds_remaining := int(phase.get("seconds_remaining", 0))
-		var phase_text := phase_name
-		if phase_name == "Launch Countdown":
-			phase_text = "%s (%ds)" % [phase_name, seconds_remaining]
-		var join_text := "[url=%d]Join[/url]" % lobby_id if phase_name == "Open" else "[color=#c98e78]Locked[/color]"
-		lines.append(
-			"%s  Lobby #%d  |  players %d  |  A %d  B %d  |  ready %d  |  %s" % [
-				join_text,
-				lobby_id,
-				int(lobby.get("player_count", 0)),
-				int(lobby.get("team_a_count", 0)),
-				int(lobby.get("team_b_count", 0)),
-				int(lobby.get("ready_count", 0)),
-				phase_text,
-			]
-		)
-	if lines.is_empty():
-		lines.append("No active game lobbies.")
-	return "\n".join(lines)
+	return ClientStateViewScript.lobby_directory_bbcode(lobby_directory)
 
 
 func record_text() -> String:
-	return "W-L-NC  %d-%d-%d" % [
-		int(record.get("wins", 0)),
-		int(record.get("losses", 0)),
-		int(record.get("no_contests", 0)),
-	]
+	return ClientStateViewScript.record_text(record)
 
 
 func score_text() -> String:
-	return "Team A %d  :  %d Team B" % [score_a, score_b]
+	return ClientStateViewScript.score_text(score_a, score_b)
 
 
 func event_log_text() -> String:
-	return "\n".join(recent_events)
+	return ClientStateViewScript.event_log_text(recent_events)
 
 
 func round_summary_text() -> String:
-	if round_summary.is_empty():
-		return ""
-	var round_number := int(round_summary.get("round", current_round))
-	var lines: Array[String] = []
-	lines.append("Round %d" % round_number)
-	lines.append("This round")
-	lines.append_array(_summary_block_lines(round_summary.get("round_totals", [])))
-	lines.append("")
-	lines.append("Running total")
-	lines.append_array(_summary_block_lines(round_summary.get("running_totals", [])))
-	return "\n".join(lines)
+	return ClientStateViewScript.round_summary_text(round_summary, current_round)
 
 
 func match_summary_text() -> String:
-	if match_summary.is_empty():
-		return ""
-	var rounds_played := int(match_summary.get("rounds_played", 0))
-	var lines: Array[String] = []
-	lines.append("Rounds played: %d" % rounds_played)
-	lines.append_array(_summary_block_lines(match_summary.get("totals", [])))
-	return "\n".join(lines)
+	return ClientStateViewScript.match_summary_text(match_summary)
 
 
 func lobby_note() -> String:
-	return "Click an open lobby in the directory, enter a manual lobby ID, or start a solo training session. Use Menu for your alias, record, roster, and event views while the backend keeps directory, roster, and arena state authoritative."
+	return ClientStateViewScript.lobby_note()
 
 
 func can_join_or_create_lobby() -> bool:
-	return transport_state == "open" and screen == "central"
+	return ClientStateViewScript.can_join_or_create_lobby(transport_state, screen)
 
 
 func can_start_training() -> bool:
-	return transport_state == "open" and screen == "central"
+	return ClientStateViewScript.can_start_training(transport_state, screen)
 
 
 func can_manage_lobby() -> bool:
-	return transport_state == "open" and screen == "lobby" and not lobby_locked
+	return ClientStateViewScript.can_manage_lobby(transport_state, screen, lobby_locked)
 
 
 func can_leave_lobby() -> bool:
-	return transport_state == "open" and screen == "lobby" and not lobby_locked
+	return ClientStateViewScript.can_leave_lobby(transport_state, screen, lobby_locked)
 
 
 func can_choose_skill() -> bool:
-	if is_training_mode():
-		return transport_state == "open" and screen == "match"
-	return (
-		transport_state == "open"
-		and screen == "match"
-		and match_phase == "skill_pick"
-		and not local_round_skill_locked
+	return ClientStateViewScript.can_choose_skill(
+		transport_state,
+		screen,
+		is_training_mode(),
+		match_phase,
+		local_round_skill_locked
 	)
 
 
 func next_skill_tier_for(tree_name: String) -> int:
-	if tree_name == "":
-		return 0
-	if not skill_tree_names().has(tree_name):
-		return 0
-	var current_tier := int(local_skill_progress.get(tree_name, 0))
-	if current_tier >= 5:
-		return 0
-	return current_tier + 1
+	return ClientStateViewScript.next_skill_tier_for(tree_name, skill_catalog, local_skill_progress)
 
 
 func can_choose_skill_option(tree_name: String, tier: int) -> bool:
-	if is_training_mode():
-		return transport_state == "open" and screen == "match" and tier >= 1 and tier <= 5
-	return can_choose_skill() and tier == next_skill_tier_for(tree_name)
+	return ClientStateViewScript.can_choose_skill_option(
+		tree_name,
+		tier,
+		transport_state,
+		screen,
+		is_training_mode(),
+		match_phase,
+		local_round_skill_locked,
+		skill_catalog,
+		local_skill_progress
+	)
 
 
 func skill_tree_names() -> Array[String]:
-	var ordered: Array[String] = []
-	for entry in skill_catalog:
-		var tree_name := String(entry.get("tree", ""))
-		if tree_name != "" and not ordered.has(tree_name):
-			ordered.append(tree_name)
-	if ordered.is_empty():
-		for tree_name in local_skill_progress.keys():
-			ordered.append(String(tree_name))
-	return ordered
+	return ClientStateViewScript.skill_tree_names(skill_catalog, local_skill_progress)
 
 
 func skill_entries_for(tree_name: String) -> Array[Dictionary]:
-	var entries: Array[Dictionary] = []
-	for entry in skill_catalog:
-		if String(entry.get("tree", "")) == tree_name:
-			entries.append((entry as Dictionary).duplicate(true))
-	entries.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
-		return int(a.get("tier", 0)) < int(b.get("tier", 0))
-	)
-	return entries
+	return ClientStateViewScript.skill_entries_for(skill_catalog, tree_name)
 
 
 func skill_name_for(tree_name: String, tier: int) -> String:
-	for entry in skill_catalog:
-		if String(entry.get("tree", "")) == tree_name and int(entry.get("tier", 0)) == tier:
-			return String(entry.get("skill_name", "%s %d" % [tree_name, tier]))
-	return "%s %d" % [tree_name, tier]
+	return ClientStateViewScript.skill_name_for(skill_catalog, tree_name, tier)
 
 
 func skill_description_for(tree_name: String, tier: int) -> String:
-	var entry := _skill_catalog_entry(tree_name, tier)
-	if entry.is_empty():
-		return ""
-	return String(entry.get("skill_description", ""))
+	return ClientStateViewScript.skill_description_for(skill_catalog, tree_name, tier)
 
 
 func skill_summary_for(tree_name: String, tier: int) -> String:
-	var entry := _skill_catalog_entry(tree_name, tier)
-	if entry.is_empty():
-		return ""
-	return String(entry.get("skill_summary", ""))
+	return ClientStateViewScript.skill_summary_for(skill_catalog, tree_name, tier)
 
 
 func skill_ui_category_for(tree_name: String, tier: int) -> String:
-	var entry := _skill_catalog_entry(tree_name, tier)
-	if entry.is_empty():
-		return "neutral"
-	return String(entry.get("ui_category", "neutral"))
+	return ClientStateViewScript.skill_ui_category_for(skill_catalog, tree_name, tier)
 
 
 func skill_tooltip_for(tree_name: String, tier: int) -> String:
-	var description := skill_description_for(tree_name, tier)
-	var summary := skill_summary_for(tree_name, tier)
-	var parts: Array[String] = []
-	if description != "":
-		parts.append(description)
-	if summary != "":
-		if not parts.is_empty():
-			parts.append("")
-		parts.append(summary)
-	return "\n".join(parts)
+	return ClientStateViewScript.skill_tooltip_for(skill_catalog, tree_name, tier)
 
 
 func skill_catalog_signature() -> String:
-	var parts: Array[String] = []
-	for entry in skill_catalog:
-		parts.append("%s:%d:%s:%s:%s:%s:%s" % [
-			String(entry.get("tree", "")),
-			int(entry.get("tier", 0)),
-			String(entry.get("skill_id", "")),
-			String(entry.get("skill_name", "")),
-			String(entry.get("skill_description", "")),
-			String(entry.get("skill_summary", "")),
-			String(entry.get("ui_category", "")),
-		])
-	return "|".join(parts)
+	return ClientStateViewScript.skill_catalog_signature(skill_catalog)
 
 
 func can_quit_results() -> bool:
-	return transport_state == "open" and screen == "results"
+	return ClientStateViewScript.can_quit_results(transport_state, screen)
 
 
 func can_reset_training() -> bool:
-	return transport_state == "open" and is_training_mode()
+	return ClientStateViewScript.can_reset_training(transport_state, is_training_mode())
 
 
 func can_quit_arena() -> bool:
-	return transport_state == "open" and (screen == "results" or is_training_mode())
+	return ClientStateViewScript.can_quit_arena(transport_state, screen, is_training_mode())
 
 
 func can_send_combat_input() -> bool:
-	var player := local_arena_player()
-	return (
-		transport_state == "open"
-		and screen == "match"
-		and (match_phase == "combat" or is_training_mode())
-		and not player.is_empty()
-		and bool(player.get("alive", false))
+	return ClientStateViewScript.can_send_combat_input(
+		transport_state,
+		screen,
+		is_training_mode(),
+		match_phase,
+		local_arena_player()
 	)
 
 
 func can_use_combat_slot(slot: int) -> bool:
-	if slot < 1 or slot > 5:
-		return false
-	var player := local_arena_player()
-	var cooldowns: Array = player.get("slot_cooldown_remaining_ms", [])
-	var remaining := int(cooldowns[slot - 1]) if cooldowns.size() >= slot else 0
-	return (
-		can_send_combat_input()
-		and int(player.get("current_cast_slot", 0)) == 0
-		and slot <= int(player.get("unlocked_skill_slots", 0))
-		and remaining <= 0
+	return ClientStateViewScript.can_use_combat_slot(
+		slot,
+		transport_state,
+		screen,
+		is_training_mode(),
+		match_phase,
+		local_arena_player()
 	)
 
 
 func can_use_primary_attack() -> bool:
-	var player := local_arena_player()
-	return (
-		can_send_combat_input()
-		and int(player.get("current_cast_slot", 0)) == 0
-		and int(player.get("primary_cooldown_remaining_ms", 0)) <= 0
+	return ClientStateViewScript.can_use_primary_attack(
+		transport_state,
+		screen,
+		is_training_mode(),
+		match_phase,
+		local_arena_player()
 	)
 
 
@@ -751,59 +700,24 @@ func authoritative_arena_projectiles_list() -> Array[Dictionary]:
 
 
 func local_skill_name_for_slot(slot: int) -> String:
-	if slot <= 0:
-		return "Awaiting pick"
-	if slot <= local_skill_loadout.size():
-		return String(local_skill_loadout[slot - 1].get("skill_name", "Awaiting pick"))
-	return "Awaiting pick"
+	return ClientStateViewScript.local_skill_name_for_slot(local_skill_loadout, slot)
 
 
 func player_skill_name_for_slot(player_id: int, slot: int) -> String:
-	if slot <= 0:
-		return "Melee"
-	if player_id == local_player_id:
-		return local_skill_name_for_slot(slot)
-	if roster.has(player_id):
-		var member: Dictionary = roster[player_id]
-		var skill_name := String(member.get("skill", ""))
-		if skill_name != "" and skill_name != "Awaiting next pick" and skill_name != "No skill locked":
-			return skill_name
-	return "Slot %d" % slot
+	return ClientStateViewScript.player_skill_name_for_slot(
+		local_player_id,
+		local_skill_loadout,
+		roster,
+		player_id,
+		slot
+	)
 
 
 func cooldown_summary_text() -> String:
-	var player := local_arena_player()
-	if player.is_empty():
-		return "Cooldowns: waiting for a local combat snapshot."
-
-	var labels: Array[String] = []
-	var current_cast_slot := int(player.get("current_cast_slot", 0))
-	if current_cast_slot > 0:
-		labels.append("Casting %s %d/%dms" % [
-			local_skill_name_for_slot(current_cast_slot),
-			int(player.get("current_cast_remaining_ms", 0)),
-			int(player.get("current_cast_total_ms", 0)),
-		])
-	labels.append("Melee %s" % _cooldown_token(
-		int(player.get("primary_cooldown_remaining_ms", 0)),
-		int(player.get("primary_cooldown_total_ms", 0))
-	))
-	var unlocked_slots := int(player.get("unlocked_skill_slots", 0))
-	var remaining_list: Array = player.get("slot_cooldown_remaining_ms", [])
-	var total_list: Array = player.get("slot_cooldown_total_ms", [])
-	for slot in range(1, 6):
-		var skill_name := local_skill_name_for_slot(slot)
-		var remaining := int(remaining_list[slot - 1]) if remaining_list.size() >= slot else 0
-		var total := int(total_list[slot - 1]) if total_list.size() >= slot else 0
-		if slot > unlocked_slots:
-			labels.append("%d %s locked" % [slot, skill_name])
-		else:
-			labels.append("%d %s %s" % [
-				slot,
-				skill_name,
-				_cooldown_token(remaining, total),
-			])
-	return "Cooldowns: %s" % "  |  ".join(labels)
+	return ClientStateViewScript.cooldown_summary_text(
+		local_arena_player(),
+		local_skill_loadout
+	)
 
 
 func arena_players_list() -> Array[Dictionary]:
@@ -855,6 +769,10 @@ func arena_tile_height() -> int:
 	return int(arena_height / arena_tile_units)
 
 
+func current_arena_render_revision() -> int:
+	return arena_render_revision
+
+
 func is_tile_in_footprint(column: int, row: int) -> bool:
 	if footprint_tiles.is_empty():
 		return true
@@ -869,21 +787,33 @@ func is_tile_explored(column: int, row: int) -> bool:
 	return _mask_has_tile(explored_tiles, column, row)
 
 
-func advance_visuals(delta: float) -> void:
+func advance_visuals(delta: float) -> bool:
+	var changed := false
 	for index in range(arena_effects.size() - 1, -1, -1):
 		var effect: Dictionary = arena_effects[index]
-		var ttl: float = maxf(0.0, float(effect.get("ttl", 0.0)) - delta)
+		var previous_ttl: float = float(effect.get("ttl", 0.0))
+		var ttl: float = maxf(0.0, previous_ttl - delta)
 		effect["ttl"] = ttl
+		if not is_equal_approx(ttl, previous_ttl):
+			changed = true
 		if ttl <= 0.0:
 			arena_effects.remove_at(index)
+			changed = true
 	for index in range(local_combat_texts.size() - 1, -1, -1):
 		var entry: Dictionary = local_combat_texts[index]
-		var ttl := maxf(0.0, float(entry.get("ttl", 0.0)) - delta)
+		var previous_ttl := float(entry.get("ttl", 0.0))
+		var ttl := maxf(0.0, previous_ttl - delta)
 		entry["ttl"] = ttl
+		if not is_equal_approx(ttl, previous_ttl):
+			changed = true
 		if ttl <= 0.0:
 			local_combat_texts.remove_at(index)
-	_smooth_render_state(delta)
+			changed = true
+	changed = _smooth_render_state(delta) or changed
+	if changed:
+		_mark_arena_render_dirty()
 	_refresh_diagnostics_counts()
+	return changed
 
 
 func record_client_timing(metric_name: String, micros: int) -> void:
@@ -933,108 +863,22 @@ func record_arena_draw(draw_micros: int, arena_pixel_size: Vector2) -> void:
 
 
 func diagnostics_text(transport_snapshot: Dictionary) -> String:
-	var lines: Array[String] = []
-	lines.append("Client Diagnostics")
-	lines.append("  transport_state: %s" % transport_state)
-	lines.append("  screen: %s" % screen)
-	lines.append("  arena_mode: %s" % arena_mode)
-	lines.append("  match_phase: %s" % match_phase)
-	lines.append("  local_player_id: %d" % local_player_id)
-	lines.append("  current_match_id: %d" % current_match_id)
-	lines.append("  current_round: %d" % current_round)
-
-	lines.append("")
-	lines.append("Timing")
-	lines.append("  ui_refresh_ms: %s" % _timing_bucket_text(_diagnostic_timing("ui_refresh")))
-	lines.append("  ui_refresh_catalog_ms: %s" % _timing_bucket_text(_diagnostic_timing("ui_refresh_catalog")))
-	lines.append("  ui_refresh_labels_ms: %s" % _timing_bucket_text(_diagnostic_timing("ui_refresh_labels")))
-	lines.append("  ui_refresh_logs_ms: %s" % _timing_bucket_text(_diagnostic_timing("ui_refresh_logs")))
-	lines.append("  ui_refresh_diagnostics_ms: %s" % _timing_bucket_text(_diagnostic_timing("ui_refresh_diagnostics")))
-	lines.append("  ui_refresh_buttons_ms: %s" % _timing_bucket_text(_diagnostic_timing("ui_refresh_buttons")))
-	lines.append("  ui_refresh_visibility_ms: %s" % _timing_bucket_text(_diagnostic_timing("ui_refresh_visibility")))
-	lines.append("  advance_visuals_ms: %s" % _timing_bucket_text(_diagnostic_timing("advance_visuals")))
-	lines.append("  packet_decode_ms: %s" % _timing_bucket_text(_diagnostic_timing("packet_decode")))
-	lines.append("  snapshot_apply_ms: %s" % _timing_bucket_text(_diagnostic_timing("snapshot_apply")))
-	lines.append("  arena_draw_ms: %s" % _timing_bucket_text(_diagnostic_timing("arena_draw")))
-	lines.append("  arena_draw_floor_ms: %s" % _timing_bucket_text(_diagnostic_timing("arena_draw_floor")))
-	lines.append("  arena_draw_grid_ms: %s" % _timing_bucket_text(_diagnostic_timing("arena_draw_grid")))
-	lines.append("  arena_draw_obstacles_ms: %s" % _timing_bucket_text(_diagnostic_timing("arena_draw_obstacles")))
-	lines.append("  arena_draw_visibility_ms: %s" % _timing_bucket_text(_diagnostic_timing("arena_draw_visibility")))
-	lines.append("  arena_draw_effects_ms: %s" % _timing_bucket_text(_diagnostic_timing("arena_draw_effects")))
-	lines.append("  arena_draw_deployables_ms: %s" % _timing_bucket_text(_diagnostic_timing("arena_draw_deployables")))
-	lines.append("  arena_draw_projectiles_ms: %s" % _timing_bucket_text(_diagnostic_timing("arena_draw_projectiles")))
-	lines.append("  arena_draw_players_ms: %s" % _timing_bucket_text(_diagnostic_timing("arena_draw_players")))
-	lines.append("  arena_draw_combat_text_ms: %s" % _timing_bucket_text(_diagnostic_timing("arena_draw_combat_text")))
-	lines.append("  arena_draw_border_ms: %s" % _timing_bucket_text(_diagnostic_timing("arena_draw_border")))
-
-	var packet_stats: Dictionary = diagnostics.get("packets", {})
-	lines.append("")
-	lines.append("Packet Flow")
-	lines.append("  control_events: %d" % int(packet_stats.get("control_events", 0)))
-	lines.append("  full_snapshots: %d" % int(packet_stats.get("full_snapshots", 0)))
-	lines.append("  delta_snapshots: %d" % int(packet_stats.get("delta_snapshots", 0)))
-	lines.append("  effect_batches: %d" % int(packet_stats.get("effect_batches", 0)))
-	lines.append("  combat_text_batches: %d" % int(packet_stats.get("combat_text_batches", 0)))
-	lines.append("  bytes_in_total: %d" % int(packet_stats.get("bytes_in_total", 0)))
-	lines.append("  last_packet_bytes: %d" % int(packet_stats.get("last_packet_bytes", 0)))
-	lines.append("  last_event_type: %s" % String(packet_stats.get("last_event_type", "")))
-	lines.append("  last_sim_tick: %d" % int(packet_stats.get("last_sim_tick", 0)))
-
-	var object_stats: Dictionary = diagnostics.get("objects", {})
-	lines.append("")
-	lines.append("Scene Counts")
-	lines.append("  players: %d" % int(object_stats.get("players", 0)))
-	lines.append("  projectiles: %d" % int(object_stats.get("projectiles", 0)))
-	lines.append("  deployables: %d" % int(object_stats.get("deployables", 0)))
-	lines.append("  effects: %d" % int(object_stats.get("effects", 0)))
-	lines.append("  local_combat_texts: %d" % int(object_stats.get("combat_texts", 0)))
-
-	var tile_stats: Dictionary = diagnostics.get("tiles", {})
-	lines.append("")
-	lines.append("Arena Footprint")
-	lines.append("  arena_width_units: %d" % arena_width)
-	lines.append("  arena_height_units: %d" % arena_height)
-	lines.append("  tile_units: %d" % arena_tile_units)
-	lines.append("  footprint_tiles: %d" % int(tile_stats.get("footprint", 0)))
-	lines.append("  visible_tiles: %d" % int(tile_stats.get("visible", 0)))
-	lines.append("  explored_tiles: %d" % int(tile_stats.get("explored", 0)))
-
-	var render_stats: Dictionary = diagnostics.get("render", {})
-	lines.append("")
-	lines.append("Render Surface")
-	lines.append("  arena_pixels_w: %d" % int(render_stats.get("arena_pixels_w", 0)))
-	lines.append("  arena_pixels_h: %d" % int(render_stats.get("arena_pixels_h", 0)))
-
-	lines.append("")
-	lines.append("Transport")
-	lines.append("  signal_socket_state: %s" % String(transport_snapshot.get("signal_socket_state", "")))
-	lines.append("  control_channel_state: %s" % String(transport_snapshot.get("control_channel_state", "")))
-	lines.append("  input_channel_state: %s" % String(transport_snapshot.get("input_channel_state", "")))
-	lines.append("  snapshot_channel_state: %s" % String(transport_snapshot.get("snapshot_channel_state", "")))
-	lines.append("  signal_messages_in: %d" % int(transport_snapshot.get("signal_messages_in", 0)))
-	lines.append("  signal_messages_out: %d" % int(transport_snapshot.get("signal_messages_out", 0)))
-	lines.append("  signal_bytes_in: %d" % int(transport_snapshot.get("signal_bytes_in", 0)))
-	lines.append("  signal_bytes_out: %d" % int(transport_snapshot.get("signal_bytes_out", 0)))
-	lines.append("  control_packets_in: %d" % int(transport_snapshot.get("control_packets_in", 0)))
-	lines.append("  control_bytes_in: %d" % int(transport_snapshot.get("control_bytes_in", 0)))
-	lines.append("  snapshot_packets_in: %d" % int(transport_snapshot.get("snapshot_packets_in", 0)))
-	lines.append("  snapshot_bytes_in: %d" % int(transport_snapshot.get("snapshot_bytes_in", 0)))
-	lines.append("  control_packets_out: %d" % int(transport_snapshot.get("control_packets_out", 0)))
-	lines.append("  control_bytes_out: %d" % int(transport_snapshot.get("control_bytes_out", 0)))
-	lines.append("  input_packets_out: %d" % int(transport_snapshot.get("input_packets_out", 0)))
-	lines.append("  input_bytes_out: %d" % int(transport_snapshot.get("input_bytes_out", 0)))
-	lines.append("  transport_decode_ms: %s" % _timing_bucket_text(transport_snapshot.get("decode_timing", {})))
-	lines.append("  last_signal_close_code: %d" % int(transport_snapshot.get("last_signal_close_code", -1)))
-	lines.append("  last_signal_close_reason: %s" % String(transport_snapshot.get("last_signal_close_reason", "")))
-
-	if is_training_mode() and not training_metrics.is_empty():
-		lines.append("")
-		lines.append("Training Metrics")
-		lines.append("  damage_done: %d" % int(training_metrics.get("damage_done", 0)))
-		lines.append("  healing_done: %d" % int(training_metrics.get("healing_done", 0)))
-		lines.append("  elapsed_ms: %d" % int(training_metrics.get("elapsed_ms", 0)))
-
-	return "\n".join(lines)
+	return ClientStateViewScript.diagnostics_text(
+		diagnostics,
+		transport_snapshot,
+		transport_state,
+		screen,
+		arena_mode,
+		match_phase,
+		local_player_id,
+		current_match_id,
+		current_round,
+		arena_width,
+		arena_height,
+		arena_tile_units,
+		is_training_mode(),
+		training_metrics
+	)
 
 
 func _apply_arena_phase(snapshot: Dictionary) -> void:
@@ -1109,44 +953,6 @@ func _append_event(line: String) -> void:
 		recent_events.remove_at(0)
 
 
-func _skill_catalog_entry(tree_name: String, tier: int) -> Dictionary:
-	for entry in skill_catalog:
-		if String(entry.get("tree", "")) == tree_name and int(entry.get("tier", 0)) == tier:
-			return (entry as Dictionary).duplicate(true)
-	return {}
-
-
-func _summary_block_lines(entries: Array) -> Array[String]:
-	var normalized: Array[Dictionary] = []
-	for entry in entries:
-		normalized.append((entry as Dictionary).duplicate(true))
-	normalized.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
-		var team_a := String(a.get("team", ""))
-		var team_b := String(b.get("team", ""))
-		if team_a != team_b:
-			return team_a < team_b
-		var damage_a := int(a.get("damage_done", 0))
-		var damage_b := int(b.get("damage_done", 0))
-		if damage_a != damage_b:
-			return damage_a > damage_b
-		return String(a.get("player_name", "")) < String(b.get("player_name", ""))
-	)
-	var lines: Array[String] = []
-	for entry in normalized:
-		lines.append("%s  |  %s  |  dmg %d  |  heal+ %d  |  heal- %d  |  cc %d/%d" % [
-			String(entry.get("player_name", "Unknown")),
-			String(entry.get("team", "Unknown")),
-			int(entry.get("damage_done", 0)),
-			int(entry.get("healing_to_allies", 0)),
-			int(entry.get("healing_to_enemies", 0)),
-			int(entry.get("cc_used", 0)),
-			int(entry.get("cc_hits", 0)),
-		])
-	if lines.is_empty():
-		lines.append("No combat events recorded yet.")
-	return lines
-
-
 func _queue_local_combat_text(entry: Dictionary) -> void:
 	var copy := entry.duplicate(true)
 	copy["ttl"] = COMBAT_TEXT_LIFETIME_SECONDS
@@ -1173,7 +979,7 @@ func _clear_round_skills() -> void:
 func _reset_local_skill_progress() -> void:
 	local_skill_progress.clear()
 	local_skill_loadout.clear()
-	for tree_name in skill_tree_names():
+	for tree_name in ClientStateViewScript.skill_tree_names(skill_catalog, local_skill_progress):
 		local_skill_progress[tree_name] = 0
 
 
@@ -1194,6 +1000,7 @@ func _clear_arena_state() -> void:
 	visible_tiles = PackedByteArray()
 	explored_tiles = PackedByteArray()
 	training_metrics.clear()
+	_mark_arena_render_dirty()
 	_refresh_diagnostics_counts()
 
 
@@ -1255,48 +1062,64 @@ func _replace_arena_projectiles(projectile_entries: Array) -> void:
 		render_projectiles.append(render_projectile)
 
 
-func _smooth_render_state(delta: float) -> void:
+func _smooth_render_state(delta: float) -> bool:
+	var changed := false
 	var player_step := clampf(delta * PLAYER_RENDER_LERP_RATE, 0.0, 1.0)
 	for player_id in render_players.keys():
 		if not arena_players.has(player_id):
 			continue
 		var render_player: Dictionary = render_players[player_id]
 		var target_player: Dictionary = arena_players[player_id]
-		render_player["x"] = _smooth_axis(
+		var next_x := _smooth_axis(
 			float(render_player.get("x", target_player.get("x", 0))),
 			float(target_player.get("x", 0)),
 			player_step
 		)
-		render_player["y"] = _smooth_axis(
+		var next_y := _smooth_axis(
 			float(render_player.get("y", target_player.get("y", 0))),
 			float(target_player.get("y", 0)),
 			player_step
 		)
-		render_player["aim_x"] = _smooth_axis(
+		var next_aim_x := _smooth_axis(
 			float(render_player.get("aim_x", target_player.get("aim_x", 0))),
 			float(target_player.get("aim_x", 0)),
 			player_step
 		)
-		render_player["aim_y"] = _smooth_axis(
+		var next_aim_y := _smooth_axis(
 			float(render_player.get("aim_y", target_player.get("aim_y", 0))),
 			float(target_player.get("aim_y", 0)),
 			player_step
 		)
+		if not is_equal_approx(float(render_player.get("x", next_x)), next_x) \
+			or not is_equal_approx(float(render_player.get("y", next_y)), next_y) \
+			or not is_equal_approx(float(render_player.get("aim_x", next_aim_x)), next_aim_x) \
+			or not is_equal_approx(float(render_player.get("aim_y", next_aim_y)), next_aim_y):
+			changed = true
+		render_player["x"] = next_x
+		render_player["y"] = next_y
+		render_player["aim_x"] = next_aim_x
+		render_player["aim_y"] = next_aim_y
 
 	var projectile_step := clampf(delta * PROJECTILE_RENDER_LERP_RATE, 0.0, 1.0)
 	for index in range(min(render_projectiles.size(), arena_projectiles.size())):
 		var render_projectile: Dictionary = render_projectiles[index]
 		var target_projectile: Dictionary = arena_projectiles[index]
-		render_projectile["x"] = _smooth_axis(
+		var next_projectile_x := _smooth_axis(
 			float(render_projectile.get("x", target_projectile.get("x", 0))),
 			float(target_projectile.get("x", 0)),
 			projectile_step
 		)
-		render_projectile["y"] = _smooth_axis(
+		var next_projectile_y := _smooth_axis(
 			float(render_projectile.get("y", target_projectile.get("y", 0))),
 			float(target_projectile.get("y", 0)),
 			projectile_step
 		)
+		if not is_equal_approx(float(render_projectile.get("x", next_projectile_x)), next_projectile_x) \
+			or not is_equal_approx(float(render_projectile.get("y", next_projectile_y)), next_projectile_y):
+			changed = true
+		render_projectile["x"] = next_projectile_x
+		render_projectile["y"] = next_projectile_y
+	return changed
 
 
 func _smooth_axis(current: float, target: float, step: float) -> float:
@@ -1334,6 +1157,8 @@ func _reset_diagnostics() -> void:
 			"packet_decode": _new_timing_bucket(),
 			"snapshot_apply": _new_timing_bucket(),
 			"arena_draw": _new_timing_bucket(),
+			"arena_draw_cache_sync": _new_timing_bucket(),
+			"arena_draw_base": _new_timing_bucket(),
 			"arena_draw_floor": _new_timing_bucket(),
 			"arena_draw_grid": _new_timing_bucket(),
 			"arena_draw_obstacles": _new_timing_bucket(),
@@ -1344,6 +1169,8 @@ func _reset_diagnostics() -> void:
 			"arena_draw_players": _new_timing_bucket(),
 			"arena_draw_combat_text": _new_timing_bucket(),
 			"arena_draw_border": _new_timing_bucket(),
+			"arena_cache_background": _new_timing_bucket(),
+			"arena_cache_visibility": _new_timing_bucket(),
 		},
 		"packets": {
 			"control_events": 0,
@@ -1376,6 +1203,10 @@ func _reset_diagnostics() -> void:
 	}
 
 
+func _mark_arena_render_dirty() -> void:
+	arena_render_revision += 1
+
+
 func _new_timing_bucket() -> Dictionary:
 	return {
 		"count": 0,
@@ -1396,38 +1227,6 @@ func _record_timing_bucket(bucket: Dictionary, micros: int) -> void:
 	bucket["last_us"] = micros
 	bucket["max_us"] = maxi(int(bucket.get("max_us", 0)), micros)
 	bucket["total_us"] = int(bucket.get("total_us", 0)) + micros
-
-
-func _diagnostic_timing(metric_name: String) -> Dictionary:
-	var timings: Dictionary = diagnostics.get("timings", {})
-	return timings.get(metric_name, _new_timing_bucket())
-
-
-func _timing_bucket_text(bucket: Dictionary) -> String:
-	var count := int(bucket.get("count", 0))
-	var recent: Array = (bucket.get("recent_us", []) as Array).duplicate()
-	recent.sort()
-	var last_ms := float(bucket.get("last_us", 0)) / 1000.0
-	var avg_ms := (float(bucket.get("total_us", 0)) / float(maxi(1, count))) / 1000.0
-	var max_ms := float(bucket.get("max_us", 0)) / 1000.0
-	var p50_ms := _percentile_ms(recent, 0.50)
-	var p95_ms := _percentile_ms(recent, 0.95)
-	return "last=%.3f avg=%.3f p50=%.3f p95=%.3f max=%.3f count=%d" % [
-		last_ms,
-		avg_ms,
-		p50_ms,
-		p95_ms,
-		max_ms,
-		count,
-	]
-
-
-func _percentile_ms(sorted_values: Array, quantile: float) -> float:
-	if sorted_values.is_empty():
-		return 0.0
-	var index := int(round((sorted_values.size() - 1) * quantile))
-	index = clampi(index, 0, sorted_values.size() - 1)
-	return float(sorted_values[index]) / 1000.0
 
 
 func _refresh_diagnostics_counts() -> void:
@@ -1463,17 +1262,7 @@ func is_training_mode() -> bool:
 func training_metrics_text() -> String:
 	if not is_training_mode():
 		return ""
-	var elapsed_ms := int(training_metrics.get("elapsed_ms", 0))
-	var elapsed_seconds := maxf(float(elapsed_ms) / 1000.0, 0.001)
-	var damage_done := int(training_metrics.get("damage_done", 0))
-	var healing_done := int(training_metrics.get("healing_done", 0))
-	return "Training metrics: dmg %d  |  heal %d  |  DPS %.1f  |  HPS %.1f  |  time %.1fs" % [
-		damage_done,
-		healing_done,
-		float(damage_done) / elapsed_seconds,
-		float(healing_done) / elapsed_seconds,
-		elapsed_seconds,
-	]
+	return ClientStateViewScript.training_metrics_text(training_metrics)
 
 
 func _effect_ttl_seconds(kind_name: String) -> float:
@@ -1490,9 +1279,3 @@ func _effect_ttl_seconds(kind_name: String) -> float:
 			return 0.35
 
 
-func _cooldown_token(remaining_ms: int, total_ms: int) -> String:
-	if total_ms <= 0:
-		return "-"
-	if remaining_ms <= 0:
-		return "ready"
-	return "%.1fs" % (float(remaining_ms) / 1000.0)

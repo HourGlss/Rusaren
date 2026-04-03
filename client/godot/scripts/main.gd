@@ -2,7 +2,7 @@ extends Control
 
 const ClientStateScript := preload("res://scripts/state/client_state.gd")
 const DevSocketClientScript := preload("res://scripts/net/dev_socket_client.gd")
-const ArenaViewScript := preload("res://scripts/arena/arena_view.gd")
+const MainShellFactoryScript := preload("res://scripts/main_shell_factory.gd")
 const Protocol := preload("res://scripts/net/protocol.gd")
 const WebSocketConfigScript := preload("res://scripts/net/websocket_config.gd")
 
@@ -48,7 +48,6 @@ var record_label: Label
 var identity_label: Label
 var phase_label: Label
 var countdown_value_label: Label
-var combat_hint_label: Label
 var training_metrics_label: Label
 var cooldown_summary_label: Label
 var score_label: Label
@@ -75,7 +74,6 @@ var join_lobby_button: Button
 var start_training_button: Button
 var team_a_button: Button
 var team_b_button: Button
-var primary_attack_button: Button
 var training_loadout_button: Button
 var reset_training_button: Button
 var quit_arena_button: Button
@@ -90,7 +88,7 @@ var round_summary_log: RichTextLabel
 var skill_scroll: ScrollContainer
 var skill_columns: GridContainer
 var combat_panel: VBoxContainer
-var arena_view = null
+var arena_view: ArenaView = null
 var skill_buttons: Array[Button] = []
 var _rendered_skill_catalog_signature := ""
 var _rendered_skill_button_state_signature := ""
@@ -126,6 +124,8 @@ func _process(delta: float) -> void:
 	app_state.advance_visuals(delta)
 	app_state.record_client_timing("advance_visuals", Time.get_ticks_usec() - visuals_started_us)
 	transport.poll()
+	if arena_view != null:
+		arena_view.refresh_from_state()
 	_tick_auto_connect(delta)
 	_drive_combat_input()
 	_tick_passive_ui_refresh(delta)
@@ -165,650 +165,74 @@ func _bind_transport() -> void:
 
 
 func _build_shell() -> void:
-	var base := ColorRect.new()
-	base.color = Color8(10, 18, 24)
-	base.anchor_right = 1.0
-	base.anchor_bottom = 1.0
-	base.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(base)
-
-	var glow_top := ColorRect.new()
-	glow_top.color = Color8(189, 105, 57, 32)
-	glow_top.anchor_right = 1.0
-	glow_top.anchor_bottom = 0.35
-	glow_top.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(glow_top)
-
-	var glow_side := ColorRect.new()
-	glow_side.color = Color8(40, 132, 163, 28)
-	glow_side.anchor_left = 0.66
-	glow_side.anchor_right = 1.0
-	glow_side.anchor_bottom = 1.0
-	glow_side.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(glow_side)
-
-	var margin := MarginContainer.new()
-	margin.anchor_right = 1.0
-	margin.anchor_bottom = 1.0
-	margin.add_theme_constant_override("margin_left", 28)
-	margin.add_theme_constant_override("margin_top", 24)
-	margin.add_theme_constant_override("margin_right", 28)
-	margin.add_theme_constant_override("margin_bottom", 24)
-	add_child(margin)
-
-	var root_column := VBoxContainer.new()
-	root_column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	root_column.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	root_column.add_theme_constant_override("separation", 18)
-	margin.add_child(root_column)
-
-	root_column.add_child(_build_top_bar())
-	root_column.add_child(_build_body())
-	add_child(_build_fullscreen_menu())
-
-
-func _build_top_bar() -> Control:
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 12)
-
-	status_label = Label.new()
-	status_label.add_theme_font_size_override("font_size", 14)
-	status_label.add_theme_color_override("font_color", Color8(255, 214, 102))
-	row.add_child(status_label)
-
-	identity_label = Label.new()
-	identity_label.add_theme_color_override("font_color", Color8(128, 201, 255))
-	row.add_child(identity_label)
-
-	var spacer := Control.new()
-	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	row.add_child(spacer)
-
-	menu_button = MenuButton.new()
-	menu_button.text = "Menu"
-	menu_button.custom_minimum_size = Vector2(132, 42)
-	_style_clickable(menu_button, Color8(53, 73, 94))
-	row.add_child(menu_button)
-
-	_rebuild_menu_popup()
-	menu_button.get_popup().id_pressed.connect(_on_menu_option_selected)
-
-	return row
-
-
-func _build_body() -> Control:
-	var column := VBoxContainer.new()
-	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	column.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	column.add_theme_constant_override("separation", 14)
-
-	connection_panel = _build_connection_panel()
-	central_panel = _build_central_panel()
-	lobby_panel = _build_lobby_panel()
-	match_panel = _build_match_panel()
-	results_panel = _build_results_panel()
-
-	column.add_child(connection_panel)
-	column.add_child(central_panel)
-	column.add_child(lobby_panel)
-	column.add_child(match_panel)
-	column.add_child(results_panel)
-	return column
-
-
-func _build_connection_panel() -> PanelContainer:
-	var panel := _make_panel(Color8(29, 42, 53), Color8(92, 120, 143))
-	connection_panel = panel
-	var body := panel.get_meta("body") as VBoxContainer
-
-	var heading := Label.new()
-	heading.text = "Central Actions"
-	heading.add_theme_font_size_override("font_size", 19)
-	heading.add_theme_color_override("font_color", Color8(244, 239, 232))
-	body.add_child(heading)
-
-	banner_label = Label.new()
-	banner_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	banner_label.add_theme_color_override("font_color", Color8(214, 192, 154))
-	body.add_child(banner_label)
-
-	var note := Label.new()
-	note.text = "The client now connects automatically. Use Menu to change your alias or open record, roster, and event views."
-	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	note.add_theme_color_override("font_color", Color8(184, 191, 198))
-	body.add_child(note)
-
-	var controls := HBoxContainer.new()
-	controls.add_theme_constant_override("separation", 12)
-	body.add_child(controls)
-
-	var join_wrapper := VBoxContainer.new()
-	join_wrapper.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	controls.add_child(join_wrapper)
-
-	var join_label := Label.new()
-	join_label.text = "Join lobby ID"
-	join_label.add_theme_color_override("font_color", Color8(205, 214, 221))
-	join_wrapper.add_child(join_label)
-
-	join_lobby_input = LineEdit.new()
-	join_lobby_input.placeholder_text = "Join lobby ID"
-	join_wrapper.add_child(join_lobby_input)
-
-	create_lobby_button = _action_button("Create Lobby", Color8(45, 74, 126))
-	create_lobby_button.pressed.connect(_on_create_lobby_pressed)
-	controls.add_child(create_lobby_button)
-
-	join_lobby_button = _action_button("Join Lobby", Color8(102, 72, 28))
-	join_lobby_button.pressed.connect(_on_join_lobby_pressed)
-	controls.add_child(join_lobby_button)
-
-	start_training_button = _action_button("Start Training", Color8(62, 90, 50))
-	start_training_button.pressed.connect(_on_start_training_pressed)
-	controls.add_child(start_training_button)
-
-	return panel
-
-
-func _build_central_panel() -> PanelContainer:
-	var panel := _make_panel(Color8(32, 45, 58), Color8(75, 111, 138))
-	var body := panel.get_meta("body") as VBoxContainer
-
-	var title := Label.new()
-	title.text = "Central Lobby"
-	title.add_theme_font_size_override("font_size", 22)
-	title.add_theme_color_override("font_color", Color8(247, 241, 233))
-	body.add_child(title)
-
-	var summary := Label.new()
-	summary.text = "Create a game lobby or click one from the directory below to join it. The browser shell stays same-origin, auto-connects, and hands live gameplay to WebRTC once signaling finishes."
-	summary.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	summary.add_theme_color_override("font_color", Color8(187, 196, 203))
-	body.add_child(summary)
-
-	var list_title := Label.new()
-	list_title.text = "Active game lobbies"
-	list_title.add_theme_color_override("font_color", Color8(244, 233, 216))
-	body.add_child(list_title)
-
-	central_directory_log = RichTextLabel.new()
-	central_directory_log.bbcode_enabled = true
-	central_directory_log.fit_content = true
-	central_directory_log.meta_underlined = true
-	central_directory_log.scroll_active = true
-	central_directory_log.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	central_directory_log.custom_minimum_size = Vector2(0, 220)
-	central_directory_log.add_theme_color_override("default_color", Color8(222, 230, 236))
+	var refs := MainShellFactoryScript.build_shell(self, RANDOM_PLAYER_NAME_LENGTH)
+	_assign_shell_refs(refs)
 	central_directory_log.meta_clicked.connect(_on_lobby_directory_meta_clicked)
-	body.add_child(central_directory_log)
-
-	return panel
-
-
-func _build_lobby_panel() -> PanelContainer:
-	var panel := _make_panel(Color8(33, 50, 44), Color8(86, 144, 124))
-	var body := panel.get_meta("body") as VBoxContainer
-
-	var title := Label.new()
-	title.text = "Game Lobby"
-	title.add_theme_font_size_override("font_size", 22)
-	title.add_theme_color_override("font_color", Color8(243, 247, 243))
-	body.add_child(title)
-
-	lobby_label = Label.new()
-	lobby_label.add_theme_font_size_override("font_size", 18)
-	lobby_label.add_theme_color_override("font_color", Color8(155, 230, 189))
-	body.add_child(lobby_label)
-
-	lobby_note_label = Label.new()
-	lobby_note_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	lobby_note_label.add_theme_color_override("font_color", Color8(190, 203, 196))
-	body.add_child(lobby_note_label)
-
-	team_label = Label.new()
-	team_label.add_theme_color_override("font_color", Color8(240, 241, 220))
-	body.add_child(team_label)
-
-	var roster_title := Label.new()
-	roster_title.text = "Lobby roster"
-	roster_title.add_theme_color_override("font_color", Color8(228, 240, 228))
-	body.add_child(roster_title)
-
-	lobby_roster_log = RichTextLabel.new()
-	lobby_roster_log.fit_content = true
-	lobby_roster_log.scroll_active = false
-	lobby_roster_log.custom_minimum_size = Vector2(0, 120)
-	lobby_roster_log.add_theme_color_override("default_color", Color8(221, 234, 223))
-	body.add_child(lobby_roster_log)
-
-	var team_row := HBoxContainer.new()
-	team_row.add_theme_constant_override("separation", 10)
-	body.add_child(team_row)
-
-	team_a_button = _action_button("Join Team A", Color8(35, 82, 138))
-	team_a_button.pressed.connect(_on_team_pressed.bind("Team A"))
-	team_row.add_child(team_a_button)
-
-	team_b_button = _action_button("Join Team B", Color8(138, 56, 35))
-	team_b_button.pressed.connect(_on_team_pressed.bind("Team B"))
-	team_row.add_child(team_b_button)
-
-	var lobby_action_row := HBoxContainer.new()
-	lobby_action_row.add_theme_constant_override("separation", 10)
-	body.add_child(lobby_action_row)
-
-	ready_button = _action_button("Set Ready", Color8(28, 102, 82))
-	ready_button.pressed.connect(_on_ready_pressed)
-	lobby_action_row.add_child(ready_button)
-
-	leave_lobby_button = _action_button("Leave Lobby", Color8(102, 57, 28))
-	leave_lobby_button.pressed.connect(_on_leave_lobby_pressed)
-	lobby_action_row.add_child(leave_lobby_button)
-
-	return panel
-
-
-func _build_match_panel() -> PanelContainer:
-	var panel := _make_panel(Color8(52, 39, 33), Color8(162, 112, 73))
-	panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	var body := panel.get_meta("body") as VBoxContainer
-	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
-
-	score_label = Label.new()
-	score_label.add_theme_font_size_override("font_size", 18)
-	score_label.add_theme_color_override("font_color", Color8(240, 241, 220))
-	score_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	body.add_child(score_label)
-
-	skill_pick_panel = _make_panel(Color8(60, 47, 38), Color8(191, 135, 88))
-	var skill_pick_body := skill_pick_panel.get_meta("body") as VBoxContainer
-
-	var skill_pick_title := Label.new()
-	skill_pick_title.text = "Skill picks"
-	skill_pick_title.add_theme_color_override("font_color", Color8(252, 235, 209))
-	skill_pick_title.add_theme_font_size_override("font_size", 18)
-	skill_pick_body.add_child(skill_pick_title)
-
-	skill_pick_summary_label = Label.new()
-	skill_pick_summary_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	skill_pick_summary_label.add_theme_color_override("font_color", Color8(222, 210, 192))
-	skill_pick_body.add_child(skill_pick_summary_label)
-
-	var round_summary_title := Label.new()
-	round_summary_title.text = "Round Summary"
-	round_summary_title.add_theme_color_override("font_color", Color8(248, 224, 196))
-	skill_pick_body.add_child(round_summary_title)
-
-	round_summary_log = RichTextLabel.new()
-	round_summary_log.fit_content = true
-	round_summary_log.scroll_active = false
-	round_summary_log.custom_minimum_size = Vector2(0, 136)
-	round_summary_log.add_theme_color_override("default_color", Color8(232, 224, 216))
-	skill_pick_body.add_child(round_summary_log)
-
-	skill_scroll = ScrollContainer.new()
-	skill_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
-	skill_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
-	skill_scroll.custom_minimum_size = Vector2(0, 360)
-	skill_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	skill_pick_body.add_child(skill_scroll)
-
-	skill_columns = GridContainer.new()
-	skill_columns.columns = 3
-	skill_columns.add_theme_constant_override("separation", 10)
-	skill_columns.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	skill_scroll.add_child(skill_columns)
+	menu_button.get_popup().id_pressed.connect(_on_menu_option_selected)
+	arena_view.set_client_state(app_state)
+	_rebuild_menu_popup()
 	_rebuild_skill_buttons()
 
-	skill_pick_inline_host = VBoxContainer.new()
-	skill_pick_inline_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	skill_pick_inline_host.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	body.add_child(skill_pick_inline_host)
-	skill_pick_inline_host.add_child(skill_pick_panel)
 
-	combat_panel = VBoxContainer.new()
-	combat_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	combat_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	combat_panel.add_theme_constant_override("separation", 10)
-	body.add_child(combat_panel)
-
-	phase_label = Label.new()
-	phase_label.add_theme_font_size_override("font_size", 20)
-	phase_label.add_theme_color_override("font_color", Color8(255, 216, 156))
-	phase_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	combat_panel.add_child(phase_label)
-
-	countdown_value_label = Label.new()
-	countdown_value_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	countdown_value_label.add_theme_color_override("font_color", Color8(203, 197, 192))
-	countdown_value_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	combat_panel.add_child(countdown_value_label)
-
-	arena_view = ArenaViewScript.new()
-	arena_view.custom_minimum_size = Vector2.ZERO
-	arena_view.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	arena_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	arena_view.set_client_state(app_state)
-	combat_panel.add_child(arena_view)
-
-	combat_hint_label = Label.new()
-	combat_hint_label.visible = false
-
-	cooldown_summary_label = Label.new()
-	cooldown_summary_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	cooldown_summary_label.add_theme_color_override("font_color", Color8(183, 204, 214))
-	combat_panel.add_child(cooldown_summary_label)
-
-	training_metrics_label = Label.new()
-	training_metrics_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	training_metrics_label.add_theme_color_override("font_color", Color8(164, 232, 191))
-	combat_panel.add_child(training_metrics_label)
-
-	var combat_row := HBoxContainer.new()
-	combat_row.add_theme_constant_override("separation", 10)
-	combat_panel.add_child(combat_row)
-
-	primary_attack_button = _action_button("Primary Attack", Color8(120, 78, 34))
-	primary_attack_button.pressed.connect(_on_primary_attack_pressed)
-
-	training_loadout_button = _action_button("Class Loadout", Color8(74, 86, 116))
-	training_loadout_button.pressed.connect(_on_training_loadout_pressed)
-	combat_row.add_child(training_loadout_button)
-
-	reset_training_button = _action_button("Reset Training", Color8(56, 97, 76))
-	reset_training_button.pressed.connect(_on_reset_training_pressed)
-	combat_row.add_child(reset_training_button)
-
-	quit_arena_button = _action_button("Back To Lobby Select", Color8(102, 57, 28))
-	quit_arena_button.pressed.connect(_on_quit_arena_pressed)
-	combat_row.add_child(quit_arena_button)
-
-	return panel
-
-
-func _build_results_panel() -> PanelContainer:
-	var panel := _make_panel(Color8(47, 30, 45), Color8(128, 73, 141))
-	var body := panel.get_meta("body") as VBoxContainer
-
-	var title := Label.new()
-	title.text = "Results"
-	title.add_theme_font_size_override("font_size", 22)
-	title.add_theme_color_override("font_color", Color8(245, 233, 244))
-	body.add_child(title)
-
-	outcome_label = Label.new()
-	outcome_label.add_theme_font_size_override("font_size", 20)
-	outcome_label.add_theme_color_override("font_color", Color8(244, 192, 236))
-	outcome_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	body.add_child(outcome_label)
-
-	match_summary_log = RichTextLabel.new()
-	match_summary_log.fit_content = true
-	match_summary_log.scroll_active = true
-	match_summary_log.custom_minimum_size = Vector2(0, 220)
-	match_summary_log.add_theme_color_override("default_color", Color8(236, 225, 238))
-	body.add_child(match_summary_log)
-
-	quit_results_button = _action_button("Quit To Central Lobby", Color8(95, 61, 104))
-	quit_results_button.pressed.connect(_on_quit_results_pressed)
-	body.add_child(quit_results_button)
-
-	return panel
-
-
-func _build_fullscreen_menu() -> Control:
-	var overlay := Control.new()
-	overlay.anchor_right = 1.0
-	overlay.anchor_bottom = 1.0
-	overlay.visible = false
-	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
-	fullscreen_menu = overlay
-
-	var shade := ColorRect.new()
-	shade.color = Color8(6, 10, 14, 210)
-	shade.anchor_right = 1.0
-	shade.anchor_bottom = 1.0
-	shade.mouse_filter = Control.MOUSE_FILTER_STOP
-	overlay.add_child(shade)
-
-	var margin := MarginContainer.new()
-	margin.anchor_right = 1.0
-	margin.anchor_bottom = 1.0
-	margin.add_theme_constant_override("margin_left", 24)
-	margin.add_theme_constant_override("margin_top", 24)
-	margin.add_theme_constant_override("margin_right", 24)
-	margin.add_theme_constant_override("margin_bottom", 24)
-	overlay.add_child(margin)
-
-	var panel := PanelContainer.new()
-	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color8(18, 28, 36)
-	style.border_color = Color8(87, 119, 143)
-	style.set_border_width_all(2)
-	style.corner_radius_top_left = 20
-	style.corner_radius_top_right = 20
-	style.corner_radius_bottom_right = 20
-	style.corner_radius_bottom_left = 20
-	style.content_margin_left = 22
-	style.content_margin_top = 22
-	style.content_margin_right = 22
-	style.content_margin_bottom = 22
-	panel.add_theme_stylebox_override("panel", style)
-	margin.add_child(panel)
-
-	var body := VBoxContainer.new()
-	body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	body.add_theme_constant_override("separation", 16)
-	panel.add_child(body)
-
-	var top_row := HBoxContainer.new()
-	top_row.add_theme_constant_override("separation", 12)
-	body.add_child(top_row)
-
-	fullscreen_menu_title = Label.new()
-	fullscreen_menu_title.add_theme_font_size_override("font_size", 28)
-	fullscreen_menu_title.add_theme_color_override("font_color", Color8(244, 239, 232))
-	top_row.add_child(fullscreen_menu_title)
-
-	var spacer := Control.new()
-	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	top_row.add_child(spacer)
-
-	var close_button := _action_button("Close", Color8(72, 61, 81))
-	close_button.pressed.connect(_close_fullscreen_menu)
-	top_row.add_child(close_button)
-
-	name_menu_view = _build_name_menu_view()
-	training_loadout_view = _build_training_loadout_view()
-	record_view = _build_record_view()
-	roster_view = _build_roster_view()
-	event_view = _build_event_view()
-	diagnostics_view = _build_diagnostics_view()
-	body.add_child(name_menu_view)
-	body.add_child(training_loadout_view)
-	body.add_child(record_view)
-	body.add_child(roster_view)
-	body.add_child(event_view)
-	body.add_child(diagnostics_view)
-
-	return overlay
-
-
-func _build_name_menu_view() -> VBoxContainer:
-	var view := VBoxContainer.new()
-	view.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	view.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	view.add_theme_constant_override("separation", 14)
-
-	var note := Label.new()
-	note.text = "Your alias is client-side and saving it refreshes the realtime session. Only A-Z and a-z are kept. Blank names reroll automatically."
-	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	note.add_theme_color_override("font_color", Color8(188, 200, 210))
-	view.add_child(note)
-
-	var input_label := Label.new()
-	input_label.text = "Player alias"
-	input_label.add_theme_color_override("font_color", Color8(226, 232, 236))
-	view.add_child(input_label)
-
-	player_name_input = LineEdit.new()
-	player_name_input.max_length = RANDOM_PLAYER_NAME_LENGTH
-	player_name_input.placeholder_text = "Exactly 10 letters is recommended"
-	player_name_input.custom_minimum_size = Vector2(0, 42)
-	player_name_input.text_submitted.connect(_on_name_submitted)
-	view.add_child(player_name_input)
-
-	var action_row := HBoxContainer.new()
-	action_row.add_theme_constant_override("separation", 12)
-	view.add_child(action_row)
-
-	name_save_button = _action_button("Save Name", Color8(36, 108, 85))
-	name_save_button.pressed.connect(_on_save_name_pressed)
-	action_row.add_child(name_save_button)
-
-	name_randomize_button = _action_button("Randomize", Color8(74, 86, 116))
-	name_randomize_button.pressed.connect(_on_randomize_name_pressed)
-	action_row.add_child(name_randomize_button)
-
-	return view
-
-
-func _build_training_loadout_view() -> VBoxContainer:
-	var view := VBoxContainer.new()
-	view.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	view.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	view.add_theme_constant_override("separation", 14)
-
-	var note := Label.new()
-	note.text = "Training loadout swaps are immediate. Pick any tier 1-5 skill to replace that slot without leaving the arena."
-	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	note.add_theme_color_override("font_color", Color8(188, 200, 210))
-	view.add_child(note)
-
-	training_loadout_host = VBoxContainer.new()
-	training_loadout_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	training_loadout_host.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	view.add_child(training_loadout_host)
-
-	return view
-
-
-func _build_record_view() -> VBoxContainer:
-	var view := VBoxContainer.new()
-	view.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	view.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	view.add_theme_constant_override("separation", 12)
-
-	var info := Label.new()
-	info.text = "The server remains authoritative. W-L-NC updates only when the backend sends Connected or ReturnedToCentralLobby."
-	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	info.add_theme_color_override("font_color", Color8(180, 188, 194))
-	view.add_child(info)
-
-	record_label = Label.new()
-	record_label.add_theme_font_size_override("font_size", 34)
-	record_label.add_theme_color_override("font_color", Color8(255, 217, 122))
-	view.add_child(record_label)
-
-	return view
-
-
-func _build_roster_view() -> VBoxContainer:
-	var view := VBoxContainer.new()
-	view.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	view.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	view.add_theme_constant_override("separation", 12)
-
-	var note := Label.new()
-	note.text = "Authoritative roster built from the current backend snapshot plus live updates."
-	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	note.add_theme_color_override("font_color", Color8(179, 199, 192))
-	view.add_child(note)
-
-	roster_log = RichTextLabel.new()
-	roster_log.fit_content = false
-	roster_log.scroll_active = true
-	roster_log.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	roster_log.add_theme_color_override("default_color", Color8(226, 237, 233))
-	view.add_child(roster_log)
-
-	return view
-
-
-func _build_event_view() -> VBoxContainer:
-	var view := VBoxContainer.new()
-	view.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	view.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	view.add_theme_constant_override("separation", 12)
-
-	var note := Label.new()
-	note.text = "Recent shell-visible events from authoritative snapshots, lobby flow, and local transport transitions."
-	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	note.add_theme_color_override("font_color", Color8(188, 190, 205))
-	view.add_child(note)
-
-	event_log = RichTextLabel.new()
-	event_log.fit_content = false
-	event_log.scroll_active = true
-	event_log.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	event_log.add_theme_color_override("default_color", Color8(212, 214, 226))
-	view.add_child(event_log)
-
-	return view
-
-
-func _build_diagnostics_view() -> VBoxContainer:
-	var view := VBoxContainer.new()
-	view.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	view.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	view.add_theme_constant_override("separation", 12)
-
-	var note := Label.new()
-	note.text = "Structured client-side diagnostics for frame timing, packet flow, object counts, and transport state. Pair this with deploy/useful_log_collect.sh on the host."
-	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	note.add_theme_color_override("font_color", Color8(188, 200, 210))
-	view.add_child(note)
-
-	diagnostics_copy_button = _action_button("Copy Diagnostics", Color8(52, 94, 120))
-	diagnostics_copy_button.pressed.connect(_on_copy_diagnostics_pressed)
-	view.add_child(diagnostics_copy_button)
-
-	diagnostics_log = RichTextLabel.new()
-	diagnostics_log.fit_content = false
-	diagnostics_log.scroll_active = true
-	diagnostics_log.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	diagnostics_log.add_theme_color_override("default_color", Color8(222, 231, 237))
-	view.add_child(diagnostics_log)
-
-	return view
-
-
-func _make_panel(background: Color, border: Color) -> PanelContainer:
-	var panel := PanelContainer.new()
-	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var style := StyleBoxFlat.new()
-	style.bg_color = background
-	style.border_color = border
-	style.set_border_width_all(2)
-	style.corner_radius_top_left = 18
-	style.corner_radius_top_right = 18
-	style.corner_radius_bottom_right = 18
-	style.corner_radius_bottom_left = 18
-	style.content_margin_left = 16
-	style.content_margin_top = 16
-	style.content_margin_right = 16
-	style.content_margin_bottom = 16
-	panel.add_theme_stylebox_override("panel", style)
-
-	var body := VBoxContainer.new()
-	body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	body.add_theme_constant_override("separation", 10)
-	panel.add_child(body)
-	panel.set_meta("body", body)
-	return panel
+func _assign_shell_refs(refs) -> void:
+	connection_panel = refs.connection_panel
+	player_name_input = refs.player_name_input
+	menu_button = refs.menu_button
+	fullscreen_menu = refs.fullscreen_menu
+	fullscreen_menu_title = refs.fullscreen_menu_title
+	name_menu_view = refs.name_menu_view
+	training_loadout_view = refs.training_loadout_view
+	record_view = refs.record_view
+	roster_view = refs.roster_view
+	event_view = refs.event_view
+	diagnostics_view = refs.diagnostics_view
+	banner_label = refs.banner_label
+	status_label = refs.status_label
+	record_label = refs.record_label
+	identity_label = refs.identity_label
+	phase_label = refs.phase_label
+	countdown_value_label = refs.countdown_value_label
+	training_metrics_label = refs.training_metrics_label
+	cooldown_summary_label = refs.cooldown_summary_label
+	score_label = refs.score_label
+	outcome_label = refs.outcome_label
+	match_summary_log = refs.match_summary_log
+	lobby_label = refs.lobby_label
+	lobby_note_label = refs.lobby_note_label
+	team_label = refs.team_label
+	lobby_roster_log = refs.lobby_roster_log
+	central_panel = refs.central_panel
+	lobby_panel = refs.lobby_panel
+	match_panel = refs.match_panel
+	results_panel = refs.results_panel
+	central_directory_log = refs.central_directory_log
+	roster_log = refs.roster_log
+	event_log = refs.event_log
+	diagnostics_log = refs.diagnostics_log
+	join_lobby_input = refs.join_lobby_input
+	ready_button = refs.ready_button
+	leave_lobby_button = refs.leave_lobby_button
+	quit_results_button = refs.quit_results_button
+	create_lobby_button = refs.create_lobby_button
+	join_lobby_button = refs.join_lobby_button
+	start_training_button = refs.start_training_button
+	team_a_button = refs.team_a_button
+	team_b_button = refs.team_b_button
+	training_loadout_button = refs.training_loadout_button
+	reset_training_button = refs.reset_training_button
+	quit_arena_button = refs.quit_arena_button
+	name_save_button = refs.name_save_button
+	name_randomize_button = refs.name_randomize_button
+	diagnostics_copy_button = refs.diagnostics_copy_button
+	skill_pick_panel = refs.skill_pick_panel
+	skill_pick_inline_host = refs.skill_pick_inline_host
+	training_loadout_host = refs.training_loadout_host
+	skill_pick_summary_label = refs.skill_pick_summary_label
+	round_summary_log = refs.round_summary_log
+	skill_scroll = refs.skill_scroll
+	skill_columns = refs.skill_columns
+	combat_panel = refs.combat_panel
+	arena_view = refs.arena_view
 
 
 func _style_clickable(control: Control, color: Color) -> void:
@@ -1127,11 +551,6 @@ func _on_quit_arena_pressed() -> void:
 		_refresh_ui()
 
 
-func _on_primary_attack_pressed() -> void:
-	_pending_primary_attack = true
-	_drive_combat_input()
-
-
 func _on_training_loadout_pressed() -> void:
 	_open_fullscreen_menu(MENU_SECTION_LOADOUT)
 
@@ -1246,6 +665,15 @@ func _refresh_ui() -> void:
 
 func _refresh_ui_impl() -> void:
 	var diagnostics_panel_visible := fullscreen_menu.visible and _menu_section == MENU_SECTION_DIAGNOSTICS
+	_refresh_ui_catalog()
+	var view_state := _refresh_ui_labels()
+	_refresh_ui_logs(view_state)
+	_refresh_ui_diagnostics(diagnostics_panel_visible)
+	_refresh_ui_buttons(bool(view_state.get("is_training", false)))
+	_refresh_ui_visibility(view_state)
+
+
+func _refresh_ui_catalog() -> void:
 	var phase_started_us := Time.get_ticks_usec()
 	var skill_catalog_signature := app_state.skill_catalog_signature()
 	if skill_catalog_signature != _rendered_skill_catalog_signature:
@@ -1255,30 +683,56 @@ func _refresh_ui_impl() -> void:
 		_rebuild_menu_popup()
 	app_state.record_client_timing("ui_refresh_catalog", Time.get_ticks_usec() - phase_started_us)
 
-	phase_started_us = Time.get_ticks_usec()
-	var requested_name := _current_requested_player_name()
-	var identity_text := requested_name
-	if app_state.local_player_id > 0 and app_state.local_player_name != "":
-		identity_text = "%s (#%d)" % [app_state.local_player_name, app_state.local_player_id]
-	var lobby_text := "Lobby ID: not assigned yet"
-	if app_state.current_lobby_id > 0:
-		lobby_text = "Lobby ID: %d" % app_state.current_lobby_id
-	var result_text := app_state.banner_message
-	if app_state.outcome_label != "":
-		result_text = "%s\n%s" % [app_state.outcome_label, app_state.banner_message]
 
-	status_label.text = "Transport: %s" % app_state.transport_state.capitalize()
-	identity_label.text = "Identity: %s" % identity_text
-	banner_label.text = app_state.banner_message
-	record_label.text = app_state.record_text()
-	lobby_label.text = lobby_text
-	lobby_note_label.text = app_state.lobby_note()
-	team_label.text = "Current team: %s" % app_state.current_team()
-	phase_label.text = app_state.phase_label
+func _refresh_ui_labels() -> Dictionary:
+	var phase_started_us := Time.get_ticks_usec()
 	var is_training := app_state.is_training_mode()
 	var show_skill_pick := app_state.screen == "match" and app_state.match_phase == "skill_pick"
+	var show_training_loadout_menu := _sync_training_loadout_menu(is_training)
+	status_label.text = "Transport: %s" % app_state.transport_state.capitalize()
+	identity_label.text = "Identity: %s" % _identity_text()
+	banner_label.text = app_state.banner_message
+	record_label.text = app_state.record_text()
+	lobby_label.text = _lobby_label_text()
+	lobby_note_label.text = app_state.lobby_note()
+	team_label.text = "Current team: %s" % app_state.current_team()
 	score_label.text = _match_header_text(is_training)
 	countdown_value_label.text = _combat_countdown_text()
+	_refresh_skill_pick_summary(is_training, show_skill_pick)
+	phase_label.text = _combat_state_heading()
+	cooldown_summary_label.text = app_state.cooldown_summary_text()
+	training_metrics_label.text = app_state.training_metrics_text()
+	outcome_label.text = _results_banner_text()
+	lobby_roster_log.text = "\n".join(app_state.lobby_roster_lines())
+	app_state.record_client_timing("ui_refresh_labels", Time.get_ticks_usec() - phase_started_us)
+	return {
+		"is_training": is_training,
+		"show_skill_pick": show_skill_pick,
+		"show_training_loadout_menu": show_training_loadout_menu,
+		"round_summary_text": app_state.round_summary_text(),
+		"match_summary_text": app_state.match_summary_text(),
+	}
+
+
+func _identity_text() -> String:
+	if app_state.local_player_id > 0 and app_state.local_player_name != "":
+		return "%s (#%d)" % [app_state.local_player_name, app_state.local_player_id]
+	return _current_requested_player_name()
+
+
+func _lobby_label_text() -> String:
+	if app_state.current_lobby_id > 0:
+		return "Lobby ID: %d" % app_state.current_lobby_id
+	return "Lobby ID: not assigned yet"
+
+
+func _results_banner_text() -> String:
+	if app_state.outcome_label == "":
+		return app_state.banner_message
+	return "%s\n%s" % [app_state.outcome_label, app_state.banner_message]
+
+
+func _sync_training_loadout_menu(is_training: bool) -> bool:
 	if _menu_section == MENU_SECTION_LOADOUT and not (app_state.screen == "match" and is_training):
 		_menu_section = ""
 		fullscreen_menu.visible = false
@@ -1289,6 +743,10 @@ func _refresh_ui_impl() -> void:
 		and _menu_section == MENU_SECTION_LOADOUT
 	)
 	_move_skill_catalog_to(training_loadout_host if show_training_loadout_menu else skill_pick_inline_host)
+	return show_training_loadout_menu
+
+
+func _refresh_skill_pick_summary(is_training: bool, show_skill_pick: bool) -> void:
 	if is_training:
 		skill_pick_summary_label.text = "Training loadout is live. Click any tier 1-5 skill to replace that slot immediately."
 	elif app_state.can_choose_skill():
@@ -1297,32 +755,29 @@ func _refresh_ui_impl() -> void:
 		skill_pick_summary_label.text = "Your pick is locked. Waiting for the round to leave the skill-pick phase."
 	else:
 		skill_pick_summary_label.text = "Skill picks appear here at the start of each round."
-	phase_label.text = _combat_state_heading()
-	cooldown_summary_label.text = app_state.cooldown_summary_text()
-	training_metrics_label.text = app_state.training_metrics_text()
-	outcome_label.text = result_text
-	lobby_roster_log.text = "\n".join(app_state.lobby_roster_lines())
-	app_state.record_client_timing("ui_refresh_labels", Time.get_ticks_usec() - phase_started_us)
 
-	phase_started_us = Time.get_ticks_usec()
-	var round_summary_text := app_state.round_summary_text()
-	var match_summary_text := app_state.match_summary_text()
-	var lobby_directory_text := app_state.lobby_directory_bbcode()
-	var roster_text := "\n".join(app_state.roster_lines())
-	var event_text := app_state.event_log_text()
+
+func _refresh_ui_logs(view_state: Dictionary) -> void:
+	var phase_started_us := Time.get_ticks_usec()
+	var round_summary_text := String(view_state.get("round_summary_text", ""))
+	var match_summary_text := String(view_state.get("match_summary_text", ""))
 	round_summary_log.text = round_summary_text
 	match_summary_log.text = match_summary_text
-	central_directory_log.text = lobby_directory_text
-	roster_log.text = roster_text
-	event_log.text = event_text
+	central_directory_log.text = app_state.lobby_directory_bbcode()
+	roster_log.text = "\n".join(app_state.roster_lines())
+	event_log.text = app_state.event_log_text()
 	app_state.record_client_timing("ui_refresh_logs", Time.get_ticks_usec() - phase_started_us)
 
-	phase_started_us = Time.get_ticks_usec()
+
+func _refresh_ui_diagnostics(diagnostics_panel_visible: bool) -> void:
+	var phase_started_us := Time.get_ticks_usec()
 	if diagnostics_log != null and diagnostics_panel_visible:
 		diagnostics_log.text = app_state.diagnostics_text(transport.telemetry_snapshot())
 	app_state.record_client_timing("ui_refresh_diagnostics", Time.get_ticks_usec() - phase_started_us)
 
-	phase_started_us = Time.get_ticks_usec()
+
+func _refresh_ui_buttons(is_training: bool) -> void:
+	var phase_started_us := Time.get_ticks_usec()
 	create_lobby_button.disabled = not app_state.can_join_or_create_lobby()
 	join_lobby_button.disabled = not app_state.can_join_or_create_lobby()
 	start_training_button.disabled = not app_state.can_start_training()
@@ -1343,7 +798,14 @@ func _refresh_ui_impl() -> void:
 		_refresh_skill_buttons(is_training)
 	app_state.record_client_timing("ui_refresh_buttons", Time.get_ticks_usec() - phase_started_us)
 
-	phase_started_us = Time.get_ticks_usec()
+
+func _refresh_ui_visibility(view_state: Dictionary) -> void:
+	var phase_started_us := Time.get_ticks_usec()
+	var is_training := bool(view_state.get("is_training", false))
+	var show_skill_pick := bool(view_state.get("show_skill_pick", false))
+	var show_training_loadout_menu := bool(view_state.get("show_training_loadout_menu", false))
+	var round_summary_text := String(view_state.get("round_summary_text", ""))
+	var match_summary_text := String(view_state.get("match_summary_text", ""))
 	connection_panel.visible = app_state.screen == "central"
 	central_panel.visible = app_state.screen == "central"
 	lobby_panel.visible = app_state.screen == "lobby"

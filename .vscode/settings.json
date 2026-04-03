@@ -1,8 +1,0 @@
-{
-  "rust-analyzer.linkedProjects": [
-    "server/Cargo.toml"
-  ],
-  "rust-analyzer.check.command": "clippy",
-  "rust-analyzer.check.allTargets": true,
-  "rust-analyzer.cargo.allFeatures": true
-}
