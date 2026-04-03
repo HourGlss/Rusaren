@@ -55,6 +55,9 @@ jobs:
           RARENA_NEXTEST_JSON_PATH: target/reports/tests/nextest.jsonl
         run: ./scripts/quality.ps1 test
 
+      - name: Release performance budgets
+        run: rustup run stable cargo test --release -p game_api --test performance_budget_gates
+
       - name: Doc tests
         run: ./scripts/quality.ps1 doc
 

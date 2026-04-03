@@ -417,6 +417,8 @@ impl CombatLogStore {
             .execute_batch(
                 "
                 PRAGMA journal_mode = WAL;
+                PRAGMA synchronous = NORMAL;
+                PRAGMA temp_store = MEMORY;
                 PRAGMA foreign_keys = ON;
                 CREATE TABLE IF NOT EXISTS combat_events (
                     sequence INTEGER PRIMARY KEY AUTOINCREMENT,
