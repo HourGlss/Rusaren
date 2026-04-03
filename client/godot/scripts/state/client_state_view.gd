@@ -493,6 +493,7 @@ static func diagnostics_text(
 	lines.append_array(_diagnostic_scene_lines(diagnostics))
 	lines.append_array(_diagnostic_tile_lines(diagnostics, arena_width, arena_height, arena_tile_units))
 	lines.append_array(_diagnostic_render_lines(diagnostics))
+	lines.append_array(_diagnostic_godot_monitor_lines(diagnostics))
 	lines.append_array(_diagnostic_transport_lines(transport_snapshot, diagnostics))
 	lines.append_array(_diagnostic_training_lines(training_mode, training_metrics))
 	return "\n".join(lines)
@@ -667,6 +668,26 @@ static func _diagnostic_render_lines(diagnostics: Dictionary) -> Array[String]:
 		"Render Surface",
 		"  arena_pixels_w: %d" % int(render_stats.get("arena_pixels_w", 0)),
 		"  arena_pixels_h: %d" % int(render_stats.get("arena_pixels_h", 0)),
+	]
+
+
+static func _diagnostic_godot_monitor_lines(diagnostics: Dictionary) -> Array[String]:
+	var monitor_stats: Dictionary = diagnostics.get("godot_builtin_monitors", {})
+	if monitor_stats.is_empty():
+		return []
+	return [
+		"",
+		"Godot Monitors",
+		"  fps: %.1f" % float(monitor_stats.get("fps", 0.0)),
+		"  process_time_ms: %.3f" % float(monitor_stats.get("process_time_ms", 0.0)),
+		"  physics_process_time_ms: %.3f" % float(monitor_stats.get("physics_process_time_ms", 0.0)),
+		"  object_count: %d" % int(monitor_stats.get("object_count", 0)),
+		"  node_count: %d" % int(monitor_stats.get("node_count", 0)),
+		"  orphan_node_count: %d" % int(monitor_stats.get("orphan_node_count", 0)),
+		"  render_total_objects_in_frame: %d" % int(monitor_stats.get("render_total_objects_in_frame", 0)),
+		"  render_total_primitives_in_frame: %d" % int(monitor_stats.get("render_total_primitives_in_frame", 0)),
+		"  render_total_draw_calls_in_frame: %d" % int(monitor_stats.get("render_total_draw_calls_in_frame", 0)),
+		"  render_video_mem_used_mb: %.3f" % float(monitor_stats.get("render_video_mem_used_mb", 0.0)),
 	]
 
 

@@ -119,6 +119,7 @@ The browser diagnostics report captures:
 - packet decode timing
 - snapshot apply timing
 - arena draw timing
+- Godot built-in monitor snapshots such as FPS, process time, node count, orphan node count, and render counters
 - local object counts and footprint/visibility tile counts
 - control/snapshot packet counts and byte totals
 - current WebSocket and data-channel states
@@ -130,6 +131,30 @@ The host-side bundle captures:
 - Docker `ps` and `stats --no-stream`
 - filtered backend/Caddy/coturn logs
 - host load, uptime, memory, and root filesystem usage
+
+For frontend-only investigation, also run the repeatable client-side reference monitor pass:
+
+```powershell
+cd server
+./scripts/quality.ps1 frontend-report
+```
+
+That writes:
+- `target/reports/frontend/runtime_monitors.json`
+- `target/reports/frontend/summary.json`
+- `target/reports/frontend/index.html`
+
+Use `runtime_monitors.json` together with the copied browser diagnostics text when asking the LLM to compare a good run against a bad run.
+The runtime artifact includes both:
+- official Godot `Performance` monitors
+- custom `Rarena/*` monitors backed by the game's own UI and arena timing buckets
+
+For local editor profiling, open Godot's debugger and use:
+- `Monitors` for built-in engine counters and custom `Rarena/*` counters
+- `Profiler` for script timing
+- the visual profiler when the problem looks render-side
+
+Headless quality runs are the repeatable baseline; editor profiling is still the better source for real render-call inspection.
 
 ## Fixed-Reference Performance Gates
 The current `0.9.6` reference gate lives in `game_api` and runs through:

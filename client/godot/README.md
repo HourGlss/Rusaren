@@ -59,3 +59,74 @@ To link that cue to an authored spell, add the same `audio_cue_id` in the backen
 ```
 
 The client currently resolves cue metadata only. Real playback and movement audio still belong to the remaining sound items in `0.9.7`.
+
+## Frontend Performance Monitoring
+The frontend now uses Godot's built-in `Performance` monitors together with repo-specific custom monitors.
+This is the first-line performance path for the browser shell because it lets us correlate engine timing with the game's own UI and arena draw timings.
+
+Built-in monitors sampled by the frontend diagnostics:
+- `TIME_FPS`
+- `TIME_PROCESS`
+- `TIME_PHYSICS_PROCESS`
+- `OBJECT_COUNT`
+- `OBJECT_NODE_COUNT`
+- `OBJECT_ORPHAN_NODE_COUNT`
+- `RENDER_TOTAL_OBJECTS_IN_FRAME`
+- `RENDER_TOTAL_PRIMITIVES_IN_FRAME`
+- `RENDER_TOTAL_DRAW_CALLS_IN_FRAME`
+- `RENDER_VIDEO_MEM_USED`
+
+Custom Godot monitors registered by the client:
+- `Rarena/UIRefreshMs`
+- `Rarena/ArenaDrawMs`
+- `Rarena/ArenaVisibilityMs`
+- `Rarena/Players`
+- `Rarena/VisibleTiles`
+
+These custom monitors are visible in the Godot debugger's monitor panel and are also sampled by the headless frontend quality path.
+
+## Frontend Quality Artifacts
+Run the frontend smoke and runtime-monitor checks through the backend wrapper:
+
+```powershell
+cd server
+./scripts/quality.ps1 frontend
+./scripts/quality.ps1 frontend-report
+```
+
+That path now writes:
+- `server/target/reports/frontend/runtime_monitors.json`
+- `server/target/reports/frontend/summary.json`
+- `server/target/reports/frontend/index.html`
+
+`runtime_monitors.json` is the structured runtime artifact for LLM troubleshooting.
+It includes reference-scenario summaries for:
+- built-in Godot monitors
+- custom `Rarena/*` monitors
+- pre-cleanup and post-cleanup engine snapshots
+
+## Frontend Debug Handoff
+When the browser client feels slow or desynced, collect both the live client text and the generated runtime artifact.
+
+1. In the browser shell, open `Menu -> Diagnostics` and copy the full diagnostics text.
+2. Run:
+
+```powershell
+cd server
+./scripts/quality.ps1 frontend-report
+```
+
+3. Share:
+- the copied browser diagnostics text
+- `server/target/reports/frontend/runtime_monitors.json`
+- `server/target/reports/frontend/summary.json`
+
+For live deploy issues, also collect the host bundle from `deploy/useful_log_collect.sh` as documented in `server/README.md`.
+
+## Manual Godot Profiling
+For local editor runs, use Godot's built-in tooling directly:
+- `Debugger -> Monitors` for built-in and custom `Rarena/*` counters
+- `Debugger -> Profiler` for script and function timing
+- `Debugger -> Video RAM` and the visual profiler for render-side investigation
+
+The headless quality run is useful for repeatable baselines, but real draw-call and GPU investigation is still best done from the editor because some render counters are zero or unhelpful in headless mode.

@@ -2,6 +2,7 @@ extends Control
 
 const ClientStateScript := preload("res://scripts/state/client_state.gd")
 const DevSocketClientScript := preload("res://scripts/net/dev_socket_client.gd")
+const GodotPerfMonitorsScript := preload("res://scripts/debug/godot_perf_monitors.gd")
 const MainShellFactoryScript := preload("res://scripts/main_shell_factory.gd")
 const Protocol := preload("res://scripts/net/protocol.gd")
 const WebSocketConfigScript := preload("res://scripts/net/websocket_config.gd")
@@ -24,6 +25,13 @@ const AUTO_RECONNECT_DELAY_SECONDS := 2.0
 const PASSIVE_UI_REFRESH_INTERVAL_SECONDS := 0.10
 const RANDOM_PLAYER_NAME_LENGTH := 10
 const PLAYER_NAME_ALPHABET := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+const CUSTOM_PERF_MONITOR_IDS := [
+	"Rarena/UIRefreshMs",
+	"Rarena/ArenaDrawMs",
+	"Rarena/ArenaVisibilityMs",
+	"Rarena/Players",
+	"Rarena/VisibleTiles",
+]
 
 var auto_connect_enabled := true
 
@@ -113,10 +121,15 @@ func _ready() -> void:
 	_bootstrap_request.request_completed.connect(_on_bootstrap_request_completed)
 	_build_shell()
 	_bind_transport()
+	_install_performance_monitors()
 	_apply_player_name(_random_player_name())
 	_refresh_ui()
 	if auto_connect_enabled:
 		_queue_auto_connect(0.0)
+
+
+func _exit_tree() -> void:
+	GodotPerfMonitorsScript.remove_custom_monitors(CUSTOM_PERF_MONITOR_IDS)
 
 
 func _process(delta: float) -> void:
@@ -951,6 +964,7 @@ func _tick_passive_ui_refresh(delta: float) -> void:
 	_passive_ui_refresh_remaining -= delta
 	if _passive_ui_refresh_remaining > 0.0:
 		return
+	app_state.record_godot_monitor_snapshot(GodotPerfMonitorsScript.snapshot_builtin_monitors())
 	_refresh_ui()
 
 
@@ -1005,6 +1019,59 @@ func _append_tooltip_note(base_text: String, note: String) -> String:
 			parts.append("")
 		parts.append(note)
 	return "\n".join(parts)
+
+
+func _install_performance_monitors() -> void:
+	GodotPerfMonitorsScript.add_or_replace_custom_monitor(
+		"Rarena/UIRefreshMs",
+		Callable(self, "_custom_monitor_ui_refresh_seconds"),
+		Performance.MONITOR_TYPE_TIME
+	)
+	GodotPerfMonitorsScript.add_or_replace_custom_monitor(
+		"Rarena/ArenaDrawMs",
+		Callable(self, "_custom_monitor_arena_draw_seconds"),
+		Performance.MONITOR_TYPE_TIME
+	)
+	GodotPerfMonitorsScript.add_or_replace_custom_monitor(
+		"Rarena/ArenaVisibilityMs",
+		Callable(self, "_custom_monitor_arena_visibility_seconds"),
+		Performance.MONITOR_TYPE_TIME
+	)
+	GodotPerfMonitorsScript.add_or_replace_custom_monitor(
+		"Rarena/Players",
+		Callable(self, "_custom_monitor_player_count"),
+		Performance.MONITOR_TYPE_QUANTITY
+	)
+	GodotPerfMonitorsScript.add_or_replace_custom_monitor(
+		"Rarena/VisibleTiles",
+		Callable(self, "_custom_monitor_visible_tile_count"),
+		Performance.MONITOR_TYPE_QUANTITY
+	)
+
+
+func _custom_monitor_ui_refresh_seconds() -> float:
+	return _timing_bucket_seconds("ui_refresh")
+
+
+func _custom_monitor_arena_draw_seconds() -> float:
+	return _timing_bucket_seconds("arena_draw")
+
+
+func _custom_monitor_arena_visibility_seconds() -> float:
+	return _timing_bucket_seconds("arena_draw_visibility")
+
+
+func _custom_monitor_player_count() -> int:
+	return int(app_state.diagnostics_snapshot().get("objects", {}).get("players", 0))
+
+
+func _custom_monitor_visible_tile_count() -> int:
+	return int(app_state.diagnostics_snapshot().get("tiles", {}).get("visible", 0))
+
+
+func _timing_bucket_seconds(metric_name: String) -> float:
+	var bucket := app_state.timing_bucket_snapshot(metric_name)
+	return float(bucket.get("last_us", 0)) / 1000000.0
 
 
 func _apply_skill_button_font_color(button: Button, color: Color) -> void:

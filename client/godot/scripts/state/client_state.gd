@@ -9,6 +9,7 @@ const PROJECTILE_RENDER_LERP_RATE := 15.0
 const RENDER_SNAP_DISTANCE_UNITS := 220.0
 const SpellAudioRegistryScript := preload("res://scripts/content/spell_audio_registry.gd")
 const ClientStateViewScript := preload("res://scripts/state/client_state_view.gd")
+const GodotPerfMonitorsScript := preload("res://scripts/debug/godot_perf_monitors.gd")
 const WebSocketConfigScript := preload("res://scripts/net/websocket_config.gd")
 
 var websocket_url := WebSocketConfigScript.new().runtime_default_url()
@@ -876,6 +877,19 @@ func record_arena_draw(draw_micros: int, arena_pixel_size: Vector2) -> void:
 	diagnostics["render"] = render_stats
 
 
+func record_godot_monitor_snapshot(snapshot: Dictionary) -> void:
+	diagnostics["godot_builtin_monitors"] = snapshot.duplicate(true)
+
+
+func diagnostics_snapshot() -> Dictionary:
+	return diagnostics.duplicate(true)
+
+
+func timing_bucket_snapshot(metric_name: String) -> Dictionary:
+	var timings: Dictionary = diagnostics.get("timings", {})
+	return (timings.get(metric_name, {}) as Dictionary).duplicate(true)
+
+
 func diagnostics_text(transport_snapshot: Dictionary) -> String:
 	return ClientStateViewScript.diagnostics_text(
 		diagnostics,
@@ -1214,6 +1228,7 @@ func _reset_diagnostics() -> void:
 			"arena_pixels_w": 0,
 			"arena_pixels_h": 0,
 		},
+		"godot_builtin_monitors": GodotPerfMonitorsScript.snapshot_builtin_monitors(),
 	}
 
 

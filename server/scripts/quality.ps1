@@ -509,6 +509,8 @@ function Get-GodotExecutable {
 function Invoke-FrontendChecks {
     $godotExe = Get-GodotExecutable
     $projectPath = Join-Path $repoRoot "client\godot"
+    $frontendReportRoot = Join-Path $serverRoot "target\reports\frontend"
+    $runtimeMonitorOutput = Join-Path $frontendReportRoot "runtime_monitors.json"
     $versionOutput = (& $godotExe --version 2>$null | Select-Object -First 1)
     if ($versionOutput -match '(\d+)\.(\d+)') {
         $godotMajor = [int]$matches[1]
@@ -518,10 +520,18 @@ function Invoke-FrontendChecks {
         }
     }
 
-    & $godotExe --headless --path $projectPath --quit
-    & $godotExe --headless --path $projectPath -s res://tests/protocol_checks.gd
-    & $godotExe --headless --path $projectPath -s res://tests/web_export_checks.gd
-    & $godotExe --headless --path $projectPath -s res://tests/shell_layout_checks.gd
+    New-Item -ItemType Directory -Force -Path $frontendReportRoot | Out-Null
+    $env:RARENA_FRONTEND_MONITOR_OUTPUT = $runtimeMonitorOutput
+    try {
+        & $godotExe --headless --path $projectPath --quit
+        & $godotExe --headless --path $projectPath -s res://tests/protocol_checks.gd
+        & $godotExe --headless --path $projectPath -s res://tests/web_export_checks.gd
+        & $godotExe --headless --path $projectPath -s res://tests/shell_layout_checks.gd
+        & $godotExe --headless --path $projectPath -s res://tests/performance_monitor_checks.gd
+    }
+    finally {
+        Remove-Item Env:RARENA_FRONTEND_MONITOR_OUTPUT -ErrorAction SilentlyContinue
+    }
 }
 
 function Get-PreferredMutationScratchRoot {
@@ -1351,7 +1361,10 @@ function Invoke-QualityTask {
             }
         }
         "frontend" { Invoke-FrontendChecks }
-        "frontend-report" { & (Join-Path $PSScriptRoot "generate-reports.ps1") -Report frontend -FailOnCommandFailure }
+        "frontend-report" {
+            Invoke-FrontendChecks
+            & (Join-Path $PSScriptRoot "generate-reports.ps1") -Report frontend -FailOnCommandFailure
+        }
         "soak" { Invoke-SoakTests -HasNextest $hasNextest }
         "doc" { rustup run stable cargo xdoc }
         "docs-artifacts" { & (Join-Path $PSScriptRoot "build-docs.ps1") }

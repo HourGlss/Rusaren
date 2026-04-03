@@ -16,6 +16,7 @@ if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
 }
 
 $runtimeScriptsRoot = Join-Path $repoRoot "client\godot\scripts"
+$runtimeMetricsPath = Join-Path $OutputRoot "runtime_monitors.json"
 $godotDocsVersion = "4.6 stable"
 
 function Escape-Html {
@@ -145,6 +146,48 @@ function Get-Percent {
     }
 
     return ([double]$Numerator / [double]$Denominator) * 100.0
+}
+
+function Get-LowerIsBetterScore {
+    param(
+        [double]$Value,
+        [double]$A,
+        [double]$B,
+        [double]$C,
+        [double]$D,
+        [double]$E
+    )
+
+    if ($Value -le $A) { return 100.0 }
+    elseif ($Value -le $B) { return 85.0 }
+    elseif ($Value -le $C) { return 70.0 }
+    elseif ($Value -le $D) { return 55.0 }
+    elseif ($Value -le $E) { return 40.0 }
+    return 20.0
+}
+
+function Get-OptionalJsonValue {
+    param(
+        [AllowNull()][object]$InputObject,
+        [string[]]$Path,
+        $DefaultValue = $null
+    )
+
+    $current = $InputObject
+    foreach ($segment in $Path) {
+        if ($null -eq $current) {
+            return $DefaultValue
+        }
+
+        $property = $current.PSObject.Properties[$segment]
+        if ($null -eq $property) {
+            return $DefaultValue
+        }
+
+        $current = $property.Value
+    }
+
+    return $current
 }
 
 function Get-IndentDepth {
@@ -495,14 +538,83 @@ function Invoke-FrontendQualityReport {
         $collectionScore = Clamp-Score -Value (100.0 - ($frontOpsCount * 20.0) - [math]::Min(15.0, $queueFreeCount * 5.0) - ($hotPathAllocationCount * 12.0))
         $concurrencyScore = Clamp-Score -Value (100.0 - ($blockingLoadInHotPathCount * 40.0) - ($(if ($threadApiCount -gt 0) { 12.0 } else { 0.0 })))
 
-        $categoryScores = @(
-            [pscustomobject]@{ Name = "Typing discipline"; Weight = 25; Score = $typingScore; Grade = Get-PercentGrade -Score $typingScore; Detail = "Typed vars $typedVarCount / $totalVarCount, typed params $typedParamCount / $totalParamCount, typed returns $typedReturnCount / $($functions.Count)." },
-            [pscustomobject]@{ Name = "Frame-loop hygiene"; Weight = 25; Score = $frameScore; Grade = Get-PercentGrade -Score $frameScore; Detail = "$($frameFunctions.Count) frame callbacks, $frameQueueRedrawCount queue_redraw calls, $frameRefreshCallCount refresh/rebuild calls, $frameLoopCount direct loops in frame callbacks." },
-            [pscustomobject]@{ Name = "Draw-path efficiency risk"; Weight = 20; Score = $drawScore; Grade = Get-PercentGrade -Score $drawScore; Detail = "$drawLoopFunctionCount draw functions with loops, $nestedDrawLoopCount nested draw loops, $largeDrawFunctionCount large draw helpers, dispatcher fan-out $drawDispatcherPhaseCount." },
-            [pscustomobject]@{ Name = "Maintainability"; Weight = 10; Score = $maintainabilityScore; Grade = Get-PercentGrade -Score $maintainabilityScore; Detail = "Average runtime file size $([math]::Round((@($fileAnalyses | ForEach-Object { $_.LineCount } | Measure-Object -Average).Average), 1)) lines; $((@($functions | Where-Object { $_.Lines -gt 40 })).Count) functions over 40 lines." },
-            [pscustomobject]@{ Name = "Collection and allocation hygiene"; Weight = 10; Score = $collectionScore; Grade = Get-PercentGrade -Score $collectionScore; Detail = "$frontOpsCount front-shifting array ops, $queueFreeCount queue_free calls, $hotPathAllocationCount allocations in frame/draw paths." },
-            [pscustomobject]@{ Name = "Blocking I/O and concurrency hygiene"; Weight = 10; Score = $concurrencyScore; Grade = Get-PercentGrade -Score $concurrencyScore; Detail = "$blockingLoadInHotPathCount blocking load calls in hot paths, $threadApiCount thread/deferred APIs touched." }
-        )
+        $runtimeMetrics = $null
+        if (Test-Path $runtimeMetricsPath) {
+            $runtimeMetrics = Get-Content -Path $runtimeMetricsPath -Raw | ConvertFrom-Json
+        }
+
+        $runtimeCategory = $null
+        $runtimeSummary = $null
+        if ($null -ne $runtimeMetrics) {
+            $runtimeUiRefreshAvg = [double](Get-OptionalJsonValue -InputObject $runtimeMetrics -Path @("custom", "ui_refresh_ms", "avg") -DefaultValue 0.0)
+            $runtimeArenaDrawAvg = [double](Get-OptionalJsonValue -InputObject $runtimeMetrics -Path @("custom", "arena_draw_ms", "avg") -DefaultValue 0.0)
+            $runtimeVisibilityAvg = [double](Get-OptionalJsonValue -InputObject $runtimeMetrics -Path @("custom", "arena_visibility_ms", "avg") -DefaultValue 0.0)
+            $runtimeProcessAvg = [double](Get-OptionalJsonValue -InputObject $runtimeMetrics -Path @("built_in", "process_time_ms", "avg") -DefaultValue 0.0)
+            $runtimePostCleanupOrphans = [double](Get-OptionalJsonValue -InputObject $runtimeMetrics -Path @("post_cleanup_builtin", "orphan_node_count") -DefaultValue 0.0)
+
+            $runtimeUiRefreshScore = Get-LowerIsBetterScore -Value $runtimeUiRefreshAvg -A 2.0 -B 4.0 -C 8.0 -D 12.0 -E 16.0
+            $runtimeArenaDrawScore = Get-LowerIsBetterScore -Value $runtimeArenaDrawAvg -A 8.0 -B 12.0 -C 16.0 -D 20.0 -E 28.0
+            $runtimeVisibilityScore = Get-LowerIsBetterScore -Value $runtimeVisibilityAvg -A 4.0 -B 8.0 -C 12.0 -D 16.0 -E 22.0
+            $runtimeProcessScore = Get-LowerIsBetterScore -Value $runtimeProcessAvg -A 4.0 -B 6.0 -C 10.0 -D 14.0 -E 20.0
+            $runtimeOrphanScore = if ($runtimePostCleanupOrphans -le 0.0) {
+                100.0
+            }
+            elseif ($runtimePostCleanupOrphans -le 1.0) {
+                70.0
+            }
+            elseif ($runtimePostCleanupOrphans -le 2.0) {
+                40.0
+            }
+            else {
+                0.0
+            }
+
+            $runtimeScore = Clamp-Score -Value (
+                ($runtimeUiRefreshScore * 0.30) +
+                ($runtimeArenaDrawScore * 0.30) +
+                ($runtimeVisibilityScore * 0.20) +
+                ($runtimeProcessScore * 0.10) +
+                ($runtimeOrphanScore * 0.10)
+            )
+
+            $runtimeCategory = [pscustomobject]@{
+                Name = "Runtime monitor budgets"
+                Weight = 20
+                Score = $runtimeScore
+                Grade = Get-PercentGrade -Score $runtimeScore
+                Detail = "Reference match shell averages: ui_refresh ${runtimeUiRefreshAvg}ms, arena_draw ${runtimeArenaDrawAvg}ms, arena_visibility ${runtimeVisibilityAvg}ms, built-in process ${runtimeProcessAvg}ms, post-cleanup orphans ${runtimePostCleanupOrphans}."
+            }
+            $runtimeSummary = [pscustomobject]@{
+                UiRefreshAvgMs = [math]::Round($runtimeUiRefreshAvg, 3)
+                ArenaDrawAvgMs = [math]::Round($runtimeArenaDrawAvg, 3)
+                ArenaVisibilityAvgMs = [math]::Round($runtimeVisibilityAvg, 3)
+                ProcessTimeAvgMs = [math]::Round($runtimeProcessAvg, 3)
+                PostCleanupOrphanNodeCount = [int][math]::Round($runtimePostCleanupOrphans)
+                ArtifactPath = (Convert-ToRepoPath -Path $runtimeMetricsPath)
+            }
+        }
+
+        $categoryScores = if ($null -ne $runtimeCategory) {
+            @(
+                [pscustomobject]@{ Name = "Typing discipline"; Weight = 20; Score = $typingScore; Grade = Get-PercentGrade -Score $typingScore; Detail = "Typed vars $typedVarCount / $totalVarCount, typed params $typedParamCount / $totalParamCount, typed returns $typedReturnCount / $($functions.Count)." },
+                [pscustomobject]@{ Name = "Frame-loop hygiene"; Weight = 20; Score = $frameScore; Grade = Get-PercentGrade -Score $frameScore; Detail = "$($frameFunctions.Count) frame callbacks, $frameQueueRedrawCount queue_redraw calls, $frameRefreshCallCount refresh/rebuild calls, $frameLoopCount direct loops in frame callbacks." },
+                [pscustomobject]@{ Name = "Draw-path efficiency risk"; Weight = 15; Score = $drawScore; Grade = Get-PercentGrade -Score $drawScore; Detail = "$drawLoopFunctionCount draw functions with loops, $nestedDrawLoopCount nested draw loops, $largeDrawFunctionCount large draw helpers, dispatcher fan-out $drawDispatcherPhaseCount." },
+                $runtimeCategory,
+                [pscustomobject]@{ Name = "Maintainability"; Weight = 10; Score = $maintainabilityScore; Grade = Get-PercentGrade -Score $maintainabilityScore; Detail = "Average runtime file size $([math]::Round((@($fileAnalyses | ForEach-Object { $_.LineCount } | Measure-Object -Average).Average), 1)) lines; $((@($functions | Where-Object { $_.Lines -gt 40 })).Count) functions over 40 lines." },
+                [pscustomobject]@{ Name = "Collection and allocation hygiene"; Weight = 10; Score = $collectionScore; Grade = Get-PercentGrade -Score $collectionScore; Detail = "$frontOpsCount front-shifting array ops, $queueFreeCount queue_free calls, $hotPathAllocationCount allocations in frame/draw paths." },
+                [pscustomobject]@{ Name = "Blocking I/O and concurrency hygiene"; Weight = 5; Score = $concurrencyScore; Grade = Get-PercentGrade -Score $concurrencyScore; Detail = "$blockingLoadInHotPathCount blocking load calls in hot paths, $threadApiCount thread/deferred APIs touched." }
+            )
+        }
+        else {
+            @(
+                [pscustomobject]@{ Name = "Typing discipline"; Weight = 25; Score = $typingScore; Grade = Get-PercentGrade -Score $typingScore; Detail = "Typed vars $typedVarCount / $totalVarCount, typed params $typedParamCount / $totalParamCount, typed returns $typedReturnCount / $($functions.Count)." },
+                [pscustomobject]@{ Name = "Frame-loop hygiene"; Weight = 25; Score = $frameScore; Grade = Get-PercentGrade -Score $frameScore; Detail = "$($frameFunctions.Count) frame callbacks, $frameQueueRedrawCount queue_redraw calls, $frameRefreshCallCount refresh/rebuild calls, $frameLoopCount direct loops in frame callbacks." },
+                [pscustomobject]@{ Name = "Draw-path efficiency risk"; Weight = 20; Score = $drawScore; Grade = Get-PercentGrade -Score $drawScore; Detail = "$drawLoopFunctionCount draw functions with loops, $nestedDrawLoopCount nested draw loops, $largeDrawFunctionCount large draw helpers, dispatcher fan-out $drawDispatcherPhaseCount." },
+                [pscustomobject]@{ Name = "Maintainability"; Weight = 10; Score = $maintainabilityScore; Grade = Get-PercentGrade -Score $maintainabilityScore; Detail = "Average runtime file size $([math]::Round((@($fileAnalyses | ForEach-Object { $_.LineCount } | Measure-Object -Average).Average), 1)) lines; $((@($functions | Where-Object { $_.Lines -gt 40 })).Count) functions over 40 lines." },
+                [pscustomobject]@{ Name = "Collection and allocation hygiene"; Weight = 10; Score = $collectionScore; Grade = Get-PercentGrade -Score $collectionScore; Detail = "$frontOpsCount front-shifting array ops, $queueFreeCount queue_free calls, $hotPathAllocationCount allocations in frame/draw paths." },
+                [pscustomobject]@{ Name = "Blocking I/O and concurrency hygiene"; Weight = 10; Score = $concurrencyScore; Grade = Get-PercentGrade -Score $concurrencyScore; Detail = "$blockingLoadInHotPathCount blocking load calls in hot paths, $threadApiCount thread/deferred APIs touched." }
+            )
+        }
 
         $overallScore = 0.0
         foreach ($category in $categoryScores) {
@@ -540,7 +652,13 @@ function Invoke-FrontendQualityReport {
         }
 
         $topFindings = @($findings | Sort-Object @{ Expression = { -1 * (Get-FindingSeverityRank -Severity $_.Severity) } }, @{ Expression = { $_.Path } }, @{ Expression = { $_.Line } } | Select-Object -First 20)
-        $overallScoreSummary = New-ScoreSummary -Score $overallScore -Formula "25% typing + 25% frame-loop hygiene + 20% draw-path efficiency + 10% maintainability + 10% collection/allocation hygiene + 10% blocking-I/O/concurrency hygiene" -Breakdown @(
+        $formulaText = if ($null -ne $runtimeCategory) {
+            "20% typing + 20% frame-loop hygiene + 15% draw-path efficiency + 20% runtime monitor budgets + 10% maintainability + 10% collection/allocation hygiene + 5% blocking-I/O/concurrency hygiene"
+        }
+        else {
+            "25% typing + 25% frame-loop hygiene + 20% draw-path efficiency + 10% maintainability + 10% collection/allocation hygiene + 10% blocking-I/O/concurrency hygiene"
+        }
+        $scoreBreakdown = @(
             "Typing: $(Format-Score -Score $typingScore)",
             "Frame loops: $(Format-Score -Score $frameScore)",
             "Draw path: $(Format-Score -Score $drawScore)",
@@ -548,6 +666,10 @@ function Invoke-FrontendQualityReport {
             "Collections/allocation: $(Format-Score -Score $collectionScore)",
             "Blocking I/O/concurrency: $(Format-Score -Score $concurrencyScore)"
         )
+        if ($null -ne $runtimeCategory) {
+            $scoreBreakdown = @("Runtime monitors: $(Format-Score -Score $runtimeCategory.Score)") + $scoreBreakdown
+        }
+        $overallScoreSummary = New-ScoreSummary -Score $overallScore -Formula $formulaText -Breakdown $scoreBreakdown
 
         $summaryObject = [pscustomobject]@{
             GeneratedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
@@ -555,6 +677,7 @@ function Invoke-FrontendQualityReport {
             RuntimeScriptRoot = (Convert-ToRepoPath -Path $runtimeScriptsRoot)
             RuntimeScriptCount = $fileAnalyses.Count
             RuntimeFunctionCount = $functions.Count
+            RuntimeMonitorArtifact = if ($null -ne $runtimeSummary) { $runtimeSummary.ArtifactPath } else { $null }
             ScoreSummary = $overallScoreSummary
             Categories = @($categoryScores)
             Metrics = [pscustomobject]@{
@@ -577,6 +700,7 @@ function Invoke-FrontendQualityReport {
                 BlockingLoadsInHotPath = $blockingLoadInHotPathCount
                 ThreadApiCount = $threadApiCount
             }
+            RuntimeMetrics = $runtimeSummary
             Files = @($fileAnalyses | Sort-Object Score, Path | ForEach-Object { [pscustomobject]@{ Path = $_.Path; LineCount = $_.LineCount; FunctionCount = $_.FunctionCount; Score = $_.Score; Grade = $_.Grade; DynamicVars = $_.DynamicVarCount; FrameFunctions = $_.FrameFunctionCount; DrawFunctions = $_.DrawFunctionCount; HotPathAllocations = $_.HotPathAllocationCount } })
             Findings = @($topFindings)
             Guidance = @($docGuidance)
@@ -604,6 +728,23 @@ function Invoke-FrontendQualityReport {
         $guidanceItems = foreach ($entry in $docGuidance) {
             "<li><a href=`"$(Escape-Html $entry.Url)`">$(Escape-Html $entry.Title)</a>: $(Escape-Html $entry.Guidance)</li>"
         }
+        $runtimePanel = if ($null -ne $runtimeSummary) {
+@"
+<div class="panel"><h2>Runtime monitor reference</h2><table><thead><tr><th>Metric</th><th>Value</th><th>Source</th></tr></thead><tbody>
+<tr><td>ui_refresh_ms avg</td><td>$($runtimeSummary.UiRefreshAvgMs)</td><td>Custom monitor <code>Rarena/UIRefreshMs</code></td></tr>
+<tr><td>arena_draw_ms avg</td><td>$($runtimeSummary.ArenaDrawAvgMs)</td><td>Custom monitor <code>Rarena/ArenaDrawMs</code></td></tr>
+<tr><td>arena_visibility_ms avg</td><td>$($runtimeSummary.ArenaVisibilityAvgMs)</td><td>Custom monitor <code>Rarena/ArenaVisibilityMs</code></td></tr>
+<tr><td>process_time_ms avg</td><td>$($runtimeSummary.ProcessTimeAvgMs)</td><td>Built-in <code>Performance.TIME_PROCESS</code></td></tr>
+<tr><td>post-cleanup orphan nodes</td><td>$($runtimeSummary.PostCleanupOrphanNodeCount)</td><td>Built-in <code>Performance.OBJECT_ORPHAN_NODE_COUNT</code></td></tr>
+<tr><td>Artifact</td><td colspan="2"><code>$(Escape-Html $runtimeSummary.ArtifactPath)</code></td></tr>
+</tbody></table></div>
+"@
+        }
+        else {
+@"
+<div class="panel"><h2>Runtime monitor reference</h2><p>The runtime monitor artifact is missing. Run <code>./scripts/quality.ps1 frontend</code> or <code>./scripts/quality.ps1 frontend-report</code> with a Godot 4.1+ binary to generate <code>server/target/reports/frontend/runtime_monitors.json</code>.</p></div>
+"@
+        }
 
         $body = @"
 <h1>Frontend Quality Report</h1>
@@ -619,6 +760,7 @@ function Invoke-FrontendQualityReport {
 <div class="panel"><h2>Weighted categories</h2><table><thead><tr><th>Category</th><th>Weight</th><th>Score</th><th>What was measured</th></tr></thead><tbody>
 $(($categoryRows -join "`n"))
 </tbody></table></div>
+$runtimePanel
 <div class="panel"><h2>Top frontend findings</h2><table><thead><tr><th>Severity</th><th>Category</th><th>Location</th><th>Issue</th><th>Why it matters</th></tr></thead><tbody>
 $(($findingRows -join "`n"))
 </tbody></table></div>
@@ -640,7 +782,8 @@ $(($guidanceItems -join "`n"))
             Notes = @(
                 "Frontend quality is now graded from runtime GDScript under client/godot/scripts, not only from headless smoke checks.",
                 "The score is heuristic and docs-backed: static typing, frame callback cost, draw-path risk, arrays, and thread-safety guidance all feed the grade.",
-                "The machine-readable frontend summary lives at target/reports/frontend/summary.json for LLM-assisted triage."
+                "The machine-readable frontend summary lives at target/reports/frontend/summary.json for LLM-assisted triage.",
+                "Runtime monitor sampling from performance_monitor_checks.gd is included when target/reports/frontend/runtime_monitors.json exists."
             )
             IndexPath = "frontend/index.html"
             ErrorMessage = $null

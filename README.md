@@ -227,6 +227,22 @@ That writes the frontend summary and HTML report under:
 - `server/target/reports/frontend/summary.json`
 - `server/target/reports/frontend/index.html`
 
+The frontend report path also now writes a structured runtime monitor artifact at:
+- `server/target/reports/frontend/runtime_monitors.json`
+
+That artifact is produced from:
+- official Godot `Performance` monitors
+- custom `Rarena/*` monitors for UI refresh, arena draw, visibility draw, player count, and visible tile count
+
+Use it together with the browser's `Menu -> Diagnostics` output when the frontend feels slow or visually desynced.
+
+For local Godot editor profiling, prefer:
+- `Debugger -> Monitors`
+- `Debugger -> Profiler`
+- the visual profiler for render-heavy issues
+
+Those editor tools remain the best source for real draw-call investigation; the headless quality artifact is meant to be the repeatable baseline.
+
 Export the Godot web client into the Rust server static root:
 
 ```powershell
