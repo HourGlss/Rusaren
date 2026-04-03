@@ -196,10 +196,7 @@ fn choose_round_one_skills(
         .expect("right pre-combat events");
 }
 
-fn drain_active_match_clients(
-    clients: &mut [HeadlessClient],
-    transport: &mut InMemoryTransport,
-) {
+fn drain_active_match_clients(clients: &mut [HeadlessClient], transport: &mut InMemoryTransport) {
     for client in clients {
         let _ = client
             .drain_events(transport)
