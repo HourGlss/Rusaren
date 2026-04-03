@@ -670,8 +670,7 @@ impl SimulationWorld {
             let owner_team = world
                 .players
                 .get(&owner)
-                .map(|player| player.team)
-                .unwrap_or(TeamSide::TeamA);
+                .map_or(TeamSide::TeamA, |player| player.team);
             world.spawn_map_features(owner, owner_team, map);
         }
         Ok(world)

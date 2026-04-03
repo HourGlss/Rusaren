@@ -120,6 +120,7 @@ pub(crate) fn movement_delta(intent: MovementIntent, speed: u16) -> (i32, i32) {
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn resolve_movement(
     start_x: i16,
     start_y: i16,
@@ -207,6 +208,7 @@ pub(crate) fn point_in_map_footprint(
     map_mask_has_tile(footprint_mask, index)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn circle_fits_map_footprint(
     x: i16,
     y: i16,

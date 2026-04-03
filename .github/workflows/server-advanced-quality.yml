@@ -39,7 +39,7 @@ jobs:
       - name: Feature matrix
         run: ./scripts/quality.ps1 hack
 
-      - name: Soak and load regression
+      - name: Soak, load, and performance budget regression
         run: ./scripts/quality.ps1 soak
 
       - name: Complexity report

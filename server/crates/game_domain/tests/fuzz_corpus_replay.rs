@@ -29,7 +29,13 @@ fn server_roots() -> Vec<PathBuf> {
 fn corpus_dirs(target: &str) -> Vec<PathBuf> {
     server_roots()
         .into_iter()
-        .map(|root| root.join("fuzz").join("corpus").join(target))
+        .flat_map(|root| {
+            [
+                root.join("target").join("fuzz-seed-corpus").join(target),
+                root.join("target").join("fuzz-generated-corpus").join(target),
+                root.join("fuzz").join("corpus").join(target),
+            ]
+        })
         .filter(|dir| dir.exists())
         .map(|dir| fs::canonicalize(&dir).unwrap_or(dir))
         .collect()
@@ -39,7 +45,7 @@ fn corpus_files(target: &str) -> Vec<Vec<u8>> {
     let dirs = corpus_dirs(target);
     assert!(
         !dirs.is_empty(),
-        "at least one corpus directory should exist for target {target}"
+        "at least one seed or generated corpus directory should exist for target {target}"
     );
 
     let mut entries = dirs

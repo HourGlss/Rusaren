@@ -184,6 +184,8 @@ $orderedSources = @(
     "15_deployment_ops.md",
     "16_runbooks.md",
     "17_linode_deploy.md",
+    "18_performance_budgets.md",
+    "19_architecture_governance.md",
     "maps\README.md",
     "maps\_template.md",
     "classes\README.md",
@@ -302,6 +304,8 @@ $classSummaryBlock
 - [Deployment and Ops](15_deployment_ops.md)
 - [Runbooks](16_runbooks.md)
 - [Linode Deployment](17_linode_deploy.md)
+- [Performance Budgets](18_performance_budgets.md)
+- [Architecture Governance](19_architecture_governance.md)
 "@
 Set-Content -Path (Join-Path $bookSourceRoot "SUMMARY.md") -Value $summaryContent -Encoding UTF8
 

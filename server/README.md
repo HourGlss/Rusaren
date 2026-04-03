@@ -85,3 +85,16 @@ The host-side bundle captures:
 - Docker `ps` and `stats --no-stream`
 - filtered backend/Caddy/coturn logs
 - host load, uptime, memory, and root filesystem usage
+
+## Fixed-Reference Performance Gates
+The current `0.9.6` reference gate lives in `game_api` and runs through:
+
+- `pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/quality.ps1 soak`
+
+That task now includes:
+- repeated soak-match flow coverage
+- a fixed-reference load scenario with `100` idle clients and `10` simultaneous matches
+- command latency budgets
+- tick latency budgets
+- Linux RSS budget checks
+- SQLite combat-log append and query budget checks

@@ -32,10 +32,17 @@ The server should have explicit budgets for tick latency, command latency, CPU, 
 
 ## How to test these budgets
 - Criterion benchmarks cover micro hot paths in `game_sim` and `game_net`.
-- Soak and load scenarios should exercise repeated match loops and lobby churn under `game_api`.
-- Hosted smoke probes should verify the public path after every deploy and on a recurring timer.
-- Prometheus metrics should be used to confirm uptime, tick timing, ingress rejection rate, and websocket health on the real host.
+- `./scripts/quality.ps1 soak` now runs the fixed-reference `game_api` soak and performance-budget gate suite.
+- The current reference gate exercises:
+  - `100` idle clients
+  - `10` simultaneous matches
+  - command latency percentiles
+  - simulation tick percentiles
+  - SQLite combat-log append and query percentiles
+  - backend RSS on Linux CI or Linux reference hosts
+- Hosted smoke probes verify the public path after every deploy, and Linode setup now installs recurring hosted smoke and liveprobe timers.
+- Prometheus metrics and `/adminz?format=json` confirm uptime, tick timing, ingress rejection rate, websocket health, and combat-log timing on the real host.
 
 ## Release honesty
-- The budget numbers above are now the intended `0.9` targets.
-- The full automated gate is still incomplete until the repeatable load harness measures CPU, memory, connection capacity, and SQLite log latency directly from the reference environment.
+- The budget numbers above are now the enforced `0.9.6` targets for the fixed reference environment.
+- Whole-stack CPU on the hosted reference environment still needs to be checked through Prometheus, Docker stats, and the hosted diagnostics bundle rather than the CI-only gate.

@@ -54,12 +54,10 @@ impl ServerControlEvent {
         match kind {
             1 => decode_connected_event(payload, index),
             2..=6 => decode_lobby_event(kind, payload, index),
-            7..=14 => decode_match_event(kind, payload, index),
+            7..=14 | 25 => decode_match_event(kind, payload, index),
             15..=16 => decode_terminal_event(kind, payload, index),
-            17..=21 => decode_snapshot_event(kind, payload, index),
+            17..=21 | 24 => decode_snapshot_event(kind, payload, index),
             22..=23 => decode_summary_event(kind, payload, index),
-            24 => decode_snapshot_event(kind, payload, index),
-            25 => decode_match_event(kind, payload, index),
             other => Err(PacketError::UnknownServerEvent(other)),
         }
     }

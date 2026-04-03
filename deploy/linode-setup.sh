@@ -31,6 +31,7 @@ ADMIN_CIDR="${ADMIN_CIDR:-}"
 INSTALL_GODOT="${INSTALL_GODOT:-1}"
 GODOT_SNAP_NAME="${GODOT_SNAP_NAME:-}"
 SMOKE_INTERVAL_MINUTES="${SMOKE_INTERVAL_MINUTES:-5}"
+LIVE_PROBE_INTERVAL_MINUTES="${LIVE_PROBE_INTERVAL_MINUTES:-60}"
 RUN_DEPLOY="${RUN_DEPLOY:-1}"
 
 log() {
@@ -417,6 +418,45 @@ EOF
     systemctl enable --now rusaren-smoke.timer
 }
 
+install_live_transport_probe_timer() {
+    local service_file="/etc/systemd/system/rusaren-liveprobe.service"
+    local timer_file="/etc/systemd/system/rusaren-liveprobe.timer"
+
+    log "installing hosted live transport probe timer"
+    cat > "${service_file}" <<EOF
+[Unit]
+Description=Rusaren hosted live transport probe
+After=rusaren-compose.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=${DEPLOY_USER}
+Group=${DEPLOY_USER}
+Environment=HOME=/home/${DEPLOY_USER}
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin
+Environment=RARENA_CONFIG_DIR=${CONFIG_DIR}
+WorkingDirectory=${DEPLOY_DIR}
+ExecStart=/usr/bin/env bash ${DEPLOY_DIR}/deploy/run_live_transport_probe.sh
+EOF
+
+    cat > "${timer_file}" <<EOF
+[Unit]
+Description=Run the Rusaren hosted live transport probe on a schedule
+
+[Timer]
+OnBootSec=20m
+OnUnitActiveSec=${LIVE_PROBE_INTERVAL_MINUTES}m
+Unit=rusaren-liveprobe.service
+
+[Install]
+WantedBy=timers.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable --now rusaren-liveprobe.timer
+}
+
 main() {
     require_value PUBLIC_HOST
     require_value ACME_EMAIL
@@ -456,6 +496,7 @@ main() {
     write_compose_override
     install_compose_service
     install_smoke_probe_timer
+    install_live_transport_probe_timer
 
     if [[ "${RUN_DEPLOY}" == "1" ]]; then
         systemctl restart rusaren-compose.service
@@ -465,6 +506,7 @@ main() {
     log "deploy config directory: ${CONFIG_DIR}"
     log "private admin dashboard: https://${PUBLIC_HOST}/adminz (user ${RARENA_ADMIN_USERNAME})"
     log "smoke timer: rusaren-smoke.timer every ${SMOKE_INTERVAL_MINUTES} minute(s)"
+    log "live transport probe timer: rusaren-liveprobe.timer every ${LIVE_PROBE_INTERVAL_MINUTES} minute(s)"
     if [[ "${INSTALL_GODOT}" == "1" ]]; then
         log "Godot CLI installed via snap; deploy can now build the web client on-host with server/scripts/export-web-client.sh"
     fi

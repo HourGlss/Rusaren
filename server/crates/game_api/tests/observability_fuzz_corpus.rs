@@ -13,8 +13,9 @@ fn corpus_root() -> PathBuf {
 fn corpus_roots() -> Vec<PathBuf> {
     let repo_root = corpus_root();
     [
-        repo_root.join("fuzz").join("corpus"),
+        repo_root.join("target").join("fuzz-seed-corpus"),
         repo_root.join("target").join("fuzz-generated-corpus"),
+        repo_root.join("fuzz").join("corpus"),
     ]
     .into_iter()
     .filter(|root| root.exists())

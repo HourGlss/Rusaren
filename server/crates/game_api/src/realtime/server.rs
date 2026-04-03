@@ -331,7 +331,15 @@ async fn metrics_export(State(state): State<DevServerState>) -> Response {
 #[derive(Debug, Default, serde::Deserialize)]
 struct AdminDashboardQuery {
     format: Option<String>,
+    match_id: Option<u32>,
+    match_limit: Option<usize>,
+    event_limit: Option<usize>,
 }
+
+const DEFAULT_ADMIN_MATCH_LIMIT: usize = 8;
+const DEFAULT_ADMIN_EVENT_LIMIT: usize = 48;
+const MAX_ADMIN_MATCH_LIMIT: usize = 25;
+const MAX_ADMIN_EVENT_LIMIT: usize = 200;
 
 /// Serves a password-protected read-only admin dashboard for operators.
 async fn admin_dashboard(
@@ -351,6 +359,28 @@ async fn admin_dashboard(
     }
 
     let runtime = state.runtime.lock().await;
+    let stats = collect_admin_dashboard_stats(&runtime, state.observability.as_ref());
+    let app_diagnostics = runtime.app.diagnostics_snapshot();
+    let match_limit = clamp_admin_limit(
+        query.match_limit,
+        DEFAULT_ADMIN_MATCH_LIMIT,
+        MAX_ADMIN_MATCH_LIMIT,
+    );
+    let event_limit = clamp_admin_limit(
+        query.event_limit,
+        DEFAULT_ADMIN_EVENT_LIMIT,
+        MAX_ADMIN_EVENT_LIMIT,
+    );
+    let recent_matches = match runtime.app.recent_combat_log_matches(match_limit) {
+        Ok(matches) => matches,
+        Err(error) => return admin_dashboard_failure_response(&error.to_string()),
+    };
+    let selected_match_log =
+        match build_selected_match_log_view(&runtime, &recent_matches, query.match_id, event_limit)
+        {
+            Ok(view) => view,
+            Err(error) => return admin_dashboard_failure_response(&error.to_string()),
+        };
     let metrics = state
         .observability
         .as_ref()
@@ -364,13 +394,21 @@ async fn admin_dashboard(
                         .unwrap_or(u64::MAX)
                 })
                 .unwrap_or(0),
-            runtime: collect_admin_dashboard_stats(&runtime, state.observability.as_ref()),
-            app_diagnostics: runtime.app.diagnostics_snapshot(),
+            runtime: stats.clone(),
+            app_diagnostics: app_diagnostics.clone(),
+            recent_matches,
+            selected_match_log,
             prometheus_text: metrics.clone(),
         };
         return Json(response).into_response();
     }
-    let body = render_admin_dashboard(&runtime, state.observability.as_ref(), metrics.as_deref());
+    let body = render_admin_dashboard(
+        &stats,
+        &app_diagnostics,
+        &recent_matches,
+        selected_match_log.as_ref(),
+        metrics.as_deref(),
+    );
     Html(body).into_response()
 }
 
@@ -464,7 +502,14 @@ struct AdminDashboardStats {
     websocket_disconnects: u64,
     websocket_rejections: u64,
     websocket_active: u64,
+    recent_errors: Vec<crate::observability::RecentDiagnosticEvent>,
     recent_diagnostics: Vec<crate::observability::RecentDiagnosticEvent>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+struct AdminMatchLogView {
+    summary: crate::CombatLogMatchSummary,
+    entries: Vec<crate::CombatLogEntry>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
@@ -472,6 +517,8 @@ struct AdminDiagnosticsResponse {
     generated_unix_ms: u64,
     runtime: AdminDashboardStats,
     app_diagnostics: crate::app::ServerAppDiagnosticsSnapshot,
+    recent_matches: Vec<crate::CombatLogMatchSummary>,
+    selected_match_log: Option<AdminMatchLogView>,
     prometheus_text: Option<String>,
 }
 
@@ -481,6 +528,9 @@ fn collect_admin_dashboard_stats(
 ) -> AdminDashboardStats {
     let uptime = observability
         .map(crate::ServerObservability::uptime)
+        .unwrap_or_default();
+    let recent_diagnostics = observability
+        .map(crate::ServerObservability::recent_diagnostics)
         .unwrap_or_default();
     AdminDashboardStats {
         connected_players: runtime.app.connected_player_count(),
@@ -519,10 +569,79 @@ fn collect_admin_dashboard_stats(
             .map_or(0, crate::ServerObservability::websocket_rejections_total),
         websocket_active: observability
             .map_or(0, crate::ServerObservability::websocket_sessions_active),
-        recent_diagnostics: observability
-            .map(crate::ServerObservability::recent_diagnostics)
-            .unwrap_or_default(),
+        recent_errors: collect_recent_error_events(&recent_diagnostics),
+        recent_diagnostics,
     }
+}
+
+fn clamp_admin_limit(value: Option<usize>, default_value: usize, max_value: usize) -> usize {
+    value.unwrap_or(default_value).clamp(1, max_value)
+}
+
+fn collect_recent_error_events(
+    recent_diagnostics: &[crate::observability::RecentDiagnosticEvent],
+) -> Vec<crate::observability::RecentDiagnosticEvent> {
+    recent_diagnostics
+        .iter()
+        .filter(|event| diagnostic_is_error(event))
+        .cloned()
+        .collect()
+}
+
+fn diagnostic_is_error(event: &crate::observability::RecentDiagnosticEvent) -> bool {
+    matches!(
+        event.category,
+        "session_reject" | "websocket_upgrade" | "webrtc" | "signaling"
+    ) || {
+        let detail = event.detail.to_ascii_lowercase();
+        [
+            "error",
+            "failed",
+            "reject",
+            "unauthorized",
+            "timeout",
+            "invalid",
+            "denied",
+        ]
+        .iter()
+        .any(|needle| detail.contains(needle))
+    }
+}
+
+fn build_selected_match_log_view(
+    runtime: &RuntimeState,
+    recent_matches: &[crate::CombatLogMatchSummary],
+    requested_match_id: Option<u32>,
+    event_limit: usize,
+) -> Result<Option<AdminMatchLogView>, crate::CombatLogStoreError> {
+    let selected_summary = requested_match_id
+        .and_then(|match_id| {
+            recent_matches
+                .iter()
+                .find(|summary| summary.match_id == match_id)
+        })
+        .or_else(|| recent_matches.first());
+    let Some(summary) = selected_summary.cloned() else {
+        return Ok(None);
+    };
+    let Ok(match_id) = game_domain::MatchId::new(summary.match_id) else {
+        return Ok(None);
+    };
+    let entries = runtime
+        .app
+        .combat_log_entries_limit(match_id, event_limit)?;
+    Ok(Some(AdminMatchLogView { summary, entries }))
+}
+
+fn admin_dashboard_failure_response(message: &str) -> Response {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Html(format!(
+            "<!doctype html><html><body><h1>Rusaren admin dashboard failed</h1><p>{}</p></body></html>",
+            html_escape(message)
+        )),
+    )
+        .into_response()
 }
 
 fn render_metrics_block(metrics: Option<&str>) -> String {
@@ -578,13 +697,201 @@ fn render_recent_diagnostics_block(
     )
 }
 
+fn render_recent_errors_block(
+    recent_errors: &[crate::observability::RecentDiagnosticEvent],
+) -> String {
+    if recent_errors.is_empty() {
+        return String::from("<h2>Recent Errors</h2><p>No recent errors captured.</p>");
+    }
+
+    let mut rows = String::new();
+    for event in recent_errors.iter().rev() {
+        let connection_text = event
+            .connection_id
+            .map_or_else(|| String::from("-"), |value| value.to_string());
+        let player_text = event
+            .player_id
+            .map_or_else(|| String::from("-"), |value| value.to_string());
+        let _ = write!(
+            rows,
+            "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+            format_elapsed_seconds(event.elapsed_ms),
+            html_escape(event.category),
+            html_escape(&connection_text),
+            html_escape(&player_text),
+            html_escape(&event.detail),
+        );
+    }
+
+    format!(
+        concat!(
+            "<h2>Recent Errors</h2><table>",
+            "<tr><th>Elapsed s</th><th>Category</th><th>Connection</th><th>Player</th><th>Detail</th></tr>",
+            "{}",
+            "</table>"
+        ),
+        rows
+    )
+}
+
+fn render_recent_match_logs_block(
+    recent_matches: &[crate::CombatLogMatchSummary],
+    selected_match_log: Option<&AdminMatchLogView>,
+) -> String {
+    if recent_matches.is_empty() {
+        return String::from(
+            "<h2>Recent Match Logs</h2><p>No durable combat-log matches captured yet.</p>",
+        );
+    }
+
+    let selected_match_id = selected_match_log.map(|view| view.summary.match_id);
+    let mut match_rows = String::new();
+    for summary in recent_matches {
+        let selected_label = if Some(summary.match_id) == selected_match_id {
+            " (selected)"
+        } else {
+            ""
+        };
+        let _ = write!(
+            match_rows,
+            concat!(
+                "<tr><td><a href=\"/adminz?match_id={match_id}\">{match_id}</a>{selected}</td>",
+                "<td>{event_count}</td><td>{last_round}</td><td>{last_phase}</td><td>{last_frame}</td><td>{last_kind}</td></tr>"
+            ),
+            match_id = summary.match_id,
+            selected = selected_label,
+            event_count = summary.event_count,
+            last_round = summary.last_round,
+            last_phase = html_escape(phase_label_for_dashboard(summary.last_phase)),
+            last_frame = summary.last_frame_index,
+            last_kind = html_escape(&summary.last_event_kind),
+        );
+    }
+
+    let selected_block = selected_match_log.map_or_else(
+        || String::from("<p>No recent match log selected.</p>"),
+        render_selected_match_log_block,
+    );
+
+    format!(
+        concat!(
+            "<h2>Recent Match Logs</h2>",
+            "<table><tr><th>Match</th><th>Events</th><th>Last round</th><th>Last phase</th><th>Last frame</th><th>Last event</th></tr>{}</table>",
+            "{}"
+        ),
+        match_rows,
+        selected_block,
+    )
+}
+
+fn render_selected_match_log_block(match_log: &AdminMatchLogView) -> String {
+    let mut rows = String::new();
+    for entry in &match_log.entries {
+        let event_json = serde_json::to_string(&entry.event).unwrap_or_else(|_| {
+            String::from("{\"error\":\"failed to serialize combat log event\"}")
+        });
+        let _ = write!(
+            rows,
+            concat!(
+                "<tr><td>{sequence}</td><td>{round}</td><td>{phase}</td><td>{frame}</td><td>{kind}</td><td><code>{payload}</code></td></tr>"
+            ),
+            sequence = entry.sequence.unwrap_or_default(),
+            round = entry.round,
+            phase = html_escape(phase_label_for_dashboard(entry.phase)),
+            frame = entry.frame_index,
+            kind = html_escape(entry.event.kind()),
+            payload = html_escape(&event_json),
+        );
+    }
+
+    format!(
+        concat!(
+            "<h3>Match {}</h3>",
+            "<p>Showing {} most recent durable combat events for round {} through phase {}.</p>",
+            "<table><tr><th>Seq</th><th>Round</th><th>Phase</th><th>Frame</th><th>Kind</th><th>Payload</th></tr>{}</table>"
+        ),
+        match_log.summary.match_id,
+        match_log.entries.len(),
+        match_log.summary.last_round,
+        html_escape(phase_label_for_dashboard(match_log.summary.last_phase)),
+        rows,
+    )
+}
+
+fn render_app_diagnostics_block(
+    app_diagnostics: &crate::app::ServerAppDiagnosticsSnapshot,
+) -> String {
+    format!(
+        concat!(
+            "<h2>App Diagnostics</h2><table>",
+            "<tr><th>Control events sent</th><td>{}</td></tr>",
+            "<tr><th>Full snapshots sent</th><td>{}</td></tr>",
+            "<tr><th>Delta snapshots sent</th><td>{}</td></tr>",
+            "<tr><th>Effect batches sent</th><td>{}</td></tr>",
+            "<tr><th>Combat text batches sent</th><td>{}</td></tr>",
+            "<tr><th>Peak player count</th><td>{}</td></tr>",
+            "<tr><th>Peak projectile count</th><td>{}</td></tr>",
+            "<tr><th>Peak deployable count</th><td>{}</td></tr>",
+            "<tr><th>Peak visible tile count</th><td>{}</td></tr>",
+            "</table>",
+            "<h2>Combat Log Store</h2><table>",
+            "<tr><th>Path</th><td>{}</td></tr>",
+            "<tr><th>File bytes</th><td>{}</td></tr>",
+            "<tr><th>Event count</th><td>{}</td></tr>",
+            "<tr><th>Append p95 ms</th><td>{:.3}</td></tr>",
+            "<tr><th>Append p99 ms</th><td>{:.3}</td></tr>",
+            "<tr><th>Query p95 ms</th><td>{:.3}</td></tr>",
+            "<tr><th>Query p99 ms</th><td>{:.3}</td></tr>",
+            "</table>"
+        ),
+        app_diagnostics.app.control_events.sent_packets,
+        app_diagnostics.app.full_snapshots.sent_packets,
+        app_diagnostics.app.delta_snapshots.sent_packets,
+        app_diagnostics.app.effect_batches.sent_packets,
+        app_diagnostics.app.combat_text_batches.sent_packets,
+        app_diagnostics.app.peak_player_count,
+        app_diagnostics.app.peak_projectile_count,
+        app_diagnostics.app.peak_deployable_count,
+        app_diagnostics.app.peak_visible_tile_count,
+        html_escape(
+            app_diagnostics
+                .combat_log
+                .path
+                .as_deref()
+                .unwrap_or("in-memory"),
+        ),
+        app_diagnostics
+            .combat_log
+            .file_bytes
+            .map_or_else(|| String::from("-"), |value| value.to_string()),
+        app_diagnostics.combat_log.event_count,
+        app_diagnostics.combat_log.append.p95_ms,
+        app_diagnostics.combat_log.append.p99_ms,
+        app_diagnostics.combat_log.query.p95_ms,
+        app_diagnostics.combat_log.query.p99_ms,
+    )
+}
+
+fn phase_label_for_dashboard(phase: crate::CombatLogPhase) -> &'static str {
+    match phase {
+        crate::CombatLogPhase::SkillPick => "skill_pick",
+        crate::CombatLogPhase::PreCombat => "pre_combat",
+        crate::CombatLogPhase::Combat => "combat",
+        crate::CombatLogPhase::MatchEnd => "match_end",
+    }
+}
+
 fn render_admin_dashboard(
-    runtime: &RuntimeState,
-    observability: Option<&crate::ServerObservability>,
+    stats: &AdminDashboardStats,
+    app_diagnostics: &crate::app::ServerAppDiagnosticsSnapshot,
+    recent_matches: &[crate::CombatLogMatchSummary],
+    selected_match_log: Option<&AdminMatchLogView>,
     metrics: Option<&str>,
 ) -> String {
-    let stats = collect_admin_dashboard_stats(runtime, observability);
     let metrics_block = render_metrics_block(metrics);
+    let errors_block = render_recent_errors_block(&stats.recent_errors);
+    let match_logs_block = render_recent_match_logs_block(recent_matches, selected_match_log);
+    let app_diagnostics_block = render_app_diagnostics_block(app_diagnostics);
     let diagnostics_block = render_recent_diagnostics_block(&stats.recent_diagnostics);
 
     format!(
@@ -618,7 +925,7 @@ fn render_admin_dashboard(
             "<tr><th>Websocket sessions active</th><td>{}</td></tr>",
             "<tr><th>Websocket disconnects</th><td>{}</td></tr>",
             "<tr><th>Websocket rejections</th><td>{}</td></tr>",
-            "</table>{}{}</body></html>"
+            "</table>{}{}{}{}{}</body></html>"
         ),
         stats.connected_players,
         stats.bound_connections,
@@ -636,6 +943,9 @@ fn render_admin_dashboard(
         stats.websocket_active,
         stats.websocket_disconnects,
         stats.websocket_rejections,
+        app_diagnostics_block,
+        errors_block,
+        match_logs_block,
         diagnostics_block,
         metrics_block,
     )

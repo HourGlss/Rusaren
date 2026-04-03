@@ -31,6 +31,7 @@ pub(crate) struct MatchCombatFeedback {
 }
 
 impl MatchCombatFeedback {
+    #[allow(clippy::too_many_lines)]
     pub(crate) fn observe_entry(
         &mut self,
         content: &GameContent,

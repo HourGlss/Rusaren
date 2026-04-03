@@ -34,10 +34,9 @@ fn corpus_dirs(target: &str) -> Vec<PathBuf> {
         .into_iter()
         .flat_map(|root| {
             [
+                root.join("target").join("fuzz-seed-corpus").join(target),
+                root.join("target").join("fuzz-generated-corpus").join(target),
                 root.join("fuzz").join("corpus").join(target),
-                root.join("target")
-                    .join("fuzz-generated-corpus")
-                    .join(target),
             ]
         })
         .filter(|dir| dir.exists())
@@ -64,7 +63,7 @@ fn corpus_files(target: &str) -> Vec<Vec<u8>> {
     entries.sort_by_key(std::fs::DirEntry::file_name);
     assert!(
         !entries.is_empty(),
-        "at least one checked-in or generated corpus file should exist for target {target}"
+        "at least one seed or generated corpus file should exist for target {target}"
     );
 
     entries

@@ -17,9 +17,9 @@ mod webrtc;
 pub use app::{AppError, ServerApp, ServerAppPersistenceError};
 pub use combat_log::{
     CombatLogCastCancelReason, CombatLogCastMode, CombatLogEntry, CombatLogEvent,
-    CombatLogMissReason, CombatLogOutcome, CombatLogPhase, CombatLogRemovedStatus,
-    CombatLogStatusRemovedReason, CombatLogStore, CombatLogStoreError, CombatLogTargetKind,
-    CombatLogTeam, CombatLogTriggerReason,
+    CombatLogMatchSummary, CombatLogMissReason, CombatLogOutcome, CombatLogPhase,
+    CombatLogRemovedStatus, CombatLogStatusRemovedReason, CombatLogStore, CombatLogStoreError,
+    CombatLogTargetKind, CombatLogTeam, CombatLogTriggerReason,
 };
 pub use observability::{classify_http_path, HttpRouteLabel, ServerObservability};
 pub use realtime::{

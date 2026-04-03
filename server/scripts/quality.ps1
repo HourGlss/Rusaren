@@ -78,17 +78,60 @@ function Copy-FuzzSeedCorpus {
         [string]$DestinationRoot
     )
 
-    $sourceDir = Join-Path $serverRoot ("fuzz\corpus\" + $Target)
+    Ensure-FuzzSeedCorpus
+
+    $sourceDir = Join-Path $serverRoot ("target\fuzz-seed-corpus\" + $Target)
     $targetDir = Join-Path $DestinationRoot $Target
 
-    if (Test-Path $targetDir) {
-        Remove-Item -Recurse -Force -Path $targetDir
-    }
+    Remove-DirectoryIfExists -Path $targetDir
     New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
 
     if (Test-Path $sourceDir) {
         Copy-Item -Path (Join-Path $sourceDir "*") -Destination $targetDir -Recurse -Force
     }
+}
+
+function Remove-DirectoryIfExists {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Path
+    )
+
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        if (-not (Test-Path $Path)) {
+            return
+        }
+
+        try {
+            Remove-Item -Recurse -Force -Path $Path -ErrorAction Stop
+            return
+        }
+        catch [System.IO.FileNotFoundException] {
+            if (-not (Test-Path $Path)) {
+                return
+            }
+        }
+        catch [System.Management.Automation.ItemNotFoundException] {
+            if (-not (Test-Path $Path)) {
+                return
+            }
+        }
+
+        Start-Sleep -Milliseconds (75 * $attempt)
+    }
+
+    if (Test-Path $Path) {
+        Remove-Item -Recurse -Force -Path $Path -ErrorAction Stop
+    }
+}
+
+function Ensure-FuzzSeedCorpus {
+    $seedRoot = Join-Path $serverRoot "target\fuzz-seed-corpus"
+    if (Test-Path $seedRoot) {
+        return
+    }
+
+    rustup run stable cargo run -p fuzz_seed_builder --quiet
 }
 
 function Get-FuzzMaxTotalTime {
@@ -266,9 +309,11 @@ function Invoke-FuzzMergeNative {
     param([string[]]$Targets)
 
     $generatedCorpusRoot = Join-Path $serverRoot "target\fuzz-generated-corpus"
+    $seedCorpusRoot = Join-Path $serverRoot "target\fuzz-seed-corpus"
 
     foreach ($target in $Targets) {
-        $seedDir = Join-Path $serverRoot ("fuzz\corpus\" + $target)
+        Ensure-FuzzSeedCorpus
+        $seedDir = Join-Path $seedCorpusRoot $target
         $generatedDir = Join-Path $generatedCorpusRoot $target
         if (-not (Test-Path $generatedDir)) {
             continue
@@ -293,11 +338,13 @@ function Invoke-FuzzMergeViaWsl {
     param([string[]]$Targets)
 
     $generatedCorpusRoot = Join-Path $serverRoot "target\fuzz-generated-corpus"
+    $seedCorpusRoot = Join-Path $serverRoot "target\fuzz-seed-corpus"
 
     $serverRootWsl = Convert-WindowsPathToWsl -Path $serverRoot
 
     foreach ($target in $Targets) {
-        $seedDir = Join-Path $serverRoot ("fuzz\corpus\" + $target)
+        Ensure-FuzzSeedCorpus
+        $seedDir = Join-Path $seedCorpusRoot $target
         $generatedDir = Join-Path $generatedCorpusRoot $target
         if (-not (Test-Path $generatedDir)) {
             continue
@@ -349,12 +396,12 @@ function Invoke-SoakTests {
     param([bool]$HasNextest)
 
     if ($HasNextest) {
-        rustup run stable cargo nextest run -p game_api --test soak_match_flow --all-features
+        rustup run stable cargo nextest run -p game_api --test soak_match_flow --test performance_budget_gates --all-features
         return
     }
 
-    Write-Host "cargo-nextest is not installed; falling back to cargo test for soak coverage."
-    rustup run stable cargo test -p game_api --test soak_match_flow --all-features
+    Write-Host "cargo-nextest is not installed; falling back to cargo test for soak and performance budget coverage."
+    rustup run stable cargo test -p game_api --test soak_match_flow --test performance_budget_gates --all-features
 }
 
 function Get-GodotExecutable {
@@ -1219,6 +1266,7 @@ function Invoke-QualityTask {
         "lint" { rustup run stable cargo xlint }
         "hack" { rustup run stable cargo hack check --workspace --all-targets --each-feature }
         "test" {
+            Ensure-FuzzSeedCorpus
             $nextestJsonPath = $env:RARENA_NEXTEST_JSON_PATH
             if ($hasNextest) {
                 $nextestArgs = @("nextest", "run", "--workspace", "--all-features")

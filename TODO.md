@@ -2,7 +2,7 @@
 
 Current target release line: `1.0.0`
 Current repo version: `0.8.0`
-Current roadmap position: `0.9.6 Operations, Admin, Performance Gates, And Publication Stability`
+Current roadmap position: `0.9.7 Audio, Input, And Combat Polish`
 
 Completed:
 - `0.3.0 Quality Foundation`
@@ -51,11 +51,11 @@ Release gate:
 - [x] Add mutation testing on lobby, match, domain, and core gameplay rule logic.
 - [x] Add load and soak testing.
 - [x] Define backend performance budgets for tick latency, command latency, CPU, memory, SQLite log write latency, and connection capacity.
-- [ ] Add repeatable load scenarios and quality gates that enforce those performance budgets on a fixed reference environment.
+- [x] Add repeatable load scenarios and quality gates that enforce those performance budgets on a fixed reference environment.
 - [x] Implement the advanced spell semantics required by the class design: true channels, dispels, multi-source stacking periodic effects, and trigger-on-expire or trigger-on-dispel payloads.
 - [x] Add append-only SQLite-backed match and combat logs for all non-movement player actions, picks, casts, hits, misses, healing, status changes, deaths, and match lifecycle events.
 - [x] Add replay-style regression checks that validate selected end-to-end match flows from server-authored match and combat logs.
-- [ ] Add a private authenticated admin dashboard for health, tick timing, sessions, lobbies, matches, recent errors, and recent match/combat log views.
+- [x] Add a private authenticated admin dashboard for health, tick timing, sessions, lobbies, matches, recent errors, and recent match/combat log views.
 - [x] Add post-round and post-match summary screens with damage done, healing to allies and enemies, crowd control used, crowd control hits, and running totals carried forward after each round.
 - [x] Add player-only scrolling combat text with a World of Warcraft style flow for outgoing and incoming combat events.
 - [x] Add dynamic player coloring driven by pick order and class identity: slot 1 colors the center, slots 2 through 5 add outward rings, unpicked slots render black, the outer border is team-relative (`friendly = dark blue`, `enemy = red`), and a thin halo outside the team ring shows positive statuses on the right and negative statuses on the left with longer-duration effects higher in the stack.
@@ -165,13 +165,13 @@ Milestone gate:
 
 ### 0.9.6 Operations, Admin, Performance Gates, And Publication Stability
 
-- [ ] Add repeatable load scenarios and quality gates that enforce the defined performance budgets on a fixed reference environment.
-- [ ] Add a private authenticated admin dashboard for health, tick timing, sessions, lobbies, matches, recent errors, and recent match/combat log views.
-- [ ] Keep the liveprobe and hosted smoke checks current with the new mechanic surface so channel, dispel, and periodic-stack regressions are caught on the real hosted path.
-- [ ] Close the remaining "cannot test this yet" report items.
-- [ ] Make GitHub Actions, GitHub Pages, docs, rustdoc, and report publishing stable and routine.
-- [ ] Keep hosted smoke probes and real-domain validation current as the release line moves, rather than treating live verification as a one-time checkbox.
-- [ ] Freeze the 1.0 protocol surface only after the event schema, replay checks, UI consumers, and admin/log consumers have settled.
+- [x] Add repeatable load scenarios and quality gates that enforce the defined performance budgets on a fixed reference environment.
+- [x] Add a private authenticated admin dashboard for health, tick timing, sessions, lobbies, matches, recent errors, and recent match/combat log views.
+- [x] Keep the liveprobe and hosted smoke checks current with the new mechanic surface so channel, dispel, and periodic-stack regressions are caught on the real hosted path.
+- [x] Close the remaining "cannot test this yet" report items.
+- [x] Make GitHub Actions, GitHub Pages, docs, rustdoc, and report publishing stable and routine.
+- [x] Keep hosted smoke probes and real-domain validation current as the release line moves, rather than treating live verification as a one-time checkbox.
+- [x] Freeze the 1.0 protocol surface only after the event schema, replay checks, UI consumers, and admin/log consumers have settled.
 
 Milestone gate:
 - ops dashboards, load scenarios, and publication/reporting flows are routine rather than one-off

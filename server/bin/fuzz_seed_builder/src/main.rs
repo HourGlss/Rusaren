@@ -384,8 +384,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let corpus_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("..")
-        .join("fuzz")
-        .join("corpus");
+        .join("target")
+        .join("fuzz-seed-corpus");
 
     write_packet_header_corpus(&corpus_root.join("packet_header_decode"))?;
     write_control_command_corpus(&corpus_root.join("control_command_decode"))?;

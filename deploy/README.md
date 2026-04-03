@@ -19,3 +19,8 @@ Use the structure notes below to find the right file or subfolder quickly.
 - `run_live_transport_probe.sh`: Linux wrapper that runs the four-client transport probe, uses local `cargo` when available or a disposable Rust Docker image when it is not, and auto-collects backend diagnostics on failure.
 - `setup.sh`: Short wrapper around `linode-setup.sh` for the first Linux host bootstrap.
 - `useful_log_collect.sh`: Compact host-side diagnostics collector that summarizes compose state, public probes, admin diagnostics, and filtered transport logs into one pasteable report.
+
+## Routine verification
+- `host-smoke.sh` now validates the hosted root, `/healthz`, `/session/bootstrap`, and the authenticated `/adminz` HTML and JSON views.
+- `run_live_transport_probe.sh` keeps the real hosted transport path exercised against the live mechanic surface and collects a diagnostics bundle on failure.
+- `linode-setup.sh` installs both `rusaren-smoke.timer` and `rusaren-liveprobe.timer` so hosted verification keeps running after the initial deploy.

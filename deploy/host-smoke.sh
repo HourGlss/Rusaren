@@ -22,8 +22,9 @@ usage() {
 Usage: deploy/host-smoke.sh [--origin URL] [--env-file PATH] [--skip-admin]
 
 Runs a small post-deploy smoke suite against the hosted backend path.
-The script checks `/`, `/healthz`, `/session/bootstrap`, and `/adminz` when
-admin credentials are present in the deploy environment file.
+The script checks `/`, `/healthz`, `/session/bootstrap`, and both the HTML and
+JSON forms of `/adminz` when admin credentials are present in the deploy
+environment file.
 By default it loads `~/rusaren-config/config.env` for the current deploy user.
 EOF
 }
@@ -153,8 +154,20 @@ assert_admin_dashboard() {
     grep -q "Rusaren Admin Dashboard" "${response_file}" ||
         fatal "expected authenticated ${base_url}/adminz to render the admin dashboard"
 
+    local json_status
+    json_status="$(fetch_status_code "${base_url}/adminz?format=json" "${response_file}" --header "Authorization: Basic ${basic_auth}")"
+    [[ "${json_status}" == "200" ]] ||
+        fatal "expected authenticated ${base_url}/adminz?format=json to return 200, got ${json_status}"
+
+    jq -e '.runtime.connected_players >= 0' "${response_file}" >/dev/null ||
+        fatal "expected ${base_url}/adminz?format=json to include runtime.connected_players"
+    jq -e '.app_diagnostics.combat_log.append.p99_ms >= 0' "${response_file}" >/dev/null ||
+        fatal "expected ${base_url}/adminz?format=json to include combat log timing diagnostics"
+    jq -e '.recent_matches | arrays' "${response_file}" >/dev/null ||
+        fatal "expected ${base_url}/adminz?format=json to include recent_matches"
+
     rm -f "${response_file}"
-    log "admin dashboard requires auth and renders successfully"
+    log "admin dashboard requires auth and renders successfully in HTML and JSON"
 }
 
 main() {

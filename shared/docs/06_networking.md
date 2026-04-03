@@ -61,6 +61,20 @@ Server -> Client (authoritative):
 
 Lobby-oriented snapshots should include each visible player's `W-L-NC` record.
 
+## 1.0 protocol freeze policy
+For the `0.9.6` release line and the run-up to `1.0.0`, treat the current wire surface as frozen unless a change is both necessary and intentionally versioned.
+
+That freeze applies to:
+- HTTP bootstrap and admin JSON fields used by the web client, hosted smoke tooling, and operator diagnostics
+- binary control packets
+- binary input packets
+- authoritative arena snapshots and delta snapshots
+- shared event-model fields consumed by replay checks, combat summaries, scrolling combat text, and admin/log views
+
+Practical rule:
+- additive fields are acceptable only when existing consumers continue to work unchanged
+- incompatible layout or semantic changes require explicit test updates, consumer updates, and a documented versioning note in this file or the relevant ADR
+
 ## Snapshot strategy
 Current working implementation:
 - Send a full `ArenaStateSnapshot` when combat starts, when phase transitions happen, and when the client needs a clean authoritative reset of the arena state.

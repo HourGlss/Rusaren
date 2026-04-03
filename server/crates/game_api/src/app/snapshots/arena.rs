@@ -1,3 +1,5 @@
+use std::fmt::Write as _;
+
 use game_content::{
     ArenaMapDefinition, CombatValueKind, DispelScope, EffectPayload, GameContent, SkillBehavior,
     SkillDefinition, StatusDefinition, StatusKind,
@@ -466,6 +468,7 @@ fn append_skill_header(lines: &mut Vec<String>, skill: &SkillDefinition) {
     lines.push(parts.join(" | "));
 }
 
+#[allow(clippy::too_many_lines)]
 fn append_behavior_lines(lines: &mut Vec<String>, behavior: &SkillBehavior) {
     match behavior {
         SkillBehavior::Projectile {
@@ -497,7 +500,7 @@ fn append_behavior_lines(lines: &mut Vec<String>, behavior: &SkillBehavior) {
         } => {
             let mut line = format!("Dash: distance {distance}");
             if let Some(radius) = impact_radius {
-                line.push_str(&format!(", impact radius {radius}"));
+                let _ = write!(line, ", impact radius {radius}");
             }
             lines.push(line);
             if let Some(payload) = payload {
@@ -538,7 +541,7 @@ fn append_behavior_lines(lines: &mut Vec<String>, behavior: &SkillBehavior) {
                 format_duration_ms(*tick_interval_ms)
             );
             if *range > 0 {
-                line.push_str(&format!(", target range {range}"));
+                let _ = write!(line, ", target range {range}");
             }
             lines.push(line);
             append_payload_lines(lines, payload);
@@ -641,10 +644,10 @@ fn append_behavior_lines(lines: &mut Vec<String>, behavior: &SkillBehavior) {
                 format_duration_ms(*tick_interval_ms)
             );
             if *distance > 0 {
-                line.push_str(&format!(", place {distance} away"));
+                let _ = write!(line, ", place {distance} away");
             }
             if let Some(hit_points) = hit_points {
-                line.push_str(&format!(", {hit_points} HP"));
+                let _ = write!(line, ", {hit_points} HP");
             }
             lines.push(line);
             append_payload_lines(lines, payload);
@@ -710,10 +713,11 @@ fn format_status_summary(status: &StatusDefinition) -> String {
                 status.max_stacks
             );
             if let Some(trigger_duration_ms) = status.trigger_duration_ms {
-                text.push_str(&format!(
+                let _ = write!(
+                    text,
                     ", follow-up after {}",
                     format_duration_ms(trigger_duration_ms)
-                ));
+                );
             }
             text
         }
@@ -758,7 +762,7 @@ fn format_duration_ms(duration_ms: u16) -> String {
     if duration_ms == 0 {
         return String::from("0s");
     }
-    if duration_ms % 1000 == 0 {
+    if duration_ms.is_multiple_of(1000) {
         return format!("{}s", duration_ms / 1000);
     }
     let seconds = f32::from(duration_ms) / 1000.0;
@@ -767,7 +771,7 @@ fn format_duration_ms(duration_ms: u16) -> String {
 
 fn format_bps_percent(value: u16) -> String {
     let percent = f32::from(value) / 100.0;
-    if value % 100 == 0 {
+    if value.is_multiple_of(100) {
         format!("{percent:.0}%")
     } else {
         format!("{percent:.1}%")

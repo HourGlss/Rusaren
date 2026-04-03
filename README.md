@@ -21,10 +21,14 @@ Buildable now:
 - stricter authored YAML and ASCII content validation with clean boot-time failures on invalid content
 - backend gameplay tests that exercise every shipped melee and authored slot skill directly against the sim, including hit, miss, range, cooldown, mana, and status behavior
 - repeated soak/load regression tests for lobby churn and repeated match completion without state leaks
+- fixed-reference performance budget gates for `100` idle clients, `10` simultaneous matches, command and tick latency, Linux RSS, and SQLite combat-log append/query latency
 - Criterion benchmark targets for hot-path sim ticks and snapshot packet codec work
 - persistent player records under `server/var/player_records.tsv`
+- append-only SQLite-backed match and combat logs plus replay-style regression checks built from those server-authored events
+- a private authenticated `/adminz` operator surface with HTML and JSON views for runtime health, recent errors, and recent match/combat-log summaries
 - local quality scripts under `server/scripts`
 - GitHub Actions quality workflows plus Godot web export and deploy smoke workflows
+- recurring hosted smoke and live transport probe timers on the Linux deploy path
 - scheduled mutation-testing shards over ingress, protocol, visibility, match-flow, and simulation core logic
 - a focused packet-ingress mutation smoke path that exercises `game_net::ingress` directly and catches exact-limit packet-boundary regressions
 
@@ -33,7 +37,6 @@ Not implemented yet:
 - planned mechanic families like summons, barriers, traps, wards, shields, stealth, reveal, taunt, and fear are now captured in YAML, but they are not yet bound to live authored skills
 - more aggressive snapshot compression beyond the current full-vs-delta split
 - the full 1.0 Godot gameplay presentation bar: HUD polish, stronger spell visuals, and always-readable health and mana display in crowded fights
-- the planned `0.9` combat-readability layer: player-only scrolling combat text, round and match summary screens with running totals, concentric per-skill class-color rings, client-relative team borders, and thin positive/negative status halos outside the player token
 - rustdoc/API guidance that is complete enough for an external client or bot author to play through the game protocol without Godot
 - advanced vision features beyond the current per-player fog-of-war, explored-tile memory, and shrub sight blocking
 
@@ -65,6 +68,7 @@ Direct host mode is the default because browser WebRTC is more reliable there th
 The backend listens on:
 - `http://127.0.0.1:3000/healthz`
 - `http://127.0.0.1:3000/metrics`
+- `http://127.0.0.1:3000/adminz` for the authenticated operator dashboard
 - `http://127.0.0.1:3000/session/bootstrap` for short-lived websocket bootstrap tokens
 - `ws://127.0.0.1:3000/ws` for websocket signaling plus TURN/STUN configuration handoff
 - `ws://127.0.0.1:3000/ws-dev` for the raw websocket dev adapter and legacy transport tests
@@ -376,6 +380,11 @@ Useful Pages paths:
 - `https://hourglss.github.io/Rusaren/` for the report index
 - `https://hourglss.github.io/Rusaren/docs/site/` for the mdBook docs site
 - `https://hourglss.github.io/Rusaren/rustdoc/` for the Rust API docs
+
+The current hosted validation loop is expected to be routine, not one-off:
+- deploy-time hosted smoke via `deploy/host-smoke.sh`
+- recurring public smoke via `rusaren-smoke.timer`
+- recurring real transport validation via `deploy/run_live_transport_probe.sh` and `rusaren-liveprobe.timer`
 
 For the `1.0.0` release line, `/rustdoc/` is not just a published artifact.
 It is expected to document how an external client or bot can play the game through the API:

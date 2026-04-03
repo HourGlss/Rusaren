@@ -760,7 +760,7 @@ fn manual_runtime(content: &GameContent, seeds: Vec<game_sim::SimPlayerSeed>) ->
         world,
         explored_tiles: BTreeMap::new(),
         combat_frame_index: 0,
-        feedback: Default::default(),
+        feedback: MatchCombatFeedback::default(),
     }
 }
 

@@ -534,9 +534,10 @@ impl GameContent {
 
     #[must_use]
     pub fn map(&self) -> &ArenaMapDefinition {
-        self.maps
-            .get(&self.default_map_id)
-            .expect("default map id should always exist")
+        let Some(map) = self.maps.get(&self.default_map_id) else {
+            panic!("default map id should always exist");
+        };
+        map
     }
 
     #[must_use]

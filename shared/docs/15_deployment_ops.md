@@ -152,9 +152,10 @@ Current operator surface:
 - `deploy/deploy.sh` now waits for the backend container healthcheck before it runs hosted smoke probes
 - the same deploy script now rebuilds the Godot web bundle on Linux by default unless `BUILD_WEB_CLIENT=0`
 - the same deploy script then runs hosted smoke probes against `https://$PUBLIC_HOST` unless `RUN_PUBLIC_SMOKE=0`
-- `deploy/host-smoke.sh` validates `/`, `/healthz`, `/session/bootstrap`, and `/adminz`
+- `deploy/host-smoke.sh` validates `/`, `/healthz`, `/session/bootstrap`, and the authenticated `/adminz` HTML and JSON views
 - `deploy/linode-setup.sh` installs `snapd`, `unzip`, and a compatible Godot snap by default so the host can build the web bundle without a Windows step
 - `deploy/linode-setup.sh` installs a `rusaren-smoke.timer` systemd timer so the host keeps re-running the public probes after deploy
+- `deploy/linode-setup.sh` also installs `rusaren-liveprobe.timer` so the real hosted transport probe keeps exercising the live mechanic surface on a schedule
 
 ## Current limitation
 This deploy path is production-style and testable, but not yet the final game transport:

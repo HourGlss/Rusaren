@@ -31,9 +31,10 @@ use crate::{
     combat_feedback::MatchCombatFeedback,
     combat_log::{
         CombatLogCastCancelReason, CombatLogCastMode, CombatLogEntry, CombatLogEvent,
-        CombatLogMissReason, CombatLogOutcome, CombatLogPhase, CombatLogRemovedStatus,
-        CombatLogStatusRemovedReason, CombatLogStore, CombatLogStoreDiagnosticsSnapshot,
-        CombatLogStoreError, CombatLogTargetKind, CombatLogTeam, CombatLogTriggerReason,
+        CombatLogMatchSummary, CombatLogMissReason, CombatLogOutcome, CombatLogPhase,
+        CombatLogRemovedStatus, CombatLogStatusRemovedReason, CombatLogStore,
+        CombatLogStoreDiagnosticsSnapshot, CombatLogStoreError, CombatLogTargetKind, CombatLogTeam,
+        CombatLogTriggerReason,
     },
     diagnostics::{AppDiagnostics, AppDiagnosticsSnapshot},
     transport::{AppTransport, ConnectionId},
@@ -227,7 +228,7 @@ impl ServerApp {
         Self::from_content_and_stores(
             content,
             PlayerRecordStore::new_ephemeral(),
-            CombatLogStore::new_ephemeral().expect("ephemeral combat log should open"),
+            ephemeral_combat_log_store(),
         )
     }
 
@@ -254,7 +255,7 @@ impl ServerApp {
         Self::from_content_and_stores(
             content,
             PlayerRecordStore::new_ephemeral(),
-            CombatLogStore::new_ephemeral().expect("ephemeral combat log should open"),
+            ephemeral_combat_log_store(),
         )
     }
 
@@ -348,6 +349,23 @@ impl ServerApp {
         match_id: MatchId,
     ) -> Result<Vec<CombatLogEntry>, CombatLogStoreError> {
         self.combat_log.events_for_match(match_id)
+    }
+
+    /// Returns the most recent durable combat-log rows for one match in append order.
+    pub fn combat_log_entries_limit(
+        &self,
+        match_id: MatchId,
+        limit: usize,
+    ) -> Result<Vec<CombatLogEntry>, CombatLogStoreError> {
+        self.combat_log.events_for_match_limit(match_id, limit)
+    }
+
+    /// Returns the most recent durable combat-log match summaries.
+    pub fn recent_combat_log_matches(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<CombatLogMatchSummary>, CombatLogStoreError> {
+        self.combat_log.recent_matches(limit)
     }
 
     /// Returns a structured diagnostics snapshot for packet flow, snapshots, and the combat log.
@@ -719,10 +737,12 @@ fn map_removed_status(status: game_sim::SimRemovedStatus) -> CombatLogRemovedSta
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn map_simulation_event_to_log(event: &game_sim::SimulationEvent) -> Option<CombatLogEvent> {
     match event {
         game_sim::SimulationEvent::PlayerMoved { .. }
-        | game_sim::SimulationEvent::EffectSpawned { .. } => None,
+        | game_sim::SimulationEvent::EffectSpawned { .. }
+        | game_sim::SimulationEvent::DeployableSpawned { .. } => None,
         game_sim::SimulationEvent::DamageApplied {
             attacker,
             target,
@@ -904,10 +924,9 @@ fn map_simulation_event_to_log(event: &game_sim::SimulationEvent) -> Option<Comb
             amount: *amount,
         }),
         game_sim::SimulationEvent::Defeat { attacker, target } => Some(CombatLogEvent::Defeat {
-            source_player_id: attacker.map(|value| value.get()),
+            source_player_id: attacker.map(game_domain::PlayerId::get),
             target_player_id: target.get(),
         }),
-        game_sim::SimulationEvent::DeployableSpawned { .. } => None,
         game_sim::SimulationEvent::DeployableDamaged {
             attacker,
             deployable_id,
@@ -925,6 +944,13 @@ fn map_simulation_event_to_log(event: &game_sim::SimulationEvent) -> Option<Comb
             status_kind: None,
             trigger: None,
         }),
+    }
+}
+
+fn ephemeral_combat_log_store() -> CombatLogStore {
+    match CombatLogStore::new_ephemeral() {
+        Ok(store) => store,
+        Err(error) => panic!("ephemeral combat log should open: {error}"),
     }
 }
 

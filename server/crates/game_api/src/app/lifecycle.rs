@@ -6,7 +6,9 @@ use game_sim::COMBAT_FRAME_MS;
 
 use crate::combat_log::CombatLogEvent;
 
-use super::{build_world, AppTransport, MatchRuntime, PlayerLocation, ServerApp};
+use super::{
+    build_world, AppTransport, MatchCombatFeedback, MatchRuntime, PlayerLocation, ServerApp,
+};
 
 impl ServerApp {
     pub(super) fn advance_combat_frames<T: AppTransport>(&mut self, transport: &mut T) {
@@ -280,6 +282,7 @@ impl ServerApp {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     pub(super) fn dispatch_match_events<T: AppTransport>(
         &mut self,
         transport: &mut T,
@@ -574,7 +577,7 @@ impl ServerApp {
                     .map(|player_id| (player_id, Self::blank_visibility_mask(self.content.map())))
                     .collect(),
                 combat_frame_index: 0,
-                feedback: Default::default(),
+                feedback: MatchCombatFeedback::default(),
             },
         );
         self.game_lobbies.remove(&lobby_id);

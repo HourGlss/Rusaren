@@ -4,8 +4,8 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use game_domain::{PlayerId, PlayerName, TeamSide};
 use game_net::{
     ArenaDeltaSnapshot, ArenaEffectKind, ArenaMatchPhase, ArenaObstacleKind, ArenaObstacleSnapshot,
-    ArenaPlayerSnapshot, ArenaProjectileSnapshot, ArenaStateSnapshot, ArenaStatusKind,
-    ArenaStatusSnapshot, ServerControlEvent,
+    ArenaPlayerSnapshot, ArenaProjectileSnapshot, ArenaSessionMode, ArenaStateSnapshot,
+    ArenaStatusKind, ArenaStatusSnapshot, ServerControlEvent,
 };
 
 fn player_id(raw: u32) -> PlayerId {
@@ -168,17 +168,20 @@ fn sample_projectiles() -> Vec<ArenaProjectileSnapshot> {
 fn sample_full_snapshot() -> ServerControlEvent {
     ServerControlEvent::ArenaStateSnapshot {
         snapshot: ArenaStateSnapshot {
+            mode: ArenaSessionMode::Match,
             phase: ArenaMatchPhase::Combat,
             phase_seconds_remaining: None,
             width: 1800,
             height: 1200,
             tile_units: 50,
+            footprint_tiles: vec![0b1111_1111, 0b0000_1111],
             visible_tiles: vec![0b0011_1111, 0b0000_0011],
             explored_tiles: vec![0b1111_1111, 0b0000_1111],
             obstacles: sample_obstacles(),
             deployables: vec![],
             players: sample_players(),
             projectiles: sample_projectiles(),
+            training_metrics: None,
         },
     }
 }
@@ -186,15 +189,18 @@ fn sample_full_snapshot() -> ServerControlEvent {
 fn sample_delta_snapshot() -> ServerControlEvent {
     ServerControlEvent::ArenaDeltaSnapshot {
         snapshot: ArenaDeltaSnapshot {
+            mode: ArenaSessionMode::Match,
             phase: ArenaMatchPhase::Combat,
             phase_seconds_remaining: None,
             tile_units: 50,
+            footprint_tiles: vec![0b1111_1111, 0b0000_1111],
             visible_tiles: vec![0b0011_1111, 0b0000_0011],
             explored_tiles: vec![0b1111_1111, 0b0000_1111],
             obstacles: sample_obstacles(),
             deployables: vec![],
             players: sample_players(),
             projectiles: sample_projectiles(),
+            training_metrics: None,
         },
     }
 }

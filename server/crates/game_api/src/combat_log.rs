@@ -298,6 +298,19 @@ impl CombatLogEntry {
     }
 }
 
+/// One compact recent-match summary derived from the durable combat log.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CombatLogMatchSummary {
+    pub match_id: u32,
+    pub event_count: u64,
+    pub first_sequence: i64,
+    pub last_sequence: i64,
+    pub last_round: u8,
+    pub last_phase: CombatLogPhase,
+    pub last_frame_index: u32,
+    pub last_event_kind: String,
+}
+
 /// Errors returned while opening, encoding, querying, or decoding the combat-log store.
 #[derive(Debug)]
 pub enum CombatLogStoreError {
@@ -471,6 +484,15 @@ impl CombatLogStore {
         &self,
         match_id: MatchId,
     ) -> Result<Vec<CombatLogEntry>, CombatLogStoreError> {
+        self.events_for_match_limit(match_id, usize::MAX)
+    }
+
+    /// Returns the most recent durable combat events for one match in append order.
+    pub fn events_for_match_limit(
+        &self,
+        match_id: MatchId,
+        limit: usize,
+    ) -> Result<Vec<CombatLogEntry>, CombatLogStoreError> {
         let started_at = Instant::now();
         let mut statement = self
             .connection
@@ -479,15 +501,18 @@ impl CombatLogStore {
                 SELECT sequence, event_json
                 FROM combat_events
                 WHERE match_id = ?1
-                ORDER BY sequence ASC
+                ORDER BY sequence DESC
+                LIMIT ?2
                 ",
             )
             .map_err(|source| CombatLogStoreError::Query {
                 context: "preparing match query",
                 source,
             })?;
+        let limit = i64::try_from(limit.min(usize::try_from(i64::MAX).unwrap_or(usize::MAX)))
+            .unwrap_or(i64::MAX);
         let rows = statement
-            .query_map([i64::from(match_id.get())], |row| {
+            .query_map(params![i64::from(match_id.get()), limit], |row| {
                 Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
             })
             .map_err(|source| CombatLogStoreError::Query {
@@ -506,10 +531,93 @@ impl CombatLogStore {
             entry.sequence = Some(sequence);
             events.push(entry);
         }
+        events.reverse();
         if let Ok(mut timings) = self.query_timings.lock() {
             timings.record_duration(started_at.elapsed());
         }
         Ok(events)
+    }
+
+    /// Returns the most recent matches present in the durable combat log.
+    pub fn recent_matches(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<CombatLogMatchSummary>, CombatLogStoreError> {
+        let started_at = Instant::now();
+        let limit = i64::try_from(limit.min(usize::try_from(i64::MAX).unwrap_or(usize::MAX)))
+            .unwrap_or(i64::MAX);
+        let mut statement = self
+            .connection
+            .prepare(
+                "
+                WITH recent_matches AS (
+                    SELECT
+                        match_id,
+                        COUNT(*) AS event_count,
+                        MIN(sequence) AS first_sequence,
+                        MAX(sequence) AS last_sequence
+                    FROM combat_events
+                    GROUP BY match_id
+                    ORDER BY last_sequence DESC
+                    LIMIT ?1
+                )
+                SELECT
+                    recent_matches.match_id,
+                    recent_matches.event_count,
+                    recent_matches.first_sequence,
+                    recent_matches.last_sequence,
+                    combat_events.round,
+                    combat_events.phase,
+                    combat_events.frame_index,
+                    combat_events.event_kind
+                FROM recent_matches
+                JOIN combat_events
+                    ON combat_events.sequence = recent_matches.last_sequence
+                ORDER BY recent_matches.last_sequence DESC
+                ",
+            )
+            .map_err(|source| CombatLogStoreError::Query {
+                context: "preparing recent-match query",
+                source,
+            })?;
+        let rows = statement
+            .query_map([limit], |row| {
+                let phase_label = row.get::<_, String>(5)?;
+                Ok(CombatLogMatchSummary {
+                    match_id: row.get::<_, u32>(0)?,
+                    event_count: row
+                        .get::<_, i64>(1)
+                        .map(|count| u64::try_from(count).unwrap_or(0))?,
+                    first_sequence: row.get(2)?,
+                    last_sequence: row.get(3)?,
+                    last_round: row.get::<_, u8>(4)?,
+                    last_phase: parse_phase_label(&phase_label).ok_or_else(|| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            5,
+                            rusqlite::types::Type::Text,
+                            format!("invalid combat log phase label '{phase_label}'").into(),
+                        )
+                    })?,
+                    last_frame_index: row.get::<_, u32>(6)?,
+                    last_event_kind: row.get(7)?,
+                })
+            })
+            .map_err(|source| CombatLogStoreError::Query {
+                context: "executing recent-match query",
+                source,
+            })?;
+
+        let mut matches = Vec::new();
+        for row in rows {
+            matches.push(row.map_err(|source| CombatLogStoreError::Query {
+                context: "reading recent-match query row",
+                source,
+            })?);
+        }
+        if let Ok(mut timings) = self.query_timings.lock() {
+            timings.record_duration(started_at.elapsed());
+        }
+        Ok(matches)
     }
 
     /// Returns the current operational diagnostics for the combat-log store.
@@ -523,16 +631,14 @@ impl CombatLogStore {
                 .and_then(|path| fs::metadata(path).ok())
                 .map(|metadata| metadata.len()),
             event_count: self.event_count_untracked().unwrap_or(0),
-            append: self
-                .append_timings
-                .lock()
-                .map(|timings| timings.snapshot())
-                .unwrap_or_else(|_| RollingTimingStats::default().snapshot()),
-            query: self
-                .query_timings
-                .lock()
-                .map(|timings| timings.snapshot())
-                .unwrap_or_else(|_| RollingTimingStats::default().snapshot()),
+            append: self.append_timings.lock().map_or_else(
+                |_| RollingTimingStats::default().snapshot(),
+                |timings| timings.snapshot(),
+            ),
+            query: self.query_timings.lock().map_or_else(
+                |_| RollingTimingStats::default().snapshot(),
+                |timings| timings.snapshot(),
+            ),
         }
     }
 
@@ -555,5 +661,15 @@ fn phase_label(phase: CombatLogPhase) -> &'static str {
         CombatLogPhase::PreCombat => "pre_combat",
         CombatLogPhase::Combat => "combat",
         CombatLogPhase::MatchEnd => "match_end",
+    }
+}
+
+fn parse_phase_label(label: &str) -> Option<CombatLogPhase> {
+    match label {
+        "skill_pick" => Some(CombatLogPhase::SkillPick),
+        "pre_combat" => Some(CombatLogPhase::PreCombat),
+        "combat" => Some(CombatLogPhase::Combat),
+        "match_end" => Some(CombatLogPhase::MatchEnd),
+        _ => None,
     }
 }

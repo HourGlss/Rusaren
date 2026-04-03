@@ -528,7 +528,7 @@ fn multi_anchor_spawns_cycle_across_authored_spawn_points() {
     );
     assert_eq!(
         spawn_position(TeamSide::TeamB, 4, &map),
-        (350, 0 + SPAWN_SPACING_UNITS, -DEFAULT_AIM_X)
+        (350, SPAWN_SPACING_UNITS, -DEFAULT_AIM_X)
     );
 }
 

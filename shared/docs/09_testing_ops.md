@@ -38,6 +38,8 @@ Replay:
 - expose Prometheus metrics from the Rust server and scrape them from the hosted stack
 - validate the deploy stack in CI with a same-image smoke test that checks `/`, `/healthz`, and `/metrics`
 - run the same Docker smoke path locally with `server/scripts/docker-smoke.ps1` before host deploy changes land
+- keep the hosted path on recurring timers with `deploy/host-smoke.sh` and `deploy/run_live_transport_probe.sh`
+- use `/adminz?format=json` plus the combat-log diagnostics surface as the operator-facing source of truth during hosted triage
 - collect coverage and complexity reports for `game_sim`, `game_net`, and `game_content`
 - publish generated docs and API docs per commit so test/coverage output has architecture context beside it
 
@@ -56,3 +58,14 @@ Replay:
 ## Coverage gates
 - `./scripts/quality.ps1 coverage-gate` enforces minimum line/function coverage on the core runtime crates
 - the current gate checks `game_api`, `game_domain`, `game_lobby`, `game_match`, `game_net`, and `game_sim`
+
+## Fixed-reference performance gates
+- `./scripts/quality.ps1 soak` now includes the fixed-reference `performance_budget_gates` suite in `game_api`
+- that gate covers:
+  - `100` idle sessions
+  - `10` active matches
+  - command latency budgets
+  - tick latency budgets
+  - Linux RSS budget
+  - SQLite combat-log append and query budgets
+- the gate is intended for repeatable regressions on Linux CI or Linux reference machines, while hosted-path validation stays in the deploy smoke and liveprobe flow

@@ -702,6 +702,7 @@ fn persistent_player_records_survive_reconnect() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn training_sessions_reset_metrics_without_restarting_the_map() {
     let mut server = ServerApp::new();
     let mut transport = InMemoryTransport::new();
@@ -864,6 +865,7 @@ fn training_sessions_reset_metrics_without_restarting_the_map() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn durable_combat_logs_capture_advanced_mechanics_event_detail() {
     let path = temp_path("server-app-advanced-combat-log");
     let combat_log_path = companion_combat_log_path(&path);

@@ -77,6 +77,7 @@ That script now handles:
 - `~/rusaren-config/docker-compose.override.yml` creation
 - a `rusaren-compose.service` systemd unit
 - a `rusaren-smoke.timer` systemd timer
+- a `rusaren-liveprobe.timer` systemd timer
 - first stack bring-up through `deploy/deploy.sh`
 
 For later code updates on the same host:
@@ -221,6 +222,7 @@ Also run:
 ```bash
 bash deploy/host-smoke.sh --env-file ~/rusaren-config/config.env
 systemctl status rusaren-smoke.timer
+systemctl status rusaren-liveprobe.timer
 ```
 
 ### 10. If WebRTC fails on the live host

@@ -27,6 +27,14 @@ pub fn parse_ascii_map(source: &str, ascii_map: &str) -> Result<ArenaMapDefiniti
     })
 }
 
+type ParsedMapLayout = (
+    Vec<u8>,
+    Vec<AnchorPoint>,
+    Vec<AnchorPoint>,
+    Vec<ArenaMapObstacle>,
+    Vec<ArenaMapFeature>,
+);
+
 fn collect_map_rows<'a>(source: &str, ascii_map: &'a str) -> Result<Vec<&'a str>, ContentError> {
     let rows = ascii_map
         .lines()
@@ -98,16 +106,7 @@ fn parse_map_layout(
     rows: &[&str],
     width_tiles: u16,
     height_tiles: u16,
-) -> Result<
-    (
-        Vec<u8>,
-        Vec<AnchorPoint>,
-        Vec<AnchorPoint>,
-        Vec<ArenaMapObstacle>,
-        Vec<ArenaMapFeature>,
-    ),
-    ContentError,
-> {
+) -> Result<ParsedMapLayout, ContentError> {
     let mut footprint_mask = blank_map_mask(width_tiles, height_tiles);
     let mut team_a_anchors = Vec::new();
     let mut team_b_anchors = Vec::new();

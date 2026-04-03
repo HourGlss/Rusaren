@@ -154,7 +154,7 @@ print_admin_summary() {
     local response_file status_code basic_auth
     response_file="$(mktemp)"
     basic_auth="$(printf '%s:%s' "${RARENA_ADMIN_USERNAME}" "${RARENA_ADMIN_PASSWORD}" | base64 | tr -d '\n')"
-    status_code="$(fetch_status_code "${base_url}/adminz" "${response_file}" --header "Authorization: Basic ${basic_auth}" || true)"
+    status_code="$(fetch_status_code "${base_url}/adminz?format=json" "${response_file}" --header "Authorization: Basic ${basic_auth}" || true)"
     printf 'adminz_status: %s\n' "${status_code:-unavailable}"
     if [[ "${status_code}" != "200" ]]; then
         rm -f "${response_file}"
@@ -162,47 +162,77 @@ print_admin_summary() {
     fi
 
     python3 - "${response_file}" <<'PY'
-from html import unescape
-import re
+import json
 import sys
 
-text = open(sys.argv[1], 'r', encoding='utf-8').read()
+payload = json.load(open(sys.argv[1], 'r', encoding='utf-8'))
+runtime = payload.get("runtime", {})
+for key, value in runtime.items():
+    if isinstance(value, list):
+        continue
+    print(f"admin_{key}: {value}")
 
-def clean(value: str) -> str:
-    value = re.sub(r'<[^>]+>', '', value)
-    value = unescape(value)
-    value = re.sub(r'\s+', ' ', value)
-    return value.strip()
+recent_errors = runtime.get("recent_errors", [])
+if recent_errors:
+    print("admin_recent_errors:")
+    for event in recent_errors[:10]:
+        print(
+            "  - elapsed_ms={elapsed_ms} category={category} connection={connection_id} player={player_id} detail={detail}".format(
+                elapsed_ms=event.get("elapsed_ms"),
+                category=event.get("category"),
+                connection_id=event.get("connection_id"),
+                player_id=event.get("player_id"),
+                detail=event.get("detail"),
+            )
+        )
+else:
+    print("admin_recent_errors: none")
 
-rows = re.findall(r'<tr><th>(.*?)</th><td>(.*?)</td></tr>', text, flags=re.S)
-for key, value in rows:
-    print(f"admin_{clean(key).lower().replace(' ', '_')}: {clean(value)}")
+recent_matches = payload.get("recent_matches", [])
+if recent_matches:
+    print("admin_recent_matches:")
+    for summary in recent_matches[:10]:
+        print(
+            "  - match_id={match_id} event_count={event_count} last_round={last_round} last_phase={last_phase} last_event={last_event_kind}".format(
+                match_id=summary.get("match_id"),
+                event_count=summary.get("event_count"),
+                last_round=summary.get("last_round"),
+                last_phase=summary.get("last_phase"),
+                last_event_kind=summary.get("last_event_kind"),
+            )
+        )
+else:
+    print("admin_recent_matches: none")
 
-diag_match = re.search(r'<h2>Recent Diagnostics</h2><table>(.*?)</table>', text, flags=re.S)
-if not diag_match:
-    print("admin_recent_diagnostics: none")
-    raise SystemExit(0)
-
-diag_rows = re.findall(
-    r'<tr><td>(.*?)</td><td>(.*?)</td><td>(.*?)</td><td>(.*?)</td><td>(.*?)</td></tr>',
-    diag_match.group(1),
-    flags=re.S,
-)
-if not diag_rows:
-    print("admin_recent_diagnostics: none")
-    raise SystemExit(0)
-
-print("admin_recent_diagnostics:")
-for elapsed_s, category, connection, player, detail in diag_rows[:25]:
+selected_match_log = payload.get("selected_match_log")
+if isinstance(selected_match_log, dict):
+    summary = selected_match_log.get("summary", {})
+    entries = selected_match_log.get("entries", [])
     print(
-        "  - elapsed_s={elapsed} category={category} connection={connection} player={player} detail={detail}".format(
-            elapsed=clean(elapsed_s),
-            category=clean(category),
-            connection=clean(connection),
-            player=clean(player),
-            detail=clean(detail),
+        "admin_selected_match_log: match_id={match_id} events={event_count} recent_entries={recent_entries}".format(
+            match_id=summary.get("match_id"),
+            event_count=summary.get("event_count"),
+            recent_entries=len(entries),
         )
     )
+else:
+    print("admin_selected_match_log: none")
+
+recent_diagnostics = runtime.get("recent_diagnostics", [])
+if recent_diagnostics:
+    print("admin_recent_diagnostics:")
+    for event in recent_diagnostics[:25]:
+        print(
+            "  - elapsed_ms={elapsed_ms} category={category} connection={connection_id} player={player_id} detail={detail}".format(
+                elapsed_ms=event.get("elapsed_ms"),
+                category=event.get("category"),
+                connection_id=event.get("connection_id"),
+                player_id=event.get("player_id"),
+                detail=event.get("detail"),
+            )
+        )
+else:
+    print("admin_recent_diagnostics: none")
 PY
 
     rm -f "${response_file}"

@@ -36,6 +36,7 @@ impl SimulationWorld {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     pub(super) fn apply_status_ticks(&mut self, delta_ms: u16, events: &mut Vec<SimulationEvent>) {
         let player_ids = self.players.keys().copied().collect::<Vec<_>>();
         for player_id in player_ids {

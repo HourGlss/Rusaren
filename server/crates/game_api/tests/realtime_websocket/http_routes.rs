@@ -159,6 +159,9 @@ async fn admin_dashboard_requires_basic_auth_and_renders_runtime_state() {
     assert_eq!(authorized_status, 200);
     assert!(authorized_body.contains("Rusaren Admin Dashboard"));
     assert!(authorized_body.contains("Connected players"));
+    assert!(authorized_body.contains("Recent Errors"));
+    assert!(authorized_body.contains("Recent Match Logs"));
+    assert!(authorized_body.contains("Combat Log Store"));
     assert!(authorized_body.contains("Prometheus Snapshot"));
 
     let (json_status, json_body) = http_get_with_headers(
@@ -172,11 +175,17 @@ async fn admin_dashboard_requires_basic_auth_and_renders_runtime_state() {
         serde_json::from_str(&json_body).expect("admin json should parse");
     assert!(json_value.get("runtime").is_some());
     assert!(json_value.get("app_diagnostics").is_some());
+    assert!(json_value.get("recent_matches").is_some());
+    assert!(json_value.get("selected_match_log").is_some());
+    assert!(json_value.pointer("/runtime/recent_errors").is_some());
     assert!(json_value
         .pointer("/app_diagnostics/app/control_events/sent_packets")
         .is_some());
     assert!(json_value
         .pointer("/app_diagnostics/combat_log/append/sample_count")
+        .is_some());
+    assert!(json_value
+        .pointer("/app_diagnostics/combat_log/append/p99_ms")
         .is_some());
 
     server.shutdown().await;

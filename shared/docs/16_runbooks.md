@@ -9,13 +9,16 @@
    - `https://domain.com/`
    - `https://domain.com/healthz`
    - `https://domain.com/adminz`
+   - `https://domain.com/adminz?format=json`
    - Prometheus scrape status
    - `bash deploy/host-smoke.sh --env-file ~/rusaren-config/config.env`
+   - `systemctl status rusaren-smoke.timer`
+   - `systemctl status rusaren-liveprobe.timer`
 
 Success criteria:
 - root page serves the shell
 - `/healthz` returns `ok`
-- `/adminz` requires auth and renders for operators
+- `/adminz` requires auth and renders for operators in both HTML and JSON forms
 - Prometheus sees the backend target as `UP`
 
 If the deploy target is Linode, follow the host/DNS/firewall setup in `17_linode_deploy.md` first.
@@ -66,6 +69,7 @@ The collector summarizes:
 - compose state
 - public root, health, bootstrap, and admin checks
 - recent `/adminz` diagnostics
+- recent `/adminz` error and match-log summaries
 - filtered backend, proxy, and TURN logs for websocket and WebRTC failures
 
 ## Logs are too noisy or too quiet

@@ -31,6 +31,7 @@ impl SimulationWorld {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     pub(super) fn advance_projectiles(&mut self, delta_ms: u16, events: &mut Vec<SimulationEvent>) {
         let mut next_projectiles = Vec::new();
         let combat_obstacles = self.combat_obstacles();
@@ -247,6 +248,7 @@ impl SimulationWorld {
         self.apply_damage_internal_with_context(attacker, 0, targets, amount, None, None)
     }
 
+    #[allow(clippy::too_many_lines)]
     pub(super) fn apply_damage_internal_with_context(
         &mut self,
         attacker: PlayerId,

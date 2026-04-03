@@ -267,9 +267,7 @@ impl SimulationWorld {
         }
         let mana_cost = behavior.mana_cost();
         let cast_time_ms = self.effective_cast_time_ms(attacker, behavior.cast_time_ms());
-        let Some(player) = self.players.get_mut(&attacker) else {
-            return None;
-        };
+        let player = self.players.get_mut(&attacker)?;
         if player.active_cast.is_some() || player.mana < mana_cost {
             return None;
         }
@@ -316,9 +314,7 @@ impl SimulationWorld {
         if attacker_state.moving {
             return None;
         }
-        let Some(player) = self.players.get(&attacker) else {
-            return None;
-        };
+        let player = self.players.get(&attacker)?;
         if player.active_cast.is_some() || player.mana < mana_cost {
             return None;
         }
@@ -821,9 +817,7 @@ impl SimulationWorld {
             }
 
             let should_cancel = self.players.get(&player_id).and_then(|player| {
-                if player.active_cast.is_none() {
-                    return None;
-                }
+                player.active_cast.as_ref()?;
                 player.statuses.iter().find_map(|status| {
                     matches!(
                         status.kind,

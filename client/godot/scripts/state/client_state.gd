@@ -1277,5 +1277,3 @@ func _effect_ttl_seconds(kind_name: String) -> float:
 			return 0.22
 		_:
 			return 0.35
-
-

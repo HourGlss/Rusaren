@@ -32,8 +32,9 @@ fn corpus_roots() -> Vec<PathBuf> {
         .into_iter()
         .flat_map(|root| {
             [
-                root.join("fuzz").join("corpus"),
+                root.join("target").join("fuzz-seed-corpus"),
                 root.join("target").join("fuzz-generated-corpus"),
+                root.join("fuzz").join("corpus"),
             ]
         })
         .filter(|root| root.exists())

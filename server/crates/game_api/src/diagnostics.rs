@@ -35,6 +35,7 @@ pub(crate) struct TimingStatsSnapshot {
     pub max_ms: f64,
     pub p50_ms: f64,
     pub p95_ms: f64,
+    pub p99_ms: f64,
 }
 
 #[derive(Debug, Default)]
@@ -76,8 +77,9 @@ impl RollingTimingStats {
                 micros_to_ms_u128(self.total_us / u128::from(self.sample_count))
             },
             max_ms: micros_to_ms(self.max_us),
-            p50_ms: percentile_ms(&recent, 0.50),
-            p95_ms: percentile_ms(&recent, 0.95),
+            p50_ms: percentile_ms(&recent, 1, 2),
+            p95_ms: percentile_ms(&recent, 95, 100),
+            p99_ms: percentile_ms(&recent, 99, 100),
         }
     }
 }
@@ -283,28 +285,33 @@ fn count_set_bits(mask: &[u8]) -> u32 {
 }
 
 fn micros_to_ms(micros: u64) -> f64 {
-    micros_to_ms_u128(u128::from(micros))
+    Duration::from_micros(micros).as_secs_f64() * 1000.0
 }
 
 fn micros_to_ms_u128(micros: u128) -> f64 {
-    micros as f64 / 1000.0
+    let capped = micros.min(u128::from(u64::MAX));
+    micros_to_ms(u64::try_from(capped).unwrap_or(u64::MAX))
 }
 
-fn percentile_ms(sorted_micros: &[u64], quantile: f64) -> f64 {
+fn percentile_ms(sorted_micros: &[u64], numerator: usize, denominator: usize) -> f64 {
     if sorted_micros.is_empty() {
         return 0.0;
     }
     let last_index = sorted_micros.len().saturating_sub(1);
-    let scaled = (last_index as f64 * quantile).round();
-    let index = usize::try_from(scaled as u64)
-        .unwrap_or(last_index)
-        .min(last_index);
+    let index = last_index
+        .saturating_mul(numerator)
+        .saturating_add(denominator / 2)
+        / denominator;
     micros_to_ms(sorted_micros[index])
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn assert_ms_eq(left: f64, right: f64) {
+        assert!((left - right).abs() <= 0.000_1, "{left} != {right}");
+    }
 
     #[test]
     fn rolling_timing_stats_capture_average_and_percentiles() {
@@ -315,10 +322,11 @@ mod tests {
 
         let snapshot = stats.snapshot();
         assert_eq!(snapshot.sample_count, 3);
-        assert_eq!(snapshot.last_ms, 8.0);
-        assert_eq!(snapshot.max_ms, 8.0);
+        assert_ms_eq(snapshot.last_ms, 8.0);
+        assert_ms_eq(snapshot.max_ms, 8.0);
         assert!(snapshot.avg_ms >= 3.6 && snapshot.avg_ms <= 3.7);
-        assert_eq!(snapshot.p50_ms, 2.0);
-        assert_eq!(snapshot.p95_ms, 8.0);
+        assert_ms_eq(snapshot.p50_ms, 2.0);
+        assert_ms_eq(snapshot.p95_ms, 8.0);
+        assert_ms_eq(snapshot.p99_ms, 8.0);
     }
 }

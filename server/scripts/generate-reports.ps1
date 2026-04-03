@@ -1470,7 +1470,7 @@ function Get-FuzzCorpusStats {
         [string]$Target
     )
 
-    $seedDir = Join-Path $ServerRoot ("fuzz\corpus\" + $Target)
+    $seedDir = Join-Path $ServerRoot ("target\fuzz-seed-corpus\" + $Target)
     $generatedDir = Join-Path $ServerRoot ("target\fuzz-generated-corpus\" + $Target)
     $seedFiles = if (Test-Path $seedDir) {
         @(Get-ChildItem -Path $seedDir -File | Sort-Object Name)
