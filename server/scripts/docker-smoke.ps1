@@ -97,6 +97,7 @@ try {
             --publish "${Port}:3000" `
             --read-only `
             --tmpfs /tmp `
+            --tmpfs /app/server/var:uid=10001,gid=10001,mode=755 `
             --cap-drop ALL `
             --security-opt no-new-privileges:true `
             --env RARENA_BIND=0.0.0.0:3000 `
