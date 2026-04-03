@@ -229,6 +229,7 @@ fn planner_covers_all_trees_and_fills_the_last_match() {
                 skill_description: format!("{tree_name} tier {tier}"),
                 skill_summary: String::from("Test summary"),
                 ui_category: String::from("neutral"),
+                audio_cue_id: String::new(),
             });
         }
     }

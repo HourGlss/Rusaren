@@ -42,6 +42,7 @@ pub enum PacketError {
         allowed_mask: u16,
     },
     MissingAbilityContext,
+    SelfCastWithoutCast,
     UnexpectedAbilityContext(u16),
     ControlPayloadTooShort {
         kind: &'static str,
@@ -150,6 +151,9 @@ impl PacketError {
             )),
             Self::MissingAbilityContext => {
                 Some(f.write_str("cast packets must provide a non-zero ability_or_context"))
+            }
+            Self::SelfCastWithoutCast => {
+                Some(f.write_str("self-cast requires cast to be requested"))
             }
             Self::UnexpectedAbilityContext(value) => Some(write!(
                 f,

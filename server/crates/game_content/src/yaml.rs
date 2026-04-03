@@ -78,6 +78,7 @@ pub(super) struct MeleeYaml {
     pub(super) id: String,
     pub(super) name: String,
     pub(super) description: String,
+    pub(super) audio_cue_id: Option<String>,
     pub(super) cooldown_ms: u16,
     pub(super) range: u16,
     pub(super) radius: u16,
@@ -92,6 +93,7 @@ pub(super) struct SkillYaml {
     pub(super) id: String,
     pub(super) name: String,
     pub(super) description: String,
+    pub(super) audio_cue_id: Option<String>,
     pub(super) behavior: SkillBehaviorYaml,
 }
 

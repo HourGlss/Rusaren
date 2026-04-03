@@ -3,7 +3,7 @@ use game_domain::{PlayerId, SkillChoice, TeamAssignment, TeamSide};
 use game_match::MatchPhase;
 use game_net::{
     ServerControlEvent, ValidatedInputFrame, BUTTON_CANCEL, BUTTON_CAST, BUTTON_PRIMARY,
-    BUTTON_QUIT_TO_LOBBY,
+    BUTTON_QUIT_TO_LOBBY, BUTTON_SELF_CAST,
 };
 use game_sim::MovementIntent;
 
@@ -387,6 +387,7 @@ impl ServerApp {
             return Ok(());
         }
         let slot = u8::try_from(frame.ability_or_context).unwrap_or(u8::MAX);
+        let self_cast = frame.buttons & BUTTON_SELF_CAST != 0;
         if slot == 0 || slot > 5 {
             return Err(format!("skill slot {slot} is not valid"));
         }
@@ -401,7 +402,7 @@ impl ServerApp {
         }
         runtime
             .world
-            .queue_cast(sender_id, slot)
+            .queue_cast_with_mode(sender_id, slot, self_cast)
             .map_err(|error| error.to_string())
     }
 
@@ -461,6 +462,7 @@ impl ServerApp {
         }
 
         let slot = u8::try_from(frame.ability_or_context).unwrap_or(u8::MAX);
+        let self_cast = frame.buttons & BUTTON_SELF_CAST != 0;
         let unlocked_slots = runtime.session.current_round().get();
         if slot == 0 || slot > unlocked_slots {
             return Err(format!(
@@ -480,7 +482,7 @@ impl ServerApp {
 
         runtime
             .world
-            .queue_cast(sender_id, slot)
+            .queue_cast_with_mode(sender_id, slot, self_cast)
             .map_err(|error| error.to_string())
     }
 }

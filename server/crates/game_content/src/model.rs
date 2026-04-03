@@ -124,6 +124,7 @@ pub struct MeleeDefinition {
     pub id: String,
     pub name: String,
     pub description: String,
+    pub audio_cue_id: Option<String>,
     pub cooldown_ms: u16,
     pub range: u16,
     pub radius: u16,
@@ -326,6 +327,7 @@ pub struct SkillDefinition {
     pub id: String,
     pub name: String,
     pub description: String,
+    pub audio_cue_id: Option<String>,
     pub behavior: SkillBehavior,
 }
 

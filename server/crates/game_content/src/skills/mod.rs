@@ -131,6 +131,9 @@ fn validate_skill_file(
         validate_skill_text(source, "id", &yaml_skill.id)?;
         validate_skill_text(source, "name", &yaml_skill.name)?;
         validate_skill_text(source, "description", &yaml_skill.description)?;
+        if let Some(audio_cue_id) = yaml_skill.audio_cue_id.as_deref() {
+            validate_audio_cue_id(source, "audio_cue_id", audio_cue_id)?;
+        }
         let behavior = parse_skill_behavior(source, &yaml_skill.behavior, mechanics)?;
         skills.push(SkillDefinition {
             tree: tree.clone(),
@@ -138,6 +141,7 @@ fn validate_skill_file(
             id: yaml_skill.id,
             name: yaml_skill.name,
             description: yaml_skill.description,
+            audio_cue_id: yaml_skill.audio_cue_id,
             behavior,
         });
     }
@@ -168,11 +172,15 @@ fn parse_melee_definition(
     validate_skill_text(source, "melee.id", &yaml.id)?;
     validate_skill_text(source, "melee.name", &yaml.name)?;
     validate_skill_text(source, "melee.description", &yaml.description)?;
+    if let Some(audio_cue_id) = yaml.audio_cue_id.as_deref() {
+        validate_audio_cue_id(source, "melee.audio_cue_id", audio_cue_id)?;
+    }
     Ok(MeleeDefinition {
         tree,
         id: yaml.id,
         name: yaml.name,
         description: yaml.description,
+        audio_cue_id: yaml.audio_cue_id,
         cooldown_ms: require_positive_u16(source, "melee.cooldown_ms", Some(yaml.cooldown_ms))?,
         range: require_positive_u16(source, "melee.range", Some(yaml.range))?,
         radius: require_positive_u16(source, "melee.radius", Some(yaml.radius))?,
@@ -207,6 +215,23 @@ pub(super) fn validate_skill_text(
         });
     }
     Ok(())
+}
+
+fn validate_audio_cue_id(source: &str, field: &str, value: &str) -> Result<(), ContentError> {
+    validate_skill_text(source, field, value)?;
+    if value.chars().all(|character| {
+        character.is_ascii_lowercase()
+            || character.is_ascii_digit()
+            || matches!(character, '_' | '-')
+    }) {
+        return Ok(());
+    }
+    Err(ContentError::Validation {
+        source: String::from(source),
+        message: format!(
+            "{field} must use lowercase ascii letters, digits, '_' or '-' so it stays portable across backend content and the frontend asset registry"
+        ),
+    })
 }
 
 fn parse_skill_tree(source: &str, raw: &str) -> Result<SkillTree, ContentError> {

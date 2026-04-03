@@ -44,6 +44,7 @@ const DEFAULT_AIM_Y: i16 = 0;
 const DEFAULT_PLAYER_HIT_POINTS: u16 = 100;
 const TRAINING_DUMMY_HEALTH_MULTIPLIER: u16 = 100;
 const TRAINING_DUMMY_RESET_THRESHOLD_BPS: u16 = 500;
+const CROWD_CONTROL_DR_WINDOW_MS: u16 = 15_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MovementIntent {
@@ -458,6 +459,7 @@ struct SimPlayer {
     movement_intent: MovementIntent,
     queued_primary: bool,
     queued_cast_slot: Option<u8>,
+    queued_cast_self_target: bool,
     active_cast: Option<PendingCast>,
     melee: MeleeDefinition,
     skills: [Option<SkillDefinition>; 5],
@@ -465,6 +467,9 @@ struct SimPlayer {
     slot_cooldown_remaining_ms: [u16; 5],
     mana_regen_progress: u16,
     statuses: Vec<StatusInstance>,
+    hard_cc_dr: CrowdControlDrState,
+    movement_cc_dr: CrowdControlDrState,
+    cast_cc_dr: CrowdControlDrState,
 }
 
 #[derive(Clone, Debug)]
@@ -488,6 +493,7 @@ struct StatusInstance {
 struct PendingCast {
     slot: u8,
     slot_index: usize,
+    self_target: bool,
     remaining_ms: u16,
     total_ms: u16,
     just_started: bool,
@@ -498,6 +504,7 @@ struct PendingCast {
 enum ActiveCastMode {
     Windup,
     Channel {
+        self_target: bool,
         range: u16,
         radius: u16,
         tick_interval_ms: u16,
@@ -578,6 +585,19 @@ struct PassiveModifiers {
     cast_time: u16,
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+struct CrowdControlDrState {
+    stage: u8,
+    remaining_ms: u16,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CrowdControlDrBucket {
+    Hard,
+    Movement,
+    Cast,
+}
+
 impl SimulationWorld {
     pub fn new(
         players: Vec<SimPlayerSeed>,
@@ -632,6 +652,7 @@ impl SimulationWorld {
                         movement_intent: MovementIntent::zero(),
                         queued_primary: false,
                         queued_cast_slot: None,
+                        queued_cast_self_target: false,
                         active_cast: None,
                         melee: player.melee,
                         skills: player.skills,
@@ -639,6 +660,9 @@ impl SimulationWorld {
                         slot_cooldown_remaining_ms: [0; 5],
                         mana_regen_progress: 0,
                         statuses: Vec::new(),
+                        hard_cc_dr: CrowdControlDrState::default(),
+                        movement_cc_dr: CrowdControlDrState::default(),
+                        cast_cc_dr: CrowdControlDrState::default(),
                     },
                 )
                 .is_some()
@@ -730,6 +754,15 @@ impl SimulationWorld {
     }
 
     pub fn queue_cast(&mut self, player_id: PlayerId, slot: u8) -> Result<(), SimulationError> {
+        self.queue_cast_with_mode(player_id, slot, false)
+    }
+
+    pub fn queue_cast_with_mode(
+        &mut self,
+        player_id: PlayerId,
+        slot: u8,
+        self_target: bool,
+    ) -> Result<(), SimulationError> {
         if !(1..=5).contains(&slot) {
             return Err(SimulationError::InvalidSkillSlot(slot));
         }
@@ -748,6 +781,7 @@ impl SimulationWorld {
             return Ok(());
         }
         player.queued_cast_slot = Some(slot);
+        player.queued_cast_self_target = self_target;
         Ok(())
     }
 
@@ -793,11 +827,15 @@ impl SimulationWorld {
             player.movement_intent = MovementIntent::zero();
             player.queued_primary = false;
             player.queued_cast_slot = None;
+            player.queued_cast_self_target = false;
             player.active_cast = None;
             player.primary_cooldown_remaining_ms = 0;
             player.slot_cooldown_remaining_ms = [0; 5];
             player.mana_regen_progress = 0;
             player.statuses.clear();
+            player.hard_cc_dr = CrowdControlDrState::default();
+            player.movement_cc_dr = CrowdControlDrState::default();
+            player.cast_cc_dr = CrowdControlDrState::default();
         }
     }
 
@@ -805,6 +843,7 @@ impl SimulationWorld {
         let mut events = Vec::new();
         self.advance_cooldowns(delta_ms);
         self.advance_mana(delta_ms);
+        self.advance_crowd_control_diminishing_returns(delta_ms);
         self.apply_status_ticks(delta_ms, &mut events);
         self.move_players(delta_ms, &mut events);
         self.resolve_queued_actions(&mut events);
@@ -981,6 +1020,12 @@ impl SimulationWorld {
         u16::try_from(scaled).unwrap_or(u16::MAX)
     }
 
+    fn scale_duration_with_bps(base_ms: u16, scale_bps: u16) -> u16 {
+        let scaled = u32::from(base_ms).saturating_mul(u32::from(scale_bps));
+        let rounded = scaled.div_ceil(10_000);
+        u16::try_from(rounded).unwrap_or(u16::MAX)
+    }
+
     fn scale_speed_units(base_speed: u16, bonus_bps: u16) -> u16 {
         let scaled =
             u32::from(base_speed).saturating_mul(10_000_u32 + u32::from(bonus_bps)) / 10_000;
@@ -1093,6 +1138,64 @@ impl SimulationWorld {
         player
             .statuses
             .retain(|status| status.kind != StatusKind::Stealth);
+    }
+
+    fn crowd_control_bucket(kind: StatusKind) -> Option<CrowdControlDrBucket> {
+        match kind {
+            StatusKind::Stun | StatusKind::Sleep | StatusKind::Fear => {
+                Some(CrowdControlDrBucket::Hard)
+            }
+            StatusKind::Root => Some(CrowdControlDrBucket::Movement),
+            StatusKind::Silence => Some(CrowdControlDrBucket::Cast),
+            StatusKind::Poison
+            | StatusKind::Hot
+            | StatusKind::Chill
+            | StatusKind::Haste
+            | StatusKind::Shield
+            | StatusKind::Stealth
+            | StatusKind::Reveal => None,
+        }
+    }
+
+    fn crowd_control_dr_state_mut(
+        player: &mut SimPlayer,
+        bucket: CrowdControlDrBucket,
+    ) -> &mut CrowdControlDrState {
+        match bucket {
+            CrowdControlDrBucket::Hard => &mut player.hard_cc_dr,
+            CrowdControlDrBucket::Movement => &mut player.movement_cc_dr,
+            CrowdControlDrBucket::Cast => &mut player.cast_cc_dr,
+        }
+    }
+
+    fn crowd_control_dr_scale_bps(stage: u8) -> u16 {
+        match stage {
+            0 => 10_000,
+            1 => 5_000,
+            2 => 2_500,
+            _ => 0,
+        }
+    }
+
+    fn apply_crowd_control_dr(
+        player: &mut SimPlayer,
+        kind: StatusKind,
+        duration_ms: u16,
+    ) -> Option<u16> {
+        let Some(bucket) = Self::crowd_control_bucket(kind) else {
+            return Some(duration_ms);
+        };
+        let state = Self::crowd_control_dr_state_mut(player, bucket);
+        if state.remaining_ms == 0 {
+            state.stage = 0;
+        }
+        let scale_bps = Self::crowd_control_dr_scale_bps(state.stage);
+        state.stage = state.stage.saturating_add(1).min(3);
+        state.remaining_ms = CROWD_CONTROL_DR_WINDOW_MS;
+        if scale_bps == 0 {
+            return None;
+        }
+        Some(Self::scale_duration_with_bps(duration_ms, scale_bps))
     }
 
     fn player_has_status(&self, player_id: PlayerId, kind: StatusKind) -> bool {

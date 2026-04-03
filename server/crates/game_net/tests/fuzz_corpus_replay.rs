@@ -35,7 +35,9 @@ fn corpus_dirs(target: &str) -> Vec<PathBuf> {
         .flat_map(|root| {
             [
                 root.join("target").join("fuzz-seed-corpus").join(target),
-                root.join("target").join("fuzz-generated-corpus").join(target),
+                root.join("target")
+                    .join("fuzz-generated-corpus")
+                    .join(target),
                 root.join("fuzz").join("corpus").join(target),
             ]
         })

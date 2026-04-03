@@ -124,8 +124,6 @@ func _process(delta: float) -> void:
 	app_state.advance_visuals(delta)
 	app_state.record_client_timing("advance_visuals", Time.get_ticks_usec() - visuals_started_us)
 	transport.poll()
-	if arena_view != null:
-		arena_view.refresh_from_state()
 	_tick_auto_connect(delta)
 	_drive_combat_input()
 	_tick_passive_ui_refresh(delta)
@@ -154,6 +152,9 @@ func _input(event: InputEvent) -> void:
 				_queue_combat_cast(4)
 			KEY_5:
 				_queue_combat_cast(5)
+			KEY_X:
+				if _pending_cast_slot > 0:
+					_drive_combat_input()
 
 
 func _bind_transport() -> void:
@@ -1074,6 +1075,7 @@ func _drive_combat_input() -> void:
 	if _pending_cast_slot > 0:
 		payload["cast"] = true
 		payload["ability_or_context"] = _pending_cast_slot
+		payload["self_cast"] = Input.is_key_pressed(KEY_X)
 
 	if transport.send_input_frame(payload):
 		_next_client_input_tick += 1

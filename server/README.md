@@ -27,6 +27,51 @@ Use the structure notes below to find the right file or subfolder quickly.
 - `deny.toml`: cargo-deny policy file for dependency and license checks.
 - `rust-toolchain.toml`: Pinned Rust toolchain configuration for the backend workspace.
 
+## Authored Skill Cue IDs
+Authored melee and spell entries in `content/skills/*.yaml` can now declare an optional `audio_cue_id`.
+That field is copied into the connected skill catalog and exposed to the Godot client, but the backend does not load or play audio files itself.
+
+Example:
+
+```yaml
+melee:
+  id: warrior_broadswing
+  name: Broadswing
+  description: Heavy melee hit.
+  audio_cue_id: warrior_broadswing
+  cooldown_ms: 650
+  range: 92
+  radius: 42
+  effect: melee_swing
+  payload:
+    kind: damage
+    amount: 18
+```
+
+For spell tiers:
+
+```yaml
+- tier: 1
+  id: mage_arc_bolt
+  name: Arc Bolt
+  description: Fast projectile damage.
+  audio_cue_id: mage_arc_bolt
+  behavior:
+    kind: projectile
+    effect: skill_shot
+    cooldown_ms: 700
+    mana_cost: 16
+    speed: 320
+    range: 1600
+    radius: 18
+    payload:
+      kind: damage
+      amount: 18
+```
+
+The matching frontend registry lives at `client/godot/content/audio/spell_cues.json`, and the default asset root there is `res://assets/audio/spells`.
+The current `0.9.7` work only wires the shared cue ID seam; real playback assets and movement audio still belong to the remaining sound items in the roadmap.
+
 ## Mutation Campaigns
 Use the helper scripts when a full cargo-mutants run would take hours and needs to be split into manual shards.
 

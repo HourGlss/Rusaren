@@ -10,6 +10,7 @@ func _init() -> void:
 	success = _assert_valid_primary_input() and success
 	success = _assert_move_axis_rejection() and success
 	success = _assert_missing_cast_context_rejection() and success
+	success = _assert_self_cast_requires_cast_rejection() and success
 	success = _assert_unexpected_context_rejection() and success
 	success = _assert_aim_range_rejection() and success
 	success = _assert_start_training_uses_kind_five() and success
@@ -101,6 +102,14 @@ func _assert_missing_cast_context_rejection() -> bool:
 	return _expect_error(encoded, "cast input requires a non-zero ability_or_context")
 
 
+func _assert_self_cast_requires_cast_rejection() -> bool:
+	var encoded := Protocol.encode_input_frame({
+		"client_input_tick": 1,
+		"self_cast": true,
+	}, 1, 0)
+	return _expect_error(encoded, "self-cast requires cast to be requested")
+
+
 func _assert_unexpected_context_rejection() -> bool:
 	var encoded := Protocol.encode_input_frame({
 		"client_input_tick": 1,
@@ -178,6 +187,7 @@ func _assert_decode_connected_with_skill_catalog() -> bool:
 	_push_string(payload, "Fast projectile damage.")
 	_push_string(payload, "CD 0.7s | Cast instant | Mana 16\nProjectile: range 1500, radius 16, speed 310\nEffect: 10 damage")
 	_push_string(payload, "damage")
+	_push_string(payload, "mage_arc_bolt")
 	_push_string(payload, "Cleric")
 	payload.append(1)
 	_push_string(payload, "cleric_t1_minor_heal")
@@ -185,6 +195,7 @@ func _assert_decode_connected_with_skill_catalog() -> bool:
 	_push_string(payload, "Beam heal for the first ally hit.")
 	_push_string(payload, "CD 0.9s | Cast 0.3s | Mana 16\nBeam: range 280, radius 28\nEffect: 18 heal")
 	_push_string(payload, "heal")
+	_push_string(payload, "")
 	var decoded := Protocol.decode_server_event(_encode_server_event_packet(payload, 7, 0))
 	if not bool(decoded.get("ok", false)):
 		return _fail("connected event with skill catalog should decode")
@@ -200,6 +211,8 @@ func _assert_decode_connected_with_skill_catalog() -> bool:
 		return _fail("connected event should decode skill descriptions")
 	if String(skill_catalog[1].get("ui_category", "")) != "heal":
 		return _fail("connected event should decode skill UI categories")
+	if String(skill_catalog[0].get("audio_cue_id", "")) != "mage_arc_bolt":
+		return _fail("connected event should decode skill audio cue ids")
 	return true
 
 

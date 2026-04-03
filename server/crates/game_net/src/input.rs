@@ -1,7 +1,9 @@
 use crate::error::PacketError;
 use crate::header::PacketHeader;
 use crate::packet_types::{ChannelId, PacketKind};
-use crate::{ALLOWED_BUTTONS_MASK, BUTTON_CAST, INPUT_PAYLOAD_LEN, INPUT_PAYLOAD_LEN_U16};
+use crate::{
+    ALLOWED_BUTTONS_MASK, BUTTON_CAST, BUTTON_SELF_CAST, INPUT_PAYLOAD_LEN, INPUT_PAYLOAD_LEN_U16,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ValidatedInputFrame {
@@ -37,6 +39,10 @@ impl ValidatedInputFrame {
         }
 
         let cast_requested = buttons & BUTTON_CAST != 0;
+        let self_cast_requested = buttons & BUTTON_SELF_CAST != 0;
+        if self_cast_requested && !cast_requested {
+            return Err(PacketError::SelfCastWithoutCast);
+        }
         match (cast_requested, ability_or_context) {
             (true, 0) => return Err(PacketError::MissingAbilityContext),
             (false, non_zero) if non_zero != 0 => {

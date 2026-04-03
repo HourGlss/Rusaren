@@ -14,8 +14,10 @@ Buildable now:
 - a focused in-match Godot shell layout that hides the setup chrome after lobby join, surfaces skill picks before the arena during skill-pick windows, and returns to the central layout on disconnect
 - authoritative full and delta arena snapshots carrying match phase, hp, mana, cooldowns, active statuses, projectile state, and only the terrain/obstacles the viewing player is allowed to know about
 - a first playable arena slice with a mostly empty map, four central square pillars, traversable shrub collars, authoritative player circles, per-player fog-of-war, WASD movement, mouse aim, left-click melee, authored class melee/spells on `1`-`5`, projectile combat, debuffs, HoTs, health, mana, and cooldown state
+- held `X` self-cast for authored skills that normally target another player or an aimed point, plus crowd-control diminishing returns across hard-CC, movement-CC, and cast-CC buckets
 - a shipped authored class roster of Warrior, Rogue, Mage, Cleric, Paladin, Ranger, Bard, Druid, and Necromancer
 - runtime-loaded authored content under `server/content/skills/*.yaml`, `server/content/maps/prototype_arena.txt`, and `server/content/mechanics/registry.yaml`
+- optional backend-authored `audio_cue_id` plumbing in the skill catalog, with the Godot client resolving cue IDs through `client/godot/content/audio/spell_cues.json` when frontend spell audio assets exist
 - a same-origin Godot Web export path hosted directly by the Rust server at `/`
 - a documented production-style deploy path with Caddy, Prometheus, and `coturn`
 - stricter authored YAML and ASCII content validation with clean boot-time failures on invalid content
@@ -34,7 +36,7 @@ Buildable now:
 
 Not implemented yet:
 - the full 1.0 authored class and spell set beyond the current shipped runtime kit
-- planned mechanic families like summons, barriers, traps, wards, shields, stealth, reveal, taunt, and fear are now captured in YAML, but they are not yet bound to live authored skills
+- shipped spell and movement audio playback beyond the new cue-id plumbing
 - more aggressive snapshot compression beyond the current full-vs-delta split
 - the full 1.0 Godot gameplay presentation bar: HUD polish, stronger spell visuals, and always-readable health and mana display in crowded fights
 - rustdoc/API guidance that is complete enough for an external client or bot author to play through the game protocol without Godot
@@ -101,6 +103,48 @@ Adding more classes is now mostly centralized around:
 
 The UI and network catalog path now follow backend-authored class names and skill IDs instead of a fixed four-class wire enum.
 That means classes using the existing runtime mechanic set can now be added without touching protocol or frontend registries.
+
+Spell audio cue plumbing is now wired the same backend-authored way:
+- add an optional `audio_cue_id` to `melee:` or a skill entry inside `server/content/skills/*.yaml`
+- register that same cue ID in `client/godot/content/audio/spell_cues.json`
+- place the eventual audio file under `client/godot/assets/audio/spells/`
+
+Example authored skill snippet:
+
+```yaml
+- tier: 1
+  id: mage_arc_bolt
+  name: Arc Bolt
+  description: Fast projectile damage.
+  audio_cue_id: mage_arc_bolt
+  behavior:
+    kind: projectile
+    effect: skill_shot
+    cooldown_ms: 700
+    mana_cost: 16
+    speed: 320
+    range: 1600
+    radius: 18
+    payload:
+      kind: damage
+      amount: 18
+```
+
+Matching frontend manifest entry:
+
+```json
+{
+  "format_version": 1,
+  "asset_root": "res://assets/audio/spells",
+  "cues": {
+    "mage_arc_bolt": {
+      "file": "mage/arc_bolt.ogg"
+    }
+  }
+}
+```
+
+The current client only resolves cue metadata; it does not play those files yet. This keeps the content and protocol seam in place so real spell audio can be added without another schema change.
 
 The planned `0.9` player-token rendering language is:
 - skill slot `1` colors the player center

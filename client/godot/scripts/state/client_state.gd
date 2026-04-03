@@ -7,6 +7,7 @@ const COMBAT_TEXT_LIFETIME_SECONDS := 1.18
 const PLAYER_RENDER_LERP_RATE := 11.0
 const PROJECTILE_RENDER_LERP_RATE := 15.0
 const RENDER_SNAP_DISTANCE_UNITS := 220.0
+const SpellAudioRegistryScript := preload("res://scripts/content/spell_audio_registry.gd")
 const ClientStateViewScript := preload("res://scripts/state/client_state_view.gd")
 const WebSocketConfigScript := preload("res://scripts/net/websocket_config.gd")
 
@@ -58,9 +59,11 @@ var explored_tiles := PackedByteArray()
 var training_metrics := {}
 var diagnostics := {}
 var arena_render_revision := 1
+var spell_audio_registry := {}
 
 
 func _init() -> void:
+	spell_audio_registry = SpellAudioRegistryScript.load_default_manifest()
 	_reset_diagnostics()
 
 func _is_rendered_deployable_kind(kind_name: String) -> bool:
@@ -621,6 +624,17 @@ func skill_ui_category_for(tree_name: String, tier: int) -> String:
 
 func skill_tooltip_for(tree_name: String, tier: int) -> String:
 	return ClientStateViewScript.skill_tooltip_for(skill_catalog, tree_name, tier)
+
+
+func skill_audio_cue_for(tree_name: String, tier: int) -> String:
+	return ClientStateViewScript.skill_audio_cue_for(skill_catalog, tree_name, tier)
+
+
+func skill_audio_entry_for(tree_name: String, tier: int) -> Dictionary:
+	var cue_id := skill_audio_cue_for(tree_name, tier)
+	if cue_id == "":
+		return {}
+	return SpellAudioRegistryScript.lookup(spell_audio_registry, cue_id)
 
 
 func skill_catalog_signature() -> String:

@@ -4,7 +4,9 @@ use std::path::PathBuf;
 use game_api::decode_client_signal_message;
 
 fn corpus_roots() -> Vec<PathBuf> {
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("..");
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..");
     [
         repo_root.join("target").join("fuzz-seed-corpus"),
         repo_root.join("target").join("fuzz-generated-corpus"),

@@ -4,8 +4,8 @@ use std::fmt;
 
 use game_net::{
     ChannelId, PacketError, PacketHeader, PacketKind, SequenceTracker, ValidatedInputFrame,
-    ALLOWED_BUTTONS_MASK, BUTTON_CAST, BUTTON_PRIMARY, HEADER_LEN, INPUT_PAYLOAD_LEN,
-    INPUT_PAYLOAD_LEN_U16, PACKET_MAGIC, PROTOCOL_VERSION,
+    ALLOWED_BUTTONS_MASK, BUTTON_CAST, BUTTON_PRIMARY, BUTTON_SELF_CAST, HEADER_LEN,
+    INPUT_PAYLOAD_LEN, INPUT_PAYLOAD_LEN_U16, PACKET_MAGIC, PROTOCOL_VERSION,
 };
 use proptest::prelude::*;
 
@@ -108,13 +108,15 @@ fn input_frame_validates_button_masks_and_context_consistency() {
     assert_eq!(BUTTON_CAST, 4);
     assert_eq!(game_net::BUTTON_CANCEL, 8);
     assert_eq!(game_net::BUTTON_QUIT_TO_LOBBY, 16);
-    assert_eq!(ALLOWED_BUTTONS_MASK, 31);
+    assert_eq!(BUTTON_SELF_CAST, 32);
+    assert_eq!(ALLOWED_BUTTONS_MASK, 63);
     assert_eq!(
         ALLOWED_BUTTONS_MASK & !BUTTON_PRIMARY,
         game_net::BUTTON_SECONDARY
             | BUTTON_CAST
             | game_net::BUTTON_CANCEL
             | game_net::BUTTON_QUIT_TO_LOBBY
+            | BUTTON_SELF_CAST
     );
 
     assert_eq!(
@@ -123,6 +125,11 @@ fn input_frame_validates_button_masks_and_context_consistency() {
             provided: ALLOWED_BUTTONS_MASK + 1,
             allowed_mask: ALLOWED_BUTTONS_MASK,
         })
+    );
+
+    assert_eq!(
+        ValidatedInputFrame::new(1, 0, 0, 0, 0, BUTTON_SELF_CAST, 0),
+        Err(PacketError::SelfCastWithoutCast)
     );
 
     assert_eq!(
@@ -136,14 +143,22 @@ fn input_frame_validates_button_masks_and_context_consistency() {
     );
 
     assert_eq!(
-        ValidatedInputFrame::new(1, -10, 10, 25, -25, BUTTON_CAST | BUTTON_PRIMARY, 7),
+        ValidatedInputFrame::new(
+            1,
+            -10,
+            10,
+            25,
+            -25,
+            BUTTON_CAST | BUTTON_PRIMARY | BUTTON_SELF_CAST,
+            7
+        ),
         Ok(ValidatedInputFrame {
             client_input_tick: 1,
             move_horizontal_q: -10,
             move_vertical_q: 10,
             aim_horizontal_q: 25,
             aim_vertical_q: -25,
-            buttons: BUTTON_CAST | BUTTON_PRIMARY,
+            buttons: BUTTON_CAST | BUTTON_PRIMARY | BUTTON_SELF_CAST,
             ability_or_context: 7,
         })
     );
@@ -238,6 +253,10 @@ fn packet_error_display_covers_all_formatter_groups() {
         (
             PacketError::MissingAbilityContext,
             "cast packets must provide a non-zero ability_or_context",
+        ),
+        (
+            PacketError::SelfCastWithoutCast,
+            "self-cast requires cast to be requested",
         ),
         (
             PacketError::UnexpectedTrailingBytes {

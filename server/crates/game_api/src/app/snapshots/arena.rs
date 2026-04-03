@@ -333,6 +333,7 @@ impl ServerApp {
                 skill_description: skill.description.clone(),
                 skill_summary: build_skill_summary(skill),
                 ui_category: skill_ui_category(skill).to_string(),
+                audio_cue_id: skill.audio_cue_id.clone().unwrap_or_default(),
             })
             .collect()
     }

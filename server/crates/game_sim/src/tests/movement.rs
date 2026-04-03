@@ -403,6 +403,7 @@ fn projectile_helpers_preserve_vertical_motion_and_expire_at_range() {
         player_id(1),
         1,
         attacker_state,
+        false,
         speed,
         range,
         radius,

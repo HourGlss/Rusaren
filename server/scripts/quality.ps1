@@ -196,7 +196,7 @@ function Get-WslDistribution {
 function Convert-WindowsPathToWsl {
     param([string]$Path)
 
-    $resolved = (Resolve-Path -Path $Path).Path
+    $resolved = [System.IO.Path]::GetFullPath($Path)
     $normalized = $resolved -replace '\\', '/'
     if ($normalized -match '^([A-Za-z]):/(.*)$') {
         return "/mnt/$($matches[1].ToLower())/$($matches[2])"

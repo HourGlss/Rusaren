@@ -966,6 +966,109 @@ fn parse_ascii_map_accepts_ragged_rows_and_rejects_bad_glyphs_and_missing_anchor
 }
 
 #[test]
+fn parse_skill_yaml_accepts_audio_cue_ids_and_rejects_invalid_ones() {
+    let valid = r"
+tree: Mage
+melee:
+  id: mage_staff
+  name: Staff
+  description: bonk
+  cooldown_ms: 100
+  range: 50
+  radius: 20
+  effect: melee_swing
+  audio_cue_id: melee_staff_bonk
+  payload:
+    kind: damage
+    amount: 10
+skills:
+  - tier: 1
+    id: mage_arc_bolt
+    name: Arc Bolt
+    description: damage
+    audio_cue_id: mage_arc_bolt
+    behavior:
+      kind: projectile
+      effect: skill_shot
+      cooldown_ms: 100
+      speed: 100
+      range: 100
+      radius: 10
+      payload:
+        kind: damage
+        amount: 1
+  - tier: 2
+    id: mage_two
+    name: Two
+    description: two
+    behavior:
+      kind: beam
+      effect: beam
+      cooldown_ms: 100
+      range: 20
+      radius: 10
+      payload:
+        kind: damage
+        amount: 2
+  - tier: 3
+    id: mage_three
+    name: Three
+    description: three
+    behavior:
+      kind: beam
+      effect: beam
+      cooldown_ms: 100
+      range: 20
+      radius: 10
+      payload:
+        kind: damage
+        amount: 2
+  - tier: 4
+    id: mage_four
+    name: Four
+    description: four
+    behavior:
+      kind: beam
+      effect: beam
+      cooldown_ms: 100
+      range: 20
+      radius: 10
+      payload:
+        kind: damage
+        amount: 2
+  - tier: 5
+    id: mage_five
+    name: Five
+    description: five
+    behavior:
+      kind: beam
+      effect: beam
+      cooldown_ms: 100
+      range: 20
+      radius: 10
+      payload:
+        kind: damage
+        amount: 2
+";
+    let parsed = parse_skill_yaml("skills/mage.yaml", valid).expect("audio cue ids should parse");
+    assert_eq!(
+        parsed.melee.audio_cue_id.as_deref(),
+        Some("melee_staff_bonk")
+    );
+    assert_eq!(
+        parsed.skills[0].audio_cue_id.as_deref(),
+        Some("mage_arc_bolt")
+    );
+
+    let invalid = valid.replace("mage_arc_bolt", "Mage Arc Bolt");
+    assert!(matches!(
+        parse_skill_yaml("skills/mage.yaml", invalid.as_str()),
+        Err(ContentError::Validation { message, .. })
+            if message.contains("audio_cue_id")
+    ));
+}
+
+#[test]
 fn parse_mechanics_yaml_accepts_registry_entries_and_rejects_duplicates() {
     let yaml = r"
 behaviors:

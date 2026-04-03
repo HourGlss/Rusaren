@@ -117,8 +117,18 @@ fn activate_skill_cast(
     slot: u8,
     behavior: &SkillBehavior,
 ) -> Vec<SimulationEvent> {
+    activate_skill_cast_with_mode(world, attacker_id, slot, behavior, false)
+}
+
+fn activate_skill_cast_with_mode(
+    world: &mut SimulationWorld,
+    attacker_id: PlayerId,
+    slot: u8,
+    behavior: &SkillBehavior,
+    self_target: bool,
+) -> Vec<SimulationEvent> {
     world
-        .queue_cast(attacker_id, slot)
+        .queue_cast_with_mode(attacker_id, slot, self_target)
         .expect("cast should queue successfully");
     let mut events = world.tick(COMBAT_FRAME_MS);
     let extra_cast_frames = cast_resolution_frame_budget(behavior).saturating_sub(1);
@@ -135,7 +145,19 @@ fn resolve_skill_cast(
     slot: u8,
     behavior: SkillBehavior,
 ) -> Vec<SimulationEvent> {
-    let mut events = activate_skill_cast(world, attacker_id, slot, &behavior);
+    resolve_skill_cast_with_mode(world, attacker_id, slot, behavior, false)
+}
+
+#[allow(clippy::needless_pass_by_value)]
+fn resolve_skill_cast_with_mode(
+    world: &mut SimulationWorld,
+    attacker_id: PlayerId,
+    slot: u8,
+    behavior: SkillBehavior,
+    self_target: bool,
+) -> Vec<SimulationEvent> {
+    let mut events =
+        activate_skill_cast_with_mode(world, attacker_id, slot, &behavior, self_target);
     match behavior {
         SkillBehavior::Projectile { speed, range, .. } => {
             events.extend(collect_ticks(world, projectile_frame_budget(speed, range)));
@@ -151,6 +173,18 @@ fn resolve_skill_cast(
         _ => {}
     }
     events
+}
+
+fn remaining_status_ms(
+    world: &SimulationWorld,
+    player_id: PlayerId,
+    kind: StatusKind,
+) -> Option<u16> {
+    world
+        .statuses_for(player_id)?
+        .into_iter()
+        .find(|status| status.kind == kind)
+        .map(|status| status.remaining_ms)
 }
 
 fn effect_spawned_by(events: &[SimulationEvent], owner: PlayerId, slot: u8) -> bool {

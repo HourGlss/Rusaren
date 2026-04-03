@@ -112,6 +112,7 @@ pub struct SkillCatalogEntry {
     pub skill_description: String,
     pub skill_summary: String,
     pub ui_category: String,
+    pub audio_cue_id: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

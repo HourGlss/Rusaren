@@ -96,19 +96,29 @@ impl SimulationWorld {
                 .players
                 .get(&player_id)
                 .and_then(|player| player.queued_cast_slot);
+            let queued_cast_self_target = self
+                .players
+                .get(&player_id)
+                .is_some_and(|player| player.queued_cast_self_target);
 
             if queued_primary && !actions_blocked {
                 events.extend(self.resolve_primary_attack(player_id, snapshot));
             }
             if let Some(slot) = queued_cast_slot {
                 if !casts_blocked {
-                    events.extend(self.resolve_cast(player_id, snapshot, slot));
+                    events.extend(self.resolve_cast(
+                        player_id,
+                        snapshot,
+                        slot,
+                        queued_cast_self_target,
+                    ));
                 }
             }
 
             if let Some(player) = self.players.get_mut(&player_id) {
                 player.queued_primary = false;
                 player.queued_cast_slot = None;
+                player.queued_cast_self_target = false;
             }
         }
     }
@@ -187,6 +197,7 @@ impl SimulationWorld {
         attacker: PlayerId,
         attacker_state: SimPlayerState,
         slot: u8,
+        self_target: bool,
     ) -> Vec<SimulationEvent> {
         let slot_index = usize::from(slot - 1);
         let Some(player) = self.players.get(&attacker) else {
@@ -210,23 +221,34 @@ impl SimulationWorld {
                     attacker_state,
                     slot,
                     slot_index,
+                    self_target,
                     &skill.behavior,
                 ) {
                     return vec![event];
                 }
                 return Vec::new();
             }
-            if let Some(event) =
-                self.start_channel(attacker, attacker_state, slot, slot_index, skill.behavior)
-            {
+            if let Some(event) = self.start_channel(
+                attacker,
+                attacker_state,
+                slot,
+                slot_index,
+                self_target,
+                skill.behavior,
+            ) {
                 return vec![event];
             }
             return Vec::new();
         }
         if self.effective_cast_time_ms(attacker, skill.behavior.cast_time_ms()) > 0 {
-            if let Some(event) =
-                self.start_pending_cast(attacker, attacker_state, slot, slot_index, &skill.behavior)
-            {
+            if let Some(event) = self.start_pending_cast(
+                attacker,
+                attacker_state,
+                slot,
+                slot_index,
+                self_target,
+                &skill.behavior,
+            ) {
                 return vec![event];
             }
             return Vec::new();
@@ -244,6 +266,7 @@ impl SimulationWorld {
             attacker_state,
             slot,
             slot_index,
+            self_target,
             skill.behavior,
         ));
         events.push(SimulationEvent::CastCompleted {
@@ -260,6 +283,7 @@ impl SimulationWorld {
         attacker_state: SimPlayerState,
         slot: u8,
         slot_index: usize,
+        self_target: bool,
         behavior: &SkillBehavior,
     ) -> Option<SimulationEvent> {
         if attacker_state.moving {
@@ -274,6 +298,7 @@ impl SimulationWorld {
         player.active_cast = Some(PendingCast {
             slot,
             slot_index,
+            self_target,
             remaining_ms: cast_time_ms,
             total_ms: cast_time_ms,
             just_started: true,
@@ -295,6 +320,7 @@ impl SimulationWorld {
         attacker_state: SimPlayerState,
         slot: u8,
         slot_index: usize,
+        self_target: bool,
         behavior: SkillBehavior,
     ) -> Option<SimulationEvent> {
         let SkillBehavior::Channel {
@@ -325,10 +351,12 @@ impl SimulationWorld {
             player.active_cast = Some(PendingCast {
                 slot,
                 slot_index,
+                self_target,
                 remaining_ms: duration_ms,
                 total_ms: duration_ms,
                 just_started: true,
                 mode: ActiveCastMode::Channel {
+                    self_target,
                     range,
                     radius,
                     tick_interval_ms,
@@ -357,7 +385,7 @@ impl SimulationWorld {
         slot_index: usize,
         behavior: SkillBehavior,
     ) -> bool {
-        self.start_pending_cast(attacker, attacker_state, slot, slot_index, &behavior)
+        self.start_pending_cast(attacker, attacker_state, slot, slot_index, false, &behavior)
             .is_some()
     }
 
@@ -368,6 +396,7 @@ impl SimulationWorld {
         attacker_state: SimPlayerState,
         slot: u8,
         slot_index: usize,
+        self_target: bool,
         behavior: SkillBehavior,
     ) -> Vec<SimulationEvent> {
         match behavior {
@@ -385,6 +414,7 @@ impl SimulationWorld {
                 attacker_state,
                 slot,
                 slot_index,
+                self_target,
                 cooldown_ms,
                 mana_cost,
                 speed,
@@ -406,6 +436,7 @@ impl SimulationWorld {
                 attacker_state,
                 slot,
                 slot_index,
+                self_target,
                 cooldown_ms,
                 mana_cost,
                 range,
@@ -426,6 +457,7 @@ impl SimulationWorld {
                 attacker_state,
                 slot,
                 slot_index,
+                self_target,
                 cooldown_ms,
                 mana_cost,
                 distance,
@@ -446,6 +478,7 @@ impl SimulationWorld {
                 attacker_state,
                 slot,
                 slot_index,
+                self_target,
                 cooldown_ms,
                 mana_cost,
                 range,
@@ -465,6 +498,7 @@ impl SimulationWorld {
                 attacker_state,
                 slot,
                 slot_index,
+                self_target,
                 cooldown_ms,
                 mana_cost,
                 radius,
@@ -482,6 +516,7 @@ impl SimulationWorld {
                 attacker_state,
                 slot,
                 slot_index,
+                self_target,
                 cooldown_ms,
                 mana_cost,
                 distance,
@@ -505,6 +540,7 @@ impl SimulationWorld {
                 attacker_state,
                 slot,
                 slot_index,
+                self_target,
                 cooldown_ms,
                 mana_cost,
                 distance,
@@ -530,6 +566,7 @@ impl SimulationWorld {
                 attacker_state,
                 slot,
                 slot_index,
+                self_target,
                 cooldown_ms,
                 mana_cost,
                 distance,
@@ -553,6 +590,7 @@ impl SimulationWorld {
                 attacker_state,
                 slot,
                 slot_index,
+                self_target,
                 cooldown_ms,
                 mana_cost,
                 distance,
@@ -576,6 +614,7 @@ impl SimulationWorld {
                 attacker_state,
                 slot,
                 slot_index,
+                self_target,
                 cooldown_ms,
                 mana_cost,
                 distance,
@@ -600,6 +639,7 @@ impl SimulationWorld {
                 attacker_state,
                 slot,
                 slot_index,
+                self_target,
                 cooldown_ms,
                 mana_cost,
                 distance,
@@ -638,6 +678,7 @@ impl SimulationWorld {
         attacker_state: SimPlayerState,
         slot: u8,
         slot_index: usize,
+        self_target: bool,
         cooldown_ms: u16,
         mana_cost: u16,
         speed: u16,
@@ -654,6 +695,7 @@ impl SimulationWorld {
             attacker,
             slot,
             attacker_state,
+            self_target,
             speed,
             range,
             radius,
@@ -669,6 +711,7 @@ impl SimulationWorld {
         attacker_state: SimPlayerState,
         slot: u8,
         slot_index: usize,
+        self_target: bool,
         cooldown_ms: u16,
         mana_cost: u16,
         range: u16,
@@ -684,6 +727,7 @@ impl SimulationWorld {
             attacker,
             attacker_state,
             slot,
+            self_target,
             range,
             radius,
             arena_effect_kind(effect),
@@ -698,6 +742,7 @@ impl SimulationWorld {
         attacker_state: SimPlayerState,
         slot: u8,
         slot_index: usize,
+        self_target: bool,
         cooldown_ms: u16,
         mana_cost: u16,
         distance: u16,
@@ -713,6 +758,7 @@ impl SimulationWorld {
             attacker,
             attacker_state,
             slot,
+            self_target,
             distance,
             arena_effect_kind(effect),
             impact_radius,
@@ -727,6 +773,7 @@ impl SimulationWorld {
         attacker_state: SimPlayerState,
         slot: u8,
         slot_index: usize,
+        self_target: bool,
         cooldown_ms: u16,
         mana_cost: u16,
         range: u16,
@@ -742,6 +789,7 @@ impl SimulationWorld {
             attacker,
             attacker_state,
             slot,
+            self_target,
             range,
             radius,
             arena_effect_kind(effect),
@@ -756,6 +804,7 @@ impl SimulationWorld {
         attacker_state: SimPlayerState,
         slot: u8,
         slot_index: usize,
+        self_target: bool,
         cooldown_ms: u16,
         mana_cost: u16,
         radius: u16,
@@ -770,6 +819,7 @@ impl SimulationWorld {
             attacker,
             attacker_state,
             slot,
+            self_target,
             radius,
             arena_effect_kind(effect),
             payload,
@@ -842,9 +892,10 @@ impl SimulationWorld {
                 continue;
             }
 
-            let mut completed_skill: Option<(u8, usize, SkillBehavior)> = None;
+            let mut completed_skill: Option<(u8, usize, bool, SkillBehavior)> = None;
             let mut channel_ticks: Option<(
                 u8,
+                bool,
                 u16,
                 u16,
                 ArenaEffectKind,
@@ -873,11 +924,16 @@ impl SimulationWorld {
                             player.active_cast = None;
                             continue;
                         };
-                        completed_skill =
-                            Some((active_cast.slot, active_cast.slot_index, skill.behavior));
+                        completed_skill = Some((
+                            active_cast.slot,
+                            active_cast.slot_index,
+                            active_cast.self_target,
+                            skill.behavior,
+                        ));
                         player.active_cast = None;
                     }
                     ActiveCastMode::Channel {
+                        self_target,
                         range,
                         radius,
                         tick_interval_ms,
@@ -892,6 +948,7 @@ impl SimulationWorld {
                         *tick_progress_ms %= *tick_interval_ms;
                         channel_ticks = Some((
                             active_cast.slot,
+                            *self_target,
                             *range,
                             *radius,
                             *effect_kind,
@@ -905,11 +962,16 @@ impl SimulationWorld {
                 }
             }
 
-            if let Some((slot, slot_index, behavior)) = completed_skill {
+            if let Some((slot, slot_index, self_target, behavior)) = completed_skill {
                 if matches!(behavior, SkillBehavior::Channel { .. }) {
-                    if let Some(event) =
-                        self.start_channel(player_id, attacker_state, slot, slot_index, behavior)
-                    {
+                    if let Some(event) = self.start_channel(
+                        player_id,
+                        attacker_state,
+                        slot,
+                        slot_index,
+                        self_target,
+                        behavior,
+                    ) {
                         events.push(event);
                     }
                 } else {
@@ -919,6 +981,7 @@ impl SimulationWorld {
                         attacker_state,
                         slot,
                         slot_index,
+                        self_target,
                         behavior,
                     );
                     events.extend(cast_events);
@@ -930,7 +993,9 @@ impl SimulationWorld {
                 }
             }
 
-            if let Some((slot, range, radius, effect_kind, payload, tick_count)) = channel_ticks {
+            if let Some((slot, self_target, range, radius, effect_kind, payload, tick_count)) =
+                channel_ticks
+            {
                 for tick_index in 0..tick_count {
                     events.push(SimulationEvent::ChannelTick {
                         player_id,
@@ -942,6 +1007,7 @@ impl SimulationWorld {
                         player_id,
                         attacker_state,
                         slot,
+                        self_target,
                         range,
                         radius,
                         effect_kind,
@@ -968,12 +1034,13 @@ impl SimulationWorld {
         attacker: PlayerId,
         attacker_state: SimPlayerState,
         slot: u8,
+        self_target: bool,
         range: u16,
         radius: u16,
         effect_kind: ArenaEffectKind,
         payload: game_content::EffectPayload,
     ) -> Vec<SimulationEvent> {
-        let center = if range == 0 {
+        let center = if self_target || range == 0 {
             (attacker_state.x, attacker_state.y)
         } else {
             let combat_obstacles = self.combat_obstacles();
@@ -1042,12 +1109,31 @@ impl SimulationWorld {
         attacker: PlayerId,
         slot: u8,
         attacker_state: SimPlayerState,
+        self_target: bool,
         speed: u16,
         range: u16,
         radius: u16,
         effect_kind: ArenaEffectKind,
         payload: game_content::EffectPayload,
     ) -> Vec<SimulationEvent> {
+        if self_target {
+            let target = TargetEntity::Player(attacker);
+            let mut events = vec![SimulationEvent::EffectSpawned {
+                effect: ArenaEffect {
+                    kind: effect_kind,
+                    owner: attacker,
+                    slot,
+                    x: attacker_state.x,
+                    y: attacker_state.y,
+                    target_x: attacker_state.x,
+                    target_y: attacker_state.y,
+                    radius,
+                },
+            }];
+            Self::append_target_outcomes(&mut events, attacker, slot, &[target]);
+            events.extend(self.apply_payload(attacker, slot, &[target], payload));
+            return events;
+        }
         let direction = normalize_aim(attacker_state.aim_x, attacker_state.aim_y);
         let spawn_distance =
             i16::try_from(i32::from(PLAYER_RADIUS_UNITS) + i32::from(radius)).unwrap_or(i16::MAX);
@@ -1090,11 +1176,30 @@ impl SimulationWorld {
         attacker: PlayerId,
         attacker_state: SimPlayerState,
         slot: u8,
+        self_target: bool,
         range: u16,
         radius: u16,
         effect_kind: ArenaEffectKind,
         payload: game_content::EffectPayload,
     ) -> Vec<SimulationEvent> {
+        if self_target {
+            let target = TargetEntity::Player(attacker);
+            let mut events = vec![SimulationEvent::EffectSpawned {
+                effect: ArenaEffect {
+                    kind: effect_kind,
+                    owner: attacker,
+                    slot,
+                    x: attacker_state.x,
+                    y: attacker_state.y,
+                    target_x: attacker_state.x,
+                    target_y: attacker_state.y,
+                    radius,
+                },
+            }];
+            Self::append_target_outcomes(&mut events, attacker, slot, &[target]);
+            events.extend(self.apply_payload(attacker, slot, &[target], payload));
+            return events;
+        }
         let combat_obstacles = self.combat_obstacles();
         let desired_end = project_from_aim(
             attacker_state.x,
@@ -1145,19 +1250,24 @@ impl SimulationWorld {
         attacker: PlayerId,
         attacker_state: SimPlayerState,
         slot: u8,
+        self_target: bool,
         distance: u16,
         effect_kind: ArenaEffectKind,
         impact_radius: Option<u16>,
         payload: Option<game_content::EffectPayload>,
     ) -> Vec<SimulationEvent> {
         let combat_obstacles = self.combat_obstacles();
-        let desired = project_from_aim(
-            attacker_state.x,
-            attacker_state.y,
-            attacker_state.aim_x,
-            attacker_state.aim_y,
-            distance,
-        );
+        let desired = if self_target {
+            (attacker_state.x, attacker_state.y)
+        } else {
+            project_from_aim(
+                attacker_state.x,
+                attacker_state.y,
+                attacker_state.aim_x,
+                attacker_state.aim_y,
+                distance,
+            )
+        };
         let (resolved_x, resolved_y) = resolve_movement(
             attacker_state.x,
             attacker_state.y,
@@ -1201,7 +1311,7 @@ impl SimulationWorld {
             let targets = self.find_targets_in_radius(
                 (resolved_x, resolved_y),
                 radius,
-                Some(attacker),
+                if self_target { None } else { Some(attacker) },
                 payload.kind == game_content::CombatValueKind::Damage,
             );
             Self::append_target_outcomes(&mut events, attacker, slot, &targets);
@@ -1216,24 +1326,29 @@ impl SimulationWorld {
         attacker: PlayerId,
         attacker_state: SimPlayerState,
         slot: u8,
+        self_target: bool,
         range: u16,
         radius: u16,
         effect_kind: ArenaEffectKind,
         payload: game_content::EffectPayload,
     ) -> Vec<SimulationEvent> {
-        let combat_obstacles = self.combat_obstacles();
-        let desired_center = project_from_aim(
-            attacker_state.x,
-            attacker_state.y,
-            attacker_state.aim_x,
-            attacker_state.aim_y,
-            range,
-        );
-        let center = truncate_line_to_obstacles(
-            (attacker_state.x, attacker_state.y),
-            desired_center,
-            &combat_obstacles,
-        );
+        let center = if self_target {
+            (attacker_state.x, attacker_state.y)
+        } else {
+            let combat_obstacles = self.combat_obstacles();
+            let desired_center = project_from_aim(
+                attacker_state.x,
+                attacker_state.y,
+                attacker_state.aim_x,
+                attacker_state.aim_y,
+                range,
+            );
+            truncate_line_to_obstacles(
+                (attacker_state.x, attacker_state.y),
+                desired_center,
+                &combat_obstacles,
+            )
+        };
         let mut events = vec![SimulationEvent::EffectSpawned {
             effect: ArenaEffect {
                 kind: effect_kind,
@@ -1262,6 +1377,7 @@ impl SimulationWorld {
         attacker: PlayerId,
         attacker_state: SimPlayerState,
         slot: u8,
+        _self_target: bool,
         radius: u16,
         effect_kind: ArenaEffectKind,
         payload: game_content::EffectPayload,
@@ -1297,6 +1413,7 @@ impl SimulationWorld {
         attacker_state: SimPlayerState,
         slot: u8,
         slot_index: usize,
+        self_target: bool,
         cooldown_ms: u16,
         mana_cost: u16,
         distance: u16,
@@ -1306,13 +1423,17 @@ impl SimulationWorld {
             return Vec::new();
         }
 
-        let desired = project_from_aim(
-            attacker_state.x,
-            attacker_state.y,
-            attacker_state.aim_x,
-            attacker_state.aim_y,
-            distance,
-        );
+        let desired = if self_target {
+            (attacker_state.x, attacker_state.y)
+        } else {
+            project_from_aim(
+                attacker_state.x,
+                attacker_state.y,
+                attacker_state.aim_x,
+                attacker_state.aim_y,
+                distance,
+            )
+        };
         let (resolved_x, resolved_y) = self.resolve_teleport_destination(
             attacker_state.x,
             attacker_state.y,
@@ -1353,6 +1474,7 @@ impl SimulationWorld {
         attacker_state: SimPlayerState,
         slot: u8,
         slot_index: usize,
+        self_target: bool,
         cooldown_ms: u16,
         mana_cost: u16,
         distance: u16,
@@ -1371,6 +1493,7 @@ impl SimulationWorld {
             attacker,
             attacker_state,
             slot,
+            self_target,
             distance,
             radius,
             duration_ms,
@@ -1396,6 +1519,7 @@ impl SimulationWorld {
         attacker_state: SimPlayerState,
         slot: u8,
         slot_index: usize,
+        self_target: bool,
         cooldown_ms: u16,
         mana_cost: u16,
         distance: u16,
@@ -1411,6 +1535,7 @@ impl SimulationWorld {
             attacker,
             attacker_state,
             slot,
+            self_target,
             distance,
             radius,
             duration_ms,
@@ -1430,6 +1555,7 @@ impl SimulationWorld {
         attacker_state: SimPlayerState,
         slot: u8,
         slot_index: usize,
+        self_target: bool,
         cooldown_ms: u16,
         mana_cost: u16,
         distance: u16,
@@ -1446,6 +1572,7 @@ impl SimulationWorld {
             attacker,
             attacker_state,
             slot,
+            self_target,
             distance,
             radius,
             duration_ms,
@@ -1465,6 +1592,7 @@ impl SimulationWorld {
         attacker_state: SimPlayerState,
         slot: u8,
         slot_index: usize,
+        self_target: bool,
         cooldown_ms: u16,
         mana_cost: u16,
         distance: u16,
@@ -1480,6 +1608,7 @@ impl SimulationWorld {
             attacker,
             attacker_state,
             slot,
+            self_target,
             distance,
             radius,
             duration_ms,
@@ -1499,6 +1628,7 @@ impl SimulationWorld {
         attacker_state: SimPlayerState,
         slot: u8,
         slot_index: usize,
+        self_target: bool,
         cooldown_ms: u16,
         mana_cost: u16,
         distance: u16,
@@ -1518,6 +1648,7 @@ impl SimulationWorld {
                 attacker,
                 attacker_state,
                 slot,
+                self_target,
                 distance,
                 radius,
                 duration_ms,
@@ -1567,6 +1698,7 @@ impl SimulationWorld {
         attacker: PlayerId,
         attacker_state: SimPlayerState,
         _slot: u8,
+        self_target: bool,
         distance: u16,
         radius: u16,
         duration_ms: u16,
@@ -1576,13 +1708,17 @@ impl SimulationWorld {
         blocks_projectiles: bool,
         behavior: DeployableBehavior,
     ) -> u32 {
-        let desired = project_from_aim(
-            attacker_state.x,
-            attacker_state.y,
-            attacker_state.aim_x,
-            attacker_state.aim_y,
-            distance,
-        );
+        let desired = if self_target {
+            (attacker_state.x, attacker_state.y)
+        } else {
+            project_from_aim(
+                attacker_state.x,
+                attacker_state.y,
+                attacker_state.aim_x,
+                attacker_state.aim_y,
+                distance,
+            )
+        };
         let (resolved_x, resolved_y) = self.resolve_teleport_destination(
             attacker_state.x,
             attacker_state.y,

@@ -1559,3 +1559,172 @@ fn fear_forces_movement_away_and_blocks_actions() {
         "fear should block all player actions while it is active"
     );
 }
+
+fn authored_status_definition(
+    content: &GameContent,
+    tree: SkillTree,
+    tier: u8,
+) -> game_content::StatusDefinition {
+    let skill = content
+        .skills()
+        .resolve(&choice(tree, tier))
+        .expect("authored skill should exist");
+    behavior_payload(&skill.behavior)
+        .and_then(|payload| payload.status)
+        .expect("authored skill should carry a status payload")
+}
+
+#[test]
+fn crowd_control_diminishing_returns_scale_hard_cc_and_reset_after_the_window() {
+    let content = content();
+    let stun = authored_status_definition(
+        &content,
+        SkillTree::new("Paladin").expect("paladin tree"),
+        2,
+    );
+    assert_eq!(stun.kind, StatusKind::Stun);
+
+    let mut world = world(
+        &content,
+        vec![
+            seed(
+                &content,
+                1,
+                "Paladin",
+                TeamSide::TeamA,
+                SkillTree::new("Paladin").expect("paladin tree"),
+                [None, None, None, None, None],
+            ),
+            seed(
+                &content,
+                2,
+                "Target",
+                TeamSide::TeamB,
+                SkillTree::Warrior,
+                [None, None, None, None, None],
+            ),
+        ],
+    );
+
+    for expected_remaining_ms in [600_u16, 300, 150] {
+        assert!(
+            world
+                .apply_status(player_id(1), player_id(2), 2, stun.clone())
+                .is_some(),
+            "the first three hard crowd-control applications should still land"
+        );
+        assert_eq!(
+            remaining_status_ms(&world, player_id(2), StatusKind::Stun),
+            Some(expected_remaining_ms)
+        );
+        world
+            .players
+            .get_mut(&player_id(2))
+            .expect("target")
+            .statuses
+            .clear();
+    }
+
+    assert!(
+        world
+            .apply_status(player_id(1), player_id(2), 2, stun.clone())
+            .is_none(),
+        "the fourth hard crowd-control application inside the DR window should be immune"
+    );
+    assert_eq!(
+        remaining_status_ms(&world, player_id(2), StatusKind::Stun),
+        None
+    );
+
+    let reset_frames = usize::from(CROWD_CONTROL_DR_WINDOW_MS.div_ceil(COMBAT_FRAME_MS)) + 1;
+    let _ = collect_ticks(&mut world, reset_frames);
+    assert!(
+        world
+            .apply_status(player_id(1), player_id(2), 2, stun)
+            .is_some(),
+        "hard crowd-control should reset to full duration after the DR window expires"
+    );
+    assert_eq!(
+        remaining_status_ms(&world, player_id(2), StatusKind::Stun),
+        Some(600)
+    );
+}
+
+#[test]
+fn crowd_control_diminishing_returns_use_independent_buckets() {
+    let content = content();
+    let fear = authored_status_definition(&content, SkillTree::Warrior, 3);
+    let silence =
+        authored_status_definition(&content, SkillTree::new("Bard").expect("bard tree"), 3);
+    let root =
+        authored_status_definition(&content, SkillTree::new("Druid").expect("druid tree"), 4);
+
+    let mut world = world(
+        &content,
+        vec![
+            seed(
+                &content,
+                1,
+                "Caster",
+                TeamSide::TeamA,
+                SkillTree::Warrior,
+                [None, None, None, None, None],
+            ),
+            seed(
+                &content,
+                2,
+                "Target",
+                TeamSide::TeamB,
+                SkillTree::Mage,
+                [None, None, None, None, None],
+            ),
+        ],
+    );
+
+    assert!(world
+        .apply_status(player_id(1), player_id(2), 3, fear.clone())
+        .is_some());
+    world
+        .players
+        .get_mut(&player_id(2))
+        .expect("target")
+        .statuses
+        .clear();
+    assert!(world
+        .apply_status(player_id(1), player_id(2), 3, fear)
+        .is_some());
+    assert_eq!(
+        remaining_status_ms(&world, player_id(2), StatusKind::Fear),
+        Some(450)
+    );
+    world
+        .players
+        .get_mut(&player_id(2))
+        .expect("target")
+        .statuses
+        .clear();
+
+    assert!(world
+        .apply_status(player_id(1), player_id(2), 3, silence)
+        .is_some());
+    assert_eq!(
+        remaining_status_ms(&world, player_id(2), StatusKind::Silence),
+        Some(1100),
+        "cast-control DR should not inherit the reduced hard-CC stage"
+    );
+    world
+        .players
+        .get_mut(&player_id(2))
+        .expect("target")
+        .statuses
+        .clear();
+
+    assert!(world
+        .apply_status(player_id(1), player_id(2), 4, root)
+        .is_some());
+    assert_eq!(
+        remaining_status_ms(&world, player_id(2), StatusKind::Root),
+        Some(900),
+        "movement-control DR should stay independent from hard-CC DR"
+    );
+}

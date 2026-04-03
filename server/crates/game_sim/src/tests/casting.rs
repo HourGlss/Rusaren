@@ -629,3 +629,99 @@ fn movement_input_cancels_active_channels_mid_stream() {
         "moving should immediately cancel an active channel"
     );
 }
+
+#[test]
+fn self_cast_redirects_beam_heals_to_the_caster() {
+    let content = content();
+    let cleric_tree = SkillTree::Cleric;
+    let skill = content
+        .skills()
+        .resolve(&choice(cleric_tree.clone(), 1))
+        .expect("cleric heal should exist")
+        .clone();
+    assert!(matches!(skill.behavior, SkillBehavior::Beam { .. }));
+
+    let mut world = world(
+        &content,
+        vec![seed_with_slot_one_skill(
+            &content,
+            1,
+            "Cleric",
+            TeamSide::TeamA,
+            cleric_tree,
+            &skill,
+        )],
+    );
+    set_player_pose(
+        &mut world,
+        player_id(1),
+        TEST_ATTACKER_X,
+        TEST_OPEN_LANE_Y,
+        TEST_AIM_X,
+        TEST_AIM_Y,
+    );
+    world
+        .players
+        .get_mut(&player_id(1))
+        .expect("cleric")
+        .hit_points = 70;
+
+    let events = resolve_skill_cast_with_mode(&mut world, player_id(1), 1, skill.behavior, true);
+    assert!(
+        healing_to(&events, player_id(1)).is_some(),
+        "held self-cast should target the caster for player-targeted heals"
+    );
+    assert!(
+        world.player_state(player_id(1)).expect("cleric").hit_points > 70,
+        "the caster should actually receive the heal"
+    );
+}
+
+#[test]
+fn self_cast_centers_targeted_bursts_on_the_caster() {
+    let content = content();
+    let druid_tree = SkillTree::new("Druid").expect("druid tree");
+    let skill = content
+        .skills()
+        .resolve(&choice(druid_tree.clone(), 4))
+        .expect("druid root burst should exist")
+        .clone();
+    assert!(matches!(skill.behavior, SkillBehavior::Burst { .. }));
+
+    let mut world = world(
+        &content,
+        vec![
+            seed_with_slot_one_skill(&content, 1, "Druid", TeamSide::TeamA, druid_tree, &skill),
+            seed(
+                &content,
+                2,
+                "Enemy",
+                TeamSide::TeamB,
+                SkillTree::Warrior,
+                [None, None, None, None, None],
+            ),
+        ],
+    );
+    set_player_pose(
+        &mut world,
+        player_id(1),
+        TEST_ATTACKER_X,
+        TEST_OPEN_LANE_Y,
+        TEST_AIM_X,
+        TEST_AIM_Y,
+    );
+    set_player_pose(
+        &mut world,
+        player_id(2),
+        TEST_ATTACKER_X + 70,
+        TEST_OPEN_LANE_Y,
+        -TEST_AIM_X,
+        TEST_AIM_Y,
+    );
+
+    let events = resolve_skill_cast_with_mode(&mut world, player_id(1), 1, skill.behavior, true);
+    assert!(
+        status_applied_to(&events, player_id(2), StatusKind::Root).is_some(),
+        "held self-cast should center burst effects on the caster instead of the aimed point"
+    );
+}

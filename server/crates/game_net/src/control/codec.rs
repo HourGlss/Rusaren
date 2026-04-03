@@ -8,8 +8,9 @@ use crate::PacketError;
 use super::{
     ArenaCombatTextStyle, ArenaDeployableKind, ArenaEffectKind, ArenaMatchPhase, ArenaObstacleKind,
     ArenaSessionMode, ArenaStatusKind, LobbySnapshotPhase, SkillCatalogEntry,
-    MAX_SKILL_DESCRIPTION_BYTES, MAX_SKILL_ID_BYTES, MAX_SKILL_NAME_BYTES, MAX_SKILL_SUMMARY_BYTES,
-    MAX_SKILL_TREE_NAME_BYTES, MAX_SKILL_UI_CATEGORY_BYTES,
+    MAX_SKILL_AUDIO_CUE_BYTES, MAX_SKILL_DESCRIPTION_BYTES, MAX_SKILL_ID_BYTES,
+    MAX_SKILL_NAME_BYTES, MAX_SKILL_SUMMARY_BYTES, MAX_SKILL_TREE_NAME_BYTES,
+    MAX_SKILL_UI_CATEGORY_BYTES,
 };
 
 pub(super) fn encode_bytes(
@@ -233,6 +234,13 @@ pub(super) fn decode_skill_catalog(
                 kind,
                 "ui_category",
                 MAX_SKILL_UI_CATEGORY_BYTES,
+            )?,
+            audio_cue_id: read_string(
+                payload,
+                index,
+                kind,
+                "audio_cue_id",
+                MAX_SKILL_AUDIO_CUE_BYTES,
             )?,
         });
     }

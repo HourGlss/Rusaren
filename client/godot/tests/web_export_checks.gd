@@ -4,6 +4,7 @@ const ClientStateScript := preload("res://scripts/state/client_state.gd")
 const ArenaViewScript := preload("res://scripts/arena/arena_view.gd")
 const DevSocketClientScript := preload("res://scripts/net/dev_socket_client.gd")
 const WebSocketConfigScript := preload("res://scripts/net/websocket_config.gd")
+const SpellAudioRegistryScript := preload("res://scripts/content/spell_audio_registry.gd")
 
 
 func _init() -> void:
@@ -26,6 +27,7 @@ func _init() -> void:
 	success = _assert_remote_cast_labels_use_known_roster_skills() and success
 	success = _assert_resource_labels_only_show_for_local_player() and success
 	success = _assert_fog_rounds_only_on_visibility_boundary() and success
+	success = _assert_spell_audio_manifest_defaults_load() and success
 	quit(0 if success else 1)
 
 
@@ -91,6 +93,18 @@ func _assert_blank_origin_falls_back_to_local_default() -> bool:
 		helper.DEFAULT_LOCAL_URL,
 		"blank origin should fall back to the local default"
 	)
+
+
+func _assert_spell_audio_manifest_defaults_load() -> bool:
+	var manifest: Dictionary = SpellAudioRegistryScript.load_default_manifest()
+	if not bool(manifest.get("ok", false)):
+		return _fail("the default spell audio manifest should load from checked-in content")
+	if String(manifest.get("asset_root", "")) != "res://assets/audio/spells":
+		return _fail("the default spell audio asset root should point at the shared frontend spell folder")
+	var cues: Variant = manifest.get("cues", {})
+	if typeof(cues) != TYPE_DICTIONARY:
+		return _fail("spell audio manifest cues should stay dictionary-shaped")
+	return true
 
 
 func _assert_signaling_socket_detaches_after_control_channel_open() -> bool:

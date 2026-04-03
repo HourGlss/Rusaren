@@ -2,7 +2,7 @@ extends RefCounted
 class_name RarenaProtocol
 
 const PACKET_MAGIC := 0x5241
-const PROTOCOL_VERSION := 6
+const PROTOCOL_VERSION := 7
 const HEADER_LEN := 16
 const MAX_PLAYER_NAME_LEN := 24
 const MAX_MESSAGE_BYTES := 200
@@ -12,6 +12,7 @@ const MAX_SKILL_NAME_BYTES := 120
 const MAX_SKILL_DESCRIPTION_BYTES := 160
 const MAX_SKILL_SUMMARY_BYTES := 220
 const MAX_SKILL_UI_CATEGORY_BYTES := 24
+const MAX_SKILL_AUDIO_CUE_BYTES := 80
 
 const CHANNEL_CONTROL := 0
 const CHANNEL_INPUT := 1
@@ -28,12 +29,14 @@ const BUTTON_SECONDARY := 1 << 1
 const BUTTON_CAST := 1 << 2
 const BUTTON_CANCEL := 1 << 3
 const BUTTON_QUIT_TO_LOBBY := 1 << 4
+const BUTTON_SELF_CAST := 1 << 5
 const ALLOWED_BUTTONS_MASK := (
 	BUTTON_PRIMARY
 	| BUTTON_SECONDARY
 	| BUTTON_CAST
 	| BUTTON_CANCEL
 	| BUTTON_QUIT_TO_LOBBY
+	| BUTTON_SELF_CAST
 )
 const MIN_I16 := -32768
 const MAX_I16 := 32767
@@ -591,11 +594,16 @@ static func encode_input_frame(payload: Dictionary, seq: int, sim_tick: int = 0)
 		buttons |= BUTTON_CANCEL
 	if bool(payload.get("quit_to_lobby", false)):
 		buttons |= BUTTON_QUIT_TO_LOBBY
+	if bool(payload.get("self_cast", false)):
+		buttons |= BUTTON_SELF_CAST
 	if buttons & ~ALLOWED_BUTTONS_MASK != 0:
 		return _error("input frame contains unsupported button bits")
 
 	var ability_or_context := int(ability_result.get("value", 0))
 	var cast_requested := buttons & BUTTON_CAST != 0
+	var self_cast_requested := buttons & BUTTON_SELF_CAST != 0
+	if self_cast_requested and not cast_requested:
+		return _error("self-cast requires cast to be requested")
 	match [cast_requested, ability_or_context]:
 		[true, 0]:
 			return _error("cast input requires a non-zero ability_or_context")
@@ -675,6 +683,7 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 				var skill_description = cursor.read_string("skill_description", MAX_SKILL_DESCRIPTION_BYTES)
 				var skill_summary = cursor.read_string("skill_summary", MAX_SKILL_SUMMARY_BYTES)
 				var ui_category = cursor.read_string("ui_category", MAX_SKILL_UI_CATEGORY_BYTES)
+				var audio_cue_id = cursor.read_string("audio_cue_id", MAX_SKILL_AUDIO_CUE_BYTES)
 				if cursor.has_error():
 					return _error(cursor.error_message)
 				skill_catalog.append({
@@ -685,6 +694,7 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 					"skill_description": skill_description,
 					"skill_summary": skill_summary,
 					"ui_category": ui_category,
+					"audio_cue_id": audio_cue_id,
 				})
 			if cursor.has_error():
 				return _error(cursor.error_message)

@@ -36,6 +36,7 @@ fn sample_skill_catalog() -> Vec<SkillCatalogEntry> {
             skill_description: String::from("Short melee stun."),
             skill_summary: String::from("CD 0.9s | Cast instant\nBeam: range 90, radius 28\nStatus: Stun for 1s"),
             ui_category: String::from("control"),
+            audio_cue_id: String::from("warrior_t1_bash"),
         },
         SkillCatalogEntry {
             tree: SkillTree::Mage,
@@ -45,6 +46,7 @@ fn sample_skill_catalog() -> Vec<SkillCatalogEntry> {
             skill_description: String::from("Fast projectile damage."),
             skill_summary: String::from("CD 0.7s | Cast instant | Mana 16\nProjectile: range 1500, radius 16, speed 310\nEffect: 10 damage"),
             ui_category: String::from("damage"),
+            audio_cue_id: String::from("mage_t1_missile"),
         },
     ]
 }
@@ -113,6 +115,7 @@ fn connected_event_round_trips_custom_class_catalog_entries() {
             skill_description: String::from("Deploy a short-range turret."),
             skill_summary: String::from("CD 2.5s | Cast 0.4s | Mana 24\nSummon: place 260 away, radius 32, 65 HP, lasts 7s, attacks 340 range every 0.9s"),
             ui_category: String::from("utility"),
+            audio_cue_id: String::from("engineer_turret"),
         }],
     };
     let packet = event.clone().encode_packet(1, 0).expect("packet");

@@ -37,6 +37,7 @@ fn sample_skill_catalog() -> Vec<SkillCatalogEntry> {
             skill_description: String::from("Deal damage in melee."),
             skill_summary: String::from("Damage"),
             ui_category: String::from("damage"),
+            audio_cue_id: String::from("warrior_t1_bash"),
         },
         SkillCatalogEntry {
             tree: SkillTree::Cleric,
@@ -46,6 +47,7 @@ fn sample_skill_catalog() -> Vec<SkillCatalogEntry> {
             skill_description: String::from("Restore allied health."),
             skill_summary: String::from("Heal"),
             ui_category: String::from("heal"),
+            audio_cue_id: String::from("cleric_t1_minor_heal"),
         },
         SkillCatalogEntry {
             tree: SkillTree::Mage,
@@ -55,6 +57,7 @@ fn sample_skill_catalog() -> Vec<SkillCatalogEntry> {
             skill_description: String::from("Fire a ranged projectile."),
             skill_summary: String::from("Damage"),
             ui_category: String::from("damage"),
+            audio_cue_id: String::from("mage_t1_missile"),
         },
         SkillCatalogEntry {
             tree: SkillTree::Rogue,
@@ -64,6 +67,7 @@ fn sample_skill_catalog() -> Vec<SkillCatalogEntry> {
             skill_description: String::from("Strike a nearby target."),
             skill_summary: String::from("Damage"),
             ui_category: String::from("damage"),
+            audio_cue_id: String::from("rogue_t1_stab"),
         },
     ]
 }

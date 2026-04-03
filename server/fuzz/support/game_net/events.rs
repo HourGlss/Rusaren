@@ -40,6 +40,7 @@ impl FuzzSkillCatalogEntry {
             skill_description: String::from("Fuzz description"),
             skill_summary: String::from("Fuzz summary"),
             ui_category: String::from("utility"),
+            audio_cue_id: String::new(),
         }
     }
 }

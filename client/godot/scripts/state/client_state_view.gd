@@ -275,10 +275,17 @@ static func skill_tooltip_for(skill_catalog: Array[Dictionary], tree_name: Strin
 	return "\n".join(parts)
 
 
+static func skill_audio_cue_for(skill_catalog: Array[Dictionary], tree_name: String, tier: int) -> String:
+	var entry := _skill_catalog_entry(skill_catalog, tree_name, tier)
+	if entry.is_empty():
+		return ""
+	return String(entry.get("audio_cue_id", ""))
+
+
 static func skill_catalog_signature(skill_catalog: Array[Dictionary]) -> String:
 	var parts: Array[String] = []
 	for entry in skill_catalog:
-		parts.append("%s:%d:%s:%s:%s:%s:%s" % [
+		parts.append("%s:%d:%s:%s:%s:%s:%s:%s" % [
 			String(entry.get("tree", "")),
 			int(entry.get("tier", 0)),
 			String(entry.get("skill_id", "")),
@@ -286,6 +293,7 @@ static func skill_catalog_signature(skill_catalog: Array[Dictionary]) -> String:
 			String(entry.get("skill_description", "")),
 			String(entry.get("skill_summary", "")),
 			String(entry.get("ui_category", "")),
+			String(entry.get("audio_cue_id", "")),
 		])
 	return "|".join(parts)
 

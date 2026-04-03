@@ -6,6 +6,21 @@ use super::{
 };
 
 impl SimulationWorld {
+    pub(super) fn advance_crowd_control_diminishing_returns(&mut self, delta_ms: u16) {
+        for player in self.players.values_mut() {
+            for state in [
+                &mut player.hard_cc_dr,
+                &mut player.movement_cc_dr,
+                &mut player.cast_cc_dr,
+            ] {
+                state.remaining_ms = state.remaining_ms.saturating_sub(delta_ms);
+                if state.remaining_ms == 0 {
+                    state.stage = 0;
+                }
+            }
+        }
+    }
+
     pub(super) fn advance_cooldowns(&mut self, delta_ms: u16) {
         for player in self.players.values_mut() {
             player.primary_cooldown_remaining_ms = player

@@ -14,8 +14,9 @@ use super::server_types::{
     LobbyDirectoryEntry, LobbySnapshotPhase, LobbySnapshotPlayer, SkillCatalogEntry,
 };
 use super::{
-    MAX_MESSAGE_BYTES, MAX_SKILL_DESCRIPTION_BYTES, MAX_SKILL_ID_BYTES, MAX_SKILL_NAME_BYTES,
-    MAX_SKILL_SUMMARY_BYTES, MAX_SKILL_TREE_NAME_BYTES, MAX_SKILL_UI_CATEGORY_BYTES,
+    MAX_MESSAGE_BYTES, MAX_SKILL_AUDIO_CUE_BYTES, MAX_SKILL_DESCRIPTION_BYTES, MAX_SKILL_ID_BYTES,
+    MAX_SKILL_NAME_BYTES, MAX_SKILL_SUMMARY_BYTES, MAX_SKILL_TREE_NAME_BYTES,
+    MAX_SKILL_UI_CATEGORY_BYTES,
 };
 
 pub(super) fn encode_player_record(payload: &mut Vec<u8>, record: PlayerRecord) {
@@ -65,6 +66,12 @@ pub(super) fn encode_skill_catalog(
             "ui_category",
             &entry.ui_category,
             MAX_SKILL_UI_CATEGORY_BYTES,
+        )?;
+        push_len_prefixed_string(
+            payload,
+            "audio_cue_id",
+            &entry.audio_cue_id,
+            MAX_SKILL_AUDIO_CUE_BYTES,
         )?;
     }
     Ok(())

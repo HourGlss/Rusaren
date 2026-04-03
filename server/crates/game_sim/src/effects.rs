@@ -624,6 +624,8 @@ impl SimulationWorld {
         if !player.alive {
             return None;
         }
+        let effective_duration_ms =
+            Self::apply_crowd_control_dr(player, definition.kind, definition.duration_ms)?;
 
         let mut stacks_after = 1_u8;
         let mut stack_delta = 1_u8;
@@ -632,7 +634,7 @@ impl SimulationWorld {
         }) {
             let before = existing.stacks;
             existing.stacks = existing.stacks.saturating_add(1).min(existing.max_stacks);
-            existing.remaining_ms = definition.duration_ms;
+            existing.remaining_ms = effective_duration_ms;
             existing.tick_progress_ms = 0;
             existing.magnitude = definition.magnitude;
             existing.trigger_duration_ms = definition.trigger_duration_ms;
@@ -655,7 +657,7 @@ impl SimulationWorld {
                 slot,
                 kind: definition.kind,
                 stacks: 1,
-                remaining_ms: definition.duration_ms,
+                remaining_ms: effective_duration_ms,
                 tick_interval_ms: definition.tick_interval_ms,
                 tick_progress_ms: 0,
                 magnitude: definition.magnitude,
@@ -700,7 +702,7 @@ impl SimulationWorld {
             kind: definition.kind,
             stacks: stacks_after,
             stack_delta,
-            remaining_ms: definition.duration_ms,
+            remaining_ms: effective_duration_ms,
         })
     }
 
