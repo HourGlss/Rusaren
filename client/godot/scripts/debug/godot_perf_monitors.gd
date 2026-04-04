@@ -69,12 +69,11 @@ static func snapshot_builtin_monitors() -> Dictionary:
 
 static func add_or_replace_custom_monitor(
 	id: String,
-	callable: Callable,
-	monitor_type: int
+	callable: Callable
 ) -> void:
 	if Performance.has_custom_monitor(id):
 		Performance.remove_custom_monitor(id)
-	Performance.add_custom_monitor(id, callable, [], monitor_type)
+	Performance.add_custom_monitor(id, callable)
 
 
 static func remove_custom_monitors(ids: Array) -> void:

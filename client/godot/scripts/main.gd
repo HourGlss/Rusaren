@@ -1024,28 +1024,23 @@ func _append_tooltip_note(base_text: String, note: String) -> String:
 func _install_performance_monitors() -> void:
 	GodotPerfMonitorsScript.add_or_replace_custom_monitor(
 		"Rarena/UIRefreshMs",
-		Callable(self, "_custom_monitor_ui_refresh_seconds"),
-		Performance.MONITOR_TYPE_TIME
+		Callable(self, "_custom_monitor_ui_refresh_seconds")
 	)
 	GodotPerfMonitorsScript.add_or_replace_custom_monitor(
 		"Rarena/ArenaDrawMs",
-		Callable(self, "_custom_monitor_arena_draw_seconds"),
-		Performance.MONITOR_TYPE_TIME
+		Callable(self, "_custom_monitor_arena_draw_seconds")
 	)
 	GodotPerfMonitorsScript.add_or_replace_custom_monitor(
 		"Rarena/ArenaVisibilityMs",
-		Callable(self, "_custom_monitor_arena_visibility_seconds"),
-		Performance.MONITOR_TYPE_TIME
+		Callable(self, "_custom_monitor_arena_visibility_seconds")
 	)
 	GodotPerfMonitorsScript.add_or_replace_custom_monitor(
 		"Rarena/Players",
-		Callable(self, "_custom_monitor_player_count"),
-		Performance.MONITOR_TYPE_QUANTITY
+		Callable(self, "_custom_monitor_player_count")
 	)
 	GodotPerfMonitorsScript.add_or_replace_custom_monitor(
 		"Rarena/VisibleTiles",
-		Callable(self, "_custom_monitor_visible_tile_count"),
-		Performance.MONITOR_TYPE_QUANTITY
+		Callable(self, "_custom_monitor_visible_tile_count")
 	)
 
 
