@@ -76,6 +76,7 @@ pub enum MatchPhase {
 pub enum MatchEvent {
     SkillChosen {
         player_id: PlayerId,
+        slot: u8,
         choice: SkillChoice,
     },
     PreCombatStarted {

@@ -80,8 +80,16 @@ The backend listens on:
 
 When deployed behind Caddy on the real domain, the same browser path becomes `https://<domain>/session/bootstrap` and `wss://<domain>/ws`.
 
-The dev adapter persists player `W-L-NC` records at:
+The dev adapter persists player records at:
 - `server/var/player_records.tsv`
+
+Those records now include:
+- match `W-L-NC`
+- rounds won and lost
+- cumulative damage and healing totals
+- cumulative combat time for derived DPS and HPS
+- crowd-control attempts and hits for CC accuracy
+- per-skill pick counts keyed by authored `skill_id`
 
 The client no longer chooses its own runtime player ID.
 The connect packet now sends only the player name, the Rust backend assigns a random player ID,

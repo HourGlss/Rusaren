@@ -32,6 +32,14 @@ var record := {
 	"wins": 0,
 	"losses": 0,
 	"no_contests": 0,
+	"round_wins": 0,
+	"round_losses": 0,
+	"total_damage_done": 0,
+	"total_healing_done": 0,
+	"total_combat_ms": 0,
+	"cc_used": 0,
+	"cc_hits": 0,
+	"skill_pick_counts": {},
 }
 var lobby_directory: Array[Dictionary] = []
 var roster := {}
@@ -325,12 +333,13 @@ func _apply_match_flow_event(event_type: String, event: Dictionary) -> bool:
 func _apply_skill_chosen_event(event: Dictionary) -> void:
 	var skill_player_id := int(event.get("player_id", 0))
 	var skill_member := _ensure_roster_entry(skill_player_id)
+	var slot := int(event.get("slot", 0))
 	var tree_name := String(event.get("tree", "Unknown"))
 	var tier := int(event.get("tier", 0))
 	skill_member["skill"] = ClientStateViewScript.skill_name_for(skill_catalog, tree_name, tier)
 	if skill_player_id == local_player_id and tree_name != "":
 		local_skill_progress[tree_name] = max(tier, int(local_skill_progress.get(tree_name, 0)))
-		_remember_local_skill_choice(tree_name, tier, skill_member["skill"])
+		_remember_local_skill_choice(slot, tree_name, tier, skill_member["skill"])
 		if not is_training_mode():
 			local_round_skill_locked = true
 	banner_message = "%s locked %s." % [_display_name(skill_player_id), skill_member["skill"]]
@@ -544,7 +553,7 @@ func lobby_directory_bbcode() -> String:
 
 
 func record_text() -> String:
-	return ClientStateViewScript.record_text(record)
+	return ClientStateViewScript.record_text(record, skill_catalog)
 
 
 func score_text() -> String:
@@ -912,6 +921,12 @@ func timing_bucket_snapshot(metric_name: String) -> Dictionary:
 	return _timing_bucket_snapshot(timings.get(metric_name, {}))
 
 
+func timing_bucket_last_us(metric_name: String) -> int:
+	var timings: Dictionary = diagnostics.get("timings", {})
+	var bucket: Dictionary = timings.get(metric_name, {})
+	return int(bucket.get("last_us", 0))
+
+
 func diagnostics_text(transport_snapshot: Dictionary) -> String:
 	return ClientStateViewScript.diagnostics_text(
 		diagnostics,
@@ -1061,21 +1076,27 @@ func _clear_arena_state() -> void:
 	_refresh_diagnostics_counts()
 
 
-func _remember_local_skill_choice(tree_name: String, tier: int, skill_name: String) -> void:
+func _remember_local_skill_choice(slot: int, tree_name: String, tier: int, skill_name: String) -> void:
+	var normalized_slot := maxi(1, slot)
 	for index in range(local_skill_loadout.size()):
 		var choice: Dictionary = local_skill_loadout[index]
-		if int(choice.get("tier", 0)) == tier:
+		if int(choice.get("slot", 0)) == normalized_slot:
 			local_skill_loadout[index] = {
+				"slot": normalized_slot,
 				"tree": tree_name,
 				"tier": tier,
 				"skill_name": skill_name,
 			}
 			return
 	local_skill_loadout.append({
+		"slot": normalized_slot,
 		"tree": tree_name,
 		"tier": tier,
 		"skill_name": skill_name,
 	})
+	local_skill_loadout.sort_custom(func(left: Dictionary, right: Dictionary) -> bool:
+		return int(left.get("slot", 0)) < int(right.get("slot", 0))
+	)
 
 
 func _replace_arena_players(player_entries: Array) -> void:

@@ -589,7 +589,7 @@ fn parse_ward_behavior(
         mana_cost,
         distance: require_present_u16(source, "distance", fields.distance)?,
         radius: require_present_u16(source, "radius", fields.radius)?,
-        duration_ms: require_present_u16(source, "duration_ms", fields.duration_ms)?,
+        duration_ms: require_present_u16_allow_zero(source, "duration_ms", fields.duration_ms)?,
         hit_points: require_present_u16(source, "hit_points", fields.hit_points)?,
         effect,
     })
@@ -984,6 +984,11 @@ fn read_numeric_field(
             message: format!("{field} must be greater than zero when provided"),
         }),
         (NumericFieldRule::Optional, value) => Ok(value),
+        (NumericFieldRule::NonNegative, Some(value)) => Ok(Some(value)),
+        (NumericFieldRule::NonNegative, None) => Err(ContentError::Validation {
+            source: String::from(source),
+            message: format!("{field} is required"),
+        }),
         (NumericFieldRule::Zero, Some(0) | None) => Ok(Some(0)),
         (NumericFieldRule::Zero, Some(_)) => Err(ContentError::Validation {
             source: String::from(source),
@@ -1003,6 +1008,20 @@ fn require_present_u16(source: &str, field: &str, value: Option<u16>) -> Result<
             source: String::from(source),
             message: format!("{field} must be greater than zero"),
         }),
+        Some(value) => Ok(value),
+        None => Err(ContentError::Validation {
+            source: String::from(source),
+            message: format!("{field} is required"),
+        }),
+    }
+}
+
+fn require_present_u16_allow_zero(
+    source: &str,
+    field: &str,
+    value: Option<u16>,
+) -> Result<u16, ContentError> {
+    match value {
         Some(value) => Ok(value),
         None => Err(ContentError::Validation {
             source: String::from(source),

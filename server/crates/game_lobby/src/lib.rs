@@ -320,7 +320,7 @@ impl Lobby {
                 player.team.map(|team| TeamAssignment {
                     player_id: player.player_id,
                     player_name: player.player_name.clone(),
-                    record: player.record,
+                    record: player.record.clone(),
                     team,
                 })
             })

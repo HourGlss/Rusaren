@@ -84,7 +84,11 @@ impl MatchSession {
         player.selected_for_round = Some(choice.clone());
         player.equipped_slots[usize::from(self.current_round.get() - 1)] = Some(choice.clone());
 
-        let mut events = vec![MatchEvent::SkillChosen { player_id, choice }];
+        let mut events = vec![MatchEvent::SkillChosen {
+            player_id,
+            slot: self.current_round.get(),
+            choice,
+        }];
         if self
             .players
             .values()

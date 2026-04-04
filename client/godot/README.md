@@ -127,6 +127,11 @@ cd server
 - `server/target/reports/frontend/runtime_monitors.json`
 - `server/target/reports/frontend/summary.json`
 
+If the live browser diagnostics ever show all-zero custom timing buckets again while the built-in
+Godot monitors are non-zero, treat that as a diagnostics regression. The checked-in
+`performance_monitor_checks.gd` reference scenario now asserts that the custom `Rarena/*` timing
+monitors produce sampled, non-zero values during the frontend quality run.
+
 When the issue is render-specific, focus first on:
 - `arena_draw_ms`
 - `arena_draw_base_ms`
@@ -134,6 +139,10 @@ When the issue is render-specific, focus first on:
 - `arena_cache_sync_ms`
 - `arena_cache_background_ms`
 - `arena_cache_visibility_ms`
+
+The checked-in positive frontend tests also cover the round-to-round skill bar bug where a later
+pick from a different class could overwrite the wrong slot locally. The browser shell is expected
+to track server-authored `slot` values, not just `tier` values.
 
 For live deploy issues, also collect the host bundle from `deploy/useful_log_collect.sh` as documented in `server/README.md`.
 

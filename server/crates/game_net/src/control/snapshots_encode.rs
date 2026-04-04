@@ -19,10 +19,31 @@ use super::{
     MAX_SKILL_UI_CATEGORY_BYTES,
 };
 
-pub(super) fn encode_player_record(payload: &mut Vec<u8>, record: PlayerRecord) {
+pub(super) fn encode_player_record(
+    payload: &mut Vec<u8>,
+    record: &PlayerRecord,
+) -> Result<(), PacketError> {
     payload.extend_from_slice(&record.wins.to_le_bytes());
     payload.extend_from_slice(&record.losses.to_le_bytes());
     payload.extend_from_slice(&record.no_contests.to_le_bytes());
+    payload.extend_from_slice(&record.round_wins.to_le_bytes());
+    payload.extend_from_slice(&record.round_losses.to_le_bytes());
+    payload.extend_from_slice(&record.total_damage_done.to_le_bytes());
+    payload.extend_from_slice(&record.total_healing_done.to_le_bytes());
+    payload.extend_from_slice(&record.total_combat_ms.to_le_bytes());
+    payload.extend_from_slice(&record.cc_used.to_le_bytes());
+    payload.extend_from_slice(&record.cc_hits.to_le_bytes());
+    let skill_pick_count = u16::try_from(record.skill_pick_counts.len()).unwrap_or(u16::MAX);
+    payload.extend_from_slice(&skill_pick_count.to_le_bytes());
+    for (skill_id, count) in record
+        .skill_pick_counts
+        .iter()
+        .take(usize::from(skill_pick_count))
+    {
+        push_len_prefixed_string(payload, "skill_id", skill_id, MAX_SKILL_ID_BYTES)?;
+        payload.extend_from_slice(&count.to_le_bytes());
+    }
+    Ok(())
 }
 
 pub(super) fn encode_skill_catalog(
@@ -120,7 +141,7 @@ pub(super) fn encode_game_lobby_snapshot(
             player.player_name.as_str(),
             game_domain::MAX_PLAYER_NAME_LEN,
         )?;
-        encode_player_record(payload, player.record);
+        encode_player_record(payload, &player.record)?;
         payload.push(encode_optional_team(player.team));
         payload.push(encode_ready_state(player.ready));
     }

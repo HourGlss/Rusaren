@@ -2,7 +2,7 @@ extends RefCounted
 class_name RarenaProtocol
 
 const PACKET_MAGIC := 0x5241
-const PROTOCOL_VERSION := 8
+const PROTOCOL_VERSION := 9
 const HEADER_LEN := 16
 const MAX_PLAYER_NAME_LEN := 24
 const MAX_MESSAGE_BYTES := 200
@@ -197,12 +197,35 @@ class ByteCursor:
 		var wins = read_u16()
 		var losses = read_u16()
 		var no_contests = read_u16()
+		var round_wins = read_u16()
+		var round_losses = read_u16()
+		var total_damage_done = read_u32()
+		var total_healing_done = read_u32()
+		var total_combat_ms = read_u32()
+		var cc_used = read_u16()
+		var cc_hits = read_u16()
+		var skill_pick_entry_count = read_u16()
 		if has_error():
 			return null
+		var skill_pick_counts := {}
+		for _entry_index in range(int(skill_pick_entry_count)):
+			var skill_id = read_string("skill_id", MAX_SKILL_ID_BYTES)
+			var count = read_u16()
+			if has_error():
+				return null
+			skill_pick_counts[skill_id] = count
 		return {
 			"wins": wins,
 			"losses": losses,
 			"no_contests": no_contests,
+			"round_wins": round_wins,
+			"round_losses": round_losses,
+			"total_damage_done": total_damage_done,
+			"total_healing_done": total_healing_done,
+			"total_combat_ms": total_combat_ms,
+			"cc_used": cc_used,
+			"cc_hits": cc_hits,
+			"skill_pick_counts": skill_pick_counts,
 		}
 
 	func read_team_label() -> Variant:
@@ -791,6 +814,7 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 			}
 		10:
 			var skill_player_id = cursor.read_player_id()
+			var slot = cursor.read_u8()
 			var tree_name = cursor.read_skill_tree_name()
 			var tier = cursor.read_u8()
 			if cursor.has_error():
@@ -798,6 +822,7 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 			event = {
 				"type": "SkillChosen",
 				"player_id": skill_player_id,
+				"slot": slot,
 				"tree": tree_name,
 				"tier": tier,
 			}

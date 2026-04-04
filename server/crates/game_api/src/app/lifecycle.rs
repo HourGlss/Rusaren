@@ -329,7 +329,20 @@ impl ServerApp {
         let recipients = self.match_recipients(match_id);
         for event in events {
             match event {
-                MatchEvent::SkillChosen { player_id, choice } => {
+                MatchEvent::SkillChosen {
+                    player_id,
+                    slot,
+                    choice,
+                } => {
+                    let skill_id = self
+                        .content
+                        .skills()
+                        .resolve(choice)
+                        .map(|skill| skill.id.clone())
+                        .unwrap_or_else(|| format!("{}_t{}", choice.tree.as_str(), choice.tier));
+                    if let Some(player) = self.players.get_mut(player_id) {
+                        player.record.record_skill_pick(&skill_id);
+                    }
                     if let Err(error) = self.append_match_log(
                         match_id,
                         CombatLogEvent::SkillPicked {
@@ -351,6 +364,7 @@ impl ServerApp {
                         &recipients,
                         ServerControlEvent::SkillChosen {
                             player_id: *player_id,
+                            slot: *slot,
                             tree: choice.tree.clone(),
                             tier: choice.tier,
                         },
@@ -402,6 +416,21 @@ impl ServerApp {
                     winning_team,
                     score,
                 } => {
+                    if let Some(roster) = self
+                        .matches
+                        .get(&match_id)
+                        .map(|runtime| runtime.roster.clone())
+                    {
+                        for assignment in roster {
+                            if let Some(player) = self.players.get_mut(&assignment.player_id) {
+                                if assignment.team == *winning_team {
+                                    player.record.record_round_win();
+                                } else {
+                                    player.record.record_round_loss();
+                                }
+                            }
+                        }
+                    }
                     let round_summary = self
                         .matches
                         .get_mut(&match_id)
@@ -674,10 +703,24 @@ impl ServerApp {
         match_id: MatchId,
         outcome: MatchOutcome,
     ) {
-        let roster = match self.matches.get(&match_id) {
-            Some(runtime) => runtime.roster.clone(),
+        let (roster, combat_frame_index, combat_totals) = match self.matches.get(&match_id) {
+            Some(runtime) => (
+                runtime.roster.clone(),
+                runtime.combat_frame_index,
+                runtime
+                    .roster
+                    .iter()
+                    .map(|assignment| {
+                        (
+                            assignment.player_id,
+                            runtime.feedback.player_record_totals(assignment.player_id),
+                        )
+                    })
+                    .collect::<std::collections::BTreeMap<_, _>>(),
+            ),
             None => return,
         };
+        let combat_ms = combat_frame_index.saturating_mul(u32::from(COMBAT_FRAME_MS));
 
         let mut dirty_players = Vec::new();
         for assignment in roster {
@@ -699,6 +742,15 @@ impl ServerApp {
                     }
                     MatchOutcome::NoContest => player.record.record_no_contest(),
                 }
+                if let Some(totals) = combat_totals.get(&assignment.player_id) {
+                    player.record.record_match_combat_totals(
+                        totals.damage_done,
+                        totals.healing_done,
+                        combat_ms,
+                        totals.cc_used,
+                        totals.cc_hits,
+                    );
+                }
                 player.location = PlayerLocation::Results(match_id);
                 dirty_players.push(assignment.player_id);
             }
@@ -717,12 +769,12 @@ impl ServerApp {
         let Some((player_name, record)) = self
             .players
             .get(&player_id)
-            .map(|player| (player.player_name.clone(), player.record))
+            .map(|player| (player.player_name.clone(), player.record.clone()))
         else {
             return false;
         };
 
-        let save_result = self.record_store.save(&player_name, record);
+        let save_result = self.record_store.save(&player_name, &record);
         match save_result {
             Ok(()) => true,
             Err(error) => {

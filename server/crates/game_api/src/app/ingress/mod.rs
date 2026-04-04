@@ -225,7 +225,7 @@ impl ServerApp {
             player_id,
             ConnectedPlayer {
                 player_name: player_name.clone(),
-                record,
+                record: record.clone(),
                 location: PlayerLocation::CentralLobby,
                 inbound_control,
                 inbound_input: SequenceTracker::new(),

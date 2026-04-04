@@ -61,6 +61,10 @@ func _collect_runtime_monitors() -> bool:
 	success = _assert_metric_sampled(custom_summary, "arena_cache_sync_ms", "custom arena-cache-sync monitor") and success
 	success = _assert_metric_sampled(custom_summary, "arena_cache_background_ms", "custom arena-cache-background monitor") and success
 	success = _assert_metric_sampled(custom_summary, "arena_cache_visibility_ms", "custom arena-cache-visibility monitor") and success
+	success = _assert_metric_non_zero(custom_summary, "ui_refresh_ms", "custom ui-refresh monitor") and success
+	success = _assert_metric_non_zero(custom_summary, "arena_draw_ms", "custom arena-draw monitor") and success
+	success = _assert_metric_non_zero(custom_summary, "arena_base_draw_ms", "custom arena-base-draw monitor") and success
+	success = _assert_metric_non_zero(custom_summary, "arena_cache_sync_ms", "custom arena-cache-sync monitor") and success
 
 	_shell.queue_free()
 	await process_frame
@@ -127,6 +131,7 @@ func _prime_shell_state() -> void:
 	_shell.app_state.apply_server_event({
 		"type": "SkillChosen",
 		"player_id": 11,
+		"slot": 1,
 		"tree": "Mage",
 		"tier": 1,
 	})
@@ -141,6 +146,7 @@ func _prime_shell_state() -> void:
 	_shell.app_state.apply_server_event({
 		"type": "SkillChosen",
 		"player_id": 11,
+		"slot": 2,
 		"tree": "Mage",
 		"tier": 2,
 	})
@@ -350,6 +356,13 @@ func _assert_metric_sampled(summary: Dictionary, metric_name: String, label: Str
 	var metric: Dictionary = summary.get(metric_name, {})
 	if int(metric.get("count", 0)) <= 0:
 		return _fail("%s should produce at least one sample" % label)
+	return true
+
+
+func _assert_metric_non_zero(summary: Dictionary, metric_name: String, label: String) -> bool:
+	var metric: Dictionary = summary.get(metric_name, {})
+	if float(metric.get("avg", 0.0)) <= 0.0 and float(metric.get("max", 0.0)) <= 0.0:
+		return _fail("%s should report non-zero runtime values" % label)
 	return true
 
 

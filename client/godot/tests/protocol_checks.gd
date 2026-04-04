@@ -179,6 +179,16 @@ func _assert_decode_connected_with_skill_catalog() -> bool:
 	_push_u16(payload, 1)
 	_push_u16(payload, 2)
 	_push_u16(payload, 3)
+	_push_u16(payload, 4)
+	_push_u16(payload, 5)
+	_push_u32(payload, 600)
+	_push_u32(payload, 120)
+	_push_u32(payload, 30000)
+	_push_u16(payload, 7)
+	_push_u16(payload, 6)
+	_push_u16(payload, 1)
+	_push_string(payload, "mage_t1_missile")
+	_push_u16(payload, 9)
 	_push_u16(payload, 2)
 	_push_string(payload, "Mage")
 	payload.append(1)
@@ -200,9 +210,16 @@ func _assert_decode_connected_with_skill_catalog() -> bool:
 	if not bool(decoded.get("ok", false)):
 		return _fail("connected event with skill catalog should decode")
 	var event: Dictionary = decoded.get("event", {})
+	var record: Dictionary = event.get("record", {})
 	var skill_catalog: Array = event.get("skill_catalog", [])
 	if String(event.get("type", "")) != "Connected":
 		return _fail("connected payload should decode as a Connected event")
+	if int(record.get("round_wins", 0)) != 4 or int(record.get("round_losses", 0)) != 5:
+		return _fail("connected event should decode extended round record fields")
+	if int(record.get("total_damage_done", 0)) != 600 or int(record.get("cc_hits", 0)) != 6:
+		return _fail("connected event should decode extended combat record fields")
+	if int((record.get("skill_pick_counts", {}) as Dictionary).get("mage_t1_missile", 0)) != 9:
+		return _fail("connected event should decode per-skill pick counters")
 	if skill_catalog.size() != 2:
 		return _fail("connected event should decode the skill catalog entries")
 	if String(skill_catalog[0].get("skill_name", "")) != "Magic Missile":

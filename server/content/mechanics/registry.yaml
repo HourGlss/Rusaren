@@ -184,7 +184,7 @@ behaviors:
         distance: required
         speed: forbidden
         impact_radius: forbidden
-        duration_ms: required
+        duration_ms: non_negative
         hit_points: required
         tick_interval_ms: required
         player_speed_bps: forbidden
@@ -330,7 +330,7 @@ behaviors:
         distance: required
         speed: forbidden
         impact_radius: forbidden
-        duration_ms: required
+        duration_ms: non_negative
         hit_points: required
         tick_interval_ms: forbidden
         player_speed_bps: forbidden

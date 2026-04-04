@@ -54,6 +54,7 @@ pub(super) struct MechanicSchemaYaml {
 pub(super) enum NumericRuleYaml {
     Required,
     Optional,
+    NonNegative,
     Zero,
     #[default]
     Forbidden,

@@ -22,6 +22,7 @@ func _init() -> void:
 	success = _assert_aura_deployables_stay_hidden_from_client_render_state() and success
 	success = _assert_training_state_tracks_footprint_metrics_and_dummy_variants() and success
 	success = _assert_local_skill_labels_and_render_smoothing() and success
+	success = _assert_record_text_renders_extended_player_metrics() and success
 	success = _assert_round_and_match_summaries_and_combat_text() and success
 	success = _assert_player_token_palette_and_team_rings() and success
 	success = _assert_remote_cast_labels_use_known_roster_skills() and success
@@ -200,6 +201,7 @@ func _assert_skill_buttons_only_unlock_next_tiers() -> bool:
 	state.apply_server_event({
 		"type": "SkillChosen",
 		"player_id": 11,
+		"slot": 1,
 		"tree": "Mage",
 		"tier": 1,
 	})
@@ -499,10 +501,10 @@ func _assert_local_skill_labels_and_render_smoothing() -> bool:
 				"skill_name": "Magic Missile",
 			},
 			{
-				"tree": "Mage",
-				"tier": 2,
-				"skill_id": "mage_t2_ice_lance",
-				"skill_name": "Ice Lance",
+				"tree": "Warrior",
+				"tier": 1,
+				"skill_id": "warrior_t1_bash",
+				"skill_name": "Bash",
 			},
 		],
 	})
@@ -515,6 +517,7 @@ func _assert_local_skill_labels_and_render_smoothing() -> bool:
 	state.apply_server_event({
 		"type": "SkillChosen",
 		"player_id": 11,
+		"slot": 1,
 		"tree": "Mage",
 		"tier": 1,
 	})
@@ -529,8 +532,9 @@ func _assert_local_skill_labels_and_render_smoothing() -> bool:
 	state.apply_server_event({
 		"type": "SkillChosen",
 		"player_id": 11,
-		"tree": "Mage",
-		"tier": 2,
+		"slot": 2,
+		"tree": "Warrior",
+		"tier": 1,
 	})
 	state.apply_server_event({
 		"type": "CombatStarted",
@@ -570,8 +574,8 @@ func _assert_local_skill_labels_and_render_smoothing() -> bool:
 	var cooldown_text := state.cooldown_summary_text()
 	if not cooldown_text.contains("Magic Missile"):
 		return _fail("cooldown summary should include the local player's first chosen skill name")
-	if not cooldown_text.contains("Ice Lance"):
-		return _fail("cooldown summary should include the local player's second chosen skill name")
+	if not cooldown_text.contains("Bash"):
+		return _fail("cooldown summary should include the local player's second chosen skill name even when it is another class's tier 1")
 
 	state.apply_server_event({
 		"type": "ArenaDeltaSnapshot",
@@ -616,6 +620,62 @@ func _assert_local_skill_labels_and_render_smoothing() -> bool:
 	var smoothed_x := float(state.arena_players_list()[0].get("x", -640))
 	if smoothed_x <= -640.0 or smoothed_x >= -420.0:
 		return _fail("render smoothing should move player positions toward the new authoritative location")
+	return true
+
+
+func _assert_record_text_renders_extended_player_metrics() -> bool:
+	var state := ClientStateScript.new()
+	state.record = {
+		"wins": 8,
+		"losses": 3,
+		"no_contests": 1,
+		"round_wins": 17,
+		"round_losses": 11,
+		"total_damage_done": 4200,
+		"total_healing_done": 1500,
+		"total_combat_ms": 120000,
+		"cc_used": 25,
+		"cc_hits": 10,
+		"skill_pick_counts": {
+			"mage_t1_missile": 9,
+			"warrior_t1_bash": 4,
+		},
+	}
+	state.skill_catalog = [
+		{
+			"tree": "Mage",
+			"tier": 1,
+			"skill_id": "mage_t1_missile",
+			"skill_name": "Magic Missile",
+		},
+		{
+			"tree": "Warrior",
+			"tier": 1,
+			"skill_id": "warrior_t1_bash",
+			"skill_name": "Bash",
+		},
+		{
+			"tree": "Cleric",
+			"tier": 1,
+			"skill_id": "cleric_minor_heal",
+			"skill_name": "Minor Heal",
+		},
+	]
+	var text := state.record_text()
+	if not text.contains("W-L-NC  8-3-1"):
+		return _fail("record text should include game wins, losses, and no contests")
+	if not text.contains("W-L  17-11"):
+		return _fail("record text should include round wins and losses")
+	if not text.contains("DPS  35.0"):
+		return _fail("record text should include derived DPS")
+	if not text.contains("HPS  12.5"):
+		return _fail("record text should include derived HPS")
+	if not text.contains("CC Accuracy  40.0% (10/25)"):
+		return _fail("record text should include CC accuracy")
+	if not text.contains("Magic Missile x9"):
+		return _fail("record text should include known skill pick counts")
+	if not text.contains("Minor Heal x0"):
+		return _fail("record text should show zero-count authored skills so the page covers every skill")
 	return true
 
 
@@ -809,6 +869,7 @@ func _assert_remote_cast_labels_use_known_roster_skills() -> bool:
 	state.apply_server_event({
 		"type": "SkillChosen",
 		"player_id": 22,
+		"slot": 2,
 		"tree": "Mage",
 		"tier": 2,
 	})

@@ -50,6 +50,7 @@ pub enum ServerControlEvent {
     },
     SkillChosen {
         player_id: PlayerId,
+        slot: u8,
         tree: SkillTree,
         tier: u8,
     },

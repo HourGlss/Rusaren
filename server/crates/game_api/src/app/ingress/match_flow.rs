@@ -33,7 +33,7 @@ impl ServerApp {
         let Some((player_name, record)) = self
             .players
             .get(&sender_id)
-            .map(|player| (player.player_name.clone(), player.record))
+            .map(|player| (player.player_name.clone(), player.record.clone()))
         else {
             self.send_error(transport, sender_id, "player is not connected");
             return;
@@ -132,6 +132,7 @@ impl ServerApp {
                     sender_id,
                     ServerControlEvent::SkillChosen {
                         player_id: sender_id,
+                        slot: tier,
                         tree,
                         tier,
                     },
@@ -175,7 +176,11 @@ impl ServerApp {
                     _ => None,
                 })
         {
-            if let Some(record) = self.players.get(&sender_id).map(|player| player.record) {
+            if let Some(record) = self
+                .players
+                .get(&sender_id)
+                .map(|player| player.record.clone())
+            {
                 if let Some(player) = self.players.get_mut(&sender_id) {
                     player.location = PlayerLocation::CentralLobby;
                 }
@@ -196,7 +201,11 @@ impl ServerApp {
             None => return,
         };
 
-        if let Some(record) = self.players.get(&sender_id).map(|player| player.record) {
+        if let Some(record) = self
+            .players
+            .get(&sender_id)
+            .map(|player| player.record.clone())
+        {
             if let Some(player) = self.players.get_mut(&sender_id) {
                 player.location = PlayerLocation::CentralLobby;
             }

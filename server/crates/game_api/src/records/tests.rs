@@ -39,9 +39,10 @@ fn ephemeral_store_creates_and_updates_records_without_io() {
         wins: 2,
         losses: 1,
         no_contests: 3,
+        ..PlayerRecord::new()
     };
     store
-        .save(&player_name("Alice"), updated)
+        .save(&player_name("Alice"), &updated)
         .expect("record should save");
 
     assert_eq!(
@@ -68,9 +69,10 @@ fn persistent_store_round_trips_records_through_disk() {
         wins: 4,
         losses: 2,
         no_contests: 1,
+        ..PlayerRecord::new()
     };
     store
-        .save(&player_name("Mallory"), updated)
+        .save(&player_name("Mallory"), &updated)
         .expect("record should persist");
     drop(store);
 
@@ -115,14 +117,17 @@ fn persistent_store_rejects_malformed_rows_and_duplicate_keys() {
 fn legacy_rows_merge_duplicate_player_names_during_migration() {
     let canonical = canonicalize_record_store_contents("1\tAlice\t1\t2\t3\n2\tAlice\t4\t5\t6\n")
         .expect("legacy duplicate names should merge during migration");
-    assert_eq!(canonical, "Alice\t5\t7\t9\n");
+    assert_eq!(canonical, "Alice\t5\t7\t9\t0\t0\t0\t0\t0\t0\t0\t\n");
 }
 
 #[test]
 fn canonicalize_record_store_rewrites_rows_in_sorted_order() {
     let canonical = canonicalize_record_store_contents("Mallory\t4\t2\t1\nAlice\t1\t0\t0\n")
         .expect("canonicalization should succeed");
-    assert_eq!(canonical, "Alice\t1\t0\t0\nMallory\t4\t2\t1\n");
+    assert_eq!(
+        canonical,
+        "Alice\t1\t0\t0\t0\t0\t0\t0\t0\t0\t0\t\nMallory\t4\t2\t1\t0\t0\t0\t0\t0\t0\t0\t\n"
+    );
 }
 
 #[test]
@@ -135,7 +140,10 @@ fn canonicalize_record_store_preserves_empty_input() {
 fn canonicalize_record_store_reads_legacy_rows_and_rewrites_them() {
     let canonical = canonicalize_record_store_contents("9\tMallory\t4\t2\t1\n1\tAlice\t1\t0\t0\n")
         .expect("legacy rows should parse");
-    assert_eq!(canonical, "Alice\t1\t0\t0\nMallory\t4\t2\t1\n");
+    assert_eq!(
+        canonical,
+        "Alice\t1\t0\t0\t0\t0\t0\t0\t0\t0\t0\t\nMallory\t4\t2\t1\t0\t0\t0\t0\t0\t0\t0\t\n"
+    );
 }
 
 #[test]

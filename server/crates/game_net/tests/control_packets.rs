@@ -289,6 +289,7 @@ fn server_control_event_round_trips_all_scalar_variants() {
         },
         ServerControlEvent::SkillChosen {
             player_id: player_id(7),
+            slot: 4,
             tree: SkillTree::Rogue,
             tier: 4,
         },
@@ -307,6 +308,7 @@ fn server_control_event_round_trips_all_scalar_variants() {
                 wins: 1,
                 losses: 0,
                 no_contests: 1,
+                ..PlayerRecord::new()
             },
         },
         ServerControlEvent::Error {
@@ -348,6 +350,7 @@ fn server_control_event_round_trips_lobby_directory_and_snapshot_packets() {
                 wins: 1,
                 losses: 2,
                 no_contests: 3,
+                ..PlayerRecord::new()
             },
             team: Some(TeamSide::TeamA),
             ready: ReadyState::Ready,
@@ -402,6 +405,7 @@ fn connected_event_round_trips_skill_catalog() {
             wins: 1,
             losses: 2,
             no_contests: 3,
+            ..PlayerRecord::new()
         },
         skill_catalog: sample_skill_catalog(),
     };
@@ -990,6 +994,14 @@ fn server_control_event_rejects_invalid_snapshot_phase_and_optional_team_values(
     payload.extend_from_slice(&7_u32.to_le_bytes());
     payload.push(5);
     payload.extend_from_slice(b"Alice");
+    payload.extend_from_slice(&0_u16.to_le_bytes());
+    payload.extend_from_slice(&0_u16.to_le_bytes());
+    payload.extend_from_slice(&0_u16.to_le_bytes());
+    payload.extend_from_slice(&0_u16.to_le_bytes());
+    payload.extend_from_slice(&0_u16.to_le_bytes());
+    payload.extend_from_slice(&0_u32.to_le_bytes());
+    payload.extend_from_slice(&0_u32.to_le_bytes());
+    payload.extend_from_slice(&0_u32.to_le_bytes());
     payload.extend_from_slice(&0_u16.to_le_bytes());
     payload.extend_from_slice(&0_u16.to_le_bytes());
     payload.extend_from_slice(&0_u16.to_le_bytes());

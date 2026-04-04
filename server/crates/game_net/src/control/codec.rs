@@ -2,6 +2,7 @@ use game_domain::{
     LobbyId, MatchId, MatchOutcome, PlayerId, PlayerName, PlayerRecord, ReadyState, RoundNumber,
     SkillTree, TeamSide,
 };
+use std::collections::BTreeMap;
 
 use crate::PacketError;
 
@@ -194,10 +195,35 @@ pub(super) fn read_player_record(
     index: &mut usize,
     kind: &'static str,
 ) -> Result<PlayerRecord, PacketError> {
+    let wins = read_u16(payload, index, kind)?;
+    let losses = read_u16(payload, index, kind)?;
+    let no_contests = read_u16(payload, index, kind)?;
+    let round_wins = read_u16(payload, index, kind)?;
+    let round_losses = read_u16(payload, index, kind)?;
+    let total_damage_done = read_u32(payload, index, kind)?;
+    let total_healing_done = read_u32(payload, index, kind)?;
+    let total_combat_ms = read_u32(payload, index, kind)?;
+    let cc_used = read_u16(payload, index, kind)?;
+    let cc_hits = read_u16(payload, index, kind)?;
+    let skill_pick_count = usize::from(read_u16(payload, index, kind)?);
+    let mut skill_pick_counts = BTreeMap::new();
+    for _ in 0..skill_pick_count {
+        let skill_id = read_string(payload, index, kind, "skill_id", super::MAX_SKILL_ID_BYTES)?;
+        let count = read_u16(payload, index, kind)?;
+        skill_pick_counts.insert(skill_id, count);
+    }
     Ok(PlayerRecord {
-        wins: read_u16(payload, index, kind)?,
-        losses: read_u16(payload, index, kind)?,
-        no_contests: read_u16(payload, index, kind)?,
+        wins,
+        losses,
+        no_contests,
+        round_wins,
+        round_losses,
+        total_damage_done,
+        total_healing_done,
+        total_combat_ms,
+        cc_used,
+        cc_hits,
+        skill_pick_counts,
     })
 }
 

@@ -36,6 +36,7 @@ pub enum MechanicCategory {
 pub enum NumericFieldRule {
     Required,
     Optional,
+    NonNegative,
     Zero,
     Forbidden,
 }

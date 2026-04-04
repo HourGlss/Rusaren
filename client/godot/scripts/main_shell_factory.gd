@@ -652,15 +652,24 @@ static func _build_record_view(refs: ShellRefs) -> VBoxContainer:
 	view.add_theme_constant_override("separation", 12)
 
 	var info := Label.new()
-	info.text = "The server remains authoritative. W-L-NC updates only when the backend sends Connected or ReturnedToCentralLobby."
+	info.text = "The server remains authoritative. Match record, round record, long-run combat rates, CC accuracy, and per-skill pick counts refresh when the backend sends Connected or ReturnedToCentralLobby."
 	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	info.add_theme_color_override("font_color", Color8(180, 188, 194))
 	view.add_child(info)
 
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	view.add_child(scroll)
+
 	refs.record_label = Label.new()
-	refs.record_label.add_theme_font_size_override("font_size", 34)
+	refs.record_label.add_theme_font_size_override("font_size", 24)
 	refs.record_label.add_theme_color_override("font_color", Color8(255, 217, 122))
-	view.add_child(refs.record_label)
+	refs.record_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	refs.record_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	refs.record_label.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	refs.record_label.vertical_alignment = VERTICAL_ALIGNMENT_TOP
+	scroll.add_child(refs.record_label)
 
 	return view
 

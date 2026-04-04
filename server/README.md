@@ -198,6 +198,13 @@ The browser diagnostics report captures:
 - control/snapshot packet counts and byte totals
 - current WebSocket and data-channel states
 
+Persistent player records on the backend now also track more than match outcome:
+- rounds won and lost
+- cumulative damage and healing totals
+- cumulative combat time for derived DPS and HPS
+- crowd-control attempts and hits for CC accuracy
+- per-skill pick counts
+
 The host-side bundle captures:
 - the same compact text summary as before
 - a structured `/adminz?format=json` snapshot

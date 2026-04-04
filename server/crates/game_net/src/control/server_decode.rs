@@ -252,6 +252,7 @@ fn decode_skill_chosen_event(
 ) -> Result<ServerControlEvent, PacketError> {
     Ok(ServerControlEvent::SkillChosen {
         player_id: read_player_id(payload, index, "SkillChosen")?,
+        slot: read_u8(payload, index, "SkillChosen")?,
         tree: read_skill_tree(payload, index, "SkillChosen")?,
         tier: read_u8(payload, index, "SkillChosen")?,
     })

@@ -23,6 +23,14 @@ struct SummaryTotals {
     cc_hits: u16,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct PlayerCombatRecordTotals {
+    pub damage_done: u32,
+    pub healing_done: u32,
+    pub cc_used: u16,
+    pub cc_hits: u16,
+}
+
 #[derive(Debug, Default)]
 pub(crate) struct MatchCombatFeedback {
     round_totals: BTreeMap<PlayerId, SummaryTotals>,
@@ -335,6 +343,20 @@ impl MatchCombatFeedback {
         MatchSummarySnapshot {
             rounds_played,
             totals: summary_lines(roster, &self.running_totals),
+        }
+    }
+
+    pub(crate) fn player_record_totals(&self, player_id: PlayerId) -> PlayerCombatRecordTotals {
+        let totals = self
+            .running_totals
+            .get(&player_id)
+            .copied()
+            .unwrap_or_default();
+        PlayerCombatRecordTotals {
+            damage_done: totals.damage_done,
+            healing_done: totals.healing_to_allies,
+            cc_used: totals.cc_used,
+            cc_hits: totals.cc_hits,
         }
     }
 

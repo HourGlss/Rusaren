@@ -243,9 +243,10 @@ fn encode_match_body(event: ServerControlEvent, payload: &mut Vec<u8>) -> Result
         }
         ServerControlEvent::SkillChosen {
             player_id,
+            slot,
             tree,
             tier,
-        } => encode_skill_chosen_event(payload, player_id, &tree, tier),
+        } => encode_skill_chosen_event(payload, player_id, slot, &tree, tier),
         ServerControlEvent::PreCombatStarted { seconds_remaining } => {
             payload.push(seconds_remaining);
             Ok(())
@@ -273,8 +274,7 @@ fn encode_match_body(event: ServerControlEvent, payload: &mut Vec<u8>) -> Result
             encode_match_summary_event(payload, &summary)
         }
         ServerControlEvent::ReturnedToCentralLobby { record } => {
-            encode_player_record(payload, record);
-            Ok(())
+            encode_player_record(payload, &record)
         }
         ServerControlEvent::Error { message } => {
             push_len_prefixed_string(payload, "message", &message, MAX_MESSAGE_BYTES)
@@ -318,7 +318,7 @@ fn encode_connected_event(
         player_name.as_str(),
         game_domain::MAX_PLAYER_NAME_LEN,
     )?;
-    encode_player_record(payload, record);
+    encode_player_record(payload, &record)?;
     encode_skill_catalog(payload, skill_catalog)?;
     Ok(())
 }
@@ -378,10 +378,12 @@ fn encode_match_started_event(
 fn encode_skill_chosen_event(
     payload: &mut Vec<u8>,
     player_id: PlayerId,
+    slot: u8,
     tree: &SkillTree,
     tier: u8,
 ) -> Result<(), PacketError> {
     payload.extend_from_slice(&player_id.get().to_le_bytes());
+    payload.push(slot);
     push_len_prefixed_string(
         payload,
         "skill_tree",

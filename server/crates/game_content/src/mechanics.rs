@@ -208,6 +208,7 @@ const fn parse_numeric_rule(rule: NumericRuleYaml) -> NumericFieldRule {
     match rule {
         NumericRuleYaml::Required => NumericFieldRule::Required,
         NumericRuleYaml::Optional => NumericFieldRule::Optional,
+        NumericRuleYaml::NonNegative => NumericFieldRule::NonNegative,
         NumericRuleYaml::Zero => NumericFieldRule::Zero,
         NumericRuleYaml::Forbidden => NumericFieldRule::Forbidden,
     }

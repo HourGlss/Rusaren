@@ -1119,8 +1119,7 @@ func _custom_monitor_visible_tile_count() -> int:
 
 
 func _timing_bucket_seconds(metric_name: String) -> float:
-	var bucket := app_state.timing_bucket_snapshot(metric_name)
-	return float(bucket.get("last_us", 0)) / 1000000.0
+	return float(app_state.timing_bucket_last_us(metric_name)) / 1000000.0
 
 
 func _apply_skill_button_font_color(button: Button, color: Color) -> void:

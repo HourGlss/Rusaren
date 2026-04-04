@@ -19,7 +19,7 @@ impl ServerApp {
         let lobby_id = self.allocate_lobby_id();
         let mut lobby = Lobby::new(lobby_id);
         let (player_name, record) = match self.players.get(&sender_id) {
-            Some(player) => (player.player_name.clone(), player.record),
+            Some(player) => (player.player_name.clone(), player.record.clone()),
             None => {
                 self.send_error(transport, sender_id, "player is not connected");
                 return;
@@ -91,7 +91,7 @@ impl ServerApp {
         }
 
         let (player_name, record) = match self.players.get(&sender_id) {
-            Some(player) => (player.player_name.clone(), player.record),
+            Some(player) => (player.player_name.clone(), player.record.clone()),
             None => {
                 self.send_error(transport, sender_id, "player is not connected");
                 return;
@@ -179,7 +179,7 @@ impl ServerApp {
                 let record = self
                     .players
                     .get(&sender_id)
-                    .map(|player| player.record)
+                    .map(|player| player.record.clone())
                     .unwrap_or_default();
                 self.send_event(
                     transport,

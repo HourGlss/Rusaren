@@ -220,43 +220,51 @@ func _draw_deployables(arena_rect: Rect2) -> void:
 			arena_rect,
 			Vector2(float(deployable.get("x", 0)), float(deployable.get("y", 0)))
 		)
-		var radius := _world_radius_to_canvas(arena_rect, float(deployable.get("radius", 0)))
+		var gameplay_radius := _world_radius_to_canvas(arena_rect, float(deployable.get("radius", 0)))
 		var team_color := _team_color(String(deployable.get("team", "")), true)
 		var kind_name := String(deployable.get("kind", ""))
 		if kind_name == "Aura":
 			continue
+		var draw_radius := gameplay_radius
+		if kind_name == "Ward":
+			draw_radius = maxf(minf(gameplay_radius * 0.18, 18.0), 7.0)
 		draw_circle(
-			position + Vector2(0.0, radius * 0.76),
-			maxf(radius * 0.94, 5.0),
+			position + Vector2(0.0, draw_radius * 0.76),
+			maxf(draw_radius * 0.94, 5.0),
 			DEPLOYABLE_SHADOW_COLOR
 		)
 		match kind_name:
 			"Barrier":
-				var rect := Rect2(position - Vector2(radius, radius), Vector2(radius * 2.0, radius * 2.0))
+				var rect := Rect2(position - Vector2(draw_radius, draw_radius), Vector2(draw_radius * 2.0, draw_radius * 2.0))
 				draw_rect(rect, Color(team_color.r, team_color.g, team_color.b, 0.26))
-				draw_rect(rect.grow(-maxf(radius * 0.18, 3.0)), Color(0.18, 0.2, 0.24, 0.9))
+				draw_rect(rect.grow(-maxf(draw_radius * 0.18, 3.0)), Color(0.18, 0.2, 0.24, 0.9))
 				draw_rect(rect, team_color, false, 2.0)
 			"Ward":
-				draw_circle(position, radius + 5.0, Color(team_color.r, team_color.g, team_color.b, 0.16))
-				draw_circle(position, radius, Color(0.14, 0.16, 0.2, 0.92))
-				draw_arc(position, radius, 0.0, TAU, 24, team_color, 2.0)
-				draw_circle(position, maxf(radius * 0.34, 3.0), team_color)
+				draw_circle(position, draw_radius + 2.0, Color(0.08, 0.1, 0.12, 0.9))
+				draw_circle(position, draw_radius, Color(0.17, 0.15, 0.12, 0.96))
+				draw_circle(position, maxf(draw_radius * 0.54, 3.0), team_color)
+				draw_line(
+					position + Vector2(0.0, draw_radius * 0.4),
+					position + Vector2(0.0, draw_radius * 1.6),
+					Color8(201, 182, 152),
+					2.0
+				)
 			"Trap":
-				draw_circle(position, radius, Color(0.18, 0.13, 0.14, 0.96))
-				draw_arc(position, radius, 0.0, TAU, 20, team_color, 2.0)
-				draw_line(position + Vector2(-radius * 0.6, -radius * 0.6), position + Vector2(radius * 0.6, radius * 0.6), team_color, 2.0)
-				draw_line(position + Vector2(-radius * 0.6, radius * 0.6), position + Vector2(radius * 0.6, -radius * 0.6), team_color, 2.0)
+				draw_circle(position, draw_radius, Color(0.18, 0.13, 0.14, 0.96))
+				draw_arc(position, draw_radius, 0.0, TAU, 20, team_color, 2.0)
+				draw_line(position + Vector2(-draw_radius * 0.6, -draw_radius * 0.6), position + Vector2(draw_radius * 0.6, draw_radius * 0.6), team_color, 2.0)
+				draw_line(position + Vector2(-draw_radius * 0.6, draw_radius * 0.6), position + Vector2(draw_radius * 0.6, -draw_radius * 0.6), team_color, 2.0)
 			"Aura":
-				draw_circle(position, radius, Color(team_color.r, team_color.g, team_color.b, 0.12))
-				draw_arc(position, radius, 0.0, TAU, 32, team_color, 2.0)
-				draw_circle(position, maxf(radius * 0.32, 4.0), Color(team_color.r, team_color.g, team_color.b, 0.75))
+				draw_circle(position, draw_radius, Color(team_color.r, team_color.g, team_color.b, 0.12))
+				draw_arc(position, draw_radius, 0.0, TAU, 32, team_color, 2.0)
+				draw_circle(position, maxf(draw_radius * 0.32, 4.0), Color(team_color.r, team_color.g, team_color.b, 0.75))
 			_:
-				draw_circle(position, radius + 5.0, Color(team_color.r, team_color.g, team_color.b, 0.14))
-				draw_circle(position, radius, Color(0.18, 0.2, 0.24, 0.94))
-				draw_circle(position, maxf(radius * 0.48, 4.0), team_color)
+				draw_circle(position, draw_radius + 5.0, Color(team_color.r, team_color.g, team_color.b, 0.14))
+				draw_circle(position, draw_radius, Color(0.18, 0.2, 0.24, 0.94))
+				draw_circle(position, maxf(draw_radius * 0.48, 4.0), team_color)
 
-		var hp_width := radius * 1.8
-		var hp_origin := position + Vector2(-hp_width * 0.5, radius + 8.0)
+		var hp_width := maxf(draw_radius * 2.4, 24.0)
+		var hp_origin := position + Vector2(-hp_width * 0.5, draw_radius + 8.0)
 		var hp_ratio := 0.0
 		var max_hp := maxf(1.0, float(deployable.get("max_hit_points", 1)))
 		hp_ratio = clampf(float(deployable.get("hit_points", 0)) / max_hp, 0.0, 1.0)
@@ -266,7 +274,7 @@ func _draw_deployables(arena_rect: Rect2) -> void:
 		if font != null:
 			draw_string(
 				font,
-				position + Vector2(-radius * 0.9, -radius - 8.0),
+				position + Vector2(-draw_radius * 0.9, -draw_radius - 8.0),
 				kind_name,
 				HORIZONTAL_ALIGNMENT_LEFT,
 				-1.0,

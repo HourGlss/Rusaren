@@ -483,6 +483,7 @@ impl FuzzServerControlEvent {
                 tier,
             } => ServerControlEvent::SkillChosen {
                 player_id: normalize_player_id(player_id),
+                slot: normalize_skill_tier(tier),
                 tree: tree.into_real(),
                 tier: normalize_skill_tier(tier),
             },

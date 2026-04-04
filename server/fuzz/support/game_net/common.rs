@@ -187,6 +187,7 @@ impl FuzzPlayerRecord {
             wins: self.wins,
             losses: self.losses,
             no_contests: self.no_contests,
+            ..PlayerRecord::new()
         }
     }
 }

@@ -97,6 +97,7 @@ fn team_side_round_trips_and_player_record_accumulates_outcomes() {
             wins: 1,
             losses: 1,
             no_contests: 1,
+            ..PlayerRecord::new()
         }
     );
     assert_eq!(record.total_games(), 3);

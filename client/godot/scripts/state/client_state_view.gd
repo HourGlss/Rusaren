@@ -86,12 +86,38 @@ static func lobby_directory_bbcode(lobby_directory: Array[Dictionary]) -> String
 	return "\n".join(lines)
 
 
-static func record_text(record: Dictionary) -> String:
-	return "W-L-NC  %d-%d-%d" % [
-		int(record.get("wins", 0)),
-		int(record.get("losses", 0)),
-		int(record.get("no_contests", 0)),
+static func record_text(record: Dictionary, skill_catalog: Array[Dictionary]) -> String:
+	var total_combat_ms: int = maxi(0, int(record.get("total_combat_ms", 0)))
+	var damage_done: int = maxi(0, int(record.get("total_damage_done", 0)))
+	var healing_done: int = maxi(0, int(record.get("total_healing_done", 0)))
+	var cc_used: int = maxi(0, int(record.get("cc_used", 0)))
+	var cc_hits: int = maxi(0, int(record.get("cc_hits", 0)))
+	var lines: Array[String] = [
+		"Games",
+		"  W-L-NC  %d-%d-%d" % [
+			int(record.get("wins", 0)),
+			int(record.get("losses", 0)),
+			int(record.get("no_contests", 0)),
+		],
+		"",
+		"Rounds",
+		"  W-L  %d-%d" % [
+			int(record.get("round_wins", 0)),
+			int(record.get("round_losses", 0)),
+		],
+		"",
+		"Combat Rates",
+		"  DPS  %.1f" % _per_second_value(damage_done, total_combat_ms),
+		"  HPS  %.1f" % _per_second_value(healing_done, total_combat_ms),
+		"  CC Accuracy  %s" % _cc_accuracy_text(cc_hits, cc_used),
 	]
+	var skill_pick_counts := record.get("skill_pick_counts", {}) as Dictionary
+	if not skill_catalog.is_empty() or not skill_pick_counts.is_empty():
+		lines.append("")
+		lines.append("Skill Picks")
+		for summary in _skill_pick_summary_lines(skill_pick_counts, skill_catalog):
+			lines.append("  %s" % summary)
+	return "\n".join(lines)
 
 
 static func score_text(score_a: int, score_b: int) -> String:
@@ -111,6 +137,63 @@ static func objective_control_text(
 		_format_clock_ms(objective_team_b_ms),
 		_format_clock_ms(objective_target_ms),
 	]
+
+
+static func _per_second_value(total_amount: int, total_ms: int) -> float:
+	if total_amount <= 0 or total_ms <= 0:
+		return 0.0
+	return (float(total_amount) * 1000.0) / float(total_ms)
+
+
+static func _cc_accuracy_text(cc_hits: int, cc_used: int) -> String:
+	if cc_used <= 0:
+		return "0.0% (0/0)"
+	return "%.1f%% (%d/%d)" % [
+		(float(cc_hits) * 100.0) / float(cc_used),
+		cc_hits,
+		cc_used,
+	]
+
+
+static func _skill_pick_summary_lines(
+	skill_pick_counts: Dictionary,
+	skill_catalog: Array[Dictionary]
+) -> Array[String]:
+	var summaries: Array[Dictionary] = []
+	var emitted_skill_ids := {}
+	for entry in skill_catalog:
+		var skill_id := String(entry.get("skill_id", ""))
+		if skill_id == "" or emitted_skill_ids.has(skill_id):
+			continue
+		emitted_skill_ids[skill_id] = true
+		summaries.append({
+			"skill_id": skill_id,
+			"skill_name": String(entry.get("skill_name", skill_id)),
+			"count": int(skill_pick_counts.get(skill_id, 0)),
+		})
+	for skill_id_variant in skill_pick_counts.keys():
+		var skill_id := String(skill_id_variant)
+		if emitted_skill_ids.has(skill_id):
+			continue
+		summaries.append({
+			"skill_id": skill_id,
+			"skill_name": _skill_name_for_id(skill_catalog, skill_id),
+			"count": int(skill_pick_counts.get(skill_id_variant, 0)),
+		})
+	var lines: Array[String] = []
+	for summary in summaries:
+		lines.append("%s x%d" % [
+			String(summary.get("skill_name", summary.get("skill_id", ""))),
+			int(summary.get("count", 0)),
+		])
+	return lines
+
+
+static func _skill_name_for_id(skill_catalog: Array[Dictionary], skill_id: String) -> String:
+	for entry in skill_catalog:
+		if String(entry.get("skill_id", "")) == skill_id:
+			return String(entry.get("skill_name", skill_id))
+	return skill_id
 
 
 static func event_log_text(recent_events: Array[String]) -> String:

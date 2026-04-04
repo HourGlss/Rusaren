@@ -599,10 +599,16 @@ fn append_behavior_lines(lines: &mut Vec<String>, behavior: &SkillBehavior) {
             hit_points,
             ..
         } => {
-            lines.push(format!(
-                "Ward: place {distance} away, vision radius {radius}, {hit_points} HP, lasts {}",
-                format_duration_ms(*duration_ms)
-            ));
+            if *duration_ms == 0 {
+                lines.push(format!(
+                    "Ward: place {distance} away, vision radius {radius}, {hit_points} HP, lasts until killed"
+                ));
+            } else {
+                lines.push(format!(
+                    "Ward: place {distance} away, vision radius {radius}, {hit_points} HP, lasts {}",
+                    format_duration_ms(*duration_ms)
+                ));
+            }
         }
         SkillBehavior::Trap {
             distance,

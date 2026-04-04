@@ -439,6 +439,7 @@ func _assert_combat_hud_surfaces_local_skill_names() -> bool:
 	shell.app_state.apply_server_event({
 		"type": "SkillChosen",
 		"player_id": 11,
+		"slot": 1,
 		"tree": "Mage",
 		"tier": 1,
 	})
@@ -453,6 +454,7 @@ func _assert_combat_hud_surfaces_local_skill_names() -> bool:
 	shell.app_state.apply_server_event({
 		"type": "SkillChosen",
 		"player_id": 11,
+		"slot": 2,
 		"tree": "Mage",
 		"tier": 2,
 	})

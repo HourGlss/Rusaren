@@ -1845,6 +1845,12 @@ impl SimulationWorld {
             desired.0,
             desired.1,
         );
+        let persistent_ward = kind == ArenaDeployableKind::Ward && duration_ms == 0;
+        let remaining_ms = if persistent_ward {
+            u16::MAX
+        } else {
+            duration_ms
+        };
         let deployable_id = self.next_deployable_id();
         self.deployables.push(DeployableState {
             id: deployable_id,
@@ -1857,7 +1863,7 @@ impl SimulationWorld {
             radius,
             hit_points,
             max_hit_points: hit_points,
-            remaining_ms: duration_ms,
+            remaining_ms,
             blocks_movement,
             blocks_projectiles,
             behavior,

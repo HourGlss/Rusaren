@@ -309,10 +309,12 @@ impl SimulationWorld {
                     ..
                 }
             );
-            if !permanent_training_dummy && !persistent_toggleable_aura {
+            let persistent_ward = matches!(deployable.behavior, DeployableBehavior::Ward)
+                && deployable.remaining_ms == u16::MAX;
+            if !permanent_training_dummy && !persistent_toggleable_aura && !persistent_ward {
                 deployable.remaining_ms = deployable.remaining_ms.saturating_sub(delta_ms);
             }
-            if ((!permanent_training_dummy && !persistent_toggleable_aura)
+            if ((!permanent_training_dummy && !persistent_toggleable_aura && !persistent_ward)
                 && deployable.remaining_ms == 0)
                 || deployable.hit_points == 0
             {
