@@ -2,7 +2,7 @@ extends RefCounted
 class_name RarenaProtocol
 
 const PACKET_MAGIC := 0x5241
-const PROTOCOL_VERSION := 7
+const PROTOCOL_VERSION := 8
 const HEADER_LEN := 16
 const MAX_PLAYER_NAME_LEN := 24
 const MAX_MESSAGE_BYTES := 200
@@ -917,8 +917,12 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 			var height = cursor.read_u16()
 			var tile_units = cursor.read_u16()
 			var footprint_tiles: PackedByteArray = cursor.read_blob("footprint_tiles")
+			var objective_tiles: PackedByteArray = cursor.read_blob("objective_tiles")
 			var visible_tiles: PackedByteArray = cursor.read_blob("visible_tiles")
 			var explored_tiles: PackedByteArray = cursor.read_blob("explored_tiles")
+			var objective_target_ms = cursor.read_u32()
+			var objective_team_a_ms = cursor.read_u32()
+			var objective_team_b_ms = cursor.read_u32()
 			var obstacle_count = cursor.read_u16()
 			if cursor.has_error():
 				return _error(cursor.error_message)
@@ -1007,8 +1011,12 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 					"height": height,
 					"tile_units": tile_units,
 					"footprint_tiles": footprint_tiles,
+					"objective_tiles": objective_tiles,
 					"visible_tiles": visible_tiles,
 					"explored_tiles": explored_tiles,
+					"objective_target_ms": objective_target_ms,
+					"objective_team_a_ms": objective_team_a_ms,
+					"objective_team_b_ms": objective_team_b_ms,
 					"obstacles": obstacles,
 					"deployables": deployables,
 					"players": players,
@@ -1022,8 +1030,12 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 			var delta_phase_seconds = cursor.read_optional_u8()
 			var delta_tile_units = cursor.read_u16()
 			var delta_footprint_tiles: PackedByteArray = cursor.read_blob("footprint_tiles")
+			var delta_objective_tiles: PackedByteArray = cursor.read_blob("objective_tiles")
 			var delta_visible_tiles: PackedByteArray = cursor.read_blob("visible_tiles")
 			var delta_explored_tiles: PackedByteArray = cursor.read_blob("explored_tiles")
+			var delta_objective_target_ms = cursor.read_u32()
+			var delta_objective_team_a_ms = cursor.read_u32()
+			var delta_objective_team_b_ms = cursor.read_u32()
 			var delta_obstacle_count = cursor.read_u16()
 			if cursor.has_error():
 				return _error(cursor.error_message)
@@ -1110,8 +1122,12 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 					"phase_seconds_remaining": delta_phase_seconds,
 					"tile_units": delta_tile_units,
 					"footprint_tiles": delta_footprint_tiles,
+					"objective_tiles": delta_objective_tiles,
 					"visible_tiles": delta_visible_tiles,
 					"explored_tiles": delta_explored_tiles,
+					"objective_target_ms": delta_objective_target_ms,
+					"objective_team_a_ms": delta_objective_team_a_ms,
+					"objective_team_b_ms": delta_objective_team_b_ms,
 					"obstacles": delta_obstacles,
 					"deployables": delta_deployables,
 					"players": delta_players,

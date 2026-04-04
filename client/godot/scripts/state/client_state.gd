@@ -55,8 +55,12 @@ var render_projectiles: Array[Dictionary] = []
 var arena_effects: Array[Dictionary] = []
 var local_combat_texts: Array[Dictionary] = []
 var footprint_tiles := PackedByteArray()
+var objective_tiles := PackedByteArray()
 var visible_tiles := PackedByteArray()
 var explored_tiles := PackedByteArray()
+var objective_target_ms := 0
+var objective_team_a_ms := 0
+var objective_team_b_ms := 0
 var training_metrics := {}
 var diagnostics := {}
 var arena_render_revision := 1
@@ -465,8 +469,12 @@ func _apply_full_arena_snapshot(snapshot: Dictionary) -> void:
 	arena_height = int(snapshot.get("height", 0))
 	arena_tile_units = int(snapshot.get("tile_units", 0))
 	footprint_tiles = snapshot.get("footprint_tiles", PackedByteArray())
+	objective_tiles = snapshot.get("objective_tiles", PackedByteArray())
 	visible_tiles = snapshot.get("visible_tiles", PackedByteArray())
 	explored_tiles = snapshot.get("explored_tiles", PackedByteArray())
+	objective_target_ms = int(snapshot.get("objective_target_ms", objective_target_ms))
+	objective_team_a_ms = int(snapshot.get("objective_team_a_ms", objective_team_a_ms))
+	objective_team_b_ms = int(snapshot.get("objective_team_b_ms", objective_team_b_ms))
 	_apply_arena_common(snapshot)
 
 
@@ -475,8 +483,12 @@ func _apply_delta_arena_snapshot(snapshot: Dictionary) -> void:
 	_apply_arena_phase(snapshot)
 	arena_tile_units = int(snapshot.get("tile_units", arena_tile_units))
 	footprint_tiles = snapshot.get("footprint_tiles", footprint_tiles)
+	objective_tiles = snapshot.get("objective_tiles", objective_tiles)
 	visible_tiles = snapshot.get("visible_tiles", PackedByteArray())
 	explored_tiles = snapshot.get("explored_tiles", PackedByteArray())
+	objective_target_ms = int(snapshot.get("objective_target_ms", objective_target_ms))
+	objective_team_a_ms = int(snapshot.get("objective_team_a_ms", objective_team_a_ms))
+	objective_team_b_ms = int(snapshot.get("objective_team_b_ms", objective_team_b_ms))
 	_apply_arena_common(snapshot)
 
 
@@ -802,6 +814,10 @@ func is_tile_explored(column: int, row: int) -> bool:
 	return _mask_has_tile(explored_tiles, column, row)
 
 
+func is_objective_tile(column: int, row: int) -> bool:
+	return _mask_has_tile(objective_tiles, column, row)
+
+
 func advance_visuals(delta: float) -> bool:
 	var changed := false
 	for index in range(arena_effects.size() - 1, -1, -1):
@@ -882,12 +898,18 @@ func record_godot_monitor_snapshot(snapshot: Dictionary) -> void:
 
 
 func diagnostics_snapshot() -> Dictionary:
-	return diagnostics.duplicate(true)
+	var snapshot := diagnostics.duplicate(true)
+	var timings: Dictionary = diagnostics.get("timings", {})
+	var timing_snapshots := {}
+	for metric_name in timings.keys():
+		timing_snapshots[metric_name] = _timing_bucket_snapshot(timings.get(metric_name, {}))
+	snapshot["timings"] = timing_snapshots
+	return snapshot
 
 
 func timing_bucket_snapshot(metric_name: String) -> Dictionary:
 	var timings: Dictionary = diagnostics.get("timings", {})
-	return (timings.get(metric_name, {}) as Dictionary).duplicate(true)
+	return _timing_bucket_snapshot(timings.get(metric_name, {}))
 
 
 func diagnostics_text(transport_snapshot: Dictionary) -> String:
@@ -904,6 +926,9 @@ func diagnostics_text(transport_snapshot: Dictionary) -> String:
 		arena_width,
 		arena_height,
 		arena_tile_units,
+		objective_team_a_ms,
+		objective_team_b_ms,
+		objective_target_ms,
 		is_training_mode(),
 		training_metrics
 	)
@@ -1025,8 +1050,12 @@ func _clear_arena_state() -> void:
 	arena_effects.clear()
 	local_combat_texts.clear()
 	footprint_tiles = PackedByteArray()
+	objective_tiles = PackedByteArray()
 	visible_tiles = PackedByteArray()
 	explored_tiles = PackedByteArray()
+	objective_target_ms = 0
+	objective_team_a_ms = 0
+	objective_team_b_ms = 0
 	training_metrics.clear()
 	_mark_arena_render_dirty()
 	_refresh_diagnostics_counts()
@@ -1221,6 +1250,7 @@ func _reset_diagnostics() -> void:
 		},
 		"tiles": {
 			"footprint": 0,
+			"objective": 0,
 			"visible": 0,
 			"explored": 0,
 		},
@@ -1258,6 +1288,29 @@ func _record_timing_bucket(bucket: Dictionary, micros: int) -> void:
 	bucket["total_us"] = int(bucket.get("total_us", 0)) + micros
 
 
+func _timing_bucket_snapshot(bucket_value: Variant) -> Dictionary:
+	var bucket := bucket_value as Dictionary
+	var count := int(bucket.get("count", 0))
+	var recent: Array = (bucket.get("recent_us", []) as Array).duplicate()
+	recent.sort()
+	return {
+		"count": count,
+		"last_ms": float(bucket.get("last_us", 0)) / 1000.0,
+		"avg_ms": (float(bucket.get("total_us", 0)) / float(maxi(1, count))) / 1000.0,
+		"max_ms": float(bucket.get("max_us", 0)) / 1000.0,
+		"p50_ms": _percentile_ms(recent, 0.50),
+		"p95_ms": _percentile_ms(recent, 0.95),
+	}
+
+
+func _percentile_ms(sorted_values: Array, quantile: float) -> float:
+	if sorted_values.is_empty():
+		return 0.0
+	var index := int(round((sorted_values.size() - 1) * quantile))
+	index = clampi(index, 0, sorted_values.size() - 1)
+	return float(sorted_values[index]) / 1000.0
+
+
 func _refresh_diagnostics_counts() -> void:
 	var object_stats: Dictionary = diagnostics.get("objects", {})
 	object_stats["players"] = arena_players.size()
@@ -1269,6 +1322,7 @@ func _refresh_diagnostics_counts() -> void:
 
 	var tile_stats: Dictionary = diagnostics.get("tiles", {})
 	tile_stats["footprint"] = _mask_set_bit_count(footprint_tiles)
+	tile_stats["objective"] = _mask_set_bit_count(objective_tiles)
 	tile_stats["visible"] = _mask_set_bit_count(visible_tiles)
 	tile_stats["explored"] = _mask_set_bit_count(explored_tiles)
 	diagnostics["tiles"] = tile_stats

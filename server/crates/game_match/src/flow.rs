@@ -4,7 +4,7 @@ use game_domain::{LoadoutProgress, MatchOutcome, SkillChoice, TeamAssignment, Te
 
 use super::{
     known_round, MatchConfig, MatchError, MatchEvent, MatchId, MatchPhase, MatchPlayer,
-    MatchSession, PlayerId, ScoreBoard,
+    MatchSession, PlayerId, ScoreBoard, ROUND_OBJECTIVE_TARGET_MS,
 };
 
 impl MatchSession {
@@ -55,6 +55,8 @@ impl MatchSession {
                 seconds_remaining: config.skill_pick_seconds,
             },
             score: ScoreBoard::new(),
+            objective_team_a_ms: 0,
+            objective_team_b_ms: 0,
             players,
         })
     }
@@ -185,6 +187,74 @@ impl MatchSession {
         }
 
         let winning_team = defeated_team.other();
+        Ok(self.finish_round(winning_team))
+    }
+
+    pub fn advance_objective_control(
+        &mut self,
+        team_a_present: bool,
+        team_b_present: bool,
+        delta_ms: u16,
+    ) -> Result<Vec<MatchEvent>, MatchError> {
+        self.expect_phase("Combat")?;
+
+        if team_a_present {
+            self.objective_team_a_ms = self
+                .objective_team_a_ms
+                .saturating_add(u32::from(delta_ms))
+                .min(ROUND_OBJECTIVE_TARGET_MS.saturating_mul(2));
+        }
+        if team_b_present {
+            self.objective_team_b_ms = self
+                .objective_team_b_ms
+                .saturating_add(u32::from(delta_ms))
+                .min(ROUND_OBJECTIVE_TARGET_MS.saturating_mul(2));
+        }
+
+        let winner = if self.objective_team_a_ms >= ROUND_OBJECTIVE_TARGET_MS
+            && self.objective_team_b_ms >= ROUND_OBJECTIVE_TARGET_MS
+        {
+            if self.objective_team_a_ms > self.objective_team_b_ms {
+                Some(TeamSide::TeamA)
+            } else if self.objective_team_b_ms > self.objective_team_a_ms {
+                Some(TeamSide::TeamB)
+            } else {
+                None
+            }
+        } else if self.objective_team_a_ms >= ROUND_OBJECTIVE_TARGET_MS {
+            Some(TeamSide::TeamA)
+        } else if self.objective_team_b_ms >= ROUND_OBJECTIVE_TARGET_MS {
+            Some(TeamSide::TeamB)
+        } else {
+            None
+        };
+
+        Ok(winner.map_or_else(Vec::new, |team| self.finish_round(team)))
+    }
+
+    pub fn disconnect_player(&mut self, player_id: PlayerId) -> Result<MatchEvent, MatchError> {
+        let player_name = self
+            .players
+            .get(&player_id)
+            .ok_or(MatchError::PlayerMissing(player_id))?
+            .assignment
+            .player_name
+            .clone();
+
+        let message = format!("{player_name} has disconnected. Game is over.");
+        self.phase = MatchPhase::MatchEnd {
+            outcome: MatchOutcome::NoContest,
+            message: message.clone(),
+        };
+
+        Ok(MatchEvent::MatchEnded {
+            outcome: MatchOutcome::NoContest,
+            message,
+            score: self.score.clone(),
+        })
+    }
+
+    fn finish_round(&mut self, winning_team: TeamSide) -> Vec<MatchEvent> {
         self.score.award_round(winning_team);
 
         let round_event = MatchEvent::RoundWon {
@@ -209,14 +279,14 @@ impl MatchSession {
                 outcome,
                 message: message.clone(),
             };
-            return Ok(vec![
+            return vec![
                 round_event,
                 MatchEvent::MatchEnded {
                     outcome,
                     message,
                     score: self.score.clone(),
                 },
-            ]);
+            ];
         }
 
         self.current_round = match self.current_round.next() {
@@ -224,28 +294,6 @@ impl MatchSession {
             None => panic!("internal invariant violated: non-final round should have a successor"),
         };
         self.reset_for_next_round();
-        Ok(vec![round_event])
-    }
-
-    pub fn disconnect_player(&mut self, player_id: PlayerId) -> Result<MatchEvent, MatchError> {
-        let player_name = self
-            .players
-            .get(&player_id)
-            .ok_or(MatchError::PlayerMissing(player_id))?
-            .assignment
-            .player_name
-            .clone();
-
-        let message = format!("{player_name} has disconnected. Game is over.");
-        self.phase = MatchPhase::MatchEnd {
-            outcome: MatchOutcome::NoContest,
-            message: message.clone(),
-        };
-
-        Ok(MatchEvent::MatchEnded {
-            outcome: MatchOutcome::NoContest,
-            message,
-            score: self.score.clone(),
-        })
+        vec![round_event]
     }
 }

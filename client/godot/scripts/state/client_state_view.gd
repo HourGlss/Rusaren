@@ -98,6 +98,21 @@ static func score_text(score_a: int, score_b: int) -> String:
 	return "Team A %d  :  %d Team B" % [score_a, score_b]
 
 
+static func objective_control_text(
+	objective_team_a_ms: int,
+	objective_team_b_ms: int,
+	objective_target_ms: int
+) -> String:
+	if objective_target_ms <= 0:
+		return ""
+	return "Center A %s / %s   Center B %s / %s" % [
+		_format_clock_ms(objective_team_a_ms),
+		_format_clock_ms(objective_target_ms),
+		_format_clock_ms(objective_team_b_ms),
+		_format_clock_ms(objective_target_ms),
+	]
+
+
 static func event_log_text(recent_events: Array[String]) -> String:
 	return "\n".join(recent_events)
 
@@ -475,6 +490,9 @@ static func diagnostics_text(
 	arena_width: int,
 	arena_height: int,
 	arena_tile_units: int,
+	objective_team_a_ms: int,
+	objective_team_b_ms: int,
+	objective_target_ms: int,
 	training_mode: bool,
 	training_metrics: Dictionary
 ) -> String:
@@ -492,6 +510,11 @@ static func diagnostics_text(
 	lines.append_array(_diagnostic_packet_lines(diagnostics))
 	lines.append_array(_diagnostic_scene_lines(diagnostics))
 	lines.append_array(_diagnostic_tile_lines(diagnostics, arena_width, arena_height, arena_tile_units))
+	lines.append_array(_diagnostic_objective_lines(
+		objective_team_a_ms,
+		objective_team_b_ms,
+		objective_target_ms
+	))
 	lines.append_array(_diagnostic_render_lines(diagnostics))
 	lines.append_array(_diagnostic_godot_monitor_lines(diagnostics))
 	lines.append_array(_diagnostic_transport_lines(transport_snapshot, diagnostics))
@@ -656,8 +679,30 @@ static func _diagnostic_tile_lines(
 		"  arena_height_units: %d" % arena_height,
 		"  tile_units: %d" % arena_tile_units,
 		"  footprint_tiles: %d" % int(tile_stats.get("footprint", 0)),
+		"  objective_tiles: %d" % int(tile_stats.get("objective", 0)),
 		"  visible_tiles: %d" % int(tile_stats.get("visible", 0)),
 		"  explored_tiles: %d" % int(tile_stats.get("explored", 0)),
+	]
+
+
+static func _diagnostic_objective_lines(
+	objective_team_a_ms: int,
+	objective_team_b_ms: int,
+	objective_target_ms: int
+) -> Array[String]:
+	if objective_target_ms <= 0:
+		return []
+	return [
+		"",
+		"Center Control",
+		"  team_a_ms: %d" % objective_team_a_ms,
+		"  team_b_ms: %d" % objective_team_b_ms,
+		"  target_ms: %d" % objective_target_ms,
+		"  display: %s" % objective_control_text(
+			objective_team_a_ms,
+			objective_team_b_ms,
+			objective_target_ms
+		),
 	]
 
 
@@ -746,6 +791,13 @@ static func _timing_bucket_text(bucket: Dictionary) -> String:
 		float(bucket.get("max_ms", 0.0)),
 		int(bucket.get("count", 0)),
 	]
+
+
+static func _format_clock_ms(value_ms: int) -> String:
+	var total_seconds := maxi(0, value_ms) / 1000
+	var minutes := total_seconds / 60
+	var seconds := total_seconds % 60
+	return "%d:%02d" % [minutes, seconds]
 
 
 static func _cooldown_token(remaining_ms: int, total_ms: int) -> String:

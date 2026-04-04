@@ -183,11 +183,48 @@ impl ServerApp {
             }
         }
 
+        if match_events.is_empty() && matches!(runtime.session.phase(), MatchPhase::Combat) {
+            let (team_a_present, team_b_present) = Self::objective_control_presence(runtime);
+            match runtime.session.advance_objective_control(
+                team_a_present,
+                team_b_present,
+                COMBAT_FRAME_MS,
+            ) {
+                Ok(events) => match_events.extend(events),
+                Err(error) => errors.push(error.to_string()),
+            }
+        }
+
         if matches!(runtime.session.phase(), MatchPhase::SkillPick { .. }) {
             runtime.rebuild_world(content);
         }
 
         (match_events, errors)
+    }
+
+    fn objective_control_presence(runtime: &MatchRuntime) -> (bool, bool) {
+        let mut team_a_present = false;
+        let mut team_b_present = false;
+        for state in runtime.world.players() {
+            if !state.alive
+                || !Self::mask_contains_point(
+                    &runtime.map,
+                    &runtime.map.objective_mask,
+                    state.x,
+                    state.y,
+                )
+            {
+                continue;
+            }
+            match state.team {
+                TeamSide::TeamA => team_a_present = true,
+                TeamSide::TeamB => team_b_present = true,
+            }
+            if team_a_present && team_b_present {
+                break;
+            }
+        }
+        (team_a_present, team_b_present)
     }
 
     pub(super) fn advance_lobby_countdowns<T: AppTransport>(&mut self, transport: &mut T) {
@@ -538,6 +575,20 @@ impl ServerApp {
         lobby_id: LobbyId,
         roster: Vec<TeamAssignment>,
     ) {
+        let Some(lobby_map) = self
+            .game_lobbies
+            .get(&lobby_id)
+            .map(|runtime| runtime.map.clone())
+        else {
+            self.broadcast_event(
+                transport,
+                &self.lobby_members(lobby_id),
+                ServerControlEvent::Error {
+                    message: String::from("game lobby does not exist"),
+                },
+            );
+            return;
+        };
         let match_id = self.allocate_match_id();
         let session = match MatchSession::new(match_id, roster.clone(), MatchConfig::v1()) {
             Ok(session) => session,
@@ -567,14 +618,15 @@ impl ServerApp {
         self.matches.insert(
             match_id,
             MatchRuntime {
-                world: build_world(&roster, &session, &self.content),
+                map: lobby_map.clone(),
+                world: build_world(&roster, &session, &self.content, &lobby_map),
                 roster,
                 participants: participants.clone(),
                 session,
                 explored_tiles: participants
                     .iter()
                     .copied()
-                    .map(|player_id| (player_id, Self::blank_visibility_mask(self.content.map())))
+                    .map(|player_id| (player_id, Self::blank_visibility_mask(&lobby_map)))
                     .collect(),
                 combat_frame_index: 0,
                 feedback: MatchCombatFeedback::default(),

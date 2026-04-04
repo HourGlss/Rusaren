@@ -48,9 +48,8 @@ fn visibility_masks_tiles_players_projectiles_and_effects_are_precise() {
     );
     let alice_id = alice.player_id().expect("alice id");
     let bob_id = bob.player_id().expect("bob id");
-    let map = server.content.map().clone();
-
     let runtime = server.matches.get_mut(&match_id).expect("match runtime");
+    let map = runtime.map.clone();
     let (visible_tiles, explored_tiles) = build_runtime_visibility_masks(runtime, alice_id, &map);
     let alice_state = runtime.world.player_state(alice_id).expect("alice state");
     let close_shrub = *runtime
@@ -228,6 +227,7 @@ fn visibility_helper_boundaries_and_shared_shrubs_are_precise() {
         width_units: 400,
         height_units: 400,
         footprint_mask: vec![0xFF, 0xFF],
+        objective_mask: vec![0x00, 0x00],
         team_a_anchors: vec![(-150, -150)],
         team_b_anchors: vec![(150, 150)],
         obstacles: Vec::new(),
@@ -425,8 +425,7 @@ fn snapshot_filters_include_visible_non_owned_entities_and_repair_explored_masks
     );
     let alice_id = alice.player_id().expect("alice id");
     let bob_id = bob.player_id().expect("bob id");
-    let map = server.content.map().clone();
-
+    let map = server.matches[&match_id].map.clone();
     let (alice_position, hidden_position) = {
         let runtime = server.matches.get_mut(&match_id).expect("match runtime");
         runtime.explored_tiles.insert(alice_id, vec![0xFF]);
@@ -738,6 +737,7 @@ fn manual_seed(
 }
 
 fn manual_runtime(content: &GameContent, seeds: Vec<game_sim::SimPlayerSeed>) -> MatchRuntime {
+    let map = content.map().clone();
     let roster = seeds
         .iter()
         .map(|seed| seed.assignment.clone())
@@ -752,8 +752,9 @@ fn manual_runtime(content: &GameContent, seeds: Vec<game_sim::SimPlayerSeed>) ->
         game_match::MatchConfig::v1(),
     )
     .expect("match session");
-    let world = game_sim::SimulationWorld::new(seeds, content.map()).expect("world");
+    let world = game_sim::SimulationWorld::new(seeds, &map).expect("world");
     MatchRuntime {
+        map,
         roster,
         participants,
         session,

@@ -507,6 +507,7 @@ fn multi_anchor_spawns_cycle_across_authored_spawn_points() {
         width_units: 1000,
         height_units: 600,
         footprint_mask: vec![0xFF; (10_usize * 6).div_ceil(8)],
+        objective_mask: vec![0x00; (10_usize * 6).div_ceil(8)],
         team_a_anchors: vec![(-350, -120), (-350, 0), (-350, 120)],
         team_b_anchors: vec![(350, -120), (350, 0), (350, 120)],
         obstacles: Vec::new(),

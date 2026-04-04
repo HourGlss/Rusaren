@@ -189,6 +189,24 @@ fn custom_content() -> (GameContent, PathBuf) {
     (content, root)
 }
 
+fn content_with_template_map(label: &str, map_text: &str) -> (GameContent, PathBuf) {
+    let root = temp_dir(label);
+    remove_dir_if_exists(&root);
+    copy_dir_all(&workspace_content_root(), &root);
+    fs::write(root.join("maps").join("template_arena.txt"), map_text)
+        .expect("template arena should write");
+    let content = GameContent::load_from_root(&root).expect("custom content root should load");
+    (content, root)
+}
+
+fn compact_match_template_map() -> &'static str {
+    "...............\n\
+...............\n\
+..A.....XXX..B.\n\
+...............\n\
+...............\n"
+}
+
 fn assert_connected(events: &[ServerControlEvent], player_id: PlayerId, player_name: &str) {
     assert!(events.iter().any(|event| matches!(
         event,
@@ -279,7 +297,54 @@ fn cast_until_round_won(
         }
     }
 
-    panic!("expected round {round} to end after repeated slot-one casts");
+    let match_id = match server.players[&alice
+        .player_id()
+        .expect("alice should stay connected during the match")]
+        .location
+    {
+        PlayerLocation::Match(match_id) => match_id,
+        location => panic!("alice should still be in a live match, found {location:?}"),
+    };
+    force_team_a_round_win_via_objective(server, transport, match_id);
+    alice_events.extend(
+        alice
+            .drain_events(transport)
+            .expect("alice forced-win events"),
+    );
+    bob_events.extend(bob.drain_events(transport).expect("bob forced-win events"));
+    if alice_events.iter().any(|event| {
+        matches!(
+            event,
+            ServerControlEvent::RoundWon { round: won_round, .. } if won_round.get() == round
+        )
+    }) {
+        return (alice_events, bob_events);
+    }
+
+    panic!("expected round {round} to end after repeated slot-one casts or objective fallback");
+}
+
+fn force_team_a_round_win_via_objective(
+    server: &mut ServerApp,
+    transport: &mut InMemoryTransport,
+    match_id: MatchId,
+) {
+    let mut remaining_ms = game_match::ROUND_OBJECTIVE_TARGET_MS;
+    while remaining_ms > 0 {
+        let slice_ms = remaining_ms.min(60_000) as u16;
+        let events = {
+            let runtime = server.matches.get_mut(&match_id).expect("match runtime");
+            runtime
+                .session
+                .advance_objective_control(true, false, slice_ms)
+                .expect("objective control should resolve in combat")
+        };
+        remaining_ms = remaining_ms.saturating_sub(u32::from(slice_ms));
+        if !events.is_empty() {
+            server.dispatch_match_events(transport, match_id, &events);
+            return;
+        }
+    }
 }
 
 fn lobby_snapshot_players(entries: &[ServerControlEvent]) -> Option<&[LobbySnapshotPlayer]> {

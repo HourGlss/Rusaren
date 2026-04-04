@@ -4,6 +4,7 @@ members = [
   "bin/backend_callgraph",
   "bin/live_transport_probe",
   "bin/scip_json_dump",
+  "bin/map_sample_builder",
   "bin/dedicated_server",
   "crates/game_api",
   "crates/game_content",

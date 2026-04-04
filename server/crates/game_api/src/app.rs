@@ -110,10 +110,12 @@ impl ConnectedPlayer {
 #[derive(Debug)]
 struct GameLobbyRuntime {
     lobby: Lobby,
+    map: ArenaMapDefinition,
 }
 
 #[derive(Debug)]
 struct MatchRuntime {
+    map: ArenaMapDefinition,
     roster: Vec<TeamAssignment>,
     participants: Vec<PlayerId>,
     session: MatchSession,
@@ -125,7 +127,7 @@ struct MatchRuntime {
 
 impl MatchRuntime {
     fn rebuild_world(&mut self, content: &GameContent) {
-        self.world = build_world(&self.roster, &self.session, content);
+        self.world = build_world(&self.roster, &self.session, content, &self.map);
     }
 }
 
@@ -958,6 +960,7 @@ fn build_world(
     roster: &[TeamAssignment],
     session: &MatchSession,
     content: &GameContent,
+    map: &ArenaMapDefinition,
 ) -> SimulationWorld {
     match SimulationWorld::new(
         roster
@@ -990,7 +993,7 @@ fn build_world(
                 }
             })
             .collect(),
-        content.map(),
+        map,
     ) {
         Ok(world) => world,
         Err(error) => panic!("valid match roster should build a simulation world: {error}"),

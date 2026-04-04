@@ -239,8 +239,12 @@ func _assert_decode_arena_state_snapshot() -> bool:
 	_push_u16(payload, 1200)
 	_push_u16(payload, 50)
 	_push_blob(payload, PackedByteArray([0x7F, 0x03]))
+	_push_blob(payload, PackedByteArray([0x0C, 0x03]))
 	_push_blob(payload, PackedByteArray([0x3F, 0x03]))
 	_push_blob(payload, PackedByteArray([0xFF, 0x0F]))
+	_push_u32(payload, 180000)
+	_push_u32(payload, 42000)
+	_push_u32(payload, 37500)
 	_push_u16(payload, 1)
 	payload.append(1)
 	_push_i16(payload, -220)
@@ -315,9 +319,16 @@ func _assert_decode_arena_state_snapshot() -> bool:
 	var footprint_tiles: PackedByteArray = snapshot.get("footprint_tiles", PackedByteArray())
 	if footprint_tiles.size() != 2 or int(footprint_tiles[0]) != 0x7F:
 		return _fail("arena state snapshot should decode footprint tile masks")
+	var objective_tiles: PackedByteArray = snapshot.get("objective_tiles", PackedByteArray())
+	if objective_tiles.size() != 2 or int(objective_tiles[0]) != 0x0C:
+		return _fail("arena state snapshot should decode objective tile masks")
 	var visible_tiles: PackedByteArray = snapshot.get("visible_tiles", PackedByteArray())
 	if visible_tiles.size() != 2 or int(visible_tiles[0]) != 0x3F:
 		return _fail("arena state snapshot should decode visible tile masks")
+	if int(snapshot.get("objective_target_ms", 0)) != 180000:
+		return _fail("arena state snapshot should decode the objective timer target")
+	if int(snapshot.get("objective_team_a_ms", 0)) != 42000 or int(snapshot.get("objective_team_b_ms", 0)) != 37500:
+		return _fail("arena state snapshot should decode team objective timers")
 	if deployables.size() != 0:
 		return _fail("arena state snapshot should decode deployable arrays")
 	if int(players[0].get("unlocked_skill_slots", 0)) != 3:
@@ -350,8 +361,12 @@ func _assert_decode_arena_delta_snapshot() -> bool:
 	payload.append(0)
 	_push_u16(payload, 50)
 	_push_blob(payload, PackedByteArray([0x7F, 0x03]))
+	_push_blob(payload, PackedByteArray([0x0C, 0x03]))
 	_push_blob(payload, PackedByteArray([0x3F, 0x03]))
 	_push_blob(payload, PackedByteArray([0xFF, 0x0F]))
+	_push_u32(payload, 180000)
+	_push_u32(payload, 45250)
+	_push_u32(payload, 38900)
 	_push_u16(payload, 1)
 	payload.append(2)
 	_push_i16(payload, -220)
@@ -415,6 +430,13 @@ func _assert_decode_arena_delta_snapshot() -> bool:
 	var footprint_tiles: PackedByteArray = snapshot.get("footprint_tiles", PackedByteArray())
 	if footprint_tiles.size() != 2 or int(footprint_tiles[0]) != 0x7F:
 		return _fail("arena delta snapshot should decode footprint tiles")
+	var objective_tiles: PackedByteArray = snapshot.get("objective_tiles", PackedByteArray())
+	if objective_tiles.size() != 2 or int(objective_tiles[0]) != 0x0C:
+		return _fail("arena delta snapshot should decode objective tiles")
+	if int(snapshot.get("objective_target_ms", 0)) != 180000:
+		return _fail("arena delta snapshot should preserve the objective target")
+	if int(snapshot.get("objective_team_a_ms", 0)) != 45250 or int(snapshot.get("objective_team_b_ms", 0)) != 38900:
+		return _fail("arena delta snapshot should decode team objective timers")
 	if players.size() != 1 or int(players[0].get("mana", 0)) != 64:
 		return _fail("arena delta snapshot should decode player state")
 	var equipped_trees: Array = players[0].get("equipped_skill_trees", [])
@@ -436,8 +458,12 @@ func _assert_decode_training_state_snapshot() -> bool:
 	_push_u16(payload, 700)
 	_push_u16(payload, 50)
 	_push_blob(payload, PackedByteArray([0x1F, 0x01]))
+	_push_blob(payload, PackedByteArray([0x00, 0x00]))
 	_push_blob(payload, PackedByteArray([0x1F, 0x01]))
 	_push_blob(payload, PackedByteArray([0x1F, 0x01]))
+	_push_u32(payload, 180000)
+	_push_u32(payload, 0)
+	_push_u32(payload, 0)
 	_push_u16(payload, 0)
 	_push_u16(payload, 2)
 	_push_u32(payload, 91)
@@ -508,6 +534,8 @@ func _assert_decode_training_state_snapshot() -> bool:
 		return _fail("training state payload should decode through the arena snapshot event")
 	if String(snapshot.get("mode", "")) != "Training":
 		return _fail("training state snapshot should preserve training mode")
+	if int(snapshot.get("objective_target_ms", 0)) != 180000:
+		return _fail("training state snapshot should decode the shared objective target")
 	if deployables.size() != 2:
 		return _fail("training state snapshot should decode dummy deployables")
 	if String(deployables[0].get("kind", "")) != "TrainingDummyResetFull":

@@ -105,10 +105,12 @@ fn default_mechanics() -> &'static MechanicCatalog {
     })
 }
 
+mod map_generation;
 mod maps;
 mod mechanics;
 mod skills;
 
+pub use map_generation::{generate_template_match_map, render_ascii_map};
 pub use maps::parse_ascii_map;
 pub use mechanics::parse_mechanics_yaml;
 pub use skills::parse_skill_yaml;

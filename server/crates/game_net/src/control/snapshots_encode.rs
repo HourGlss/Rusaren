@@ -139,8 +139,12 @@ pub(super) fn encode_arena_state_snapshot(
     payload.extend_from_slice(&snapshot.height.to_le_bytes());
     payload.extend_from_slice(&snapshot.tile_units.to_le_bytes());
     encode_bytes(payload, "footprint_tiles", &snapshot.footprint_tiles)?;
+    encode_bytes(payload, "objective_tiles", &snapshot.objective_tiles)?;
     encode_bytes(payload, "visible_tiles", &snapshot.visible_tiles)?;
     encode_bytes(payload, "explored_tiles", &snapshot.explored_tiles)?;
+    payload.extend_from_slice(&snapshot.objective_target_ms.to_le_bytes());
+    payload.extend_from_slice(&snapshot.objective_team_a_ms.to_le_bytes());
+    payload.extend_from_slice(&snapshot.objective_team_b_ms.to_le_bytes());
 
     let obstacle_count =
         u16::try_from(snapshot.obstacles.len()).map_err(|_| PacketError::PayloadTooLarge {
@@ -173,8 +177,12 @@ pub(super) fn encode_arena_delta_snapshot(
     encode_optional_u8(payload, snapshot.phase_seconds_remaining);
     payload.extend_from_slice(&snapshot.tile_units.to_le_bytes());
     encode_bytes(payload, "footprint_tiles", &snapshot.footprint_tiles)?;
+    encode_bytes(payload, "objective_tiles", &snapshot.objective_tiles)?;
     encode_bytes(payload, "visible_tiles", &snapshot.visible_tiles)?;
     encode_bytes(payload, "explored_tiles", &snapshot.explored_tiles)?;
+    payload.extend_from_slice(&snapshot.objective_target_ms.to_le_bytes());
+    payload.extend_from_slice(&snapshot.objective_team_a_ms.to_le_bytes());
+    payload.extend_from_slice(&snapshot.objective_team_b_ms.to_le_bytes());
     encode_arena_obstacles(payload, &snapshot.obstacles)?;
     encode_arena_deployables(payload, &snapshot.deployables)?;
     encode_arena_players(payload, &snapshot.players)?;

@@ -9,7 +9,7 @@ pub fn parse_ascii_map(source: &str, ascii_map: &str) -> Result<ArenaMapDefiniti
     let rows = collect_map_rows(source, ascii_map)?;
     let (width_tiles, height_tiles, width_units, height_units) =
         validate_map_dimensions(source, &rows)?;
-    let (footprint_mask, team_a_anchors, team_b_anchors, obstacles, features) =
+    let (footprint_mask, objective_mask, team_a_anchors, team_b_anchors, obstacles, features) =
         parse_map_layout(source, &rows, width_tiles, height_tiles)?;
 
     Ok(ArenaMapDefinition {
@@ -20,6 +20,7 @@ pub fn parse_ascii_map(source: &str, ascii_map: &str) -> Result<ArenaMapDefiniti
         width_units,
         height_units,
         footprint_mask,
+        objective_mask,
         team_a_anchors,
         team_b_anchors,
         obstacles,
@@ -28,6 +29,7 @@ pub fn parse_ascii_map(source: &str, ascii_map: &str) -> Result<ArenaMapDefiniti
 }
 
 type ParsedMapLayout = (
+    Vec<u8>,
     Vec<u8>,
     Vec<AnchorPoint>,
     Vec<AnchorPoint>,
@@ -108,6 +110,7 @@ fn parse_map_layout(
     height_tiles: u16,
 ) -> Result<ParsedMapLayout, ContentError> {
     let mut footprint_mask = blank_map_mask(width_tiles, height_tiles);
+    let mut objective_mask = blank_map_mask(width_tiles, height_tiles);
     let mut team_a_anchors = Vec::new();
     let mut team_b_anchors = Vec::new();
     let mut obstacles = Vec::new();
@@ -130,6 +133,7 @@ fn parse_map_layout(
                 row_index,
                 column_index,
                 &mut footprint_mask,
+                &mut objective_mask,
                 width_tiles,
                 center_x,
                 center_y,
@@ -167,6 +171,7 @@ fn parse_map_layout(
     }
     Ok((
         footprint_mask,
+        objective_mask,
         team_a_anchors,
         team_b_anchors,
         obstacles,
@@ -195,6 +200,7 @@ fn parse_map_glyph(
     row_index: usize,
     column_index: usize,
     footprint_mask: &mut [u8],
+    objective_mask: &mut [u8],
     width_tiles: u16,
     center_x: i16,
     center_y: i16,
@@ -217,6 +223,11 @@ fn parse_map_glyph(
         'B' => {
             set_map_mask_bit(footprint_mask, width_tiles, row_index, column_index);
             team_b_anchors.push((center_x, center_y));
+            Ok(())
+        }
+        'X' => {
+            set_map_mask_bit(footprint_mask, width_tiles, row_index, column_index);
+            set_map_mask_bit(objective_mask, width_tiles, row_index, column_index);
             Ok(())
         }
         '#' => {

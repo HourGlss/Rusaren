@@ -335,6 +335,7 @@ static func _build_match_header(refs: ShellRefs, body: VBoxContainer) -> void:
 	refs.score_label = Label.new()
 	refs.score_label.add_theme_font_size_override("font_size", 18)
 	refs.score_label.add_theme_color_override("font_color", Color8(240, 241, 220))
+	refs.score_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	refs.score_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	body.add_child(refs.score_label)
 

@@ -269,8 +269,12 @@ impl FuzzArenaStateSnapshot {
             height: self.height.max(1),
             tile_units: self.tile_units.max(1),
             footprint_tiles: vec![],
+            objective_tiles: vec![],
             visible_tiles: truncate_bytes(self.visible_tiles, 16),
             explored_tiles: truncate_bytes(self.explored_tiles, 16),
+            objective_target_ms: 180_000,
+            objective_team_a_ms: 0,
+            objective_team_b_ms: 0,
             obstacles: take_vec(self.obstacles, MAX_OBSTACLES)
                 .into_iter()
                 .map(FuzzArenaObstacleSnapshot::into_real)
@@ -309,8 +313,12 @@ impl FuzzArenaDeltaSnapshot {
             phase_seconds_remaining: self.phase_seconds_remaining,
             tile_units: self.tile_units.max(1),
             footprint_tiles: vec![],
+            objective_tiles: vec![],
             visible_tiles: truncate_bytes(self.visible_tiles, 16),
             explored_tiles: truncate_bytes(self.explored_tiles, 16),
+            objective_target_ms: 180_000,
+            objective_team_a_ms: 0,
+            objective_team_b_ms: 0,
             obstacles: take_vec(self.obstacles, MAX_OBSTACLES)
                 .into_iter()
                 .map(FuzzArenaObstacleSnapshot::into_real)

@@ -14,6 +14,7 @@ const FRIENDLY_TEAM_COLOR := Color8(27, 58, 128)
 const ENEMY_TEAM_COLOR := Color8(196, 61, 50)
 const ARENA_VOID_COLOR := Color8(20, 21, 25)
 const ARENA_FLOOR_COLOR := Color8(232, 232, 236)
+const OBJECTIVE_FLOOR_COLOR := Color8(171, 74, 74)
 const GRID_COLOR := Color8(205, 206, 212)
 
 var app_state: ClientState = null
@@ -401,13 +402,14 @@ func _clear_cached_layers() -> void:
 
 
 func _background_signature(arena_rect: Rect2) -> String:
-	return "%d|%d|%d|%d|%d|%d|%d" % [
+	return "%d|%d|%d|%d|%d|%d|%d|%d" % [
 		int(round(arena_rect.size.x)),
 		int(round(arena_rect.size.y)),
 		app_state.arena_width,
 		app_state.arena_height,
 		app_state.arena_tile_units,
 		hash(app_state.footprint_tiles),
+		hash(app_state.objective_tiles),
 		hash(app_state.arena_obstacles),
 	]
 
@@ -429,6 +431,7 @@ func _build_background_image(arena_rect: Rect2) -> Image:
 	var image := _create_rgba_image(image_size)
 	image.fill(ARENA_VOID_COLOR)
 	_paint_floor_runs(image, image_size)
+	_paint_objective_runs(image, image_size)
 	_paint_grid(image, image_size)
 	_paint_obstacles(image, image_size)
 	return image
@@ -487,6 +490,25 @@ func _paint_floor_runs(image: Image, image_size: Vector2i) -> void:
 				image.fill_rect(
 					_tile_run_image_rect(image_size, run_start, row, column - 1, row),
 					ARENA_FLOOR_COLOR
+				)
+				run_start = -1
+
+
+func _paint_objective_runs(image: Image, image_size: Vector2i) -> void:
+	var tile_width := app_state.arena_tile_width()
+	var tile_height := app_state.arena_tile_height()
+	if tile_width <= 0 or tile_height <= 0 or app_state.arena_tile_units <= 0:
+		return
+	for row in range(tile_height):
+		var run_start := -1
+		for column in range(tile_width + 1):
+			var is_objective := column < tile_width and app_state.is_objective_tile(column, row)
+			if is_objective and run_start < 0:
+				run_start = column
+			elif not is_objective and run_start >= 0:
+				image.fill_rect(
+					_tile_run_image_rect(image_size, run_start, row, column - 1, row),
+					OBJECTIVE_FLOOR_COLOR
 				)
 				run_start = -1
 

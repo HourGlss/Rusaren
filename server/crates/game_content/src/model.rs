@@ -412,6 +412,7 @@ pub struct ArenaMapDefinition {
     pub width_units: u16,
     pub height_units: u16,
     pub footprint_mask: Vec<u8>,
+    pub objective_mask: Vec<u8>,
     pub team_a_anchors: Vec<(i16, i16)>,
     pub team_b_anchors: Vec<(i16, i16)>,
     pub obstacles: Vec<ArenaMapObstacle>,

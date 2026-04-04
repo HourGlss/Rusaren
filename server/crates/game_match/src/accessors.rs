@@ -23,6 +23,11 @@ impl MatchSession {
     }
 
     #[must_use]
+    pub fn objective_control_ms(&self) -> (u32, u32) {
+        (self.objective_team_a_ms, self.objective_team_b_ms)
+    }
+
+    #[must_use]
     pub fn equipped_choice(&self, player_id: PlayerId, slot: u8) -> Option<SkillChoice> {
         if !(1..=5).contains(&slot) {
             return None;
@@ -61,5 +66,7 @@ impl MatchSession {
         self.phase = MatchPhase::SkillPick {
             seconds_remaining: self.config.skill_pick_seconds,
         };
+        self.objective_team_a_ms = 0;
+        self.objective_team_b_ms = 0;
     }
 }

@@ -156,8 +156,12 @@ func _prime_shell_state() -> void:
 			"height": 950,
 			"tile_units": 50,
 			"footprint_tiles": _full_mask(35, 19),
+			"objective_tiles": _rect_mask(35, 19, Rect2i(17, 8, 3, 3)),
 			"visible_tiles": _rect_mask(35, 19, Rect2i(0, 0, 16, 19)),
 			"explored_tiles": _full_mask(35, 19),
+			"objective_target_ms": 180000,
+			"objective_team_a_ms": 42000,
+			"objective_team_b_ms": 37500,
 			"obstacles": [
 				{
 					"kind": "Pillar",

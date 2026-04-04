@@ -1,8 +1,9 @@
+use game_content::generate_template_match_map;
 use game_domain::{LobbyId, PlayerId, ReadyState, TeamSide};
 use game_lobby::{Lobby, LobbyEvent, LobbyPhase};
 use game_net::ServerControlEvent;
 
-use super::super::{GameLobbyRuntime, PlayerLocation, ServerApp};
+use super::super::{fill_random, GameLobbyRuntime, PlayerLocation, ServerApp};
 use super::AppTransport;
 
 impl ServerApp {
@@ -30,8 +31,34 @@ impl ServerApp {
             return;
         }
 
+        let Some(template_map) = self.content.map_by_id("template_arena") else {
+            self.send_error(
+                transport,
+                sender_id,
+                "template_arena.txt must exist before creating a game lobby",
+            );
+            return;
+        };
+        let mut seed_bytes = [0_u8; 8];
+        let seed = if fill_random(&mut seed_bytes).is_ok() {
+            u64::from_le_bytes(seed_bytes)
+        } else {
+            u64::from(lobby_id.get()).wrapping_mul(0x9E37_79B9)
+        };
+        let map = match generate_template_match_map(
+            template_map,
+            format!("lobby_{}_arena", lobby_id.get()),
+            seed,
+        ) {
+            Ok(map) => map,
+            Err(error) => {
+                self.send_error(transport, sender_id, &error.to_string());
+                return;
+            }
+        };
+
         self.game_lobbies
-            .insert(lobby_id, GameLobbyRuntime { lobby });
+            .insert(lobby_id, GameLobbyRuntime { lobby, map });
         if let Some(player) = self.players.get_mut(&sender_id) {
             player.location = PlayerLocation::GameLobby(lobby_id);
         }

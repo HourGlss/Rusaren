@@ -121,6 +121,31 @@ Example:
 
 Toggleable auras are deliberately limited to self-anchored aura shapes. Validation rejects authored toggleable auras that declare `distance` or `hit_points`, because those imply traveling or independent deployable placements rather than a WoW-style persistent self-state.
 
+## Generated Match Maps And Center Control
+Live match arenas are now generated per lobby from `content/maps/template_arena.txt`.
+
+The runtime contract is:
+- authored `A` and `B` spawn anchors in the template never move
+- authored `X` tiles define the center objective and stay fixed
+- the generator may add symmetric pillars and shrubs around that template
+- every authored spawn anchor must retain at least one route to the center objective
+- each team's center timer advances whenever that team has at least one living player in the center
+- both teams continue accumulating time if both are present together
+- the round ends when one team reaches `180000 ms` (`3:00`) of cumulative center time
+- objective timers reset at the start of each round
+
+The live per-lobby map is not written back to content. It exists in memory for that lobby and match only.
+
+For inspection, regenerate the sample catalog under `content/maps/generated/`:
+
+```powershell
+cd server
+cargo run -p map_sample_builder -- --count 100
+```
+
+That command writes `sample_001.txt` through `sample_100.txt` into `content/maps/generated/`.
+Those files are for review only. The runtime content loader scans `content/maps/*.txt` and does not load nested sample files from `content/maps/generated/`.
+
 ## Mutation Campaigns
 Use the helper scripts when a full cargo-mutants run would take hours and needs to be split into manual shards.
 

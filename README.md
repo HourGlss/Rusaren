@@ -14,10 +14,11 @@ Buildable now:
 - a focused in-match Godot shell layout that hides the setup chrome after lobby join, surfaces skill picks before the arena during skill-pick windows, and returns to the central layout on disconnect
 - authoritative full and delta arena snapshots carrying match phase, hp, mana, cooldowns, active statuses, projectile state, and only the terrain/obstacles the viewing player is allowed to know about
 - a first playable arena slice with a mostly empty map, four central square pillars, traversable shrub collars, authoritative player circles, per-player fog-of-war, WASD movement, mouse aim, left-click melee, authored class melee/spells on `1`-`5`, projectile combat, debuffs, HoTs, health, mana, and cooldown state
+- per-lobby generated match arenas built from `server/content/maps/template_arena.txt`, with fixed authored spawn anchors, diagonally symmetric random pillars and brush, a red `3x3` center objective, and a shared `3:00` round win clock that can advance for both teams at once
 - held `X` self-cast for authored skills that normally target another player or an aimed point, plus crowd-control diminishing returns across hard-CC, movement-CC, and cast-CC buckets
 - toggleable self-anchored auras such as Rogue Nightcloak, plus authored aura payload hooks that can fire at cast start and at aura end/cancel
 - a shipped authored class roster of Warrior, Rogue, Mage, Cleric, Paladin, Ranger, Bard, Druid, and Necromancer
-- runtime-loaded authored content under `server/content/skills/*.yaml`, `server/content/maps/prototype_arena.txt`, and `server/content/mechanics/registry.yaml`
+- runtime-loaded authored content under `server/content/skills/*.yaml`, `server/content/maps/*.txt`, and `server/content/mechanics/registry.yaml`
 - optional backend-authored `audio_cue_id` plumbing in the skill catalog, with the Godot client resolving cue IDs through `client/godot/content/audio/spell_cues.json` when frontend spell audio assets exist
 - a same-origin Godot Web export path hosted directly by the Rust server at `/`
 - a documented production-style deploy path with Caddy, Prometheus, and `coturn`
@@ -92,7 +93,9 @@ The backend now also sends the authored skill catalog in the `Connected` event, 
 skill picker renders those backend-authored names on the buttons instead of local placeholder labels.
 The runtime game content now lives under:
 - `server/content/skills/*.yaml` for authored class/skill definitions
-- `server/content/maps/prototype_arena.txt` for the current ASCII arena map
+- `server/content/maps/prototype_arena.txt` for the fixed authored reference arena still used by bundled-content checks and direct content loading
+- `server/content/maps/template_arena.txt` for the authored lobby-generation template that fixes spawn anchors and center-objective tiles while leaving blockers and brush to the per-lobby generator
+- `server/content/maps/generated/*.txt` for inspection-only sample outputs written by `cargo run -p map_sample_builder -- --count 100`
 - `server/content/mechanics/registry.yaml` for implemented and planned mechanic families, plus the data-driven validation schema for each implemented mechanic
 
 Those files are the live source of truth for the backend. The Markdown docs under `shared/docs/`
@@ -185,6 +188,24 @@ Example authored stealth toggle:
 ```
 
 Toggleable auras are intentionally restricted to self-anchored aura shapes. They cannot declare travel distance or deployable hit points.
+
+Generated match maps now follow a separate contract from the fixed reference arena:
+- the live lobby generator starts from `server/content/maps/template_arena.txt`
+- Team A and Team B spawn anchors never move away from the authored `A` and `B` tiles in that template
+- `X` tiles mark the center-control objective and render as red floor in the client
+- the generator may add diagonally symmetric pillars and shrubs, but it must preserve at least one path from every authored spawn anchor to the center objective
+- during combat, each team accumulates center time whenever at least one living player from that team is standing on an `X` tile
+- the round ends when a team reaches `3:00` of total center time; if both teams are in the center together, both timers continue advancing
+- the center timer resets at the start of every round
+
+The checked-in sample catalog can be regenerated with:
+
+```powershell
+cd server
+cargo run -p map_sample_builder -- --count 100
+```
+
+Those samples are written under `server/content/maps/generated/` for inspection only. The runtime content loader does not scan that subfolder, and live generated maps are created when a lobby is created and then discarded with the match.
 
 The planned `0.9` player-token rendering language is:
 - skill slot `1` colors the player center
@@ -312,6 +333,8 @@ Edit gameplay content quickly:
 ```text
 server/content/skills/*.yaml
 server/content/maps/prototype_arena.txt
+server/content/maps/template_arena.txt
+server/content/maps/generated/*.txt
 server/content/mechanics/registry.yaml
 ```
 

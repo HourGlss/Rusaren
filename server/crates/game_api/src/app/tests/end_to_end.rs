@@ -12,8 +12,48 @@ fn end_to_end_game_lobby_countdown_and_match_start_work_via_fake_clients() {
 }
 
 #[test]
-fn fake_clients_receive_delta_snapshots_with_runtime_status_and_mana_state() {
+fn launched_matches_broadcast_generated_objective_maps() {
     let mut server = ServerApp::new();
+    let mut transport = InMemoryTransport::new();
+    let (mut alice, mut bob) = connect_pair(&mut server, &mut transport);
+
+    let _ = launch_match(&mut server, &mut transport, &mut alice, &mut bob);
+
+    alice
+        .choose_skill(&mut transport, skill(SkillTree::Rogue, 1))
+        .expect("alice skill");
+    bob.choose_skill(&mut transport, skill(SkillTree::Warrior, 1))
+        .expect("bob skill");
+    server.pump_transport(&mut transport);
+    let _ = alice
+        .drain_events(&mut transport)
+        .expect("alice skill events");
+    let _ = bob.drain_events(&mut transport).expect("bob skill events");
+
+    server.advance_seconds(&mut transport, 5);
+    let alice_events = alice
+        .drain_events(&mut transport)
+        .expect("alice combat snapshot events");
+    let snapshot = arena_state_snapshot(&alice_events).expect("combat snapshot should exist");
+
+    assert!(
+        snapshot.objective_tiles.iter().any(|byte| *byte != 0),
+        "generated match maps should preserve the template center objective tiles"
+    );
+    assert_eq!(
+        snapshot.objective_target_ms,
+        game_match::ROUND_OBJECTIVE_TARGET_MS
+    );
+    assert_eq!(snapshot.objective_team_a_ms, 0);
+    assert_eq!(snapshot.objective_team_b_ms, 0);
+    assert!(!snapshot.players.is_empty());
+}
+
+#[test]
+fn fake_clients_receive_delta_snapshots_with_runtime_status_and_mana_state() {
+    let (content, root) =
+        content_with_template_map("delta-status-template", compact_match_template_map());
+    let mut server = ServerApp::new_with_content(content);
     let mut transport = InMemoryTransport::new();
     let (mut alice, mut bob) = connect_pair(&mut server, &mut transport);
 
@@ -53,6 +93,7 @@ fn fake_clients_receive_delta_snapshots_with_runtime_status_and_mana_state() {
                     && player.active_statuses.iter().any(|status| status.kind == ArenaStatusKind::Poison)
             })
     )));
+    remove_dir_if_exists(&root);
 }
 
 #[test]

@@ -459,8 +459,12 @@ fn arena_status_kinds_round_trip_for_all_runtime_statuses() {
                 phase_seconds_remaining: None,
                 tile_units: 50,
                 footprint_tiles: vec![0b0011_1111, 0b0000_0011],
+                objective_tiles: vec![0b0000_1100, 0b0000_0011],
                 visible_tiles: vec![0b0011_1111, 0b0000_0011],
                 explored_tiles: vec![0b1111_1111, 0b0000_1111],
+                objective_target_ms: 180_000,
+                objective_team_a_ms: 42_000,
+                objective_team_b_ms: 37_500,
                 obstacles: vec![ArenaObstacleSnapshot {
                     kind: ArenaObstacleKind::Shrub,
                     center_x: -220,
@@ -609,8 +613,12 @@ fn sample_full_arena_snapshot_event() -> ServerControlEvent {
             height: 1200,
             tile_units: 50,
             footprint_tiles: vec![0b0011_1111, 0b0000_0011],
+            objective_tiles: vec![0b0000_1100, 0b0000_0011],
             visible_tiles: vec![0b0011_1111, 0b0000_0011],
             explored_tiles: vec![0b1111_1111, 0b0000_1111],
+            objective_target_ms: 180_000,
+            objective_team_a_ms: 0,
+            objective_team_b_ms: 0,
             obstacles: vec![
                 ArenaObstacleSnapshot {
                     kind: ArenaObstacleKind::Shrub,
@@ -707,8 +715,12 @@ fn sample_delta_arena_snapshot_event() -> ServerControlEvent {
             phase_seconds_remaining: None,
             tile_units: 50,
             footprint_tiles: vec![0b0011_1111, 0b0000_0011],
+            objective_tiles: vec![0b0000_1100, 0b0000_0011],
             visible_tiles: vec![0b0011_1111, 0b0000_0011],
             explored_tiles: vec![0b1111_1111, 0b0000_1111],
+            objective_target_ms: 180_000,
+            objective_team_a_ms: 0,
+            objective_team_b_ms: 0,
             obstacles: vec![ArenaObstacleSnapshot {
                 kind: ArenaObstacleKind::Pillar,
                 center_x: -220,
@@ -854,6 +866,10 @@ fn server_control_event_rejects_invalid_arena_kinds() {
     arena_payload.extend_from_slice(&0_u16.to_le_bytes());
     arena_payload.extend_from_slice(&0_u16.to_le_bytes());
     arena_payload.extend_from_slice(&0_u16.to_le_bytes());
+    arena_payload.extend_from_slice(&0_u16.to_le_bytes());
+    arena_payload.extend_from_slice(&0_u32.to_le_bytes());
+    arena_payload.extend_from_slice(&0_u32.to_le_bytes());
+    arena_payload.extend_from_slice(&0_u32.to_le_bytes());
     arena_payload.extend_from_slice(&1_u16.to_le_bytes());
     arena_payload.push(9);
     arena_payload.extend_from_slice(&0_i16.to_le_bytes());

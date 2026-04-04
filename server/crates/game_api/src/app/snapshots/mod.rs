@@ -144,6 +144,7 @@ impl ServerApp {
         let projectiles =
             Self::arena_projectiles_snapshot(&runtime.world, viewer_id, map, &visible_tiles);
         let (phase, phase_seconds_remaining) = Self::arena_match_phase_snapshot(&runtime.session);
+        let (objective_team_a_ms, objective_team_b_ms) = runtime.session.objective_control_ms();
 
         let snapshot = ArenaStateSnapshot {
             mode: ArenaSessionMode::Match,
@@ -153,8 +154,12 @@ impl ServerApp {
             height: runtime.world.arena_height_units(),
             tile_units: map.tile_units,
             footprint_tiles: runtime.world.footprint_mask().to_vec(),
+            objective_tiles: map.objective_mask.clone(),
             visible_tiles,
             explored_tiles,
+            objective_target_ms: game_match::ROUND_OBJECTIVE_TARGET_MS,
+            objective_team_a_ms,
+            objective_team_b_ms,
             obstacles,
             deployables,
             players,
@@ -191,6 +196,7 @@ impl ServerApp {
         let projectiles =
             Self::arena_projectiles_snapshot(&runtime.world, viewer_id, map, &visible_tiles);
         let (phase, phase_seconds_remaining) = Self::arena_match_phase_snapshot(&runtime.session);
+        let (objective_team_a_ms, objective_team_b_ms) = runtime.session.objective_control_ms();
 
         let snapshot = ArenaDeltaSnapshot {
             mode: ArenaSessionMode::Match,
@@ -198,8 +204,12 @@ impl ServerApp {
             phase_seconds_remaining,
             tile_units: map.tile_units,
             footprint_tiles: runtime.world.footprint_mask().to_vec(),
+            objective_tiles: map.objective_mask.clone(),
             visible_tiles,
             explored_tiles,
+            objective_target_ms: game_match::ROUND_OBJECTIVE_TARGET_MS,
+            objective_team_a_ms,
+            objective_team_b_ms,
             obstacles,
             deployables,
             players,
@@ -245,8 +255,12 @@ impl ServerApp {
             height: runtime.world.arena_height_units(),
             tile_units: map.tile_units,
             footprint_tiles: runtime.world.footprint_mask().to_vec(),
+            objective_tiles: map.objective_mask.clone(),
             visible_tiles,
             explored_tiles,
+            objective_target_ms: game_match::ROUND_OBJECTIVE_TARGET_MS,
+            objective_team_a_ms: 0,
+            objective_team_b_ms: 0,
             obstacles,
             deployables,
             players,
@@ -290,8 +304,12 @@ impl ServerApp {
             phase_seconds_remaining: None,
             tile_units: map.tile_units,
             footprint_tiles: runtime.world.footprint_mask().to_vec(),
+            objective_tiles: map.objective_mask.clone(),
             visible_tiles,
             explored_tiles,
+            objective_target_ms: game_match::ROUND_OBJECTIVE_TARGET_MS,
+            objective_team_a_ms: 0,
+            objective_team_b_ms: 0,
             obstacles,
             deployables,
             players,
@@ -315,7 +333,13 @@ impl ServerApp {
         if recipients.is_empty() {
             return;
         }
-        let map = self.content.map().clone();
+        let Some(map) = self
+            .matches
+            .get(&match_id)
+            .map(|runtime| runtime.map.clone())
+        else {
+            return;
+        };
         for recipient in recipients {
             let Some(snapshot) = self.build_arena_state_snapshot(match_id, recipient, &map) else {
                 continue;
@@ -362,7 +386,13 @@ impl ServerApp {
         if recipients.is_empty() {
             return;
         }
-        let map = self.content.map().clone();
+        let Some(map) = self
+            .matches
+            .get(&match_id)
+            .map(|runtime| runtime.map.clone())
+        else {
+            return;
+        };
         for recipient in recipients {
             let Some(snapshot) = self.build_arena_delta_snapshot(match_id, recipient, &map) else {
                 continue;
@@ -414,7 +444,13 @@ impl ServerApp {
         if recipients.is_empty() {
             return;
         }
-        let map = self.content.map().clone();
+        let Some(map) = self
+            .matches
+            .get(&match_id)
+            .map(|runtime| runtime.map.clone())
+        else {
+            return;
+        };
         for recipient in recipients {
             let filtered = self.filter_arena_effects(match_id, recipient, effects, &map);
             if filtered.is_empty() {

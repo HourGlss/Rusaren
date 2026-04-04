@@ -144,3 +144,18 @@ For local editor runs, use Godot's built-in tooling directly:
 - `Debugger -> Video RAM` and the visual profiler for render-side investigation
 
 The headless quality run is useful for repeatable baselines, but real draw-call and GPU investigation is still best done from the editor because some render counters are zero or unhelpful in headless mode.
+
+## Match Objective Presentation
+Generated match arenas can now carry a center-control objective from the backend.
+
+The current client presentation contract is:
+- `objective_tiles` from arena snapshots render as red floor in the cached arena background
+- the match header shows both teams' accumulated center time against the shared `3:00` target
+- the timers are authoritative and reset when the backend starts a new round
+- both teams may keep accumulating time simultaneously if both occupy the center together
+
+When debugging round flow, include these fields from `Menu -> Diagnostics`:
+- `objective_tiles`
+- `team_a_ms`
+- `team_b_ms`
+- `target_ms`

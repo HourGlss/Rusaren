@@ -5,6 +5,7 @@ const DevSocketClientScript := preload("res://scripts/net/dev_socket_client.gd")
 const GodotPerfMonitorsScript := preload("res://scripts/debug/godot_perf_monitors.gd")
 const PerfClockScript := preload("res://scripts/debug/perf_clock.gd")
 const MainShellFactoryScript := preload("res://scripts/main_shell_factory.gd")
+const ClientStateViewScript := preload("res://scripts/state/client_state_view.gd")
 const Protocol := preload("res://scripts/net/protocol.gd")
 const WebSocketConfigScript := preload("res://scripts/net/websocket_config.gd")
 
@@ -988,7 +989,18 @@ func _needs_passive_ui_refresh() -> bool:
 
 func _match_header_text(_is_training: bool) -> String:
 	var round_number: int = maxi(1, app_state.current_round)
-	return "Round %d, Team A %d : %d Team B" % [round_number, app_state.score_a, app_state.score_b]
+	var header := "Round %d, Team A %d : %d Team B" % [
+		round_number,
+		app_state.score_a,
+		app_state.score_b,
+	]
+	if not app_state.is_training_mode() and app_state.objective_target_ms > 0:
+		header += "\n%s" % ClientStateViewScript.objective_control_text(
+			app_state.objective_team_a_ms,
+			app_state.objective_team_b_ms,
+			app_state.objective_target_ms
+		)
+	return header
 
 
 func _combat_state_heading() -> String:

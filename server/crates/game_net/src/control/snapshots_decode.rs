@@ -73,8 +73,12 @@ pub(super) fn decode_arena_state_snapshot(
     let height = read_u16(payload, index, "ArenaStateSnapshot")?;
     let tile_units = read_u16(payload, index, "ArenaStateSnapshot")?;
     let footprint_tiles = decode_bytes(payload, index, "ArenaStateSnapshot", "footprint_tiles")?;
+    let objective_tiles = decode_bytes(payload, index, "ArenaStateSnapshot", "objective_tiles")?;
     let visible_tiles = decode_bytes(payload, index, "ArenaStateSnapshot", "visible_tiles")?;
     let explored_tiles = decode_bytes(payload, index, "ArenaStateSnapshot", "explored_tiles")?;
+    let objective_target_ms = read_u32(payload, index, "ArenaStateSnapshot")?;
+    let objective_team_a_ms = read_u32(payload, index, "ArenaStateSnapshot")?;
+    let objective_team_b_ms = read_u32(payload, index, "ArenaStateSnapshot")?;
     let obstacles = decode_arena_obstacles(payload, index, "ArenaStateSnapshot")?;
     let deployables = decode_arena_deployables(payload, index, "ArenaStateSnapshot")?;
     let players = decode_arena_players(payload, index, "ArenaStateSnapshot")?;
@@ -90,8 +94,12 @@ pub(super) fn decode_arena_state_snapshot(
             height,
             tile_units,
             footprint_tiles,
+            objective_tiles,
             visible_tiles,
             explored_tiles,
+            objective_target_ms,
+            objective_team_a_ms,
+            objective_team_b_ms,
             obstacles,
             deployables,
             players,
@@ -110,8 +118,12 @@ pub(super) fn decode_arena_delta_snapshot(
     let phase_seconds_remaining = read_optional_u8(payload, index, "ArenaDeltaSnapshot")?;
     let tile_units = read_u16(payload, index, "ArenaDeltaSnapshot")?;
     let footprint_tiles = decode_bytes(payload, index, "ArenaDeltaSnapshot", "footprint_tiles")?;
+    let objective_tiles = decode_bytes(payload, index, "ArenaDeltaSnapshot", "objective_tiles")?;
     let visible_tiles = decode_bytes(payload, index, "ArenaDeltaSnapshot", "visible_tiles")?;
     let explored_tiles = decode_bytes(payload, index, "ArenaDeltaSnapshot", "explored_tiles")?;
+    let objective_target_ms = read_u32(payload, index, "ArenaDeltaSnapshot")?;
+    let objective_team_a_ms = read_u32(payload, index, "ArenaDeltaSnapshot")?;
+    let objective_team_b_ms = read_u32(payload, index, "ArenaDeltaSnapshot")?;
     let obstacles = decode_arena_obstacles(payload, index, "ArenaDeltaSnapshot")?;
     let deployables = decode_arena_deployables(payload, index, "ArenaDeltaSnapshot")?;
     let players = decode_arena_players(payload, index, "ArenaDeltaSnapshot")?;
@@ -125,8 +137,12 @@ pub(super) fn decode_arena_delta_snapshot(
             phase_seconds_remaining,
             tile_units,
             footprint_tiles,
+            objective_tiles,
             visible_tiles,
             explored_tiles,
+            objective_target_ms,
+            objective_team_a_ms,
+            objective_team_b_ms,
             obstacles,
             deployables,
             players,
