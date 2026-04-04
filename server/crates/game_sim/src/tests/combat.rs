@@ -25,6 +25,13 @@ fn melee_uses_class_stats_and_respects_cooldown() {
         ],
     );
     let alice = world.player_state(player_id(1)).expect("alice");
+    let expected_damage = world
+        .players
+        .get(&player_id(1))
+        .expect("alice player")
+        .melee
+        .payload
+        .amount;
     {
         let bob = world.players.get_mut(&player_id(2)).expect("bob");
         bob.x = alice.x + 60;
@@ -35,7 +42,7 @@ fn melee_uses_class_stats_and_respects_cooldown() {
         .queue_primary_attack(player_id(1))
         .expect("melee queue");
     let events = world.tick(COMBAT_FRAME_MS);
-    assert!(events.iter().any(|event| matches!(event, SimulationEvent::DamageApplied { attacker, target, amount: 14, .. } if *attacker == player_id(1) && *target == player_id(2))));
+    assert!(events.iter().any(|event| matches!(event, SimulationEvent::DamageApplied { attacker, target, amount, .. } if *attacker == player_id(1) && *target == player_id(2) && *amount == expected_damage)));
 
     world
         .queue_primary_attack(player_id(1))
@@ -580,11 +587,18 @@ fn every_authored_skill_hits_with_valid_geometry_and_resources() {
             ));
         }
 
-        assert!(
-            effect_spawned_by(&events, attacker_id, 1),
-            "{} should spawn a visible effect",
-            skill.id
+        let should_spawn_visible_effect = !matches!(
+            &skill.behavior,
+            SkillBehavior::Aura { payload, .. }
+                if payload.status.as_ref().is_some_and(|status| status.kind == StatusKind::Stealth)
         );
+        if should_spawn_visible_effect {
+            assert!(
+                effect_spawned_by(&events, attacker_id, 1),
+                "{} should spawn a visible effect",
+                skill.id
+            );
+        }
 
         if matches!(
             &skill.behavior,
@@ -1086,6 +1100,7 @@ fn deployable_overlap_radius_and_target_helpers_include_exact_thresholds() {
     world.deployables.push(DeployableState {
         id: 777,
         owner: player_id(1),
+        slot: 0,
         team: TeamSide::TeamA,
         kind: ArenaDeployableKind::Summon,
         x: 30,

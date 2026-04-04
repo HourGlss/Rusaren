@@ -126,6 +126,9 @@ impl MatchCombatFeedback {
                 stacks,
                 ..
             } => {
+                if status_kind == "stealth" {
+                    return;
+                }
                 let (Some(source), Some(target)) = (
                     parse_player_id(*source_player_id),
                     parse_player_id(*target_player_id),
@@ -157,6 +160,9 @@ impl MatchCombatFeedback {
                 reason,
                 ..
             } => {
+                if status_kind == "stealth" {
+                    return;
+                }
                 let Some(target) = parse_player_id(*target_player_id) else {
                     return;
                 };

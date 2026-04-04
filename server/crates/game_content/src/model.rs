@@ -57,6 +57,8 @@ pub enum StackRule {
 pub struct BehaviorSchema {
     pub numeric_fields: BTreeMap<String, NumericFieldRule>,
     pub payload: PayloadFieldRule,
+    pub cast_start_payload: PayloadFieldRule,
+    pub cast_end_payload: PayloadFieldRule,
     pub allowed_effects: Vec<SkillEffectKind>,
 }
 
@@ -255,7 +257,10 @@ pub enum SkillBehavior {
         radius: u16,
         duration_ms: u16,
         hit_points: Option<u16>,
+        toggleable: bool,
         tick_interval_ms: u16,
+        cast_start_payload: Option<EffectPayload>,
+        cast_end_payload: Option<EffectPayload>,
         effect: SkillEffectKind,
         payload: EffectPayload,
     },

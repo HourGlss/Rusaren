@@ -283,6 +283,7 @@ impl SimulationWorld {
                         }
                         keep
                     });
+                    self.cancel_toggleable_stealth_auras(player_id);
                     let damage = self.consume_shields(player_id, amount, &mut events);
                     if damage == 0 {
                         for removed in removed_statuses {

@@ -11,18 +11,26 @@ melee:
     kind: damage
     amount: 22
 skills:
-  - tier: 1
+  - tier: 4
     id: rogue_nightcloak
     name: Nightcloak
-    description: Aura that repeatedly applies stealth.
+    description: Toggle into stealth until canceled or broken by action or damage.
     behavior:
       kind: aura
       effect: nova
       cooldown_ms: 2400
       mana_cost: 10
+      toggleable: true
       radius: 12
       duration_ms: 30000
       tick_interval_ms: 1000
+      cast_start_payload:
+        kind: heal
+        amount: 0
+        status:
+          kind: stealth
+          duration_ms: 1200
+          magnitude: 0
       payload:
         kind: heal
         amount: 0
@@ -30,7 +38,7 @@ skills:
           kind: stealth
           duration_ms: 1200
           magnitude: 0
-  - tier: 2
+  - tier: 1
     id: rogue_venom_shiv
     name: Venom Shiv
     description: Projectile damage that applies poison.
@@ -51,7 +59,7 @@ skills:
           tick_interval_ms: 1000
           magnitude: 5
           max_stacks: 5
-  - tier: 3
+  - tier: 2
     id: rogue_lullwire_trap
     name: Lullwire Trap
     description: Place a trap that applies sleep.
@@ -71,7 +79,7 @@ skills:
           kind: sleep
           duration_ms: 1200
           magnitude: 0
-  - tier: 4
+  - tier: 3
     id: rogue_veil_step
     name: Veil Step
     description: Teleport to the nearest valid point.

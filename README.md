@@ -15,6 +15,7 @@ Buildable now:
 - authoritative full and delta arena snapshots carrying match phase, hp, mana, cooldowns, active statuses, projectile state, and only the terrain/obstacles the viewing player is allowed to know about
 - a first playable arena slice with a mostly empty map, four central square pillars, traversable shrub collars, authoritative player circles, per-player fog-of-war, WASD movement, mouse aim, left-click melee, authored class melee/spells on `1`-`5`, projectile combat, debuffs, HoTs, health, mana, and cooldown state
 - held `X` self-cast for authored skills that normally target another player or an aimed point, plus crowd-control diminishing returns across hard-CC, movement-CC, and cast-CC buckets
+- toggleable self-anchored auras such as Rogue Nightcloak, plus authored aura payload hooks that can fire at cast start and at aura end/cancel
 - a shipped authored class roster of Warrior, Rogue, Mage, Cleric, Paladin, Ranger, Bard, Druid, and Necromancer
 - runtime-loaded authored content under `server/content/skills/*.yaml`, `server/content/maps/prototype_arena.txt`, and `server/content/mechanics/registry.yaml`
 - optional backend-authored `audio_cue_id` plumbing in the skill catalog, with the Godot client resolving cue IDs through `client/godot/content/audio/spell_cues.json` when frontend spell audio assets exist
@@ -145,6 +146,45 @@ Matching frontend manifest entry:
 ```
 
 The current client only resolves cue metadata; it does not play those files yet. This keeps the content and protocol seam in place so real spell audio can be added without another schema change.
+
+Aura authoring now supports persistent self-toggles and payload hooks at the boundaries of the aura lifecycle:
+- set `toggleable: true` on an `aura` behavior to make a self-anchored aura recastable as an off-toggle
+- use `cast_start_payload` to apply an effect immediately when the aura is activated
+- use `cast_end_payload` to apply an effect when the aura is canceled or expires naturally
+
+Example authored stealth toggle:
+
+```yaml
+- tier: 4
+  id: rogue_nightcloak
+  name: Nightcloak
+  description: Toggle into stealth until canceled or broken by action or damage.
+  behavior:
+    kind: aura
+    effect: nova
+    cooldown_ms: 2400
+    mana_cost: 10
+    toggleable: true
+    radius: 12
+    duration_ms: 30000
+    tick_interval_ms: 1000
+    cast_start_payload:
+      kind: heal
+      amount: 0
+      status:
+        kind: stealth
+        duration_ms: 1200
+        magnitude: 0
+    payload:
+      kind: heal
+      amount: 0
+      status:
+        kind: stealth
+        duration_ms: 1200
+        magnitude: 0
+```
+
+Toggleable auras are intentionally restricted to self-anchored aura shapes. They cannot declare travel distance or deployable hit points.
 
 The planned `0.9` player-token rendering language is:
 - skill slot `1` colors the player center

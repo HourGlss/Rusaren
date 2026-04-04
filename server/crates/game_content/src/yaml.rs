@@ -36,6 +36,10 @@ pub(super) struct MechanicSchemaYaml {
     #[serde(default)]
     pub(super) payload: PayloadRuleYaml,
     #[serde(default)]
+    pub(super) cast_start_payload: PayloadRuleYaml,
+    #[serde(default)]
+    pub(super) cast_end_payload: PayloadRuleYaml,
+    #[serde(default)]
     pub(super) expire_payload: PayloadRuleYaml,
     #[serde(default)]
     pub(super) dispel_payload: PayloadRuleYaml,
@@ -147,5 +151,8 @@ pub(super) struct SkillBehaviorYaml {
     pub(super) projectile_speed_bps: Option<u16>,
     pub(super) cooldown_bps: Option<u16>,
     pub(super) cast_time_bps: Option<u16>,
+    pub(super) toggleable: Option<bool>,
+    pub(super) cast_start_payload: Option<EffectPayloadYaml>,
+    pub(super) cast_end_payload: Option<EffectPayloadYaml>,
     pub(super) payload: Option<EffectPayloadYaml>,
 }

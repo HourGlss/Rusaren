@@ -34,7 +34,7 @@ use helpers::{
 
 pub const PLAYER_RADIUS_UNITS: u16 = 28;
 pub const COMBAT_FRAME_MS: u16 = 100;
-pub const PLAYER_MOVE_SPEED_UNITS_PER_SECOND: u16 = 260;
+pub const PLAYER_MOVE_SPEED_UNITS_PER_SECOND: u16 = 286;
 pub const PLAYER_MAX_MANA: u16 = 100;
 pub const PLAYER_MANA_REGEN_PER_SECOND: u16 = 12;
 pub const VISION_RADIUS_UNITS: u16 = 450;
@@ -45,6 +45,7 @@ const DEFAULT_PLAYER_HIT_POINTS: u16 = 100;
 const TRAINING_DUMMY_HEALTH_MULTIPLIER: u16 = 100;
 const TRAINING_DUMMY_RESET_THRESHOLD_BPS: u16 = 500;
 const CROWD_CONTROL_DR_WINDOW_MS: u16 = 15_000;
+const GLOBAL_PROJECTILE_SPEED_BPS: u16 = 2_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MovementIntent {
@@ -544,6 +545,7 @@ enum TargetEntity {
 struct DeployableState {
     id: u32,
     owner: PlayerId,
+    slot: u8,
     team: TeamSide,
     kind: ArenaDeployableKind,
     x: i16,
@@ -576,7 +578,10 @@ enum DeployableBehavior {
         tick_progress_ms: u16,
         effect_kind: ArenaEffectKind,
         payload: game_content::EffectPayload,
+        cast_start_payload: Option<game_content::EffectPayload>,
+        cast_end_payload: Option<game_content::EffectPayload>,
         anchor_player: Option<PlayerId>,
+        toggleable: bool,
     },
     TrainingDummyResetFull,
     TrainingDummyExecute,
@@ -1048,7 +1053,9 @@ impl SimulationWorld {
     fn effective_projectile_speed(&self, player_id: PlayerId, base_speed: u16) -> u16 {
         Self::scale_speed_units(
             base_speed,
-            self.passive_modifiers_for(player_id).projectile_speed,
+            self.passive_modifiers_for(player_id)
+                .projectile_speed
+                .saturating_add(GLOBAL_PROJECTILE_SPEED_BPS),
         )
     }
 
@@ -1139,6 +1146,48 @@ impl SimulationWorld {
         player
             .statuses
             .retain(|status| status.kind != StatusKind::Stealth);
+        self.cancel_toggleable_stealth_auras(player_id);
+    }
+
+    fn cancel_toggleable_stealth_auras(&mut self, player_id: PlayerId) {
+        self.deployables.retain(|deployable| {
+            deployable.owner != player_id || !Self::deployable_tracks_toggleable_stealth(deployable)
+        });
+    }
+
+    fn deployable_tracks_toggleable_stealth(deployable: &DeployableState) -> bool {
+        match &deployable.behavior {
+            DeployableBehavior::Aura {
+                payload,
+                cast_start_payload,
+                toggleable,
+                ..
+            } => {
+                *toggleable
+                    && (Self::payload_applies_status_kind(payload, StatusKind::Stealth)
+                        || cast_start_payload.as_ref().is_some_and(|payload| {
+                            Self::payload_applies_status_kind(payload, StatusKind::Stealth)
+                        }))
+            }
+            _ => false,
+        }
+    }
+
+    fn payload_applies_status_kind(
+        payload: &game_content::EffectPayload,
+        kind: StatusKind,
+    ) -> bool {
+        payload
+            .status
+            .as_ref()
+            .is_some_and(|status| status.kind == kind)
+    }
+
+    fn payload_hides_aura_visuals(payload: &game_content::EffectPayload) -> bool {
+        Self::payload_applies_status_kind(payload, StatusKind::Stealth)
+            && payload.amount == 0
+            && payload.interrupt_silence_duration_ms.is_none()
+            && payload.dispel.is_none()
     }
 
     fn crowd_control_bucket(kind: StatusKind) -> Option<CrowdControlDrBucket> {
@@ -1275,6 +1324,7 @@ impl SimulationWorld {
             self.deployables.push(DeployableState {
                 id: deployable_id,
                 owner,
+                slot: 0,
                 team: dummy_team,
                 kind,
                 x: feature.center_x,

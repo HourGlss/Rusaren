@@ -302,12 +302,21 @@ impl SimulationWorld {
                 DeployableBehavior::TrainingDummyResetFull
                     | DeployableBehavior::TrainingDummyExecute
             );
-            if !permanent_training_dummy {
+            let persistent_toggleable_aura = matches!(
+                deployable.behavior,
+                DeployableBehavior::Aura {
+                    toggleable: true,
+                    ..
+                }
+            );
+            if !permanent_training_dummy && !persistent_toggleable_aura {
                 deployable.remaining_ms = deployable.remaining_ms.saturating_sub(delta_ms);
             }
-            if (!permanent_training_dummy && deployable.remaining_ms == 0)
+            if ((!permanent_training_dummy && !persistent_toggleable_aura)
+                && deployable.remaining_ms == 0)
                 || deployable.hit_points == 0
             {
+                events.extend(self.aura_end_events(&deployable));
                 expired.push(deployable_id);
                 continue;
             }
@@ -415,14 +424,19 @@ impl SimulationWorld {
                     tick_progress_ms,
                     effect_kind,
                     payload,
+                    cast_start_payload: _,
+                    cast_end_payload: _,
                     anchor_player,
+                    toggleable: _,
                 } => {
                     if let Some(anchor_player_id) = *anchor_player {
                         let Some(anchor_state) = self.player_state(anchor_player_id) else {
+                            events.extend(self.aura_end_events(&deployable));
                             expired.push(deployable_id);
                             continue;
                         };
                         if !anchor_state.alive {
+                            events.extend(self.aura_end_events(&deployable));
                             expired.push(deployable_id);
                             continue;
                         }
@@ -432,53 +446,14 @@ impl SimulationWorld {
                     *tick_progress_ms = tick_progress_ms.saturating_add(delta_ms);
                     while *tick_progress_ms >= *tick_interval_ms {
                         *tick_progress_ms = tick_progress_ms.saturating_sub(*tick_interval_ms);
-                        events.push(SimulationEvent::EffectSpawned {
-                            effect: ArenaEffect {
-                                kind: *effect_kind,
-                                owner: deployable.owner,
-                                slot: 0,
-                                x: deployable.x,
-                                y: deployable.y,
-                                target_x: deployable.x,
-                                target_y: deployable.y,
-                                radius: deployable.radius,
-                            },
-                        });
-                        let targets = self.find_targets_in_radius(
+                        events.extend(self.aura_pulse_events(
+                            deployable.owner,
+                            deployable.slot,
                             (deployable.x, deployable.y),
                             deployable.radius,
-                            None,
-                            payload.kind == CombatValueKind::Damage,
-                        );
-                        if targets.is_empty() {
-                            events.push(SimulationEvent::ImpactMiss {
-                                source: deployable.owner,
-                                slot: 0,
-                                reason: SimMissReason::NoTarget,
-                            });
-                        } else {
-                            for target in &targets {
-                                let (target_kind, target_id) = match target {
-                                    TargetEntity::Player(player_id) => {
-                                        (SimTargetKind::Player, player_id.get())
-                                    }
-                                    TargetEntity::Deployable(deployable_id) => {
-                                        (SimTargetKind::Deployable, *deployable_id)
-                                    }
-                                };
-                                events.push(SimulationEvent::ImpactHit {
-                                    source: deployable.owner,
-                                    slot: 0,
-                                    target_kind,
-                                    target_id,
-                                });
-                            }
-                        }
-                        events.extend(self.apply_payload(
-                            deployable.owner,
-                            0,
-                            &targets,
+                            *effect_kind,
                             payload.clone(),
+                            !Self::payload_hides_aura_visuals(payload),
                         ));
                     }
                 }
@@ -496,6 +471,25 @@ impl SimulationWorld {
         if !expired.is_empty() {
             self.deployables
                 .retain(|deployable| !expired.contains(&deployable.id));
+        }
+    }
+
+    fn aura_end_events(&mut self, deployable: &super::DeployableState) -> Vec<SimulationEvent> {
+        match &deployable.behavior {
+            DeployableBehavior::Aura {
+                effect_kind,
+                cast_end_payload: Some(payload),
+                ..
+            } => self.aura_pulse_events(
+                deployable.owner,
+                deployable.slot,
+                (deployable.x, deployable.y),
+                deployable.radius,
+                *effect_kind,
+                payload.clone(),
+                !Self::payload_hides_aura_visuals(payload),
+            ),
+            _ => Vec::new(),
         }
     }
 

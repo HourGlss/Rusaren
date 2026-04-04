@@ -1,4 +1,5 @@
 use super::*;
+use game_content::{CombatValueKind, EffectPayload, SkillEffectKind, StatusDefinition};
 
 fn poison_impact_frames(speed: u16, distance_units: u16) -> usize {
     let travel_per_frame = usize::from(travel_distance_units(speed, COMBAT_FRAME_MS).max(1));
@@ -1446,15 +1447,19 @@ fn stealth_blocks_targeting_and_breaks_on_actions() {
         .get(&player_id(1))
         .and_then(|player| player.skills[0].clone())
         .expect("stealth skill");
-    let _ = resolve_skill_cast(&mut world, player_id(1), 1, stealth_skill.behavior);
-    let _ = collect_ticks(&mut world, 10);
+    let cast_events = resolve_skill_cast(&mut world, player_id(1), 1, stealth_skill.behavior);
     assert!(
-        world
-            .statuses_for(player_id(1))
-            .expect("statuses")
-            .iter()
-            .any(|status| status.kind == StatusKind::Stealth),
-        "the rogue should enter stealth after the aura pulses"
+        player_has_status(&world, player_id(1), StatusKind::Stealth),
+        "the rogue should enter stealth immediately when Nightcloak starts"
+    );
+    assert!(
+        !effect_spawned_by(&cast_events, player_id(1), 1),
+        "Nightcloak should not advertise stealth with a visible aura pulse"
+    );
+    let pulse_events = collect_ticks(&mut world, 10);
+    assert!(
+        !effect_spawned_by(&pulse_events, player_id(1), 1),
+        "Nightcloak refreshes should stay visually hidden while stealth is active"
     );
 
     let projectile_skill = world
@@ -1478,12 +1483,170 @@ fn stealth_blocks_targeting_and_breaks_on_actions() {
         "the rogue should still be able to act while stealthed"
     );
     assert!(
+        !player_has_status(&world, player_id(1), StatusKind::Stealth),
+        "taking an action should immediately break stealth"
+    );
+    let _ = collect_ticks(&mut world, 20);
+    assert!(
+        !player_has_status(&world, player_id(1), StatusKind::Stealth),
+        "breaking stealth should also cancel the toggle aura so it does not silently reapply"
+    );
+}
+
+#[test]
+fn nightcloak_recast_toggles_stealth_off_without_spending_more_resources() {
+    let content = content();
+    let rogue_skill = content
+        .skills()
+        .resolve(&choice(SkillTree::Rogue, 4))
+        .expect("rogue stealth skill")
+        .clone();
+    let mut world = world(
+        &content,
+        vec![seed_with_slot_one_skill(
+            &content,
+            1,
+            "Rogue",
+            TeamSide::TeamA,
+            SkillTree::Rogue,
+            &rogue_skill,
+        )],
+    );
+
+    let _ = resolve_skill_cast(&mut world, player_id(1), 1, rogue_skill.behavior.clone());
+    let after_first_cast = world.player_state(player_id(1)).expect("rogue state");
+    let cooldown_after_first_cast = after_first_cast.slot_cooldown_remaining_ms[0];
+    assert!(
+        world
+            .statuses_for(player_id(1))
+            .expect("statuses")
+            .iter()
+            .any(|status| status.kind == StatusKind::Stealth),
+        "the rogue should be stealthed after the first toggle"
+    );
+
+    {
+        let rogue = world.players.get_mut(&player_id(1)).expect("rogue");
+        rogue.mana = 0;
+        rogue.mana_regen_progress = 0;
+    }
+
+    let _ = activate_skill_cast(&mut world, player_id(1), 1, &rogue_skill.behavior);
+    let after_second_cast = world.player_state(player_id(1)).expect("rogue state");
+    assert!(
         world
             .statuses_for(player_id(1))
             .expect("statuses")
             .iter()
             .all(|status| status.kind != StatusKind::Stealth),
-        "taking an action should immediately break stealth"
+        "recasting Nightcloak should toggle the stealth aura off"
+    );
+    assert_eq!(
+        after_second_cast.mana,
+        1,
+        "toggling Nightcloak off should bypass mana spending and only reflect the next tick of natural regen"
+    );
+    assert_eq!(
+        after_second_cast.slot_cooldown_remaining_ms[0],
+        cooldown_after_first_cast.saturating_sub(COMBAT_FRAME_MS),
+        "toggling Nightcloak off should let the existing cooldown keep ticking instead of restarting it"
+    );
+}
+
+#[test]
+fn aura_cast_end_payload_applies_when_a_toggle_aura_is_canceled() {
+    let content = content();
+    let mut stealth_skill = content
+        .skills()
+        .resolve(&choice(SkillTree::Rogue, 4))
+        .expect("rogue stealth skill")
+        .clone();
+    stealth_skill.behavior = SkillBehavior::Aura {
+        cooldown_ms: 2400,
+        cast_time_ms: 0,
+        mana_cost: 10,
+        distance: 0,
+        radius: 24,
+        duration_ms: 30000,
+        hit_points: None,
+        toggleable: true,
+        tick_interval_ms: 1000,
+        cast_start_payload: Some(EffectPayload {
+            kind: CombatValueKind::Heal,
+            amount: 0,
+            status: Some(StatusDefinition {
+                kind: StatusKind::Stealth,
+                duration_ms: 1200,
+                tick_interval_ms: None,
+                magnitude: 0,
+                max_stacks: 1,
+                trigger_duration_ms: None,
+                expire_payload: None,
+                dispel_payload: None,
+            }),
+            interrupt_silence_duration_ms: None,
+            dispel: None,
+        }),
+        cast_end_payload: Some(EffectPayload {
+            kind: CombatValueKind::Heal,
+            amount: 0,
+            status: Some(StatusDefinition {
+                kind: StatusKind::Haste,
+                duration_ms: 1500,
+                tick_interval_ms: None,
+                magnitude: 1200,
+                max_stacks: 1,
+                trigger_duration_ms: None,
+                expire_payload: None,
+                dispel_payload: None,
+            }),
+            interrupt_silence_duration_ms: None,
+            dispel: None,
+        }),
+        effect: SkillEffectKind::Nova,
+        payload: EffectPayload {
+            kind: CombatValueKind::Heal,
+            amount: 0,
+            status: Some(StatusDefinition {
+                kind: StatusKind::Stealth,
+                duration_ms: 1200,
+                tick_interval_ms: None,
+                magnitude: 0,
+                max_stacks: 1,
+                trigger_duration_ms: None,
+                expire_payload: None,
+                dispel_payload: None,
+            }),
+            interrupt_silence_duration_ms: None,
+            dispel: None,
+        },
+    };
+    let mut world = world(
+        &content,
+        vec![seed_with_slot_one_skill(
+            &content,
+            1,
+            "Rogue",
+            TeamSide::TeamA,
+            SkillTree::Rogue,
+            &stealth_skill,
+        )],
+    );
+
+    let _ = resolve_skill_cast(&mut world, player_id(1), 1, stealth_skill.behavior.clone());
+    assert!(
+        world
+            .statuses_for(player_id(1))
+            .expect("statuses")
+            .iter()
+            .any(|status| status.kind == StatusKind::Stealth),
+        "the toggle aura should apply its cast-start stealth payload"
+    );
+
+    let toggle_off_events = resolve_skill_cast(&mut world, player_id(1), 1, stealth_skill.behavior);
+    assert!(
+        status_applied_to(&toggle_off_events, player_id(1), StatusKind::Haste).is_some(),
+        "canceling a toggle aura should apply its cast-end payload"
     );
 }
 

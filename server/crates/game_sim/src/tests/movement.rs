@@ -344,7 +344,9 @@ fn projectile_spawn_and_advance_follow_authored_math() {
         "casts at exact mana cost should still succeed and consume mana"
     );
 
-    let step = i16::try_from(travel_distance_units(speed, COMBAT_FRAME_MS)).unwrap_or(i16::MAX);
+    let effective_speed = world.effective_projectile_speed(player_id(1), speed);
+    let step =
+        i16::try_from(travel_distance_units(effective_speed, COMBAT_FRAME_MS)).unwrap_or(i16::MAX);
     assert_eq!(
         projectile.x,
         spawn_x + step,
@@ -804,6 +806,7 @@ fn combat_obstacles_walkability_and_teleport_resolution_stay_precise() {
     let projectile_only = DeployableState {
         id: 900,
         owner: player_id(1),
+        slot: 0,
         team: TeamSide::TeamA,
         kind: ArenaDeployableKind::Ward,
         x: walkable_x + 80,
@@ -819,6 +822,7 @@ fn combat_obstacles_walkability_and_teleport_resolution_stay_precise() {
     let movement_only = DeployableState {
         id: 901,
         owner: player_id(1),
+        slot: 0,
         team: TeamSide::TeamA,
         kind: ArenaDeployableKind::Barrier,
         x: walkable_x + 160,
@@ -906,6 +910,7 @@ fn deployable_advancement_target_positions_and_enemy_lookup_stay_precise() {
     world.deployables.push(DeployableState {
         id: 451,
         owner: player_id(1),
+        slot: 0,
         team: TeamSide::TeamA,
         kind: ArenaDeployableKind::Trap,
         x: 0,

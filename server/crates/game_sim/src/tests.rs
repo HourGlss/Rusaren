@@ -242,6 +242,14 @@ fn status_applied_to(events: &[SimulationEvent], target: PlayerId, kind: StatusK
     })
 }
 
+fn player_has_status(world: &SimulationWorld, player_id: PlayerId, kind: StatusKind) -> bool {
+    world
+        .statuses_for(player_id)
+        .unwrap_or_default()
+        .iter()
+        .any(|status| status.kind == kind)
+}
+
 fn behavior_payload(behavior: &SkillBehavior) -> Option<game_content::EffectPayload> {
     match behavior {
         SkillBehavior::Projectile { payload, .. }

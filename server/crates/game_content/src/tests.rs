@@ -924,6 +924,139 @@ skills:
     assert_eq!(parsed.skills[0].behavior.mana_cost(), 0);
 }
 
+const TOGGLEABLE_AURA_SKILL_YAML: &str = r"
+tree: Rogue
+melee:
+  id: rogue_dual_cut
+  name: Dual Cut
+  description: quick slash
+  cooldown_ms: 450
+  range: 86
+  radius: 38
+  effect: melee_swing
+  payload:
+    kind: damage
+    amount: 22
+skills:
+  - tier: 1
+    id: rogue_venom_shiv
+    name: Venom Shiv
+    description: projectile opener
+    behavior:
+      kind: projectile
+      effect: skill_shot
+      cooldown_ms: 650
+      mana_cost: 14
+      speed: 360
+      range: 1500
+      radius: 14
+      payload:
+        kind: damage
+        amount: 10
+  - tier: 2
+    id: rogue_lullwire_trap
+    name: Lullwire Trap
+    description: trap
+    behavior:
+      kind: trap
+      effect: burst
+      cooldown_ms: 2200
+      mana_cost: 24
+      distance: 220
+      radius: 42
+      duration_ms: 6000
+      hit_points: 40
+      payload:
+        kind: damage
+        amount: 6
+  - tier: 3
+    id: rogue_veil_step
+    name: Veil Step
+    description: teleport
+    behavior:
+      kind: teleport
+      effect: dash_trail
+      cooldown_ms: 1500
+      mana_cost: 20
+      distance: 240
+  - tier: 4
+    id: rogue_nightcloak
+    name: Nightcloak
+    description: stealth toggle
+    behavior:
+      kind: aura
+      effect: nova
+      cooldown_ms: 2400
+      mana_cost: 10
+      toggleable: true
+      radius: 12
+      duration_ms: 30000
+      tick_interval_ms: 1000
+      cast_start_payload:
+        kind: heal
+        amount: 0
+        status:
+          kind: stealth
+          duration_ms: 1200
+          magnitude: 0
+      cast_end_payload:
+        kind: heal
+        amount: 0
+        status:
+          kind: haste
+          duration_ms: 1500
+          magnitude: 1200
+      payload:
+        kind: heal
+        amount: 0
+        status:
+          kind: stealth
+          duration_ms: 1200
+          magnitude: 0
+  - tier: 5
+    id: rogue_assassins_tempo
+    name: Assassin's Tempo
+    description: passive speed
+    behavior:
+      kind: passive
+      effect: nova
+      player_speed_bps: 1600
+";
+
+#[test]
+fn parse_skill_yaml_accepts_aura_cast_start_and_end_payloads() {
+    let parsed = parse_skill_yaml("skills/rogue.yaml", TOGGLEABLE_AURA_SKILL_YAML)
+        .expect("yaml should parse");
+    assert!(matches!(
+        parsed.skills[3].behavior,
+        SkillBehavior::Aura {
+            toggleable: true,
+            cast_start_payload: Some(EffectPayload {
+                status: Some(StatusDefinition {
+                    kind: StatusKind::Stealth,
+                    ..
+                }),
+                ..
+            }),
+            cast_end_payload: Some(EffectPayload {
+                status: Some(StatusDefinition {
+                    kind: StatusKind::Haste,
+                    ..
+                }),
+                ..
+            }),
+            payload: EffectPayload {
+                status: Some(StatusDefinition {
+                    kind: StatusKind::Stealth,
+                    ..
+                }),
+                ..
+            },
+            ..
+        }
+    ));
+}
+
 #[test]
 fn parse_ascii_map_accepts_ragged_rows_and_rejects_bad_glyphs_and_missing_anchors() {
     let ragged = " A.d\nA..B\n  D B\n";

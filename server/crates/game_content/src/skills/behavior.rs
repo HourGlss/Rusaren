@@ -26,6 +26,24 @@ struct BehaviorNumericFields {
     cast_time_bps: Option<u16>,
 }
 
+#[derive(Clone, Debug)]
+struct BehaviorAuxPayloads {
+    cast_start_payload: Option<EffectPayload>,
+    cast_end_payload: Option<EffectPayload>,
+}
+
+#[derive(Clone, Copy)]
+struct BehaviorParseContext<'a> {
+    source: &'a str,
+    yaml: &'a SkillBehaviorYaml,
+    mechanics: &'a MechanicCatalog,
+    schema: &'a BehaviorSchema,
+    fields: BehaviorNumericFields,
+    effect: SkillEffectKind,
+    cooldown_ms: u16,
+    mana_cost: u16,
+}
+
 fn parse_behavior_numeric_fields(
     source: &str,
     yaml: &SkillBehaviorYaml,
@@ -134,9 +152,10 @@ pub(super) fn parse_skill_behavior(
     let effect = parse_effect_kind(source, &yaml.effect)?;
     validate_allowed_effect(source, &yaml.kind, effect, &schema.allowed_effects)?;
     let fields = parse_behavior_numeric_fields(source, yaml, schema)?;
+    let aux_payloads = parse_behavior_aux_payloads(source, yaml, schema, mechanics)?;
     let cooldown_ms = fields.cooldown_ms.unwrap_or(0);
     let mana_cost = fields.mana_cost.unwrap_or(0);
-    dispatch_skill_behavior(
+    let context = BehaviorParseContext {
         source,
         yaml,
         mechanics,
@@ -145,180 +164,194 @@ pub(super) fn parse_skill_behavior(
         effect,
         cooldown_ms,
         mana_cost,
-    )
+    };
+    dispatch_skill_behavior(context, &aux_payloads)
+}
+
+fn parse_behavior_aux_payloads(
+    source: &str,
+    yaml: &SkillBehaviorYaml,
+    schema: &BehaviorSchema,
+    mechanics: &MechanicCatalog,
+) -> Result<BehaviorAuxPayloads, ContentError> {
+    Ok(BehaviorAuxPayloads {
+        cast_start_payload: parse_optional_behavior_payload(
+            source,
+            yaml.cast_start_payload.clone(),
+            schema.cast_start_payload,
+            mechanics,
+        )?,
+        cast_end_payload: parse_optional_behavior_payload(
+            source,
+            yaml.cast_end_payload.clone(),
+            schema.cast_end_payload,
+            mechanics,
+        )?,
+    })
 }
 
 fn dispatch_skill_behavior(
-    source: &str,
-    yaml: &SkillBehaviorYaml,
-    mechanics: &MechanicCatalog,
-    schema: &BehaviorSchema,
-    fields: BehaviorNumericFields,
-    effect: SkillEffectKind,
-    cooldown_ms: u16,
-    mana_cost: u16,
+    context: BehaviorParseContext<'_>,
+    aux_payloads: &BehaviorAuxPayloads,
 ) -> Result<SkillBehavior, ContentError> {
-    match yaml.kind.as_str() {
-        "projectile" | "beam" | "dash" | "burst" | "nova" => parse_direct_skill_behavior(
-            source,
-            yaml,
-            mechanics,
-            schema,
-            fields,
-            effect,
-            cooldown_ms,
-            mana_cost,
-        ),
-        "teleport" => parse_teleport_behavior(
-            source,
-            fields,
-            effect,
-            require_present_u16(source, "cooldown_ms", Some(cooldown_ms))?,
-            mana_cost,
-        ),
-        "channel" => parse_channel_behavior(
-            source,
-            yaml,
-            mechanics,
-            schema,
-            fields,
-            effect,
-            require_present_u16(source, "cooldown_ms", Some(cooldown_ms))?,
-            mana_cost,
-        ),
-        "passive" => parse_passive_behavior(source, fields),
-        "summon" | "ward" | "trap" | "barrier" | "aura" => parse_deployable_skill_behavior(
-            source,
-            yaml,
-            mechanics,
-            schema,
-            fields,
-            effect,
-            cooldown_ms,
-            mana_cost,
-        ),
+    match context.yaml.kind.as_str() {
+        "projectile" | "beam" | "dash" | "burst" | "nova" => {
+            parse_direct_skill_behavior(context, aux_payloads)
+        }
+        "teleport" => parse_teleport_behavior(context, aux_payloads),
+        "channel" => parse_channel_behavior(context, aux_payloads),
+        "passive" => parse_passive_behavior(context, aux_payloads),
+        "summon" | "ward" | "trap" | "barrier" | "aura" => {
+            parse_deployable_skill_behavior(context, aux_payloads)
+        }
         other => Err(ContentError::Validation {
-            source: String::from(source),
+            source: String::from(context.source),
             message: format!("unknown behavior kind '{other}'"),
         }),
     }
 }
 
 fn parse_direct_skill_behavior(
-    source: &str,
-    yaml: &SkillBehaviorYaml,
-    mechanics: &MechanicCatalog,
-    schema: &BehaviorSchema,
-    fields: BehaviorNumericFields,
-    effect: SkillEffectKind,
-    cooldown_ms: u16,
-    mana_cost: u16,
+    context: BehaviorParseContext<'_>,
+    aux_payloads: &BehaviorAuxPayloads,
 ) -> Result<SkillBehavior, ContentError> {
-    let cooldown_ms = require_present_u16(source, "cooldown_ms", Some(cooldown_ms))?;
-    match yaml.kind.as_str() {
+    validate_no_aux_payloads(context.source, aux_payloads, &context.yaml.kind)?;
+    let cooldown_ms =
+        require_present_u16(context.source, "cooldown_ms", Some(context.cooldown_ms))?;
+    match context.yaml.kind.as_str() {
         "projectile" => parse_projectile_behavior(
-            source,
-            yaml,
-            mechanics,
-            schema,
-            fields,
-            effect,
+            context.source,
+            context.yaml,
+            context.mechanics,
+            context.schema,
+            context.fields,
+            context.effect,
             cooldown_ms,
-            mana_cost,
+            context.mana_cost,
         ),
         "beam" => parse_beam_behavior(
-            source,
-            yaml,
-            mechanics,
-            schema,
-            fields,
-            effect,
+            context.source,
+            context.yaml,
+            context.mechanics,
+            context.schema,
+            context.fields,
+            context.effect,
             cooldown_ms,
-            mana_cost,
+            context.mana_cost,
         ),
         "dash" => parse_dash_behavior(
-            source,
-            yaml,
-            mechanics,
-            schema,
-            fields,
-            effect,
+            context.source,
+            context.yaml,
+            context.mechanics,
+            context.schema,
+            context.fields,
+            context.effect,
             cooldown_ms,
-            mana_cost,
+            context.mana_cost,
         ),
         "burst" => parse_burst_behavior(
-            source,
-            yaml,
-            mechanics,
-            schema,
-            fields,
-            effect,
+            context.source,
+            context.yaml,
+            context.mechanics,
+            context.schema,
+            context.fields,
+            context.effect,
             cooldown_ms,
-            mana_cost,
+            context.mana_cost,
         ),
         "nova" => parse_nova_behavior(
-            source,
-            yaml,
-            mechanics,
-            schema,
-            fields,
-            effect,
+            context.source,
+            context.yaml,
+            context.mechanics,
+            context.schema,
+            context.fields,
+            context.effect,
             cooldown_ms,
-            mana_cost,
+            context.mana_cost,
         ),
         other => Err(ContentError::Validation {
-            source: String::from(source),
+            source: String::from(context.source),
             message: format!("unsupported direct behavior kind '{other}'"),
         }),
     }
 }
 
 fn parse_deployable_skill_behavior(
-    source: &str,
-    yaml: &SkillBehaviorYaml,
-    mechanics: &MechanicCatalog,
-    schema: &BehaviorSchema,
-    fields: BehaviorNumericFields,
-    effect: SkillEffectKind,
-    cooldown_ms: u16,
-    mana_cost: u16,
+    context: BehaviorParseContext<'_>,
+    aux_payloads: &BehaviorAuxPayloads,
 ) -> Result<SkillBehavior, ContentError> {
-    let cooldown_ms = require_present_u16(source, "cooldown_ms", Some(cooldown_ms))?;
-    match yaml.kind.as_str() {
-        "summon" => parse_summon_behavior(
-            source,
-            yaml,
-            mechanics,
-            schema,
-            fields,
-            effect,
-            cooldown_ms,
-            mana_cost,
-        ),
-        "ward" => parse_ward_behavior(source, fields, effect, cooldown_ms, mana_cost),
-        "trap" => parse_trap_behavior(
-            source,
-            yaml,
-            mechanics,
-            schema,
-            fields,
-            effect,
-            cooldown_ms,
-            mana_cost,
-        ),
-        "barrier" => parse_barrier_behavior(source, fields, effect, cooldown_ms, mana_cost),
-        "aura" => parse_aura_behavior(
-            source,
-            yaml,
-            mechanics,
-            schema,
-            fields,
-            effect,
-            cooldown_ms,
-            mana_cost,
-        ),
+    let cooldown_ms =
+        require_present_u16(context.source, "cooldown_ms", Some(context.cooldown_ms))?;
+    match context.yaml.kind.as_str() {
+        "summon" => {
+            validate_no_aux_payloads(context.source, aux_payloads, &context.yaml.kind)?;
+            validate_toggleable_flag(
+                context.source,
+                &context.yaml.kind,
+                context.yaml.toggleable.unwrap_or(false),
+            )?;
+            parse_summon_behavior(
+                context.source,
+                context.yaml,
+                context.mechanics,
+                context.schema,
+                context.fields,
+                context.effect,
+                cooldown_ms,
+                context.mana_cost,
+            )
+        }
+        "ward" => {
+            validate_no_aux_payloads(context.source, aux_payloads, &context.yaml.kind)?;
+            validate_toggleable_flag(
+                context.source,
+                &context.yaml.kind,
+                context.yaml.toggleable.unwrap_or(false),
+            )?;
+            parse_ward_behavior(
+                context.source,
+                context.fields,
+                context.effect,
+                cooldown_ms,
+                context.mana_cost,
+            )
+        }
+        "trap" => {
+            validate_no_aux_payloads(context.source, aux_payloads, &context.yaml.kind)?;
+            validate_toggleable_flag(
+                context.source,
+                &context.yaml.kind,
+                context.yaml.toggleable.unwrap_or(false),
+            )?;
+            parse_trap_behavior(
+                context.source,
+                context.yaml,
+                context.mechanics,
+                context.schema,
+                context.fields,
+                context.effect,
+                cooldown_ms,
+                context.mana_cost,
+            )
+        }
+        "barrier" => {
+            validate_no_aux_payloads(context.source, aux_payloads, &context.yaml.kind)?;
+            validate_toggleable_flag(
+                context.source,
+                &context.yaml.kind,
+                context.yaml.toggleable.unwrap_or(false),
+            )?;
+            parse_barrier_behavior(
+                context.source,
+                context.fields,
+                context.effect,
+                cooldown_ms,
+                context.mana_cost,
+            )
+        }
+        "aura" => parse_aura_behavior(context, aux_payloads),
         other => Err(ContentError::Validation {
-            source: String::from(source),
+            source: String::from(context.source),
             message: format!("unsupported deployable behavior kind '{other}'"),
         }),
     }
@@ -435,56 +468,78 @@ fn parse_nova_behavior(
 }
 
 fn parse_teleport_behavior(
-    source: &str,
-    fields: BehaviorNumericFields,
-    effect: SkillEffectKind,
-    cooldown_ms: u16,
-    mana_cost: u16,
+    context: BehaviorParseContext<'_>,
+    aux_payloads: &BehaviorAuxPayloads,
 ) -> Result<SkillBehavior, ContentError> {
+    validate_no_aux_payloads(context.source, aux_payloads, "teleport")?;
+    validate_toggleable_flag(
+        context.source,
+        "teleport",
+        context.yaml.toggleable.unwrap_or(false),
+    )?;
     Ok(SkillBehavior::Teleport {
-        cooldown_ms,
-        cast_time_ms: fields.cast_time_ms.unwrap_or(0),
-        mana_cost,
-        distance: require_present_u16(source, "distance", fields.distance)?,
-        effect,
+        cooldown_ms: require_present_u16(context.source, "cooldown_ms", Some(context.cooldown_ms))?,
+        cast_time_ms: context.fields.cast_time_ms.unwrap_or(0),
+        mana_cost: context.mana_cost,
+        distance: require_present_u16(context.source, "distance", context.fields.distance)?,
+        effect: context.effect,
     })
 }
 
 fn parse_channel_behavior(
-    source: &str,
-    yaml: &SkillBehaviorYaml,
-    mechanics: &MechanicCatalog,
-    schema: &BehaviorSchema,
-    fields: BehaviorNumericFields,
-    effect: SkillEffectKind,
-    cooldown_ms: u16,
-    mana_cost: u16,
+    context: BehaviorParseContext<'_>,
+    aux_payloads: &BehaviorAuxPayloads,
 ) -> Result<SkillBehavior, ContentError> {
+    validate_no_aux_payloads(context.source, aux_payloads, "channel")?;
+    validate_toggleable_flag(
+        context.source,
+        "channel",
+        context.yaml.toggleable.unwrap_or(false),
+    )?;
     Ok(SkillBehavior::Channel {
-        cooldown_ms,
-        cast_time_ms: fields.cast_time_ms.unwrap_or(0),
-        mana_cost,
-        range: fields.range.unwrap_or(0),
-        radius: require_present_u16(source, "radius", fields.radius)?,
-        duration_ms: require_present_u16(source, "duration_ms", fields.duration_ms)?,
-        tick_interval_ms: require_present_u16(source, "tick_interval_ms", fields.tick_interval_ms)?,
-        effect,
-        payload: parse_behavior_payload(source, yaml.payload.clone(), schema.payload, mechanics)?,
+        cooldown_ms: require_present_u16(context.source, "cooldown_ms", Some(context.cooldown_ms))?,
+        cast_time_ms: context.fields.cast_time_ms.unwrap_or(0),
+        mana_cost: context.mana_cost,
+        range: context.fields.range.unwrap_or(0),
+        radius: require_present_u16(context.source, "radius", context.fields.radius)?,
+        duration_ms: require_present_u16(
+            context.source,
+            "duration_ms",
+            context.fields.duration_ms,
+        )?,
+        tick_interval_ms: require_present_u16(
+            context.source,
+            "tick_interval_ms",
+            context.fields.tick_interval_ms,
+        )?,
+        effect: context.effect,
+        payload: parse_behavior_payload(
+            context.source,
+            context.yaml.payload.clone(),
+            context.schema.payload,
+            context.mechanics,
+        )?,
     })
 }
 
 fn parse_passive_behavior(
-    source: &str,
-    fields: BehaviorNumericFields,
+    context: BehaviorParseContext<'_>,
+    aux_payloads: &BehaviorAuxPayloads,
 ) -> Result<SkillBehavior, ContentError> {
-    let player_speed_bps = fields.player_speed_bps.unwrap_or(0);
-    let projectile_speed_bps = fields.projectile_speed_bps.unwrap_or(0);
-    let cooldown_bps = fields.cooldown_bps.unwrap_or(0);
-    let cast_time_bps = fields.cast_time_bps.unwrap_or(0);
+    validate_no_aux_payloads(context.source, aux_payloads, "passive")?;
+    validate_toggleable_flag(
+        context.source,
+        "passive",
+        context.yaml.toggleable.unwrap_or(false),
+    )?;
+    let player_speed_bps = context.fields.player_speed_bps.unwrap_or(0);
+    let projectile_speed_bps = context.fields.projectile_speed_bps.unwrap_or(0);
+    let cooldown_bps = context.fields.cooldown_bps.unwrap_or(0);
+    let cast_time_bps = context.fields.cast_time_bps.unwrap_or(0);
     if player_speed_bps == 0 && projectile_speed_bps == 0 && cooldown_bps == 0 && cast_time_bps == 0
     {
         return Err(ContentError::Validation {
-            source: String::from(source),
+            source: String::from(context.source),
             message: String::from("passive behaviors must modify at least one stat"),
         });
     }
@@ -583,27 +638,82 @@ fn parse_barrier_behavior(
 }
 
 fn parse_aura_behavior(
-    source: &str,
-    yaml: &SkillBehaviorYaml,
-    mechanics: &MechanicCatalog,
-    schema: &BehaviorSchema,
-    fields: BehaviorNumericFields,
-    effect: SkillEffectKind,
-    cooldown_ms: u16,
-    mana_cost: u16,
+    context: BehaviorParseContext<'_>,
+    aux_payloads: &BehaviorAuxPayloads,
 ) -> Result<SkillBehavior, ContentError> {
+    let toggleable = context.yaml.toggleable.unwrap_or(false);
+    if toggleable
+        && (context.fields.distance.unwrap_or(0) > 0 || context.fields.hit_points.is_some())
+    {
+        return Err(ContentError::Validation {
+            source: String::from(context.source),
+            message: String::from(
+                "toggleable auras must be self-anchored and cannot declare distance or hit_points",
+            ),
+        });
+    }
     Ok(SkillBehavior::Aura {
-        cooldown_ms,
-        cast_time_ms: fields.cast_time_ms.unwrap_or(0),
-        mana_cost,
-        distance: fields.distance.unwrap_or(0),
-        radius: require_present_u16(source, "radius", fields.radius)?,
-        duration_ms: require_present_u16(source, "duration_ms", fields.duration_ms)?,
-        hit_points: fields.hit_points,
-        tick_interval_ms: require_present_u16(source, "tick_interval_ms", fields.tick_interval_ms)?,
-        effect,
-        payload: parse_behavior_payload(source, yaml.payload.clone(), schema.payload, mechanics)?,
+        cooldown_ms: require_present_u16(context.source, "cooldown_ms", Some(context.cooldown_ms))?,
+        cast_time_ms: context.fields.cast_time_ms.unwrap_or(0),
+        mana_cost: context.mana_cost,
+        distance: context.fields.distance.unwrap_or(0),
+        radius: require_present_u16(context.source, "radius", context.fields.radius)?,
+        duration_ms: require_present_u16(
+            context.source,
+            "duration_ms",
+            context.fields.duration_ms,
+        )?,
+        hit_points: context.fields.hit_points,
+        toggleable,
+        tick_interval_ms: require_present_u16(
+            context.source,
+            "tick_interval_ms",
+            context.fields.tick_interval_ms,
+        )?,
+        cast_start_payload: aux_payloads.cast_start_payload.clone(),
+        cast_end_payload: aux_payloads.cast_end_payload.clone(),
+        effect: context.effect,
+        payload: parse_behavior_payload(
+            context.source,
+            context.yaml.payload.clone(),
+            context.schema.payload,
+            context.mechanics,
+        )?,
     })
+}
+
+fn validate_no_aux_payloads(
+    source: &str,
+    aux_payloads: &BehaviorAuxPayloads,
+    kind: &str,
+) -> Result<(), ContentError> {
+    if aux_payloads.cast_start_payload.is_some() {
+        return Err(ContentError::Validation {
+            source: String::from(source),
+            message: format!("behavior.cast_start_payload is not valid for behavior kind '{kind}'"),
+        });
+    }
+    if aux_payloads.cast_end_payload.is_some() {
+        return Err(ContentError::Validation {
+            source: String::from(source),
+            message: format!("behavior.cast_end_payload is not valid for behavior kind '{kind}'"),
+        });
+    }
+    Ok(())
+}
+
+fn validate_toggleable_flag(
+    source: &str,
+    kind: &str,
+    toggleable: bool,
+) -> Result<(), ContentError> {
+    if toggleable {
+        return Err(ContentError::Validation {
+            source: String::from(source),
+            message: format!("behavior.toggleable is not valid for behavior kind '{kind}'"),
+        });
+    }
+    Ok(())
 }
 
 pub(super) fn parse_payload(

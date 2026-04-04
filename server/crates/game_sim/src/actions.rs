@@ -1,9 +1,10 @@
 use super::{
     arena_effect_kind, normalize_aim, project_from_aim, resolve_movement, round_f32_to_i32,
     saturating_i16, truncate_line_to_obstacles, ActiveCastMode, ArenaDeployableKind, ArenaEffect,
-    ArenaEffectKind, DeployableBehavior, DeployableState, PendingCast, PlayerId, ProjectileState,
-    QueuedActions, SimCastCancelReason, SimCastMode, SimMissReason, SimPlayerState, SimTargetKind,
-    SimulationEvent, SimulationWorld, SkillBehavior, StatusKind, TargetEntity, PLAYER_RADIUS_UNITS,
+    ArenaEffectKind, CombatValueKind, DeployableBehavior, DeployableState, PendingCast, PlayerId,
+    ProjectileState, QueuedActions, SimCastCancelReason, SimCastMode, SimMissReason,
+    SimPlayerState, SimTargetKind, SimulationEvent, SimulationWorld, SkillBehavior, StatusKind,
+    TargetEntity, PLAYER_RADIUS_UNITS,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -214,16 +215,29 @@ impl SimulationWorld {
         self_target: bool,
     ) -> Vec<SimulationEvent> {
         let slot_index = usize::from(slot - 1);
-        let Some(player) = self.players.get(&attacker) else {
+        let Some((cooldown_remaining_ms, skill)) = self.players.get(&attacker).map(|player| {
+            (
+                player.slot_cooldown_remaining_ms[slot_index],
+                player.skills[slot_index].clone(),
+            )
+        }) else {
             return Vec::new();
         };
-        if player.slot_cooldown_remaining_ms[slot_index] > 0 {
+        let Some(skill) = skill else {
+            return Vec::new();
+        };
+        let toggle_cancel_on_cooldown = cooldown_remaining_ms > 0
+            && matches!(
+                &skill.behavior,
+                SkillBehavior::Aura {
+                    toggleable: true,
+                    ..
+                }
+            )
+            && self.active_toggleable_aura_index(attacker, slot).is_some();
+        if cooldown_remaining_ms > 0 && !toggle_cancel_on_cooldown {
             return Vec::new();
         }
-
-        let Some(skill) = player.skills[slot_index].clone() else {
-            return Vec::new();
-        };
         if matches!(skill.behavior, SkillBehavior::Passive { .. }) {
             return Vec::new();
         }
@@ -645,7 +659,10 @@ impl SimulationWorld {
                 radius,
                 duration_ms,
                 hit_points,
+                toggleable,
                 tick_interval_ms,
+                cast_start_payload,
+                cast_end_payload,
                 effect,
                 payload,
             } => self.resolve_aura_cast(
@@ -660,7 +677,10 @@ impl SimulationWorld {
                 radius,
                 duration_ms,
                 hit_points,
+                toggleable,
                 tick_interval_ms,
+                cast_start_payload,
+                cast_end_payload,
                 effect,
                 payload,
             ),
@@ -1645,14 +1665,24 @@ impl SimulationWorld {
         radius: u16,
         duration_ms: u16,
         hit_points: Option<u16>,
+        toggleable: bool,
         tick_interval_ms: u16,
+        cast_start_payload: Option<game_content::EffectPayload>,
+        cast_end_payload: Option<game_content::EffectPayload>,
         effect: game_content::SkillEffectKind,
         payload: game_content::EffectPayload,
     ) -> Vec<SimulationEvent> {
+        if let Some(events) =
+            self.cancel_existing_toggleable_aura(attacker, slot, toggleable, attacker_state)
+        {
+            return events;
+        }
         if !self.commit_skill_cast(attacker, slot_index, cooldown_ms, mana_cost) {
             return Vec::new();
         }
 
+        let effect_kind = arena_effect_kind(effect);
+        let hidden_visuals = Self::aura_visuals_are_hidden(&payload, cast_start_payload.as_ref());
         if let Some(hit_points) = hit_points {
             let deployable_id = self.spawn_deployable_entity(
                 attacker,
@@ -1669,18 +1699,44 @@ impl SimulationWorld {
                 DeployableBehavior::Aura {
                     tick_interval_ms,
                     tick_progress_ms: 0,
-                    effect_kind: arena_effect_kind(effect),
+                    effect_kind,
                     payload,
+                    cast_start_payload: cast_start_payload.clone(),
+                    cast_end_payload,
                     anchor_player: None,
+                    toggleable,
                 },
             );
-            return self.spawn_deployable_events(attacker, slot, attacker_state, deployable_id);
+            let mut events = self.spawn_deployable_events_with_visual(
+                attacker,
+                slot,
+                attacker_state,
+                deployable_id,
+                !hidden_visuals,
+            );
+            let center = self
+                .deployables
+                .iter()
+                .find(|deployable| deployable.id == deployable_id)
+                .map_or((attacker_state.x, attacker_state.y), |deployable| {
+                    (deployable.x, deployable.y)
+                });
+            events.extend(self.aura_cast_start_events(
+                attacker,
+                slot,
+                center,
+                radius,
+                effect_kind,
+                cast_start_payload,
+            ));
+            return events;
         }
 
         let deployable_id = self.next_deployable_id();
         self.deployables.push(DeployableState {
             id: deployable_id,
             owner: attacker,
+            slot,
             team: attacker_state.team,
             kind: ArenaDeployableKind::Aura,
             x: attacker_state.x,
@@ -1694,12 +1750,66 @@ impl SimulationWorld {
             behavior: DeployableBehavior::Aura {
                 tick_interval_ms,
                 tick_progress_ms: 0,
-                effect_kind: arena_effect_kind(effect),
+                effect_kind,
                 payload,
+                cast_start_payload: cast_start_payload.clone(),
+                cast_end_payload,
                 anchor_player: Some(attacker),
+                toggleable,
             },
         });
-        self.spawn_deployable_events(attacker, slot, attacker_state, deployable_id)
+        let mut events = self.spawn_deployable_events_with_visual(
+            attacker,
+            slot,
+            attacker_state,
+            deployable_id,
+            !hidden_visuals,
+        );
+        events.extend(self.aura_cast_start_events(
+            attacker,
+            slot,
+            (attacker_state.x, attacker_state.y),
+            radius,
+            effect_kind,
+            cast_start_payload,
+        ));
+        events
+    }
+
+    fn cancel_existing_toggleable_aura(
+        &mut self,
+        attacker: PlayerId,
+        slot: u8,
+        toggleable: bool,
+        attacker_state: SimPlayerState,
+    ) -> Option<Vec<SimulationEvent>> {
+        if !toggleable {
+            return None;
+        }
+        self.active_toggleable_aura_index(attacker, slot)
+            .map(|index| self.cancel_toggleable_aura(index, attacker_state))
+    }
+
+    fn aura_cast_start_events(
+        &mut self,
+        attacker: PlayerId,
+        slot: u8,
+        center: (i16, i16),
+        radius: u16,
+        effect_kind: ArenaEffectKind,
+        cast_start_payload: Option<game_content::EffectPayload>,
+    ) -> Vec<SimulationEvent> {
+        cast_start_payload.map_or_else(Vec::new, |payload| {
+            self.aura_pulse_events(attacker, slot, center, radius, effect_kind, payload, false)
+        })
+    }
+
+    fn aura_visuals_are_hidden(
+        payload: &game_content::EffectPayload,
+        cast_start_payload: Option<&game_content::EffectPayload>,
+    ) -> bool {
+        Self::payload_hides_aura_visuals(payload)
+            || cast_start_payload.is_some_and(Self::payload_hides_aura_visuals)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1707,7 +1817,7 @@ impl SimulationWorld {
         &mut self,
         attacker: PlayerId,
         attacker_state: SimPlayerState,
-        _slot: u8,
+        slot: u8,
         self_target: bool,
         distance: u16,
         radius: u16,
@@ -1739,6 +1849,7 @@ impl SimulationWorld {
         self.deployables.push(DeployableState {
             id: deployable_id,
             owner: attacker,
+            slot,
             team: attacker_state.team,
             kind,
             x: resolved_x,
@@ -1761,6 +1872,23 @@ impl SimulationWorld {
         attacker_state: SimPlayerState,
         deployable_id: u32,
     ) -> Vec<SimulationEvent> {
+        self.spawn_deployable_events_with_visual(
+            attacker,
+            slot,
+            attacker_state,
+            deployable_id,
+            true,
+        )
+    }
+
+    fn spawn_deployable_events_with_visual(
+        &self,
+        attacker: PlayerId,
+        slot: u8,
+        attacker_state: SimPlayerState,
+        deployable_id: u32,
+        emit_visual: bool,
+    ) -> Vec<SimulationEvent> {
         let Some(deployable) = self
             .deployables
             .iter()
@@ -1768,8 +1896,9 @@ impl SimulationWorld {
         else {
             return Vec::new();
         };
-        vec![
-            SimulationEvent::EffectSpawned {
+        let mut events = Vec::new();
+        if emit_visual {
+            events.push(SimulationEvent::EffectSpawned {
                 effect: ArenaEffect {
                     kind: match deployable.kind {
                         ArenaDeployableKind::Summon => ArenaEffectKind::SkillShot,
@@ -1790,15 +1919,126 @@ impl SimulationWorld {
                     target_y: deployable.y,
                     radius: deployable.radius,
                 },
-            },
-            SimulationEvent::DeployableSpawned {
-                deployable_id,
-                owner: attacker,
-                kind: deployable.kind,
-                x: deployable.x,
-                y: deployable.y,
-                radius: deployable.radius,
-            },
-        ]
+            });
+        }
+        events.push(SimulationEvent::DeployableSpawned {
+            deployable_id,
+            owner: attacker,
+            kind: deployable.kind,
+            x: deployable.x,
+            y: deployable.y,
+            radius: deployable.radius,
+        });
+        events
+    }
+
+    fn active_toggleable_aura_index(&self, owner: PlayerId, slot: u8) -> Option<usize> {
+        self.deployables.iter().position(|deployable| {
+            deployable.owner == owner
+                && deployable.slot == slot
+                && matches!(
+                    deployable.behavior,
+                    DeployableBehavior::Aura {
+                        toggleable: true,
+                        ..
+                    }
+                )
+        })
+    }
+
+    fn cancel_toggleable_aura(
+        &mut self,
+        index: usize,
+        attacker_state: SimPlayerState,
+    ) -> Vec<SimulationEvent> {
+        let Some(deployable) = self.deployables.get(index).cloned() else {
+            return Vec::new();
+        };
+        self.deployables.remove(index);
+        if Self::deployable_tracks_toggleable_stealth(&deployable) {
+            if let Some(player) = self.players.get_mut(&deployable.owner) {
+                player.statuses.retain(|status| {
+                    !(status.source == deployable.owner
+                        && status.slot == deployable.slot
+                        && status.kind == StatusKind::Stealth)
+                });
+            }
+        }
+        match deployable.behavior {
+            DeployableBehavior::Aura {
+                effect_kind,
+                cast_end_payload: Some(payload),
+                ..
+            } => {
+                let emit_visual = !Self::payload_hides_aura_visuals(&payload);
+                self.aura_pulse_events(
+                    deployable.owner,
+                    deployable.slot,
+                    (attacker_state.x, attacker_state.y),
+                    deployable.radius,
+                    effect_kind,
+                    payload,
+                    emit_visual,
+                )
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    pub(super) fn aura_pulse_events(
+        &mut self,
+        owner: PlayerId,
+        slot: u8,
+        center: (i16, i16),
+        radius: u16,
+        effect_kind: ArenaEffectKind,
+        payload: game_content::EffectPayload,
+        emit_visual: bool,
+    ) -> Vec<SimulationEvent> {
+        let mut events = Vec::new();
+        if emit_visual {
+            events.push(SimulationEvent::EffectSpawned {
+                effect: ArenaEffect {
+                    kind: effect_kind,
+                    owner,
+                    slot,
+                    x: center.0,
+                    y: center.1,
+                    target_x: center.0,
+                    target_y: center.1,
+                    radius,
+                },
+            });
+        }
+        let targets = self.find_targets_in_radius(
+            center,
+            radius,
+            None,
+            payload.kind == CombatValueKind::Damage,
+        );
+        if targets.is_empty() {
+            events.push(SimulationEvent::ImpactMiss {
+                source: owner,
+                slot,
+                reason: SimMissReason::NoTarget,
+            });
+        } else {
+            for target in &targets {
+                let (target_kind, target_id) = match target {
+                    TargetEntity::Player(player_id) => (SimTargetKind::Player, player_id.get()),
+                    TargetEntity::Deployable(deployable_id) => {
+                        (SimTargetKind::Deployable, *deployable_id)
+                    }
+                };
+                events.push(SimulationEvent::ImpactHit {
+                    source: owner,
+                    slot,
+                    target_kind,
+                    target_id,
+                });
+            }
+        }
+        events.extend(self.apply_payload(owner, slot, &targets, payload));
+        events
     }
 }

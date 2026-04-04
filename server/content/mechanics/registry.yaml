@@ -246,6 +246,8 @@ behaviors:
     notes: "Applies repeated buffs or debuffs while the source persists. The source can be the caster or a placed entity."
     schema:
       payload: required
+      cast_start_payload: optional
+      cast_end_payload: optional
       allowed_effects: [nova]
       numeric_fields:
         cooldown_ms: required

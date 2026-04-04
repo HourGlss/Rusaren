@@ -2414,7 +2414,7 @@ mod probe_tests {
 
         assert_eq!(cleric.round_skills[&1].role, SkillRole::Support);
         assert_eq!(cleric.round_skills[&3].role, SkillRole::Support);
-        assert_eq!(rogue.round_skills[&2].role, SkillRole::Engage);
+        assert_eq!(rogue.round_skills[&3].role, SkillRole::Engage);
     }
 
     #[test]

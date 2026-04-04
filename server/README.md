@@ -72,6 +72,55 @@ For spell tiers:
 The matching frontend registry lives at `client/godot/content/audio/spell_cues.json`, and the default asset root there is `res://assets/audio/spells`.
 The current `0.9.7` work only wires the shared cue ID seam; real playback assets and movement audio still belong to the remaining sound items in the roadmap.
 
+## Toggleable Aura Authoring
+Authored `aura` behaviors can now declare lifecycle payload hooks and self-toggling behavior directly in `content/skills/*.yaml`.
+
+Use these fields under `behavior:` for an aura:
+- `toggleable: true` to make the aura recast as an off-toggle instead of spending mana and restarting cooldown
+- `cast_start_payload:` to apply an effect immediately when the aura begins
+- `cast_end_payload:` to apply an effect when the aura is canceled or expires naturally
+
+Example:
+
+```yaml
+- tier: 4
+  id: rogue_nightcloak
+  name: Nightcloak
+  description: Toggle into stealth until canceled or broken by action or damage.
+  behavior:
+    kind: aura
+    effect: nova
+    cooldown_ms: 2400
+    mana_cost: 10
+    toggleable: true
+    radius: 12
+    duration_ms: 30000
+    tick_interval_ms: 1000
+    cast_start_payload:
+      kind: heal
+      amount: 0
+      status:
+        kind: stealth
+        duration_ms: 1200
+        magnitude: 0
+    cast_end_payload:
+      kind: heal
+      amount: 0
+      status:
+        kind: haste
+        duration_ms: 1500
+        magnitude: 1200
+    payload:
+      kind: heal
+      amount: 0
+      status:
+        kind: stealth
+        duration_ms: 1200
+        magnitude: 0
+```
+
+Toggleable auras are deliberately limited to self-anchored aura shapes. Validation rejects authored toggleable auras that declare `distance` or `hit_points`, because those imply traveling or independent deployable placements rather than a WoW-style persistent self-state.
+
 ## Mutation Campaigns
 Use the helper scripts when a full cargo-mutants run would take hours and needs to be split into manual shards.
 

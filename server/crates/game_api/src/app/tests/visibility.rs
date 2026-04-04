@@ -919,7 +919,6 @@ fn stealthed_players_stay_hidden_until_a_reveal_effect_lands() {
         .queue_cast(alice_id, 4)
         .expect("stealth aura should queue");
     let _ = runtime.world.tick(COMBAT_FRAME_MS);
-    advance_world(&mut runtime.world, 10);
     assert!(
         runtime
             .world
@@ -927,7 +926,7 @@ fn stealthed_players_stay_hidden_until_a_reveal_effect_lands() {
             .unwrap_or_default()
             .iter()
             .any(|status| status.kind == game_content::StatusKind::Stealth),
-        "the rogue should gain stealth after the aura pulses"
+        "the rogue should gain stealth as soon as Nightcloak starts"
     );
 
     runtime.world.update_aim(bob_id, -1, 0).expect("bob aim");

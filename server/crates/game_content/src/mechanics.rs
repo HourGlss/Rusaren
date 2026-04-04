@@ -119,6 +119,8 @@ fn parse_behavior_schema(
         return Ok(BehaviorSchema {
             numeric_fields: BTreeMap::new(),
             payload: PayloadFieldRule::Forbidden,
+            cast_start_payload: PayloadFieldRule::Forbidden,
+            cast_end_payload: PayloadFieldRule::Forbidden,
             allowed_effects: Vec::new(),
         });
     };
@@ -146,6 +148,8 @@ fn parse_behavior_schema(
     Ok(BehaviorSchema {
         numeric_fields,
         payload: parse_payload_rule(yaml.payload),
+        cast_start_payload: parse_payload_rule(yaml.cast_start_payload),
+        cast_end_payload: parse_payload_rule(yaml.cast_end_payload),
         allowed_effects,
     })
 }
