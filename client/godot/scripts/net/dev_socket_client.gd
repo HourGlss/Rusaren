@@ -1,6 +1,7 @@
 extends RefCounted
 class_name DevSocketClient
 
+const PerfClockScript := preload("res://scripts/debug/perf_clock.gd")
 const Protocol := preload("res://scripts/net/protocol.gd")
 
 signal opened
@@ -213,9 +214,9 @@ func _poll_data_channel(data_channel: WebRTCDataChannel) -> void:
 
 	while data_channel.get_available_packet_count() > 0:
 		var packet := data_channel.get_packet()
-		var decode_started_us := Time.get_ticks_usec()
+		var decode_started_us := PerfClockScript.now_us()
 		var decoded := Protocol.decode_server_event(packet)
-		var decode_us := Time.get_ticks_usec() - decode_started_us
+		var decode_us := PerfClockScript.elapsed_us(decode_started_us)
 		_record_decode_timing(decode_us)
 		_record_inbound_channel_packet(data_channel, packet, decoded)
 		if decoded.get("ok", false):

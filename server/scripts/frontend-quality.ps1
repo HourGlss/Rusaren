@@ -548,7 +548,11 @@ function Invoke-FrontendQualityReport {
         if ($null -ne $runtimeMetrics) {
             $runtimeUiRefreshAvg = [double](Get-OptionalJsonValue -InputObject $runtimeMetrics -Path @("custom", "ui_refresh_ms", "avg") -DefaultValue 0.0)
             $runtimeArenaDrawAvg = [double](Get-OptionalJsonValue -InputObject $runtimeMetrics -Path @("custom", "arena_draw_ms", "avg") -DefaultValue 0.0)
+            $runtimeArenaBaseDrawAvg = [double](Get-OptionalJsonValue -InputObject $runtimeMetrics -Path @("custom", "arena_base_draw_ms", "avg") -DefaultValue 0.0)
             $runtimeVisibilityAvg = [double](Get-OptionalJsonValue -InputObject $runtimeMetrics -Path @("custom", "arena_visibility_ms", "avg") -DefaultValue 0.0)
+            $runtimeCacheSyncAvg = [double](Get-OptionalJsonValue -InputObject $runtimeMetrics -Path @("custom", "arena_cache_sync_ms", "avg") -DefaultValue 0.0)
+            $runtimeCacheBackgroundAvg = [double](Get-OptionalJsonValue -InputObject $runtimeMetrics -Path @("custom", "arena_cache_background_ms", "avg") -DefaultValue 0.0)
+            $runtimeCacheVisibilityAvg = [double](Get-OptionalJsonValue -InputObject $runtimeMetrics -Path @("custom", "arena_cache_visibility_ms", "avg") -DefaultValue 0.0)
             $runtimeProcessAvg = [double](Get-OptionalJsonValue -InputObject $runtimeMetrics -Path @("built_in", "process_time_ms", "avg") -DefaultValue 0.0)
             $runtimePostCleanupOrphans = [double](Get-OptionalJsonValue -InputObject $runtimeMetrics -Path @("post_cleanup_builtin", "orphan_node_count") -DefaultValue 0.0)
 
@@ -582,12 +586,16 @@ function Invoke-FrontendQualityReport {
                 Weight = 20
                 Score = $runtimeScore
                 Grade = Get-PercentGrade -Score $runtimeScore
-                Detail = "Reference match shell averages: ui_refresh ${runtimeUiRefreshAvg}ms, arena_draw ${runtimeArenaDrawAvg}ms, arena_visibility ${runtimeVisibilityAvg}ms, built-in process ${runtimeProcessAvg}ms, post-cleanup orphans ${runtimePostCleanupOrphans}."
+                Detail = "Reference match shell averages: ui_refresh ${runtimeUiRefreshAvg}ms, arena_draw ${runtimeArenaDrawAvg}ms, arena_base_draw ${runtimeArenaBaseDrawAvg}ms, arena_visibility ${runtimeVisibilityAvg}ms, arena_cache_sync ${runtimeCacheSyncAvg}ms, arena_cache_background ${runtimeCacheBackgroundAvg}ms, arena_cache_visibility ${runtimeCacheVisibilityAvg}ms, built-in process ${runtimeProcessAvg}ms, post-cleanup orphans ${runtimePostCleanupOrphans}."
             }
             $runtimeSummary = [pscustomobject]@{
                 UiRefreshAvgMs = [math]::Round($runtimeUiRefreshAvg, 3)
                 ArenaDrawAvgMs = [math]::Round($runtimeArenaDrawAvg, 3)
+                ArenaBaseDrawAvgMs = [math]::Round($runtimeArenaBaseDrawAvg, 3)
                 ArenaVisibilityAvgMs = [math]::Round($runtimeVisibilityAvg, 3)
+                ArenaCacheSyncAvgMs = [math]::Round($runtimeCacheSyncAvg, 3)
+                ArenaCacheBackgroundAvgMs = [math]::Round($runtimeCacheBackgroundAvg, 3)
+                ArenaCacheVisibilityAvgMs = [math]::Round($runtimeCacheVisibilityAvg, 3)
                 ProcessTimeAvgMs = [math]::Round($runtimeProcessAvg, 3)
                 PostCleanupOrphanNodeCount = [int][math]::Round($runtimePostCleanupOrphans)
                 ArtifactPath = (Convert-ToRepoPath -Path $runtimeMetricsPath)
@@ -733,7 +741,11 @@ function Invoke-FrontendQualityReport {
 <div class="panel"><h2>Runtime monitor reference</h2><table><thead><tr><th>Metric</th><th>Value</th><th>Source</th></tr></thead><tbody>
 <tr><td>ui_refresh_ms avg</td><td>$($runtimeSummary.UiRefreshAvgMs)</td><td>Custom monitor <code>Rarena/UIRefreshMs</code></td></tr>
 <tr><td>arena_draw_ms avg</td><td>$($runtimeSummary.ArenaDrawAvgMs)</td><td>Custom monitor <code>Rarena/ArenaDrawMs</code></td></tr>
+<tr><td>arena_base_draw_ms avg</td><td>$($runtimeSummary.ArenaBaseDrawAvgMs)</td><td>Custom monitor <code>Rarena/ArenaBaseDrawMs</code></td></tr>
 <tr><td>arena_visibility_ms avg</td><td>$($runtimeSummary.ArenaVisibilityAvgMs)</td><td>Custom monitor <code>Rarena/ArenaVisibilityMs</code></td></tr>
+<tr><td>arena_cache_sync_ms avg</td><td>$($runtimeSummary.ArenaCacheSyncAvgMs)</td><td>Custom monitor <code>Rarena/ArenaCacheSyncMs</code></td></tr>
+<tr><td>arena_cache_background_ms avg</td><td>$($runtimeSummary.ArenaCacheBackgroundAvgMs)</td><td>Custom monitor <code>Rarena/ArenaCacheBackgroundMs</code></td></tr>
+<tr><td>arena_cache_visibility_ms avg</td><td>$($runtimeSummary.ArenaCacheVisibilityAvgMs)</td><td>Custom monitor <code>Rarena/ArenaCacheVisibilityMs</code></td></tr>
 <tr><td>process_time_ms avg</td><td>$($runtimeSummary.ProcessTimeAvgMs)</td><td>Built-in <code>Performance.TIME_PROCESS</code></td></tr>
 <tr><td>post-cleanup orphan nodes</td><td>$($runtimeSummary.PostCleanupOrphanNodeCount)</td><td>Built-in <code>Performance.OBJECT_ORPHAN_NODE_COUNT</code></td></tr>
 <tr><td>Artifact</td><td colspan="2"><code>$(Escape-Html $runtimeSummary.ArtifactPath)</code></td></tr>

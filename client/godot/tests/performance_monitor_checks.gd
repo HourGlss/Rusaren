@@ -8,6 +8,10 @@ const CUSTOM_MONITORS := {
 	"ui_refresh_ms": "Rarena/UIRefreshMs",
 	"arena_draw_ms": "Rarena/ArenaDrawMs",
 	"arena_visibility_ms": "Rarena/ArenaVisibilityMs",
+	"arena_base_draw_ms": "Rarena/ArenaBaseDrawMs",
+	"arena_cache_sync_ms": "Rarena/ArenaCacheSyncMs",
+	"arena_cache_background_ms": "Rarena/ArenaCacheBackgroundMs",
+	"arena_cache_visibility_ms": "Rarena/ArenaCacheVisibilityMs",
 	"players": "Rarena/Players",
 	"visible_tiles": "Rarena/VisibleTiles",
 }
@@ -53,6 +57,10 @@ func _collect_runtime_monitors() -> bool:
 	success = _assert_metric_sampled(custom_summary, "ui_refresh_ms", "custom ui-refresh monitor") and success
 	success = _assert_metric_sampled(custom_summary, "arena_draw_ms", "custom arena-draw monitor") and success
 	success = _assert_metric_sampled(custom_summary, "arena_visibility_ms", "custom visibility monitor") and success
+	success = _assert_metric_sampled(custom_summary, "arena_base_draw_ms", "custom arena-base-draw monitor") and success
+	success = _assert_metric_sampled(custom_summary, "arena_cache_sync_ms", "custom arena-cache-sync monitor") and success
+	success = _assert_metric_sampled(custom_summary, "arena_cache_background_ms", "custom arena-cache-background monitor") and success
+	success = _assert_metric_sampled(custom_summary, "arena_cache_visibility_ms", "custom arena-cache-visibility monitor") and success
 
 	_shell.queue_free()
 	await process_frame

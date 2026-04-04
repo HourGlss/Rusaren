@@ -149,6 +149,14 @@ The runtime artifact includes both:
 - official Godot `Performance` monitors
 - custom `Rarena/*` monitors backed by the game's own UI and arena timing buckets
 
+When the browser shell looks visually laggy, prioritize these frontend timings first:
+- `arena_draw_ms`
+- `arena_draw_base_ms`
+- `arena_visibility_ms`
+- `arena_cache_sync_ms`
+- `arena_cache_background_ms`
+- `arena_cache_visibility_ms`
+
 For local editor profiling, open Godot's debugger and use:
 - `Monitors` for built-in engine counters and custom `Rarena/*` counters
 - `Profiler` for script timing

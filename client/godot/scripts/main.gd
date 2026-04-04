@@ -3,6 +3,7 @@ extends Control
 const ClientStateScript := preload("res://scripts/state/client_state.gd")
 const DevSocketClientScript := preload("res://scripts/net/dev_socket_client.gd")
 const GodotPerfMonitorsScript := preload("res://scripts/debug/godot_perf_monitors.gd")
+const PerfClockScript := preload("res://scripts/debug/perf_clock.gd")
 const MainShellFactoryScript := preload("res://scripts/main_shell_factory.gd")
 const Protocol := preload("res://scripts/net/protocol.gd")
 const WebSocketConfigScript := preload("res://scripts/net/websocket_config.gd")
@@ -29,6 +30,10 @@ const CUSTOM_PERF_MONITOR_IDS := [
 	"Rarena/UIRefreshMs",
 	"Rarena/ArenaDrawMs",
 	"Rarena/ArenaVisibilityMs",
+	"Rarena/ArenaBaseDrawMs",
+	"Rarena/ArenaCacheSyncMs",
+	"Rarena/ArenaCacheBackgroundMs",
+	"Rarena/ArenaCacheVisibilityMs",
 	"Rarena/Players",
 	"Rarena/VisibleTiles",
 ]
@@ -133,10 +138,12 @@ func _exit_tree() -> void:
 
 
 func _process(delta: float) -> void:
-	var visuals_started_us := Time.get_ticks_usec()
-	app_state.advance_visuals(delta)
-	app_state.record_client_timing("advance_visuals", Time.get_ticks_usec() - visuals_started_us)
+	var visuals_started_us := PerfClockScript.now_us()
+	var visuals_changed := app_state.advance_visuals(delta)
+	app_state.record_client_timing("advance_visuals", PerfClockScript.elapsed_us(visuals_started_us))
 	transport.poll()
+	if arena_view != null:
+		arena_view.sync_render_state(visuals_changed)
 	_tick_auto_connect(delta)
 	_drive_combat_input()
 	_tick_passive_ui_refresh(delta)
@@ -650,7 +657,7 @@ func _on_bootstrap_request_completed(
 
 func _on_packet_received(decoded_event: Dictionary) -> void:
 	var event_data: Dictionary = decoded_event.get("event", {})
-	var apply_started_us := Time.get_ticks_usec()
+	var apply_started_us := PerfClockScript.now_us()
 	app_state.apply_server_event(event_data)
 	var header: Dictionary = decoded_event.get("header", {})
 	var packet_size := int(decoded_event.get("raw_packet_bytes", Protocol.HEADER_LEN + int(header.get("payload_len", 0))))
@@ -659,9 +666,11 @@ func _on_packet_received(decoded_event: Dictionary) -> void:
 		String(event_data.get("type", "Unknown")),
 		packet_size,
 		int(decoded_event.get("decode_us", 0)),
-		Time.get_ticks_usec() - apply_started_us
+		PerfClockScript.elapsed_us(apply_started_us)
 	)
 	_refresh_ui()
+	if arena_view != null:
+		arena_view.sync_render_state()
 
 
 func _on_copy_diagnostics_pressed() -> void:
@@ -671,9 +680,9 @@ func _on_copy_diagnostics_pressed() -> void:
 	_refresh_ui()
 
 func _refresh_ui() -> void:
-	var started_us := Time.get_ticks_usec()
+	var started_us := PerfClockScript.now_us()
 	_refresh_ui_impl()
-	app_state.record_client_timing("ui_refresh", Time.get_ticks_usec() - started_us)
+	app_state.record_client_timing("ui_refresh", PerfClockScript.elapsed_us(started_us))
 	_passive_ui_refresh_remaining = PASSIVE_UI_REFRESH_INTERVAL_SECONDS
 
 
@@ -688,18 +697,18 @@ func _refresh_ui_impl() -> void:
 
 
 func _refresh_ui_catalog() -> void:
-	var phase_started_us := Time.get_ticks_usec()
+	var phase_started_us := PerfClockScript.now_us()
 	var skill_catalog_signature := app_state.skill_catalog_signature()
 	if skill_catalog_signature != _rendered_skill_catalog_signature:
 		_rebuild_skill_buttons()
 	var menu_popup_signature := _menu_popup_signature()
 	if menu_popup_signature != _rendered_menu_popup_signature:
 		_rebuild_menu_popup()
-	app_state.record_client_timing("ui_refresh_catalog", Time.get_ticks_usec() - phase_started_us)
+	app_state.record_client_timing("ui_refresh_catalog", PerfClockScript.elapsed_us(phase_started_us))
 
 
 func _refresh_ui_labels() -> Dictionary:
-	var phase_started_us := Time.get_ticks_usec()
+	var phase_started_us := PerfClockScript.now_us()
 	var is_training := app_state.is_training_mode()
 	var show_skill_pick := app_state.screen == "match" and app_state.match_phase == "skill_pick"
 	var show_training_loadout_menu := _sync_training_loadout_menu(is_training)
@@ -718,7 +727,7 @@ func _refresh_ui_labels() -> Dictionary:
 	training_metrics_label.text = app_state.training_metrics_text()
 	outcome_label.text = _results_banner_text()
 	lobby_roster_log.text = "\n".join(app_state.lobby_roster_lines())
-	app_state.record_client_timing("ui_refresh_labels", Time.get_ticks_usec() - phase_started_us)
+	app_state.record_client_timing("ui_refresh_labels", PerfClockScript.elapsed_us(phase_started_us))
 	return {
 		"is_training": is_training,
 		"show_skill_pick": show_skill_pick,
@@ -772,7 +781,7 @@ func _refresh_skill_pick_summary(is_training: bool, show_skill_pick: bool) -> vo
 
 
 func _refresh_ui_logs(view_state: Dictionary) -> void:
-	var phase_started_us := Time.get_ticks_usec()
+	var phase_started_us := PerfClockScript.now_us()
 	var round_summary_text := String(view_state.get("round_summary_text", ""))
 	var match_summary_text := String(view_state.get("match_summary_text", ""))
 	round_summary_log.text = round_summary_text
@@ -780,18 +789,18 @@ func _refresh_ui_logs(view_state: Dictionary) -> void:
 	central_directory_log.text = app_state.lobby_directory_bbcode()
 	roster_log.text = "\n".join(app_state.roster_lines())
 	event_log.text = app_state.event_log_text()
-	app_state.record_client_timing("ui_refresh_logs", Time.get_ticks_usec() - phase_started_us)
+	app_state.record_client_timing("ui_refresh_logs", PerfClockScript.elapsed_us(phase_started_us))
 
 
 func _refresh_ui_diagnostics(diagnostics_panel_visible: bool) -> void:
-	var phase_started_us := Time.get_ticks_usec()
+	var phase_started_us := PerfClockScript.now_us()
 	if diagnostics_log != null and diagnostics_panel_visible:
 		diagnostics_log.text = app_state.diagnostics_text(transport.telemetry_snapshot())
-	app_state.record_client_timing("ui_refresh_diagnostics", Time.get_ticks_usec() - phase_started_us)
+	app_state.record_client_timing("ui_refresh_diagnostics", PerfClockScript.elapsed_us(phase_started_us))
 
 
 func _refresh_ui_buttons(is_training: bool) -> void:
-	var phase_started_us := Time.get_ticks_usec()
+	var phase_started_us := PerfClockScript.now_us()
 	create_lobby_button.disabled = not app_state.can_join_or_create_lobby()
 	join_lobby_button.disabled = not app_state.can_join_or_create_lobby()
 	start_training_button.disabled = not app_state.can_start_training()
@@ -810,11 +819,11 @@ func _refresh_ui_buttons(is_training: bool) -> void:
 	var skill_button_state_signature := _skill_button_state_signature(is_training)
 	if skill_button_state_signature != _rendered_skill_button_state_signature:
 		_refresh_skill_buttons(is_training)
-	app_state.record_client_timing("ui_refresh_buttons", Time.get_ticks_usec() - phase_started_us)
+	app_state.record_client_timing("ui_refresh_buttons", PerfClockScript.elapsed_us(phase_started_us))
 
 
 func _refresh_ui_visibility(view_state: Dictionary) -> void:
-	var phase_started_us := Time.get_ticks_usec()
+	var phase_started_us := PerfClockScript.now_us()
 	var is_training := bool(view_state.get("is_training", false))
 	var show_skill_pick := bool(view_state.get("show_skill_pick", false))
 	var show_training_loadout_menu := bool(view_state.get("show_training_loadout_menu", false))
@@ -826,6 +835,7 @@ func _refresh_ui_visibility(view_state: Dictionary) -> void:
 	match_panel.visible = app_state.screen == "match"
 	results_panel.visible = app_state.screen == "results"
 	skill_pick_panel.visible = app_state.screen == "match" and (show_skill_pick or show_training_loadout_menu)
+	skill_pick_inline_host.visible = app_state.screen == "match" and show_skill_pick and not show_training_loadout_menu
 	combat_panel.visible = app_state.screen == "match" and (is_training or not show_skill_pick)
 	phase_label.visible = phase_label.text != ""
 	countdown_value_label.visible = countdown_value_label.text != ""
@@ -835,7 +845,7 @@ func _refresh_ui_visibility(view_state: Dictionary) -> void:
 	training_loadout_button.visible = is_training
 	reset_training_button.visible = is_training
 	quit_arena_button.visible = is_training
-	app_state.record_client_timing("ui_refresh_visibility", Time.get_ticks_usec() - phase_started_us)
+	app_state.record_client_timing("ui_refresh_visibility", PerfClockScript.elapsed_us(phase_started_us))
 
 
 func _rebuild_skill_buttons() -> void:
@@ -1035,6 +1045,22 @@ func _install_performance_monitors() -> void:
 		Callable(self, "_custom_monitor_arena_visibility_seconds")
 	)
 	GodotPerfMonitorsScript.add_or_replace_custom_monitor(
+		"Rarena/ArenaBaseDrawMs",
+		Callable(self, "_custom_monitor_arena_base_draw_seconds")
+	)
+	GodotPerfMonitorsScript.add_or_replace_custom_monitor(
+		"Rarena/ArenaCacheSyncMs",
+		Callable(self, "_custom_monitor_arena_cache_sync_seconds")
+	)
+	GodotPerfMonitorsScript.add_or_replace_custom_monitor(
+		"Rarena/ArenaCacheBackgroundMs",
+		Callable(self, "_custom_monitor_arena_cache_background_seconds")
+	)
+	GodotPerfMonitorsScript.add_or_replace_custom_monitor(
+		"Rarena/ArenaCacheVisibilityMs",
+		Callable(self, "_custom_monitor_arena_cache_visibility_seconds")
+	)
+	GodotPerfMonitorsScript.add_or_replace_custom_monitor(
 		"Rarena/Players",
 		Callable(self, "_custom_monitor_player_count")
 	)
@@ -1054,6 +1080,22 @@ func _custom_monitor_arena_draw_seconds() -> float:
 
 func _custom_monitor_arena_visibility_seconds() -> float:
 	return _timing_bucket_seconds("arena_draw_visibility")
+
+
+func _custom_monitor_arena_base_draw_seconds() -> float:
+	return _timing_bucket_seconds("arena_draw_base")
+
+
+func _custom_monitor_arena_cache_sync_seconds() -> float:
+	return _timing_bucket_seconds("arena_draw_cache_sync")
+
+
+func _custom_monitor_arena_cache_background_seconds() -> float:
+	return _timing_bucket_seconds("arena_cache_background")
+
+
+func _custom_monitor_arena_cache_visibility_seconds() -> float:
+	return _timing_bucket_seconds("arena_cache_visibility")
 
 
 func _custom_monitor_player_count() -> int:

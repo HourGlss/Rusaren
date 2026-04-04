@@ -323,6 +323,7 @@ static func _build_match_panel(owner: Control, refs: ShellRefs) -> PanelContaine
 	panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	var body := panel.get_meta("body") as VBoxContainer
 	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	body.add_theme_constant_override("separation", 8)
 
 	_build_match_header(refs, body)
 	_build_skill_pick_host(refs, body)
@@ -342,7 +343,7 @@ static func _build_skill_pick_host(refs: ShellRefs, body: VBoxContainer) -> void
 	refs.skill_pick_panel = _build_skill_pick_panel(refs)
 	refs.skill_pick_inline_host = VBoxContainer.new()
 	refs.skill_pick_inline_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	refs.skill_pick_inline_host.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	refs.skill_pick_inline_host.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	body.add_child(refs.skill_pick_inline_host)
 	refs.skill_pick_inline_host.add_child(refs.skill_pick_panel)
 
@@ -393,7 +394,7 @@ static func _build_combat_body(owner: Control, refs: ShellRefs, body: VBoxContai
 	refs.combat_panel = VBoxContainer.new()
 	refs.combat_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	refs.combat_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	refs.combat_panel.add_theme_constant_override("separation", 10)
+	refs.combat_panel.add_theme_constant_override("separation", 6)
 	body.add_child(refs.combat_panel)
 
 	refs.phase_label = Label.new()
@@ -412,6 +413,7 @@ static func _build_combat_body(owner: Control, refs: ShellRefs, body: VBoxContai
 	refs.arena_view.custom_minimum_size = Vector2.ZERO
 	refs.arena_view.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	refs.arena_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	refs.arena_view.size_flags_stretch_ratio = 1.0
 	refs.combat_panel.add_child(refs.arena_view)
 
 	refs.cooldown_summary_label = Label.new()

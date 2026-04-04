@@ -80,10 +80,15 @@ Custom Godot monitors registered by the client:
 - `Rarena/UIRefreshMs`
 - `Rarena/ArenaDrawMs`
 - `Rarena/ArenaVisibilityMs`
+- `Rarena/ArenaBaseDrawMs`
+- `Rarena/ArenaCacheSyncMs`
+- `Rarena/ArenaCacheBackgroundMs`
+- `Rarena/ArenaCacheVisibilityMs`
 - `Rarena/Players`
 - `Rarena/VisibleTiles`
 
 These custom monitors are visible in the Godot debugger's monitor panel and are also sampled by the headless frontend quality path.
+The cache-related monitors are the quickest way to tell whether time is being spent drawing the live arena or rebuilding cached background and fog layers.
 
 ## Frontend Quality Artifacts
 Run the frontend smoke and runtime-monitor checks through the backend wrapper:
@@ -104,6 +109,7 @@ It includes reference-scenario summaries for:
 - built-in Godot monitors
 - custom `Rarena/*` monitors
 - pre-cleanup and post-cleanup engine snapshots
+- cache-rebuild timings for arena background and visibility layers
 
 ## Frontend Debug Handoff
 When the browser client feels slow or desynced, collect both the live client text and the generated runtime artifact.
@@ -120,6 +126,14 @@ cd server
 - the copied browser diagnostics text
 - `server/target/reports/frontend/runtime_monitors.json`
 - `server/target/reports/frontend/summary.json`
+
+When the issue is render-specific, focus first on:
+- `arena_draw_ms`
+- `arena_draw_base_ms`
+- `arena_visibility_ms`
+- `arena_cache_sync_ms`
+- `arena_cache_background_ms`
+- `arena_cache_visibility_ms`
 
 For live deploy issues, also collect the host bundle from `deploy/useful_log_collect.sh` as documented in `server/README.md`.
 

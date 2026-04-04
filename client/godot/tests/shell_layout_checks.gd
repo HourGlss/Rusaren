@@ -358,6 +358,8 @@ func _assert_training_shell_surfaces_live_loadout_and_reset_controls() -> bool:
 		success = _fail("training should also keep the combat panel visible") and success
 	if shell.skill_pick_panel.visible:
 		success = _fail("training should keep the loadout catalog behind a menu instead of pinning it into the shell") and success
+	if shell.skill_pick_inline_host.visible:
+		success = _fail("training and combat should not leave the inline skill host consuming match layout space") and success
 	if shell.training_loadout_button == null or not shell.training_loadout_button.visible:
 		success = _fail("training should expose a dedicated class loadout button") and success
 	elif shell.training_loadout_button.text != "Class Loadout":
@@ -494,6 +496,8 @@ func _assert_combat_hud_surfaces_local_skill_names() -> bool:
 		success = _fail("combat panel should expose a cooldown summary label") and success
 	elif not shell.cooldown_summary_label.text.contains("Magic Missile") or not shell.cooldown_summary_label.text.contains("Ice Lance"):
 		success = _fail("combat panel should show local skill names alongside slot cooldowns") and success
+	if shell.skill_pick_inline_host.visible:
+		success = _fail("combat should collapse the unused inline skill host so the arena can consume the available space") and success
 
 	await _despawn_shell(shell)
 	return success

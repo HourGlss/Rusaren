@@ -1,6 +1,7 @@
 extends Control
 class_name ArenaView
 
+const PerfClockScript := preload("res://scripts/debug/perf_clock.gd")
 const PADDING := 8.0
 const PLAYER_RADIUS_UNITS := 28.0
 const FOG_EDGE_EXTENSION_RATIO := 0.52
@@ -13,20 +14,39 @@ const FRIENDLY_TEAM_COLOR := Color8(27, 58, 128)
 const ENEMY_TEAM_COLOR := Color8(196, 61, 50)
 const ARENA_VOID_COLOR := Color8(20, 21, 25)
 const ARENA_FLOOR_COLOR := Color8(232, 232, 236)
+const GRID_COLOR := Color8(205, 206, 212)
 
 var app_state: ClientState = null
+var _last_render_revision: int = -1
+var _last_viewport_size: Vector2i = Vector2i.ZERO
+var _background_cache_signature: String = ""
+var _visibility_cache_signature: String = ""
+var _background_texture: ImageTexture = null
+var _visibility_texture: ImageTexture = null
 
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_PASS
+	sync_render_state(true)
 
-
-func _process(_delta: float) -> void:
-	queue_redraw()
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_RESIZED:
+		sync_render_state(true)
 
 
 func set_client_state(state: ClientState) -> void:
 	app_state = state
+	sync_render_state(true)
+
+
+func sync_render_state(force: bool = false) -> void:
+	var viewport_size := _viewport_size_key()
+	var render_revision := app_state.current_arena_render_revision() if app_state != null else -1
+	if not force and render_revision == _last_render_revision and viewport_size == _last_viewport_size:
+		return
+	_last_render_revision = render_revision
+	_last_viewport_size = viewport_size
+	_sync_cached_layers()
 	queue_redraw()
 
 
@@ -52,7 +72,7 @@ func mouse_world_position() -> Vector2:
 
 
 func _draw() -> void:
-	var started_us := Time.get_ticks_usec()
+	var started_us := PerfClockScript.now_us()
 	var panel_rect := Rect2(Vector2.ZERO, size)
 	draw_rect(panel_rect, Color8(30, 26, 24))
 
@@ -62,68 +82,41 @@ func _draw() -> void:
 			"Waiting for the authoritative arena snapshot..."
 		)
 		if app_state != null:
-			app_state.record_arena_draw(Time.get_ticks_usec() - started_us, Vector2.ZERO)
+			app_state.record_arena_draw(PerfClockScript.elapsed_us(started_us), Vector2.ZERO)
 		return
 
 	var arena_rect := _arena_rect()
-	draw_rect(arena_rect, ARENA_VOID_COLOR)
-	var phase_started_us := Time.get_ticks_usec()
-	_draw_floor(arena_rect)
-	_record_draw_phase("arena_draw_floor", phase_started_us)
-	phase_started_us = Time.get_ticks_usec()
-	_draw_grid(arena_rect)
-	_record_draw_phase("arena_draw_grid", phase_started_us)
-	phase_started_us = Time.get_ticks_usec()
-	_draw_obstacles(arena_rect)
-	_record_draw_phase("arena_draw_obstacles", phase_started_us)
-	phase_started_us = Time.get_ticks_usec()
+	var phase_started_us := PerfClockScript.now_us()
+	_draw_base_cache(arena_rect)
+	_record_draw_phase("arena_draw_base", phase_started_us)
+	phase_started_us = PerfClockScript.now_us()
 	_draw_visibility_overlay(arena_rect)
 	_record_draw_phase("arena_draw_visibility", phase_started_us)
-	phase_started_us = Time.get_ticks_usec()
+	phase_started_us = PerfClockScript.now_us()
 	_draw_effects(arena_rect)
 	_record_draw_phase("arena_draw_effects", phase_started_us)
-	phase_started_us = Time.get_ticks_usec()
+	phase_started_us = PerfClockScript.now_us()
 	_draw_deployables(arena_rect)
 	_record_draw_phase("arena_draw_deployables", phase_started_us)
-	phase_started_us = Time.get_ticks_usec()
+	phase_started_us = PerfClockScript.now_us()
 	_draw_projectiles(arena_rect)
 	_record_draw_phase("arena_draw_projectiles", phase_started_us)
-	phase_started_us = Time.get_ticks_usec()
+	phase_started_us = PerfClockScript.now_us()
 	_draw_players(arena_rect)
 	_record_draw_phase("arena_draw_players", phase_started_us)
-	phase_started_us = Time.get_ticks_usec()
+	phase_started_us = PerfClockScript.now_us()
 	_draw_local_combat_texts(arena_rect)
 	_record_draw_phase("arena_draw_combat_text", phase_started_us)
-	phase_started_us = Time.get_ticks_usec()
+	phase_started_us = PerfClockScript.now_us()
 	_draw_border(arena_rect)
 	_record_draw_phase("arena_draw_border", phase_started_us)
 	if app_state != null:
-		app_state.record_arena_draw(Time.get_ticks_usec() - started_us, arena_rect.size)
+		app_state.record_arena_draw(PerfClockScript.elapsed_us(started_us), arena_rect.size)
 
 
 func _record_draw_phase(metric_name: String, started_us: int) -> void:
 	if app_state != null:
-		app_state.record_client_timing(metric_name, Time.get_ticks_usec() - started_us)
-
-
-func _draw_floor(arena_rect: Rect2) -> void:
-	var tile_width := app_state.arena_tile_width()
-	var tile_height := app_state.arena_tile_height()
-	if tile_width <= 0 or tile_height <= 0 or app_state.arena_tile_units <= 0:
-		draw_rect(arena_rect, ARENA_FLOOR_COLOR)
-		return
-	for row in range(tile_height):
-		var run_start := -1
-		for column in range(tile_width + 1):
-			var in_footprint := column < tile_width and app_state.is_tile_in_footprint(column, row)
-			if in_footprint and run_start < 0:
-				run_start = column
-			elif not in_footprint and run_start >= 0:
-				draw_rect(
-					_tile_run_canvas_rect(arena_rect, run_start, row, column - 1, row),
-					ARENA_FLOOR_COLOR
-				)
-				run_start = -1
+		app_state.record_client_timing(metric_name, PerfClockScript.elapsed_us(started_us))
 
 
 func _arena_rect() -> Rect2:
@@ -143,53 +136,11 @@ func _arena_rect() -> Rect2:
 	return Rect2(offset, draw_size)
 
 
-func _draw_grid(arena_rect: Rect2) -> void:
-	var grid_color := Color8(205, 206, 212)
-	var tile_width := app_state.arena_tile_width()
-	var tile_height := app_state.arena_tile_height()
-	if tile_width <= 0 or tile_height <= 0 or app_state.arena_tile_units <= 0:
+func _draw_base_cache(arena_rect: Rect2) -> void:
+	if _background_texture != null:
+		draw_texture_rect(_background_texture, arena_rect, false)
 		return
-	var tile_size := _tile_canvas_size(arena_rect)
-	for column in range(tile_width + 1):
-		var x := arena_rect.position.x + float(column) * tile_size.x
-		draw_line(
-			Vector2(x, arena_rect.position.y),
-			Vector2(x, arena_rect.end.y),
-			grid_color,
-			1.0
-		)
-	for row in range(tile_height + 1):
-		var y := arena_rect.position.y + float(row) * tile_size.y
-		draw_line(
-			Vector2(arena_rect.position.x, y),
-			Vector2(arena_rect.end.x, y),
-			grid_color,
-			1.0
-		)
-
-
-func _draw_obstacles(arena_rect: Rect2) -> void:
-	for obstacle in app_state.arena_obstacles:
-		var rect := _world_rect_to_canvas(
-			arena_rect,
-			float(obstacle.get("center_x", 0)),
-			float(obstacle.get("center_y", 0)),
-			float(obstacle.get("half_width", 0)),
-			float(obstacle.get("half_height", 0))
-		)
-		var shadow_rect := rect
-		shadow_rect.position += Vector2(7.0, 9.0)
-		draw_rect(shadow_rect, OBSTACLE_SHADOW_COLOR)
-		var kind_name := String(obstacle.get("kind", ""))
-		match kind_name:
-			"Shrub":
-				draw_rect(rect, Color8(185, 215, 180))
-			"Pillar":
-				draw_rect(rect, Color8(84, 84, 93))
-				var inner: Rect2 = rect.grow(-rect.size.x * 0.24)
-				draw_rect(inner, Color8(203, 217, 228))
-			_:
-				draw_rect(rect, Color8(140, 140, 140))
+	draw_rect(arena_rect, ARENA_VOID_COLOR)
 
 
 func _draw_effects(arena_rect: Rect2) -> void:
@@ -397,10 +348,100 @@ func _draw_border(arena_rect: Rect2) -> void:
 
 
 func _draw_visibility_overlay(arena_rect: Rect2) -> void:
+	if _visibility_texture != null:
+		draw_texture_rect(_visibility_texture, arena_rect, false)
+
+
+func _viewport_size_key() -> Vector2i:
+	return Vector2i(int(round(size.x)), int(round(size.y)))
+
+
+func _sync_cached_layers() -> void:
+	if app_state == null or not has_arena_snapshot():
+		_clear_cached_layers()
+		return
+	var arena_rect := _arena_rect()
+	if arena_rect.size.x <= 0.0 or arena_rect.size.y <= 0.0:
+		_clear_cached_layers()
+		return
+	var started_us := PerfClockScript.now_us()
+	_sync_background_cache(arena_rect)
+	_sync_visibility_cache(arena_rect)
+	if app_state != null:
+		app_state.record_client_timing("arena_draw_cache_sync", PerfClockScript.elapsed_us(started_us))
+
+
+func _sync_background_cache(arena_rect: Rect2) -> void:
+	var signature := _background_signature(arena_rect)
+	if signature == _background_cache_signature:
+		return
+	var started_us := PerfClockScript.now_us()
+	_background_cache_signature = signature
+	_background_texture = _update_cached_texture(_background_texture, _build_background_image(arena_rect))
+	if app_state != null:
+		app_state.record_client_timing("arena_cache_background", PerfClockScript.elapsed_us(started_us))
+
+
+func _sync_visibility_cache(arena_rect: Rect2) -> void:
+	var signature := _visibility_signature(arena_rect)
+	if signature == _visibility_cache_signature:
+		return
+	var started_us := PerfClockScript.now_us()
+	_visibility_cache_signature = signature
+	_visibility_texture = _update_cached_texture(_visibility_texture, _build_visibility_image(arena_rect))
+	if app_state != null:
+		app_state.record_client_timing("arena_cache_visibility", PerfClockScript.elapsed_us(started_us))
+
+
+func _clear_cached_layers() -> void:
+	_background_cache_signature = ""
+	_visibility_cache_signature = ""
+	_background_texture = null
+	_visibility_texture = null
+
+
+func _background_signature(arena_rect: Rect2) -> String:
+	return "%d|%d|%d|%d|%d|%d|%d" % [
+		int(round(arena_rect.size.x)),
+		int(round(arena_rect.size.y)),
+		app_state.arena_width,
+		app_state.arena_height,
+		app_state.arena_tile_units,
+		hash(app_state.footprint_tiles),
+		hash(app_state.arena_obstacles),
+	]
+
+
+func _visibility_signature(arena_rect: Rect2) -> String:
+	return "%d|%d|%d|%d|%d|%d|%d" % [
+		int(round(arena_rect.size.x)),
+		int(round(arena_rect.size.y)),
+		app_state.arena_width,
+		app_state.arena_height,
+		app_state.arena_tile_units,
+		hash(app_state.visible_tiles),
+		hash(app_state.explored_tiles),
+	]
+
+
+func _build_background_image(arena_rect: Rect2) -> Image:
+	var image_size := _arena_image_size(arena_rect)
+	var image := _create_rgba_image(image_size)
+	image.fill(ARENA_VOID_COLOR)
+	_paint_floor_runs(image, image_size)
+	_paint_grid(image, image_size)
+	_paint_obstacles(image, image_size)
+	return image
+
+
+func _build_visibility_image(arena_rect: Rect2) -> Image:
+	var image_size := _arena_image_size(arena_rect)
+	var image := _create_rgba_image(image_size)
+	image.fill(Color(0.0, 0.0, 0.0, 0.0))
 	var tile_width := app_state.arena_tile_width()
 	var tile_height := app_state.arena_tile_height()
 	if tile_width <= 0 or tile_height <= 0 or app_state.arena_tile_units <= 0:
-		return
+		return image
 	for row in range(tile_height):
 		var run_start := -1
 		var run_explored := false
@@ -415,81 +456,152 @@ func _draw_visibility_overlay(arena_rect: Rect2) -> void:
 				run_start = column
 				run_explored = explored
 			elif in_fog and explored != run_explored:
-				draw_rect(
-					_tile_run_canvas_rect(arena_rect, run_start, row, column - 1, row),
+				image.fill_rect(
+					_tile_run_image_rect(image_size, run_start, row, column - 1, row),
 					_fog_fill_color(run_explored)
 				)
 				run_start = column
 				run_explored = explored
 			elif not in_fog and run_start >= 0:
-				draw_rect(
-					_tile_run_canvas_rect(arena_rect, run_start, row, column - 1, row),
+				image.fill_rect(
+					_tile_run_image_rect(image_size, run_start, row, column - 1, row),
 					_fog_fill_color(run_explored)
 				)
 				run_start = -1
-	_draw_fog_soft_edges(arena_rect, tile_width, tile_height)
+	return image
 
 
-func _draw_fog_soft_edges(
-	arena_rect: Rect2,
-	tile_width: int,
-	tile_height: int
-) -> void:
-	for column in range(tile_width):
-		var row := 0
-		while row < tile_height:
-			if _has_fog_edge(column, row, Vector2i.LEFT):
-				var explored := app_state.is_tile_explored(column, row)
-				var start_row := row
-				while row < tile_height \
-					and _has_fog_edge(column, row, Vector2i.LEFT) \
-					and app_state.is_tile_explored(column, row) == explored:
-					row += 1
-				_draw_fog_edge_run(arena_rect, column, start_row, column, row - 1, Vector2i.LEFT, explored)
-				continue
-			row += 1
-
-	for column in range(tile_width):
-		var row := 0
-		while row < tile_height:
-			if _has_fog_edge(column, row, Vector2i.RIGHT):
-				var explored := app_state.is_tile_explored(column, row)
-				var start_row := row
-				while row < tile_height \
-					and _has_fog_edge(column, row, Vector2i.RIGHT) \
-					and app_state.is_tile_explored(column, row) == explored:
-					row += 1
-				_draw_fog_edge_run(arena_rect, column, start_row, column, row - 1, Vector2i.RIGHT, explored)
-				continue
-			row += 1
-
+func _paint_floor_runs(image: Image, image_size: Vector2i) -> void:
+	var tile_width := app_state.arena_tile_width()
+	var tile_height := app_state.arena_tile_height()
+	if tile_width <= 0 or tile_height <= 0 or app_state.arena_tile_units <= 0:
+		image.fill(ARENA_FLOOR_COLOR)
+		return
 	for row in range(tile_height):
-		var column := 0
-		while column < tile_width:
-			if _has_fog_edge(column, row, Vector2i.UP):
-				var explored := app_state.is_tile_explored(column, row)
-				var start_column := column
-				while column < tile_width \
-					and _has_fog_edge(column, row, Vector2i.UP) \
-					and app_state.is_tile_explored(column, row) == explored:
-					column += 1
-				_draw_fog_edge_run(arena_rect, start_column, row, column - 1, row, Vector2i.UP, explored)
-				continue
-			column += 1
+		var run_start := -1
+		for column in range(tile_width + 1):
+			var in_footprint := column < tile_width and app_state.is_tile_in_footprint(column, row)
+			if in_footprint and run_start < 0:
+				run_start = column
+			elif not in_footprint and run_start >= 0:
+				image.fill_rect(
+					_tile_run_image_rect(image_size, run_start, row, column - 1, row),
+					ARENA_FLOOR_COLOR
+				)
+				run_start = -1
 
-	for row in range(tile_height):
-		var column := 0
-		while column < tile_width:
-			if _has_fog_edge(column, row, Vector2i.DOWN):
-				var explored := app_state.is_tile_explored(column, row)
-				var start_column := column
-				while column < tile_width \
-					and _has_fog_edge(column, row, Vector2i.DOWN) \
-					and app_state.is_tile_explored(column, row) == explored:
-					column += 1
-				_draw_fog_edge_run(arena_rect, start_column, row, column - 1, row, Vector2i.DOWN, explored)
-				continue
-			column += 1
+
+func _paint_grid(image: Image, image_size: Vector2i) -> void:
+	var tile_width := app_state.arena_tile_width()
+	var tile_height := app_state.arena_tile_height()
+	if tile_width <= 0 or tile_height <= 0 or app_state.arena_tile_units <= 0:
+		return
+	for column in range(tile_width + 1):
+		var x := mini(image_size.x - 1, int(round(float(column) * float(image_size.x) / float(tile_width))))
+		image.fill_rect(Rect2i(x, 0, 1, image_size.y), GRID_COLOR)
+	for row in range(tile_height + 1):
+		var y := mini(image_size.y - 1, int(round(float(row) * float(image_size.y) / float(tile_height))))
+		image.fill_rect(Rect2i(0, y, image_size.x, 1), GRID_COLOR)
+
+
+func _paint_obstacles(image: Image, image_size: Vector2i) -> void:
+	for obstacle in app_state.arena_obstacles:
+		var rect := _world_rect_to_image(
+			image_size,
+			float(obstacle.get("center_x", 0)),
+			float(obstacle.get("center_y", 0)),
+			float(obstacle.get("half_width", 0)),
+			float(obstacle.get("half_height", 0))
+		)
+		if rect.size.x <= 0 or rect.size.y <= 0:
+			continue
+		var kind_name := String(obstacle.get("kind", ""))
+		match kind_name:
+			"Shrub":
+				image.fill_rect(rect, Color8(185, 215, 180))
+			"Pillar":
+				image.fill_rect(rect, Color8(84, 84, 93))
+				var inset_x := maxi(1, int(round(float(rect.size.x) * 0.24)))
+				var inset_y := maxi(1, int(round(float(rect.size.y) * 0.24)))
+				var inner := rect.grow_individual(-inset_x, -inset_y, -inset_x, -inset_y)
+				if inner.size.x > 0 and inner.size.y > 0:
+					image.fill_rect(inner, Color8(203, 217, 228))
+			_:
+				image.fill_rect(rect, Color8(140, 140, 140))
+
+
+func _arena_image_size(arena_rect: Rect2) -> Vector2i:
+	return Vector2i(
+		maxi(1, int(round(arena_rect.size.x))),
+		maxi(1, int(round(arena_rect.size.y)))
+	)
+
+
+func _tile_run_image_rect(
+	image_size: Vector2i,
+	start_column: int,
+	start_row: int,
+	end_column: int,
+	end_row: int
+) -> Rect2i:
+	var tile_width := app_state.arena_tile_width()
+	var tile_height := app_state.arena_tile_height()
+	var x0 := int(floor(float(start_column) * float(image_size.x) / float(tile_width)))
+	var x1 := int(ceil(float(end_column + 1) * float(image_size.x) / float(tile_width)))
+	var y0 := int(floor(float(start_row) * float(image_size.y) / float(tile_height)))
+	var y1 := int(ceil(float(end_row + 1) * float(image_size.y) / float(tile_height)))
+	var rect := Rect2i(
+		clampi(x0, 0, image_size.x),
+		clampi(y0, 0, image_size.y),
+		maxi(1, x1 - x0),
+		maxi(1, y1 - y0)
+	)
+	return rect.intersection(Rect2i(Vector2i.ZERO, image_size))
+
+
+func _world_rect_to_image(
+	image_size: Vector2i,
+	center_x: float,
+	center_y: float,
+	half_width: float,
+	half_height: float
+) -> Rect2i:
+	var center := _world_to_image(image_size, Vector2(center_x, center_y))
+	var scale_x := float(image_size.x) / float(app_state.arena_width)
+	var scale_y := float(image_size.y) / float(app_state.arena_height)
+	var draw_width := maxi(1, int(round(half_width * 2.0 * scale_x)))
+	var draw_height := maxi(1, int(round(half_height * 2.0 * scale_y)))
+	var rect := Rect2i(
+		int(round(center.x - float(draw_width) * 0.5)),
+		int(round(center.y - float(draw_height) * 0.5)),
+		draw_width,
+		draw_height
+	)
+	return rect.intersection(Rect2i(Vector2i.ZERO, image_size))
+
+
+func _world_to_image(image_size: Vector2i, world_point: Vector2) -> Vector2:
+	var normalized := Vector2(
+		(world_point.x / float(app_state.arena_width)) + 0.5,
+		(world_point.y / float(app_state.arena_height)) + 0.5
+	)
+	return Vector2(
+		normalized.x * float(image_size.x),
+		normalized.y * float(image_size.y)
+	)
+
+
+func _update_cached_texture(texture: ImageTexture, image: Image) -> ImageTexture:
+	if texture != null \
+		and texture.get_width() == image.get_width() \
+		and texture.get_height() == image.get_height():
+		texture.update(image)
+		return texture
+	return ImageTexture.create_from_image(image)
+
+
+func _create_rgba_image(image_size: Vector2i) -> Image:
+	return Image.create(image_size.x, image_size.y, false, Image.FORMAT_RGBA8)
 
 
 func _has_fog_edge(column: int, row: int, direction: Vector2i) -> bool:
@@ -498,107 +610,11 @@ func _has_fog_edge(column: int, row: int, direction: Vector2i) -> bool:
 	return app_state.is_tile_visible(column + direction.x, row + direction.y)
 
 
-func _draw_fog_edge_run(
-	arena_rect: Rect2,
-	start_column: int,
-	start_row: int,
-	end_column: int,
-	end_row: int,
-	direction: Vector2i,
-	explored: bool
-) -> void:
-	var start_rect := _tile_canvas_rect(arena_rect, start_column, start_row)
-	var end_rect := _tile_canvas_rect(arena_rect, end_column, end_row)
-	var fog_color := _fog_fill_color(explored)
-	var edge_color := Color(
-		fog_color.r,
-		fog_color.g,
-		fog_color.b,
-		fog_color.a * FOG_EDGE_ALPHA_SCALE
-	)
-	var transparent := Color(edge_color.r, edge_color.g, edge_color.b, 0.0)
-	var extension_x := start_rect.size.x * FOG_EDGE_EXTENSION_RATIO
-	var extension_y := start_rect.size.y * FOG_EDGE_EXTENSION_RATIO
-
-	if direction == Vector2i.LEFT:
-		draw_polygon(
-			PackedVector2Array([
-				Vector2(start_rect.position.x - extension_x, start_rect.position.y),
-				Vector2(start_rect.position.x, start_rect.position.y),
-				Vector2(end_rect.position.x, end_rect.end.y),
-				Vector2(end_rect.position.x - extension_x, end_rect.end.y),
-			]),
-			PackedColorArray([transparent, edge_color, edge_color, transparent])
-		)
-	elif direction == Vector2i.RIGHT:
-		draw_polygon(
-			PackedVector2Array([
-				Vector2(start_rect.end.x, start_rect.position.y),
-				Vector2(start_rect.end.x + extension_x, start_rect.position.y),
-				Vector2(end_rect.end.x + extension_x, end_rect.end.y),
-				Vector2(end_rect.end.x, end_rect.end.y),
-			]),
-			PackedColorArray([edge_color, transparent, transparent, edge_color])
-		)
-	elif direction == Vector2i.UP:
-		draw_polygon(
-			PackedVector2Array([
-				Vector2(start_rect.position.x, start_rect.position.y - extension_y),
-				Vector2(end_rect.end.x, end_rect.position.y - extension_y),
-				Vector2(end_rect.end.x, end_rect.position.y),
-				Vector2(start_rect.position.x, start_rect.position.y),
-			]),
-			PackedColorArray([transparent, transparent, edge_color, edge_color])
-		)
-	elif direction == Vector2i.DOWN:
-		draw_polygon(
-			PackedVector2Array([
-				Vector2(start_rect.position.x, start_rect.end.y),
-				Vector2(end_rect.end.x, end_rect.end.y),
-				Vector2(end_rect.end.x, end_rect.end.y + extension_y),
-				Vector2(start_rect.position.x, start_rect.end.y + extension_y),
-			]),
-			PackedColorArray([edge_color, edge_color, transparent, transparent])
-		)
-
-
 func _fog_fill_color(explored: bool) -> Color:
 	return (
 		Color(0.06, 0.08, 0.11, 0.56)
 		if explored
 		else Color(0.03, 0.04, 0.05, 0.96)
-	)
-
-
-func _tile_canvas_size(arena_rect: Rect2) -> Vector2:
-	return Vector2(
-		arena_rect.size.x / float(app_state.arena_tile_width()),
-		arena_rect.size.y / float(app_state.arena_tile_height())
-	)
-
-
-func _tile_canvas_rect(arena_rect: Rect2, column: int, row: int) -> Rect2:
-	var tile_size := _tile_canvas_size(arena_rect)
-	return Rect2(
-		arena_rect.position + Vector2(float(column) * tile_size.x, float(row) * tile_size.y),
-		tile_size
-	)
-
-
-func _tile_run_canvas_rect(
-	arena_rect: Rect2,
-	start_column: int,
-	start_row: int,
-	end_column: int,
-	end_row: int
-) -> Rect2:
-	var tile_size := _tile_canvas_size(arena_rect)
-	return Rect2(
-		arena_rect.position + Vector2(float(start_column) * tile_size.x, float(start_row) * tile_size.y),
-		Vector2(
-			float(end_column - start_column + 1) * tile_size.x,
-			float(end_row - start_row + 1) * tile_size.y
-		)
 	)
 
 
