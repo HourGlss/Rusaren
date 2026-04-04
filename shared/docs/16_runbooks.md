@@ -1,17 +1,17 @@
 # Runbooks
 
 ## Deploy or update the hosted stack
-1. On Linux hosts, let `deploy/deploy.sh` rebuild the Godot web client by default; if you want to do it manually first, run `bash server/scripts/export-web-client.sh`.
+1. On Linux hosts, let `deploy/deploy.py` rebuild the Godot web client by default; if you want to do it manually first, run `python3 server/scripts/export-web-client.py`.
 2. Update `~/rusaren-config/config.env`.
 3. Run:
-   - `sudo bash deploy/deploy.sh`
+   - `sudo python3 deploy/deploy.py`
 4. Check:
    - `https://domain.com/`
    - `https://domain.com/healthz`
    - `https://domain.com/adminz`
    - `https://domain.com/adminz?format=json`
    - Prometheus scrape status
-   - `bash deploy/host-smoke.sh --env-file ~/rusaren-config/config.env`
+   - `python3 deploy/host-smoke.py --env-file ~/rusaren-config/config.env`
    - `systemctl status rusaren-smoke.timer`
    - `systemctl status rusaren-liveprobe.timer`
 
@@ -34,8 +34,8 @@ If the deploy target is Linode, follow the host/DNS/firewall setup in `17_linode
 This means the backend started, but the web export bundle is missing from `server/static/webclient/`.
 
 Fix:
-1. Run `bash server/scripts/export-web-client.sh`.
-2. Rerun `sudo bash deploy/deploy.sh`.
+1. Run `python3 server/scripts/export-web-client.py`.
+2. Rerun `sudo python3 deploy/deploy.py`.
 
 If the host should not build the bundle automatically, check that `BUILD_WEB_CLIENT` was not set to `0`.
 
@@ -57,12 +57,12 @@ Check:
 Check:
 1. `RARENA_ADMIN_USERNAME` and `RARENA_ADMIN_PASSWORD` exist in `~/rusaren-config/config.env`
 2. `docker compose logs rarena-server --tail=200`
-3. `bash deploy/host-smoke.sh --env-file ~/rusaren-config/config.env`
+3. `python3 deploy/host-smoke.py --env-file ~/rusaren-config/config.env`
 4. that you are using the expected credentials and did not leave the example password in place
 
 ## Live disconnects need a compact diagnostic bundle
 Run:
-1. `bash deploy/useful_log_collect.sh --output /tmp/rusaren-diagnostics.txt`
+1. `python3 deploy/useful_log_collect.py --output /tmp/rusaren-diagnostics.txt`
 2. paste `/tmp/rusaren-diagnostics.txt`
 
 The collector summarizes:

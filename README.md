@@ -318,7 +318,7 @@ Export the Godot web client into the Rust server static root:
 ./server/scripts/export-web-client.ps1 -GodotExecutable <GODOT_EXECUTABLE> -InstallTemplates
 
 # Linux
-bash server/scripts/export-web-client.sh --godot-bin godot4
+python3 server/scripts/export-web-client.py --godot-bin godot4
 ```
 
 If a local `Godot/webrtc/` bundle exists, that export script also syncs it into the ignored local project path `client/godot/webrtc/` so native/headless Godot checks can use the same extension bundle.
@@ -513,9 +513,9 @@ Useful Pages paths:
 - `https://hourglss.github.io/Rusaren/rustdoc/` for the Rust API docs
 
 The current hosted validation loop is expected to be routine, not one-off:
-- deploy-time hosted smoke via `deploy/host-smoke.sh`
+- deploy-time hosted smoke via `deploy/host-smoke.py`
 - recurring public smoke via `rusaren-smoke.timer`
-- recurring real transport validation via `deploy/run_live_transport_probe.sh` and `rusaren-liveprobe.timer`
+- recurring real transport validation via `deploy/run_live_transport_probe.py` and `rusaren-liveprobe.timer`
 
 For the `1.0.0` release line, `/rustdoc/` is not just a published artifact.
 It is expected to document how an external client or bot can play the game through the API:
@@ -653,9 +653,9 @@ The checked-in `0.8.0` hosted path is:
 - `deploy/docker-compose.override.example.yml`
 
 High-level hosted flow:
-1. let `deploy/deploy.sh` rebuild the Godot web client on Linux, or manually export it into `server/static/webclient/`
-2. let `deploy/setup.sh` create `~/rusaren-config/config.env`, then edit that external file with the real host and secrets
-3. run `sudo bash deploy/deploy.sh`
+1. let `deploy/deploy.py` rebuild the Godot web client on Linux, or manually export it into `server/static/webclient/`
+2. let `deploy/setup.py` create `~/rusaren-config/config.env`, then edit that external file with the real host and secrets
+3. run `sudo python3 deploy/deploy.py`
 
 For the current live-domain target:
 - `https://pvpnowfast.com/` should serve the game shell directly
@@ -674,7 +674,7 @@ For the first real internet-reachable test, the current recommended shape is:
 - one app host
 - optional separate TURN host
 - Docker Compose deploy
-- on-host Godot web export through `server/scripts/export-web-client.sh` during deploy
+- on-host Godot web export through `server/scripts/export-web-client.py` during deploy
 
 That is the honest target for the current codebase because match ownership and player records are still local to the running server.
 - `shared/docs/16_runbooks.md`

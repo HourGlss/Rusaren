@@ -28,20 +28,20 @@ Files:
 - `deploy/coturn/turnserver.conf`
 - `deploy/config.env.example`
 - `deploy/docker-compose.override.example.yml`
-- `deploy/setup.sh`
-- `deploy/deploy.sh`
-- `deploy/linode-setup.sh`
-- `deploy/linode-deploy.sh`
-- `deploy/host-smoke.sh`
+- `deploy/setup.py`
+- `deploy/deploy.py`
+- `deploy/linode-setup.py`
+- `deploy/linode-deploy.py`
+- `deploy/host-smoke.py`
 - `server/scripts/docker-smoke.ps1`
-- `server/scripts/export-web-client.sh`
+- `server/scripts/export-web-client.py`
 
 What each part does:
 - `rarena-server`: serves `/`, `/session/bootstrap`, `/ws`, `/ws-dev`, `/healthz`, and `/metrics`
 - `caddy`: terminates TLS and reverse-proxies the public site to the Rust server
 - `prometheus`: scrapes backend metrics
 - `coturn`: provides STUN/TURN service on the operator-managed domain
-- `server/scripts/export-web-client.sh`: Linux-native Godot Web export helper used by deploy when the hosted shell needs to be rebuilt on the server
+- `server/scripts/export-web-client.py`: Linux-native Godot Web export helper used by deploy when the hosted shell needs to be rebuilt on the server
 
 ## Prerequisites
 - Docker and Docker Compose plugin on the host
@@ -60,9 +60,9 @@ What each part does:
 
 ## First deploy
 1. On the Linode host, run:
-   - `sudo PUBLIC_HOST=<your domain> ACME_EMAIL=<your email> bash deploy/setup.sh`
+   - `sudo PUBLIC_HOST=<your domain> ACME_EMAIL=<your email> python3 deploy/setup.py`
 2. For later updates from the repo root on the host, run:
-   - `sudo bash deploy/deploy.sh`
+   - `sudo python3 deploy/deploy.py`
 3. Verify:
    - `https://pvpnowfast.com/`
    - `https://pvpnowfast.com/healthz`
@@ -137,7 +137,7 @@ Current logs:
 Current operator surface:
 - `/adminz` is a private read-only dashboard protected by deploy-time basic auth
 - `~/rusaren-config/config.env` now carries `RARENA_ADMIN_USERNAME` and `RARENA_ADMIN_PASSWORD`
-- `deploy/host-smoke.sh` checks that `/adminz` rejects anonymous access and renders with valid credentials when the admin surface is enabled
+- `deploy/host-smoke.py` checks that `/adminz` rejects anonymous access and renders with valid credentials when the admin surface is enabled
 
 ## Security posture for this milestone
 - TLS is terminated by Caddy
@@ -149,13 +149,13 @@ Current operator surface:
 - Docker-published service ports should still be protected by Linode Cloud Firewall rules because Docker documents that published container ports bypass `ufw` filtering
 
 ## Hosted smoke probes
-- `deploy/deploy.sh` now waits for the backend container healthcheck before it runs hosted smoke probes
+- `deploy/deploy.py` now waits for the backend container healthcheck before it runs hosted smoke probes
 - the same deploy script now rebuilds the Godot web bundle on Linux by default unless `BUILD_WEB_CLIENT=0`
 - the same deploy script then runs hosted smoke probes against `https://$PUBLIC_HOST` unless `RUN_PUBLIC_SMOKE=0`
-- `deploy/host-smoke.sh` validates `/`, `/healthz`, `/session/bootstrap`, and the authenticated `/adminz` HTML and JSON views
-- `deploy/linode-setup.sh` installs `snapd`, `unzip`, and a compatible Godot snap by default so the host can build the web bundle without a Windows step
-- `deploy/linode-setup.sh` installs a `rusaren-smoke.timer` systemd timer so the host keeps re-running the public probes after deploy
-- `deploy/linode-setup.sh` also installs `rusaren-liveprobe.timer` so the real hosted transport probe keeps exercising the live mechanic surface on a schedule
+- `deploy/host-smoke.py` validates `/`, `/healthz`, `/session/bootstrap`, and the authenticated `/adminz` HTML and JSON views
+- `deploy/linode-setup.py` installs `snapd`, `unzip`, and a compatible Godot snap by default so the host can build the web bundle without a Windows step
+- `deploy/linode-setup.py` installs a `rusaren-smoke.timer` systemd timer so the host keeps re-running the public probes after deploy
+- `deploy/linode-setup.py` also installs `rusaren-liveprobe.timer` so the real hosted transport probe keeps exercising the live mechanic surface on a schedule
 
 ## Current limitation
 This deploy path is production-style and testable, but not yet the final game transport:

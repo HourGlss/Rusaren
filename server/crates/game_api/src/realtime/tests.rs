@@ -21,6 +21,10 @@ fn test_state(
             bootstrap_tokens: Arc::new(Mutex::new(SessionBootstrapTokenRegistry::new(
                 Duration::from_secs(30),
             ))),
+            bootstrap_rate_limiter: Arc::new(Mutex::new(SessionBootstrapRateLimiter::new(
+                SESSION_BOOTSTRAP_RATE_LIMIT_WINDOW,
+                SESSION_BOOTSTRAP_RATE_LIMIT_MAX_REQUESTS,
+            ))),
             webrtc: WebRtcRuntimeConfig::default(),
             admin_auth: None,
         },
@@ -63,6 +67,41 @@ fn bootstrap_tokens_are_one_time_use_and_expire() {
     assert_eq!(
         registry.consume(&expired, now + Duration::from_millis(60)),
         Err("session bootstrap token is missing or already consumed")
+    );
+}
+
+#[test]
+fn bootstrap_tokens_refuse_growth_beyond_the_hard_cap() {
+    let now = Instant::now();
+    let mut registry = SessionBootstrapTokenRegistry::new(Duration::from_secs(30));
+    for _ in 0..MAX_SESSION_BOOTSTRAP_TOKENS {
+        registry.mint(now).expect("token should mint below the cap");
+    }
+    let error = registry
+        .mint(now)
+        .expect_err("mint should fail once the registry reaches its cap");
+    assert!(error.contains("registry is full"));
+}
+
+#[test]
+fn bootstrap_rate_limiter_caps_requests_per_ip_and_recovers_after_the_window() {
+    let ip = "203.0.113.24".parse().expect("valid ip");
+    let start = Instant::now();
+    let mut limiter = SessionBootstrapRateLimiter::new(Duration::from_secs(10), 2);
+
+    assert_eq!(limiter.check_and_record(ip, start), Ok(()));
+    assert_eq!(
+        limiter.check_and_record(ip, start + Duration::from_secs(1)),
+        Ok(())
+    );
+    let retry_after = limiter
+        .check_and_record(ip, start + Duration::from_secs(2))
+        .expect_err("third request in the same window should be limited");
+    assert!(retry_after >= Duration::from_secs(7));
+
+    assert_eq!(
+        limiter.check_and_record(ip, start + Duration::from_secs(11)),
+        Ok(())
     );
 }
 

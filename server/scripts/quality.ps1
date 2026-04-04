@@ -88,7 +88,14 @@ function Copy-FuzzSeedCorpus {
 
     if (Test-Path $sourceDir) {
         Get-ChildItem -LiteralPath $sourceDir -Force | ForEach-Object {
-            Copy-Item -LiteralPath $_.FullName -Destination $targetDir -Recurse -Force
+            $destinationPath = Join-Path $targetDir $_.Name
+            if ($_.PSIsContainer) {
+                New-Item -ItemType Directory -Force -Path $destinationPath | Out-Null
+            }
+            else {
+                New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destinationPath) | Out-Null
+            }
+            Copy-Item -LiteralPath $_.FullName -Destination $destinationPath -Recurse -Force
         }
     }
 }

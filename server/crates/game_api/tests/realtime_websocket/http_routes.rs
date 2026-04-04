@@ -41,7 +41,7 @@ async fn hosted_root_returns_a_clear_placeholder_when_the_web_bundle_is_missing(
     let (status_code, body) = http_get(&base_url, "/").await;
     assert_eq!(status_code, 503);
     assert!(body.contains("Rusaren web client is not built yet."));
-    assert!(body.contains("export-web-client.sh"));
+    assert!(body.contains("export-web-client.py"));
 
     server.shutdown().await;
 }
@@ -119,6 +119,48 @@ async fn metrics_route_returns_service_unavailable_when_observability_is_disable
     let (status_code, body) = http_get(&base_url, "/metrics").await;
     assert_eq!(status_code, 503);
     assert!(body.contains("Rusaren metrics are disabled"));
+
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn session_bootstrap_rate_limits_repeated_requests_from_one_client_ip() {
+    let web_client_root = temp_web_client_root(
+        "bootstrap-rate-limit",
+        Some("<!doctype html><html><body>bootstrap shell</body></html>"),
+    );
+    let (server, base_url) = start_server_with_web_root(web_client_root).await;
+
+    for _ in 0..20 {
+        let (status_code, body) = http_get_with_headers(
+            &base_url,
+            "/session/bootstrap",
+            &[("X-Forwarded-For", "198.51.100.8")],
+        )
+        .await;
+        assert_eq!(status_code, 200, "bootstrap should succeed below the limit");
+        let payload: serde_json::Value =
+            serde_json::from_str(&body).expect("bootstrap JSON should parse");
+        assert!(payload.get("token").and_then(serde_json::Value::as_str).is_some());
+    }
+
+    let (status_code, body) = http_get_with_headers(
+        &base_url,
+        "/session/bootstrap",
+        &[("X-Forwarded-For", "198.51.100.8")],
+    )
+    .await;
+    assert_eq!(status_code, 429);
+    let payload: serde_json::Value =
+        serde_json::from_str(&body).expect("rate limit JSON should parse");
+    assert_eq!(
+        payload.get("error").and_then(serde_json::Value::as_str),
+        Some("session bootstrap is temporarily rate limited")
+    );
+    assert!(payload
+        .get("retry_after_ms")
+        .and_then(serde_json::Value::as_u64)
+        .is_some());
 
     server.shutdown().await;
 }

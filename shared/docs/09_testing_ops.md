@@ -38,7 +38,7 @@ Replay:
 - expose Prometheus metrics from the Rust server and scrape them from the hosted stack
 - validate the deploy stack in CI with a same-image smoke test that checks `/`, `/healthz`, and `/metrics`
 - run the same Docker smoke path locally with `server/scripts/docker-smoke.ps1` before host deploy changes land
-- keep the hosted path on recurring timers with `deploy/host-smoke.sh` and `deploy/run_live_transport_probe.sh`
+- keep the hosted path on recurring timers with `deploy/host-smoke.py` and `deploy/run_live_transport_probe.py`
 - use `/adminz?format=json` plus the combat-log diagnostics surface as the operator-facing source of truth during hosted triage
 - collect coverage and complexity reports for `game_sim`, `game_net`, and `game_content`
 - publish generated docs and API docs per commit so test/coverage output has architecture context beside it

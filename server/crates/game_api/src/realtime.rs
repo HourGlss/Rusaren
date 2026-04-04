@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::io;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -56,6 +56,9 @@ use crate::{AppTransport, ConnectionId, ServerApp};
 const SESSION_BOOTSTRAP_TOKEN_BYTES: usize = 24;
 const SESSION_BOOTSTRAP_TOKEN_TTL: Duration = Duration::from_secs(30);
 const MAX_SESSION_BOOTSTRAP_TOKEN_BYTES: usize = 96;
+const MAX_SESSION_BOOTSTRAP_TOKENS: usize = 4096;
+const SESSION_BOOTSTRAP_RATE_LIMIT_WINDOW: Duration = Duration::from_secs(60);
+const SESSION_BOOTSTRAP_RATE_LIMIT_MAX_REQUESTS: usize = 20;
 
 #[derive(Clone)]
 struct DevServerState {
@@ -65,6 +68,7 @@ struct DevServerState {
     observability: Option<ServerObservability>,
     next_connection_id: Arc<AtomicU64>,
     bootstrap_tokens: Arc<Mutex<SessionBootstrapTokenRegistry>>,
+    bootstrap_rate_limiter: Arc<Mutex<SessionBootstrapRateLimiter>>,
     webrtc: WebRtcRuntimeConfig,
     admin_auth: Option<AdminAuthConfig>,
 }
@@ -261,12 +265,23 @@ impl AdminAuthConfig {
         let Ok(decoded) = BASE64_STANDARD.decode(encoded) else {
             return false;
         };
-        let Ok(decoded) = String::from_utf8(decoded) else {
-            return false;
-        };
-
-        decoded == format!("{}:{}", self.username, self.password)
+        let mut expected = Vec::with_capacity(self.username.len() + self.password.len() + 1);
+        expected.extend_from_slice(self.username.as_bytes());
+        expected.push(b':');
+        expected.extend_from_slice(self.password.as_bytes());
+        constant_time_bytes_eq(&decoded, &expected)
     }
+}
+
+fn constant_time_bytes_eq(left: &[u8], right: &[u8]) -> bool {
+    let max_len = left.len().max(right.len());
+    let mut diff = left.len() ^ right.len();
+    for index in 0..max_len {
+        let left_byte = left.get(index).copied().unwrap_or(0);
+        let right_byte = right.get(index).copied().unwrap_or(0);
+        diff |= usize::from(left_byte ^ right_byte);
+    }
+    diff == 0
 }
 
 /// Runtime options for the websocket/WebRTC dev server.
@@ -338,6 +353,11 @@ impl SessionBootstrapTokenRegistry {
 
     fn mint(&mut self, now: Instant) -> Result<String, String> {
         self.prune_expired(now);
+        if self.issued.len() >= MAX_SESSION_BOOTSTRAP_TOKENS {
+            return Err(format!(
+                "session bootstrap token registry is full ({MAX_SESSION_BOOTSTRAP_TOKENS} active tokens)"
+            ));
+        }
 
         let mut bytes = [0_u8; SESSION_BOOTSTRAP_TOKEN_BYTES];
         getrandom_fill(&mut bytes)
@@ -366,6 +386,49 @@ impl SessionBootstrapTokenRegistry {
 
     fn prune_expired(&mut self, now: Instant) {
         self.issued.retain(|_, expires_at| *expires_at >= now);
+    }
+}
+
+#[derive(Debug)]
+struct SessionBootstrapRateLimiter {
+    requests_by_ip: BTreeMap<IpAddr, VecDeque<Instant>>,
+    window: Duration,
+    max_requests: usize,
+}
+
+impl SessionBootstrapRateLimiter {
+    fn new(window: Duration, max_requests: usize) -> Self {
+        Self {
+            requests_by_ip: BTreeMap::new(),
+            window,
+            max_requests,
+        }
+    }
+
+    fn check_and_record(&mut self, client_ip: IpAddr, now: Instant) -> Result<(), Duration> {
+        self.prune_expired(now);
+        let entry = self.requests_by_ip.entry(client_ip).or_default();
+        if entry.len() >= self.max_requests {
+            let retry_after = entry
+                .front()
+                .map(|oldest| (*oldest + self.window).saturating_duration_since(now))
+                .unwrap_or(self.window);
+            return Err(retry_after.max(Duration::from_secs(1)));
+        }
+        entry.push_back(now);
+        Ok(())
+    }
+
+    fn prune_expired(&mut self, now: Instant) {
+        self.requests_by_ip.retain(|_, timestamps| {
+            while let Some(oldest) = timestamps.front().copied() {
+                if oldest + self.window > now {
+                    break;
+                }
+                timestamps.pop_front();
+            }
+            !timestamps.is_empty()
+        });
     }
 }
 

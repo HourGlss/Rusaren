@@ -23,6 +23,8 @@ server/static/webclient/
 # Python tooling
 .venv/
 venv/
+__pycache__/
+*.py[cod]
 
 # OS/editor noise
 .DS_Store

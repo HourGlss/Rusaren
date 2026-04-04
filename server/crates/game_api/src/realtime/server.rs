@@ -1,13 +1,15 @@
 use super::{
     classify_http_path, debug, get, get_service, header, info, info_span, io, mpsc, oneshot, warn,
     Arc, AtomicU64, DevServerHandle, DevServerOptions, DevServerState, Duration, GameContent,
-    HeaderMap, Html, IngressEvent, Instant, IntoResponse, Json, Mutex, Path, PathBuf, Query,
-    RealtimeTransport, Request, Response, Router, RuntimeState, ServeDir, ServerApp,
+    HeaderMap, Html, IngressEvent, Instant, IntoResponse, IpAddr, Json, Mutex, Path, PathBuf,
+    Query, RealtimeTransport, Request, Response, Router, RuntimeState, ServeDir, ServerApp,
     SessionBootstrapQuery, SessionBootstrapResponse, SessionBootstrapTokenRegistry, SocketAddr,
     State, StatusCode, TcpListener, TraceLayer, WebSocketUpgrade, MAX_INGRESS_PACKET_BYTES,
-    MAX_SIGNAL_MESSAGE_BYTES, SESSION_BOOTSTRAP_TOKEN_TTL,
+    MAX_SIGNAL_MESSAGE_BYTES, SESSION_BOOTSTRAP_RATE_LIMIT_MAX_REQUESTS,
+    SESSION_BOOTSTRAP_RATE_LIMIT_WINDOW, SESSION_BOOTSTRAP_TOKEN_TTL,
 };
 use std::fmt::Write as _;
+use axum::extract::ConnectInfo;
 
 use super::signaling::{handle_signaling_socket, handle_websocket_dev_socket};
 
@@ -81,6 +83,10 @@ pub async fn spawn_dev_server_with_options(
         bootstrap_tokens: Arc::new(Mutex::new(SessionBootstrapTokenRegistry::new(
             SESSION_BOOTSTRAP_TOKEN_TTL,
         ))),
+        bootstrap_rate_limiter: Arc::new(Mutex::new(super::SessionBootstrapRateLimiter::new(
+            SESSION_BOOTSTRAP_RATE_LIMIT_WINDOW,
+            SESSION_BOOTSTRAP_RATE_LIMIT_MAX_REQUESTS,
+        ))),
         webrtc: options.webrtc,
         admin_auth: options.admin_auth,
     };
@@ -95,7 +101,8 @@ pub async fn spawn_dev_server_with_options(
     let app = build_router(state);
 
     let server_task = tokio::spawn(async move {
-        let server = axum::serve(listener, app).with_graceful_shutdown(async {
+        let server = axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
+            .with_graceful_shutdown(async {
             let _ = shutdown_rx.await;
         });
         let _ = server.await;
@@ -415,14 +422,47 @@ async fn admin_dashboard(
 /// Issues a short-lived one-time token required by websocket signaling upgrades.
 async fn session_bootstrap(
     State(state): State<DevServerState>,
+    ConnectInfo(peer_addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
 ) -> Result<Json<SessionBootstrapResponse>, Response> {
     if let Some(observability) = &state.observability {
         observability.record_http_request(crate::HttpRouteLabel::SessionBootstrap);
     }
 
+    let client_ip = effective_client_ip(&headers, peer_addr.ip());
+    let now = Instant::now();
+    if let Err(retry_after) = state
+        .bootstrap_rate_limiter
+        .lock()
+        .await
+        .check_and_record(client_ip, now)
+    {
+        if let Some(observability) = &state.observability {
+            observability.record_diagnostic(
+                "session_bootstrap",
+                None,
+                None,
+                format!(
+                    "rate limited bootstrap request from {client_ip}; retry after {}ms",
+                    retry_after.as_millis()
+                ),
+            );
+        }
+        let retry_after_seconds = retry_after.as_secs().max(1).to_string();
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            [(header::RETRY_AFTER, retry_after_seconds)],
+            Json(serde_json::json!({
+                "error": "session bootstrap is temporarily rate limited",
+                "retry_after_ms": u64::try_from(retry_after.as_millis()).unwrap_or(u64::MAX),
+            })),
+        )
+            .into_response());
+    }
+
     let token = {
         let mut tokens = state.bootstrap_tokens.lock().await;
-        match tokens.mint(Instant::now()) {
+        match tokens.mint(now) {
             Ok(token) => token,
             Err(message) => {
                 if let Some(observability) = &state.observability {
@@ -457,6 +497,23 @@ async fn session_bootstrap(
     }))
 }
 
+fn effective_client_ip(headers: &HeaderMap, peer_ip: IpAddr) -> IpAddr {
+    for header_name in ["x-forwarded-for", "x-real-ip"] {
+        let Some(raw_value) = headers.get(header_name) else {
+            continue;
+        };
+        let Ok(raw_value) = raw_value.to_str() else {
+            continue;
+        };
+        for candidate in raw_value.split(',') {
+            if let Ok(parsed) = candidate.trim().parse::<IpAddr>() {
+                return parsed;
+            }
+        }
+    }
+    peer_ip
+}
+
 /// Renders a small HTML page that explains how to build the missing web client.
 fn render_missing_web_client_page(web_client_root: &Path) -> String {
     format!(
@@ -466,7 +523,7 @@ fn render_missing_web_client_page(web_client_root: &Path) -> String {
             "<h1>Rusaren web client is not built yet.</h1>",
             "<p>Build the Godot Web export into the server static root, then reload this page.</p>",
             "<p>Expected export root: <code>{}</code></p>",
-            "<p>Suggested command: <code>bash server/scripts/export-web-client.sh</code></p>",
+            "<p>Suggested command: <code>python3 server/scripts/export-web-client.py</code></p>",
             "</body></html>"
         ),
         web_client_root.display()

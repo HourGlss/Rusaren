@@ -26,7 +26,14 @@ repos:
         entry: powershell -NoProfile -ExecutionPolicy Bypass -File server/scripts/quality.ps1 typos
         language: system
         pass_filenames: false
-        files: \.(md|toml|ya?ml|json|rs|ps1)$
+        files: \.(md|toml|ya?ml|json|rs|ps1|py)$
+
+      - id: python-compile
+        name: python compileall
+        entry: python -m compileall deploy server/scripts rusaren_ops
+        language: system
+        pass_filenames: false
+        files: ^(deploy/.*\.py|server/scripts/.*\.py|rusaren_ops/.*\.py)$
 
       - id: repo-taplo
         name: taplo
