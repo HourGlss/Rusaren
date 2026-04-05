@@ -67,7 +67,7 @@ def build_parser() -> argparse.ArgumentParser:
     """Construct the CLI parser for diagnostics collection."""
 
     parser = argparse.ArgumentParser(
-        prog="useful_log_collect.py",
+        prog="python -m rusaren_ops collect-logs",
         description=(
             "Collect a compact hosted-backend diagnostics report intended for copy/paste."
         ),

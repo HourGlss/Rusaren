@@ -725,7 +725,7 @@ static func _build_diagnostics_view(owner: Control, refs: ShellRefs) -> VBoxCont
 	view.add_theme_constant_override("separation", 12)
 
 	var note := Label.new()
-	note.text = "Structured client-side diagnostics for frame timing, packet flow, object counts, and transport state. Pair this with deploy/useful_log_collect.py on the host."
+	note.text = "Structured client-side diagnostics for frame timing, packet flow, object counts, and transport state. Pair this with python -m rusaren_ops collect-logs on the host."
 	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	note.add_theme_color_override("font_color", Color8(188, 200, 210))
 	view.add_child(note)

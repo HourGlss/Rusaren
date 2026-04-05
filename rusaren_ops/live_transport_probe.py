@@ -25,7 +25,7 @@ def build_parser() -> argparse.ArgumentParser:
     """Create a parser that forwards any unknown flags to the Rust probe binary."""
 
     return argparse.ArgumentParser(
-        prog="run_live_transport_probe.py",
+        prog="python -m rusaren_ops live-probe",
         description=(
             "Run the four-client hosted transport probe with a Docker fallback."
         ),

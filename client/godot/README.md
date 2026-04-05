@@ -144,7 +144,7 @@ The checked-in positive frontend tests also cover the round-to-round skill bar b
 pick from a different class could overwrite the wrong slot locally. The browser shell is expected
 to track server-authored `slot` values, not just `tier` values.
 
-For live deploy issues, also collect the host bundle from `deploy/useful_log_collect.py` as documented in `server/README.md`.
+For live deploy issues, also collect the host bundle from `python3 -m rusaren_ops collect-logs` as documented in `server/README.md`.
 
 ## Manual Godot Profiling
 For local editor runs, use Godot's built-in tooling directly:

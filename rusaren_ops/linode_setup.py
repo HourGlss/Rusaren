@@ -66,7 +66,7 @@ def build_parser() -> argparse.ArgumentParser:
     """Construct a minimal parser so the bootstrap entrypoint supports `--help`."""
 
     return argparse.ArgumentParser(
-        prog="setup.py",
+        prog="python -m rusaren_ops setup",
         description=(
             "Bootstrap a fresh Linux host for Rusaren deployment using environment variables."
         ),
@@ -575,8 +575,8 @@ def install_compose_service(config: SetupConfig) -> None:
                 "Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin",
                 f"Environment=CONFIG_DIR={config.config_dir}",
                 f"WorkingDirectory={config.deploy_dir}",
-                f"ExecStart=/usr/bin/env python3 {config.deploy_dir}/deploy/deploy.py",
-                f"ExecStop=/usr/bin/env python3 {config.deploy_dir}/deploy/deploy.py --down",
+                "ExecStart=/usr/bin/env python3 -m rusaren_ops deploy",
+                "ExecStop=/usr/bin/env python3 -m rusaren_ops deploy --down",
                 "TimeoutStartSec=0",
                 "",
                 "[Install]",
@@ -610,7 +610,7 @@ def install_smoke_probe_timer(config: SetupConfig) -> None:
                 "Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin",
                 f"Environment=CONFIG_DIR={config.config_dir}",
                 f"WorkingDirectory={config.deploy_dir}",
-                f"ExecStart=/usr/bin/env python3 {config.deploy_dir}/deploy/host-smoke.py --env-file {config.config_dir / 'config.env'}",
+                f"ExecStart=/usr/bin/env python3 -m rusaren_ops smoke --env-file {config.config_dir / 'config.env'}",
                 "",
             ]
         ),
@@ -661,7 +661,7 @@ def install_live_transport_probe_timer(config: SetupConfig) -> None:
                 f"Environment=RARENA_PROBE_TARGET_DIR={config.cargo_target_dir / 'live-transport-probe'}",
                 f"Environment=RARENA_PROBE_OUTPUT_DIR={config.probes_dir}",
                 f"WorkingDirectory={config.deploy_dir}",
-                f"ExecStart=/usr/bin/env python3 {config.deploy_dir}/deploy/run_live_transport_probe.py",
+                "ExecStart=/usr/bin/env python3 -m rusaren_ops live-probe",
                 "",
             ]
         ),
@@ -736,7 +736,7 @@ def main(argv: list[str] | None = None, *, repo_root: Path | None = None) -> int
     if config.install_godot:
         print(
             "[linode-setup] Godot CLI installed via snap; deploy can now build the web client "
-            "on-host with server/scripts/export-web-client.py"
+            "on-host with python3 -m rusaren_ops export-web-client"
         )
     print(
         "[linode-setup] Cloud Firewall should still be enabled in Linode to restrict SSH source ranges at the network edge"

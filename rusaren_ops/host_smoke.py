@@ -30,7 +30,7 @@ def build_parser() -> argparse.ArgumentParser:
     """Construct the command-line parser for hosted smoke probes."""
 
     parser = argparse.ArgumentParser(
-        prog="host-smoke.py",
+        prog="python -m rusaren_ops smoke",
         description=(
             "Probe the hosted root, health, bootstrap, and admin routes after deploy."
         ),

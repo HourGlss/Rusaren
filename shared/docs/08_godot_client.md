@@ -75,5 +75,5 @@ Current local validation:
 - Run the shell headlessly with `godot4 --headless --path client/godot --quit` to verify that the project boots.
 - Run `godot4 --headless --path client/godot -s res://tests/protocol_checks.gd` to verify the Godot packet encoder plus arena event decoding.
 - Run `godot4 --headless --path client/godot -s res://tests/web_export_checks.gd` to verify the same-origin browser websocket defaults, clickable lobby-directory formatting, and local arena combat-slot state handling.
-- Run `server/scripts/export-web-client.ps1` on Windows or `python3 server/scripts/export-web-client.py --godot-bin godot4` on Linux to build the browser shell into `server/static/webclient/`.
+- Run `server/scripts/export-web-client.ps1` on Windows or `python3 -m rusaren_ops export-web-client --godot-bin godot4` on Linux to build the browser shell into `server/static/webclient/`.
 - For hosted deployment, build the web export first, then package it with the Rust server image described in `15_deployment_ops.md`.

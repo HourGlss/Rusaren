@@ -176,7 +176,7 @@ Use the client diagnostics menu together with the host-side collector so every r
 1. Reproduce the issue in the browser client.
 2. In the client shell, open `Menu -> Diagnostics` and copy the structured report.
 3. On the host, collect the server-side bundle:
-   `python3 deploy/useful_log_collect.py --output /tmp/rusaren-diagnostics.txt --bundle-dir /tmp/rusaren-diagnostics-bundle`
+   `python3 -m rusaren_ops collect-logs --output /tmp/rusaren-diagnostics.txt --bundle-dir /tmp/rusaren-diagnostics-bundle`
 4. Give the LLM both:
    - the copied client diagnostics text
    - `/tmp/rusaren-diagnostics.txt`

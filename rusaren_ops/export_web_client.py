@@ -52,7 +52,7 @@ def build_parser() -> argparse.ArgumentParser:
     """Construct the command-line parser for the Linux export helper."""
 
     parser = argparse.ArgumentParser(
-        prog="export-web-client.py",
+        prog="python -m rusaren_ops export-web-client",
         description=(
             "Export the Godot Web build into server/static/webclient for the hosted backend."
         ),

@@ -59,7 +59,7 @@ From the repo root on the host:
 ```bash
 sudo PUBLIC_HOST=pvpnowfast.com \
   ACME_EMAIL=ops@pvpnowfast.com \
-  python3 deploy/setup.py
+  python3 -m rusaren_ops setup
 ```
 
 That script now handles:
@@ -78,15 +78,15 @@ That script now handles:
 - a `rusaren-compose.service` systemd unit
 - a `rusaren-smoke.timer` systemd timer
 - a `rusaren-liveprobe.timer` systemd timer
-- first stack bring-up through `deploy/deploy.py`
+- first stack bring-up through `python3 -m rusaren_ops deploy`
 
 For later code updates on the same host:
 
 ```bash
-sudo python3 deploy/deploy.py
+sudo python3 -m rusaren_ops deploy
 ```
 
-By default, `deploy/deploy.py` now rebuilds the Godot web bundle on the host before it builds the Docker image.
+By default, `python3 -m rusaren_ops deploy` now rebuilds the Godot web bundle on the host before it builds the Docker image.
 
 ## Step-by-step
 
@@ -129,7 +129,7 @@ The checked-in stack binds Prometheus locally by default.
 
 ### 4. Secure the host
 
-`deploy/setup.py` now handles the host-side baseline:
+`python3 -m rusaren_ops setup` now handles the host-side baseline:
 - updates packages
 - configures a limited admin user
 - hardens SSH when key access is present
@@ -141,20 +141,20 @@ Docker's published container ports intentionally remain reachable, and Docker do
 
 ### 5. Install Docker and Compose plugin
 
-`deploy/setup.py` installs Docker Engine from Docker's official apt repository, not the convenience script.
+`python3 -m rusaren_ops setup` installs Docker Engine from Docker's official apt repository, not the convenience script.
 
 ### 6. Copy the repo
 
 The live deploy needs the generated web client files, but you no longer have to prebuild them on Windows.
 The default host path is:
 1. Copy the repo to the host.
-2. Let `deploy/setup.py` install a compatible Godot snap.
-3. Let `deploy/deploy.py` run `server/scripts/export-web-client.py` on the host before the Docker build.
+2. Let `python3 -m rusaren_ops setup` install a compatible Godot snap.
+3. Let `python3 -m rusaren_ops deploy` run `python3 -m rusaren_ops export-web-client` on the host before the Docker build.
 
 If you prefer to prebuild locally instead, this still works:
 
 ```bash
-python3 server/scripts/export-web-client.py --godot-bin godot4
+python3 -m rusaren_ops export-web-client --godot-bin godot4
 ```
 
 Then copy the repo with `server/static/webclient/` already populated.
@@ -167,7 +167,7 @@ rsync -avz --delete ./ user@app-host:/opt/rusaren/
 
 ### 7. Configure environment values
 
-`deploy/setup.py` writes `~/rusaren-config/config.env` and `~/rusaren-config/docker-compose.override.yml`.
+`python3 -m rusaren_ops setup` writes `~/rusaren-config/config.env` and `~/rusaren-config/docker-compose.override.yml`.
 Set these variables before running it if you want to override the defaults:
 - `PUBLIC_HOST=pvpnowfast.com`
 - `ACME_EMAIL=<your real email>`
@@ -184,7 +184,7 @@ If the admin password is omitted, the setup script generates one and writes it t
 
 ### 8. Build and start the stack
 
-`deploy/deploy.py` now:
+`python3 -m rusaren_ops deploy` now:
 - exports the Godot web client on the host by default
 - validates the compose file
 - builds the image
@@ -195,7 +195,7 @@ If the admin password is omitted, the setup script generates one and writes it t
 If you intentionally want to skip the on-host web export and keep the placeholder page, run:
 
 ```bash
-sudo BUILD_WEB_CLIENT=0 python3 deploy/deploy.py
+sudo BUILD_WEB_CLIENT=0 python3 -m rusaren_ops deploy
 ```
 
 ### 9. Verify the live test
@@ -220,7 +220,7 @@ Then test:
 Also run:
 
 ```bash
-python3 deploy/host-smoke.py --env-file ~/rusaren-config/config.env
+python3 -m rusaren_ops smoke --env-file ~/rusaren-config/config.env
 systemctl status rusaren-smoke.timer
 systemctl status rusaren-liveprobe.timer
 ```

@@ -1,1 +1,1 @@
-"""Shared operational helpers for Linux deploy and diagnostics scripts."""
+"""Shared operational helpers and CLI commands for Rusaren ops tooling."""

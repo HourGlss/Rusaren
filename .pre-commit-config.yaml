@@ -30,10 +30,10 @@ repos:
 
       - id: python-compile
         name: python compileall
-        entry: python -m compileall deploy server/scripts rusaren_ops
+        entry: python -m compileall rusaren_ops
         language: system
         pass_filenames: false
-        files: ^(deploy/.*\.py|server/scripts/.*\.py|rusaren_ops/.*\.py)$
+        files: ^rusaren_ops/.*\.py$
 
       - id: repo-taplo
         name: taplo

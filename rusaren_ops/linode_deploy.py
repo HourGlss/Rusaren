@@ -27,7 +27,7 @@ def build_parser() -> argparse.ArgumentParser:
     """Construct the argument parser for idempotent Linux deploys."""
 
     parser = argparse.ArgumentParser(
-        prog="deploy.py",
+        prog="python -m rusaren_ops deploy",
         description=(
             "Deploy or stop the Rusaren hosted stack using ~/rusaren-config by default."
         ),
@@ -138,11 +138,10 @@ def ensure_static_root(repo_root: Path) -> None:
 def run_web_client_export(repo_root: Path) -> None:
     """Run the Linux Godot export helper as the intended export user."""
 
-    export_script = repo_root / "server" / "scripts" / "export-web-client.py"
     export_user = resolve_export_user(repo_root)
     export_home = user_home(export_user)
 
-    export_command = [sys.executable, str(export_script)]
+    export_command = [sys.executable, "-m", "rusaren_ops", "export-web-client"]
     godot_bin = os.environ.get("GODOT_BIN", "").strip()
     if godot_bin:
         export_command.extend(["--godot-bin", godot_bin])
@@ -150,7 +149,7 @@ def run_web_client_export(repo_root: Path) -> None:
     print(f"[linode-deploy] building the Godot web client on the host as {export_user}")
 
     if export_user == current_user():
-        run(export_command, env={"HOME": str(export_home)})
+        run(export_command, cwd=repo_root, env={"HOME": str(export_home)})
         return
 
     command = [
@@ -163,8 +162,8 @@ def run_web_client_export(repo_root: Path) -> None:
     ]
     if godot_bin:
         command.append(f"GODOT_BIN={godot_bin}")
-    command.extend([sys.executable, str(export_script)])
-    run(command)
+    command.extend([sys.executable, "-m", "rusaren_ops", "export-web-client"])
+    run(command, cwd=repo_root)
 
 
 def build_web_client_if_requested(repo_root: Path) -> None:
@@ -241,14 +240,8 @@ def main(argv: list[str] | None = None, *, repo_root: Path | None = None) -> int
     )
 
     compose_file = resolved_repo_root / "deploy" / "docker-compose.yml"
-    smoke_script = resolved_repo_root / "deploy" / "host-smoke.py"
-    export_script = resolved_repo_root / "server" / "scripts" / "export-web-client.py"
     if not compose_file.is_file():
         fatal(PREFIX, f"missing required file: {compose_file}")
-    if not smoke_script.is_file():
-        fatal(PREFIX, f"missing required file: {smoke_script}")
-    if not export_script.is_file():
-        fatal(PREFIX, f"missing required file: {export_script}")
 
     config_dir = resolve_config_dir(resolved_repo_root, args.config_dir)
     env_file = Path(args.env_file) if args.env_file else config_dir / "config.env"
