@@ -54,7 +54,7 @@ skills:
         amount: 8
         status:
           kind: root
-          duration_ms: 900
+          duration_ms: 8000
           magnitude: 0
   - tier: 4
     id: ranger_scout_ward
@@ -85,4 +85,4 @@ skills:
       payload:
         kind: damage
         amount: 10
-        interrupt_silence_duration_ms: 1000
+        interrupt_silence_duration_ms: 8000

@@ -55,7 +55,7 @@ skills:
         amount: 0
         status:
           kind: shield
-          duration_ms: 2500
+          duration_ms: 8000
           magnitude: 16
           max_stacks: 5
   - tier: 4
@@ -65,7 +65,7 @@ skills:
     behavior:
       kind: beam
       effect: beam
-      cooldown_ms: 2200
+      cooldown_ms: 4500
       cast_time_ms: 300
       mana_cost: 30
       range: 320
@@ -83,8 +83,8 @@ skills:
     behavior:
       kind: aura
       effect: nova
-      cooldown_ms: 3200
-      cast_time_ms: 700
+      cooldown_ms: 12000
+      cast_time_ms: 1500
       mana_cost: 45
       radius: 145
       duration_ms: 5000

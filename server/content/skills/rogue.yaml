@@ -22,7 +22,7 @@ skills:
       mana_cost: 10
       toggleable: true
       radius: 12
-      duration_ms: 30000
+      duration_ms: 1000
       tick_interval_ms: 1000
       cast_start_payload:
         kind: heal
@@ -77,7 +77,7 @@ skills:
         amount: 6
         status:
           kind: sleep
-          duration_ms: 1200
+          duration_ms: 8000
           magnitude: 0
   - tier: 3
     id: rogue_veil_step

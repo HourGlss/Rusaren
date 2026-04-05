@@ -48,7 +48,7 @@ skills:
         amount: 8
         status:
           kind: fear
-          duration_ms: 900
+          duration_ms: 8000
           magnitude: 0
   - tier: 3
     id: necromancer_wailing_line
@@ -66,7 +66,7 @@ skills:
         amount: 12
         status:
           kind: silence
-          duration_ms: 1200
+          duration_ms: 8000
           magnitude: 0
   - tier: 4
     id: necromancer_grave_servant
@@ -109,5 +109,5 @@ skills:
         amount: 10
         status:
           kind: sleep
-          duration_ms: 1200
+          duration_ms: 8000
           magnitude: 0

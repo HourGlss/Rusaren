@@ -43,7 +43,7 @@ skills:
     behavior:
       kind: burst
       effect: burst
-      cooldown_ms: 1900
+      cooldown_ms: 500
       mana_cost: 28
       range: 260
       radius: 96
@@ -52,7 +52,7 @@ skills:
         amount: 12
         status:
           kind: chill
-          duration_ms: 2200
+          duration_ms: 4000
           magnitude: 1200
           max_stacks: 3
           trigger_duration_ms: 700
@@ -84,5 +84,5 @@ skills:
     behavior:
       kind: passive
       effect: nova
-      projectile_speed_bps: 2200
+      projectile_speed_bps: 4200
       cast_time_bps: 1800
