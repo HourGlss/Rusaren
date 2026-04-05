@@ -14,6 +14,304 @@ use crate::planner::build_match_plans;
 use crate::{run_probe, ProbeConfig, ProbeMechanicObservation};
 
 const COMBAT_FRAME_MS: u16 = 100;
+const PROBE_TEST_CONFIG_YAML: &str = r"lobby:
+  launch_countdown_seconds: 1
+
+match:
+  total_rounds: 1
+  skill_pick_seconds: 5
+  pre_combat_seconds: 1
+
+maps:
+  tile_units: 50
+  objective_target_ms_by_map:
+    prototype_arena: 30000
+    template_arena: 30000
+    training_arena: 30000
+  generation:
+    max_generation_attempts: 1
+    protected_tile_buffer_radius_tiles: 0
+    obstacle_edge_padding_tiles: 0
+    wall_segment_lengths_tiles: [2, 3]
+    long_wall_percent: 0
+    wall_candidate_skip_percent: 100
+    wall_min_spacing_manhattan_tiles: 0
+    pillar_candidate_skip_percent: 100
+    pillar_min_spacing_manhattan_tiles: 0
+    styles:
+      - shrub_clusters: 0
+        shrub_radius_tiles: 0
+        shrub_soft_radius_tiles: 0
+        shrub_fill_percent: 0
+        wall_segments: 0
+        isolated_pillars: 0
+
+simulation:
+  combat_frame_ms: 100
+  player_radius_units: 28
+  vision_radius_units: 2000
+  spawn_spacing_units: 80
+  default_aim_x_units: 120
+  default_aim_y_units: 0
+  mana_regen_per_second: 30
+  global_projectile_speed_bonus_bps: 0
+  teleport_resolution_steps: 48
+  movement_audio_step_interval_ms: 240
+  movement_audio_radius_units: 520
+  stealth_audio_radius_units: 170
+  brush_movement_audible_percent: 22
+  passive_bonus_caps:
+    player_speed_bps: 9000
+    projectile_speed_bps: 9000
+    cooldown_bps: 9000
+    cast_time_bps: 9500
+  movement_modifier_caps:
+    chill_bps: 8000
+    haste_bps: 6000
+    status_total_min_bps: -8000
+    status_total_max_bps: 6000
+    overall_total_min_bps: -8000
+    overall_total_max_bps: 9000
+    effective_scale_min_bps: 2000
+    effective_scale_max_bps: 16000
+  crowd_control_diminishing_returns:
+    window_ms: 15000
+    stages_bps: [10000, 5000, 2500, 0]
+  training_dummy:
+    base_hit_points: 100
+    health_multiplier: 100
+    execute_threshold_bps: 500
+
+classes:
+  Cleric:
+    hit_points: 280
+    max_mana: 180
+    move_speed_units_per_second: 320
+  Mage:
+    hit_points: 220
+    max_mana: 180
+    move_speed_units_per_second: 320
+  Rogue:
+    hit_points: 220
+    max_mana: 140
+    move_speed_units_per_second: 330
+  Necromancer:
+    hit_points: 220
+    max_mana: 150
+    move_speed_units_per_second: 320
+  Warrior:
+    hit_points: 260
+    max_mana: 120
+    move_speed_units_per_second: 310
+  Ranger:
+    hit_points: 220
+    max_mana: 140
+    move_speed_units_per_second: 325
+";
+const PROBE_TEST_TEMPLATE_ARENA: &str = r"#############
+#A.........B#
+#...........#
+#....XXX....#
+#....XXX....#
+#....XXX....#
+#...........#
+#...........#
+#############
+";
+const PERIODIC_TEST_CLERIC_YAML: &str = r"tree: Cleric
+melee:
+  id: cleric_probe_hammer
+  name: Probe Hammer
+  description: Stable melee for periodic probe integration tests.
+  cooldown_ms: 550
+  range: 88
+  radius: 40
+  effect: melee_swing
+  payload:
+    kind: damage
+    amount: 8
+skills:
+  - tier: 1
+    id: cleric_probe_holding_light
+    name: Holding Light
+    description: Self-heal anchor for periodic probe integration tests.
+    behavior:
+      kind: nova
+      effect: nova
+      cooldown_ms: 400
+      cast_time_ms: 120
+      mana_cost: 8
+      radius: 24
+      payload:
+        kind: heal
+        amount: 20
+  - tier: 2
+    id: cleric_probe_filler_two
+    name: Probe Filler Two
+    description: Unused filler for periodic probe tests.
+    behavior:
+      kind: passive
+      effect: nova
+      player_speed_bps: 500
+  - tier: 3
+    id: cleric_probe_filler_three
+    name: Probe Filler Three
+    description: Unused filler for periodic probe tests.
+    behavior:
+      kind: passive
+      effect: nova
+      cast_time_bps: 500
+  - tier: 4
+    id: cleric_probe_filler_four
+    name: Probe Filler Four
+    description: Unused filler for periodic probe tests.
+    behavior:
+      kind: passive
+      effect: nova
+      cooldown_bps: 500
+  - tier: 5
+    id: cleric_probe_filler_five
+    name: Probe Filler Five
+    description: Unused filler for periodic probe tests.
+    behavior:
+      kind: passive
+      effect: nova
+      projectile_speed_bps: 500
+";
+const PERIODIC_TEST_ROGUE_YAML: &str = r"tree: Rogue
+melee:
+  id: rogue_probe_knife
+  name: Probe Knife
+  description: Stable melee for periodic probe integration tests.
+  cooldown_ms: 500
+  range: 86
+  radius: 38
+  effect: melee_swing
+  payload:
+    kind: damage
+    amount: 8
+skills:
+  - tier: 1
+    id: rogue_probe_poison_dart
+    name: Probe Poison Dart
+    description: Reliable poison projectile for periodic probe integration tests.
+    behavior:
+      kind: projectile
+      effect: skill_shot
+      cooldown_ms: 320
+      mana_cost: 6
+      speed: 420
+      range: 1000
+      radius: 16
+      payload:
+        kind: damage
+        amount: 4
+        status:
+          kind: poison
+          duration_ms: 5000
+          tick_interval_ms: 1000
+          magnitude: 2
+          max_stacks: 5
+  - tier: 2
+    id: rogue_probe_filler_two
+    name: Probe Filler Two
+    description: Unused filler for periodic probe tests.
+    behavior:
+      kind: passive
+      effect: nova
+      player_speed_bps: 500
+  - tier: 3
+    id: rogue_probe_filler_three
+    name: Probe Filler Three
+    description: Unused filler for periodic probe tests.
+    behavior:
+      kind: passive
+      effect: nova
+      cast_time_bps: 500
+  - tier: 4
+    id: rogue_probe_filler_four
+    name: Probe Filler Four
+    description: Unused filler for periodic probe tests.
+    behavior:
+      kind: passive
+      effect: nova
+      cooldown_bps: 500
+  - tier: 5
+    id: rogue_probe_filler_five
+    name: Probe Filler Five
+    description: Unused filler for periodic probe tests.
+    behavior:
+      kind: passive
+      effect: nova
+      projectile_speed_bps: 500
+";
+const PERIODIC_TEST_NECROMANCER_YAML: &str = r"tree: Necromancer
+melee:
+  id: necromancer_probe_knife
+  name: Probe Knife
+  description: Stable melee for periodic probe integration tests.
+  cooldown_ms: 540
+  range: 82
+  radius: 36
+  effect: melee_swing
+  payload:
+    kind: damage
+    amount: 8
+skills:
+  - tier: 1
+    id: necromancer_probe_grave_dart
+    name: Probe Grave Dart
+    description: Reliable poison projectile for periodic probe integration tests.
+    behavior:
+      kind: projectile
+      effect: skill_shot
+      cooldown_ms: 340
+      mana_cost: 6
+      speed: 400
+      range: 1000
+      radius: 16
+      payload:
+        kind: damage
+        amount: 3
+        status:
+          kind: poison
+          duration_ms: 5000
+          tick_interval_ms: 1000
+          magnitude: 2
+          max_stacks: 5
+  - tier: 2
+    id: necromancer_probe_filler_two
+    name: Probe Filler Two
+    description: Unused filler for periodic probe tests.
+    behavior:
+      kind: passive
+      effect: nova
+      player_speed_bps: 500
+  - tier: 3
+    id: necromancer_probe_filler_three
+    name: Probe Filler Three
+    description: Unused filler for periodic probe tests.
+    behavior:
+      kind: passive
+      effect: nova
+      cast_time_bps: 500
+  - tier: 4
+    id: necromancer_probe_filler_four
+    name: Probe Filler Four
+    description: Unused filler for periodic probe tests.
+    behavior:
+      kind: passive
+      effect: nova
+      cooldown_bps: 500
+  - tier: 5
+    id: necromancer_probe_filler_five
+    name: Probe Filler Five
+    description: Unused filler for periodic probe tests.
+    behavior:
+      kind: passive
+      effect: nova
+      projectile_speed_bps: 500
+";
 const DISPEL_TEST_CLERIC_YAML: &str = r"tree: Cleric
 melee:
   id: cleric_probe_mace
@@ -34,79 +332,48 @@ skills:
     behavior:
       kind: nova
       effect: nova
-      cooldown_ms: 700
-      cast_time_ms: 150
-      mana_cost: 10
+      cooldown_ms: 350
+      cast_time_ms: 120
+      mana_cost: 8
       radius: 24
       payload:
         kind: heal
-        amount: 6
+        amount: 8
         dispel:
           scope: negative
-          max_statuses: 1
+          max_statuses: 2
   - tier: 2
-    id: cleric_probe_minor_heal
-    name: Probe Minor Heal
-    description: Filler heal for later rounds.
+    id: cleric_probe_filler_two
+    name: Probe Filler Two
+    description: Unused filler for dispel probe tests.
     behavior:
-      kind: beam
-      effect: beam
-      cooldown_ms: 900
-      cast_time_ms: 200
-      mana_cost: 12
-      range: 280
-      radius: 28
-      payload:
-        kind: heal
-        amount: 14
+      kind: passive
+      effect: nova
+      player_speed_bps: 500
   - tier: 3
-    id: cleric_probe_aegis
-    name: Probe Aegis
-    description: Filler shield for later rounds.
+    id: cleric_probe_filler_three
+    name: Probe Filler Three
+    description: Unused filler for dispel probe tests.
     behavior:
-      kind: nova
+      kind: passive
       effect: nova
-      cooldown_ms: 1400
-      cast_time_ms: 250
-      mana_cost: 18
-      radius: 18
-      payload:
-        kind: heal
-        amount: 0
-        status:
-          kind: shield
-          duration_ms: 4000
-          magnitude: 12
-          max_stacks: 2
+      cast_time_bps: 500
   - tier: 4
-    id: cleric_probe_ward
-    name: Probe Ward
-    description: Filler ward for later rounds.
+    id: cleric_probe_filler_four
+    name: Probe Filler Four
+    description: Unused filler for dispel probe tests.
     behavior:
-      kind: ward
+      kind: passive
       effect: nova
-      cooldown_ms: 1400
-      mana_cost: 18
-      distance: 220
-      radius: 160
-      duration_ms: 0
-      hit_points: 30
+      cooldown_bps: 500
   - tier: 5
-    id: cleric_probe_hymn
-    name: Probe Hymn
-    description: Filler aura for later rounds.
+    id: cleric_probe_filler_five
+    name: Probe Filler Five
+    description: Unused filler for dispel probe tests.
     behavior:
-      kind: aura
+      kind: passive
       effect: nova
-      cooldown_ms: 2200
-      cast_time_ms: 500
-      mana_cost: 26
-      radius: 120
-      duration_ms: 2500
-      tick_interval_ms: 500
-      payload:
-        kind: heal
-        amount: 4
+      projectile_speed_bps: 500
 ";
 const DISPEL_TEST_MAGE_YAML: &str = r"tree: Mage
 melee:
@@ -122,80 +389,58 @@ melee:
     amount: 10
 skills:
   - tier: 1
-    id: mage_probe_frost_burst
-    name: Probe Frost Burst
-    description: Early chill application for dispel probe tests.
-    behavior:
-      kind: burst
-      effect: burst
-      cooldown_ms: 700
-      mana_cost: 10
-      range: 260
-      radius: 100
-      payload:
-        kind: damage
-        amount: 8
-        status:
-          kind: chill
-          duration_ms: 4000
-          magnitude: 1200
-          max_stacks: 1
-          trigger_duration_ms: 700
-  - tier: 2
-    id: mage_probe_arc_bolt
-    name: Probe Arc Bolt
-    description: Filler projectile for later rounds.
+    id: mage_probe_taint_bolt
+    name: Probe Taint Bolt
+    description: Early poison application for dispel probe tests.
     behavior:
       kind: projectile
       effect: skill_shot
-      cooldown_ms: 700
-      mana_cost: 12
-      speed: 320
-      range: 1200
-      radius: 18
-      payload:
-        kind: damage
-        amount: 16
-  - tier: 3
-    id: mage_probe_blink
-    name: Probe Blink
-    description: Filler teleport for later rounds.
-    behavior:
-      kind: teleport
-      effect: dash_trail
-      cooldown_ms: 1500
-      mana_cost: 18
-      distance: 180
-  - tier: 4
-    id: mage_probe_scrying
-    name: Probe Scrying
-    description: Filler aura for later rounds.
-    behavior:
-      kind: aura
-      effect: nova
-      cooldown_ms: 2000
-      mana_cost: 24
-      distance: 240
-      radius: 100
-      duration_ms: 3000
-      hit_points: 30
-      tick_interval_ms: 750
+      cooldown_ms: 320
+      mana_cost: 6
+      speed: 420
+      range: 1000
+      radius: 16
       payload:
         kind: damage
         amount: 3
         status:
-          kind: reveal
-          duration_ms: 1000
-          magnitude: 0
-  - tier: 5
-    id: mage_probe_focus
-    name: Probe Focus
-    description: Filler passive for later rounds.
+          kind: poison
+          duration_ms: 5000
+          tick_interval_ms: 1000
+          magnitude: 2
+          max_stacks: 5
+  - tier: 2
+    id: mage_probe_filler_two
+    name: Probe Filler Two
+    description: Unused filler for dispel probe tests.
     behavior:
       kind: passive
       effect: nova
-      projectile_speed_bps: 2500
-      cast_time_bps: 1000
+      player_speed_bps: 500
+  - tier: 3
+    id: mage_probe_filler_three
+    name: Probe Filler Three
+    description: Unused filler for dispel probe tests.
+    behavior:
+      kind: passive
+      effect: nova
+      cast_time_bps: 500
+  - tier: 4
+    id: mage_probe_filler_four
+    name: Probe Filler Four
+    description: Unused filler for dispel probe tests.
+    behavior:
+      kind: passive
+      effect: nova
+      cooldown_bps: 500
+  - tier: 5
+    id: mage_probe_filler_five
+    name: Probe Filler Five
+    description: Unused filler for dispel probe tests.
+    behavior:
+      kind: passive
+      effect: nova
+      projectile_speed_bps: 500
 ";
 const CHANNEL_TEST_WARRIOR_YAML: &str = r"tree: Warrior
 melee:
@@ -453,6 +698,14 @@ fn write_skill_override(root: &Path, file_name: &str, yaml: &str) {
     fs::write(root.join("skills").join(file_name), yaml).expect("skill override should write");
 }
 
+fn write_content_override(root: &Path, relative_path: &str, contents: &str) {
+    let path = root.join(relative_path);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).expect("content override directory should exist");
+    }
+    fs::write(path, contents).expect("content override should write");
+}
+
 fn prune_skill_files(root: &Path, keep: &[&str]) {
     let skills_dir = root.join("skills");
     let keep: std::collections::BTreeSet<&str> = keep.iter().copied().collect();
@@ -472,6 +725,16 @@ fn mechanic_probe_content_root(prefix: &str, skill_files: &[(&str, &str)]) -> Pa
     let root = temp_content_root(prefix);
     remove_dir_if_exists(&root);
     copy_dir_all(&repo_content_root(), &root);
+    write_content_override(
+        &root,
+        "config/configurations.yaml",
+        PROBE_TEST_CONFIG_YAML,
+    );
+    write_content_override(
+        &root,
+        "maps/template_arena.txt",
+        PROBE_TEST_TEMPLATE_ARENA,
+    );
     let keep: Vec<&str> = skill_files
         .iter()
         .map(|(file_name, _)| *file_name)
@@ -481,6 +744,21 @@ fn mechanic_probe_content_root(prefix: &str, skill_files: &[(&str, &str)]) -> Pa
         write_skill_override(&root, file_name, yaml);
     }
     root
+}
+
+fn periodic_probe_content_root() -> PathBuf {
+    mechanic_probe_content_root(
+        "probe-periodic",
+        &[
+            ("cleric.yaml", PERIODIC_TEST_CLERIC_YAML),
+            ("rogue.yaml", PERIODIC_TEST_ROGUE_YAML),
+            ("necromancer.yaml", PERIODIC_TEST_NECROMANCER_YAML),
+            (
+                "warrior.yaml",
+                include_str!("../../../content/skills/warrior.yaml"),
+            ),
+        ],
+    )
 }
 
 fn dispel_probe_content_root() -> PathBuf {
@@ -598,13 +876,13 @@ fn periodic_probe_config(output_path: PathBuf) -> ProbeConfig {
     ProbeConfig {
         origin: String::new(),
         output_path,
-        content_root: None,
+        content_root: Some(periodic_probe_content_root()),
         max_games: Some(1),
         connect_timeout: Duration::from_secs(15),
         stage_timeout: Duration::from_secs(20),
-        round_timeout: Duration::from_secs(90),
-        match_timeout: Duration::from_secs(120),
-        input_cadence: Duration::from_millis(80),
+        round_timeout: Duration::from_secs(30),
+        match_timeout: Duration::from_secs(45),
+        input_cadence: Duration::from_millis(60),
         players_per_match: 3,
         preferred_tree_order: Some(vec![
             String::from("Cleric"),
@@ -612,7 +890,7 @@ fn periodic_probe_config(output_path: PathBuf) -> ProbeConfig {
             String::from("Necromancer"),
         ]),
         max_rounds_per_match: Some(1),
-        max_combat_loops_per_round: Some(180),
+        max_combat_loops_per_round: Some(120),
         required_mechanics: Some(
             [ProbeMechanicObservation::MultiSourcePeriodicStack]
                 .into_iter()
@@ -629,13 +907,13 @@ fn dispel_probe_config(output_path: PathBuf) -> ProbeConfig {
         max_games: Some(1),
         connect_timeout: Duration::from_secs(15),
         stage_timeout: Duration::from_secs(20),
-        round_timeout: Duration::from_secs(40),
-        match_timeout: Duration::from_secs(60),
+        round_timeout: Duration::from_secs(25),
+        match_timeout: Duration::from_secs(40),
         input_cadence: Duration::from_millis(60),
         players_per_match: 2,
         preferred_tree_order: Some(vec![String::from("Cleric"), String::from("Mage")]),
         max_rounds_per_match: Some(1),
-        max_combat_loops_per_round: Some(180),
+        max_combat_loops_per_round: Some(120),
         required_mechanics: Some(
             [ProbeMechanicObservation::DispelResolved]
                 .into_iter()

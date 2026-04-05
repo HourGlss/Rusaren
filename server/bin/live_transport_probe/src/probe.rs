@@ -1098,17 +1098,6 @@ impl ProbeClientState {
             if !baseline.values().any(|count| *count > 0) {
                 baseline = self.capture_ally_dispellable_counts(&self.arena_players, scope);
             }
-            self.record_mechanic_observed(
-                logger,
-                ProbeMechanicObservation::DispelResolved,
-                &json!({
-                    "client": self.label,
-                    "slot": slot,
-                    "method": method,
-                    "mode": "eligible_dispel_cast",
-                    "scope": format!("{scope:?}"),
-                }),
-            )?;
             if baseline.values().any(|count| *count > 0) {
                 self.pending_dispel_observation = Some(PendingDispelObservation {
                     scope,
@@ -1669,46 +1658,6 @@ impl ProbeRunner {
                 );
             }
         }
-
-        let mut coordinated_sources =
-            Vec::<((TeamSide, ArenaStatusKind), BTreeSet<PlayerId>)>::new();
-        for client in &self.clients {
-            let Some(local) = client.local_player() else {
-                continue;
-            };
-            if !client.current_skill_exercised {
-                continue;
-            }
-            let Some(kind) = client
-                .current_skill_profile()
-                .and_then(|skill| Self::periodic_status_kind_for_skill(&skill))
-            else {
-                continue;
-            };
-            if let Some((_, sources)) = coordinated_sources
-                .iter_mut()
-                .find(|((team, status_kind), _)| *team == local.team && *status_kind == kind)
-            {
-                sources.insert(local.player_id);
-            } else {
-                let mut sources = BTreeSet::new();
-                sources.insert(local.player_id);
-                coordinated_sources.push(((local.team, kind), sources));
-            }
-        }
-        if let Some(((_team, kind), sources)) = coordinated_sources
-            .into_iter()
-            .find(|(_, sources)| sources.len() > 1)
-        {
-            return self.record_runner_mechanic_observed(
-                ProbeMechanicObservation::MultiSourcePeriodicStack,
-                &json!({
-                    "mode": "coordinated_liveprobe",
-                    "status": format!("{kind:?}"),
-                    "sources": sources.iter().map(|source| source.get()).collect::<Vec<_>>(),
-                }),
-            );
-        }
         Ok(())
     }
 
@@ -1767,20 +1716,6 @@ impl ProbeRunner {
                 observed = Some(("status_count_reduced", fallback_player_id, current_total));
                 break;
             }
-            if baseline_total > 0 && client.current_skill_exercised {
-                let Some(fallback_player_id) = pending
-                    .baseline_counts
-                    .keys()
-                    .copied()
-                    .next()
-                    .or(client.player_id)
-                else {
-                    continue;
-                };
-                client.pending_dispel_observation = None;
-                observed = Some(("eligible_dispel_cast", fallback_player_id, current_total));
-                break;
-            }
         }
 
         if let Some((mode, player_id, remaining_after_dispel)) = observed {
@@ -1817,18 +1752,6 @@ impl ProbeRunner {
                 )
             })
             .collect()
-    }
-
-    fn periodic_status_kind_for_skill(skill: &SkillProfile) -> Option<ArenaStatusKind> {
-        let status = ProbeClientState::skill_payload(&skill.behavior)?
-            .status
-            .as_ref()?;
-        match status.kind {
-            game_content::StatusKind::Poison => Some(ArenaStatusKind::Poison),
-            game_content::StatusKind::Hot => Some(ArenaStatusKind::Hot),
-            game_content::StatusKind::Chill => Some(ArenaStatusKind::Chill),
-            _ => None,
-        }
     }
 
     async fn run(&mut self) -> ProbeResult<ProbeOutcome> {
