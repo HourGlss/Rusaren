@@ -547,6 +547,16 @@ function Test-IsEntryPointSourcePath {
     return $normalizedPath -eq "bin/dedicated_server/src/main.rs"
 }
 
+function Test-IsScoredCodePath {
+    param([string]$Path)
+
+    $normalizedPath = Get-NormalizedDisplayPath -Path $Path
+    return (
+        -not (Test-IsTestSourcePath -Path $Path) -and
+        -not ($normalizedPath -like "fuzz/*")
+    )
+}
+
 function Test-IsToolingSourcePath {
     param([string]$Path)
 
@@ -560,6 +570,9 @@ function Get-SourceCategoryLabel {
         return "Unknown"
     }
 
+    if ($SourceInfo.IsScoredCodeSource) {
+        return "Code"
+    }
     if ($SourceInfo.IsRuntimeSource) {
         return "Runtime"
     }
@@ -610,12 +623,14 @@ function Get-SourceInventory {
             $isRuntimeSource = (-not $isTestSource) -and ($normalizedPath -like "crates/*/src/*.rs")
             $isEntryPointSource = Test-IsEntryPointSourcePath -Path $displayPath
             $isToolingSource = (-not $isRuntimeSource) -and (-not $isTestSource) -and (-not $isEntryPointSource)
+            $isScoredCodeSource = Test-IsScoredCodePath -Path $displayPath
 
             $inventory[$displayPath] = [pscustomobject]@{
                 DisplayPath = $displayPath
                 NormalizedPath = $normalizedPath
                 LineCount = @($lines).Count
                 MeaningfulLineCount = $meaningfulLines.Count
+                IsScoredCodeSource = $isScoredCodeSource
                 IsRuntimeSource = $isRuntimeSource
                 IsTestSource = $isTestSource
                 IsEntryPointSource = $isEntryPointSource
@@ -643,7 +658,7 @@ function Get-CleanCodeLineScore {
 
     $lineCount = [double]$SourceInfo.LineCount
 
-    if ($SourceInfo.IsRuntimeSource) {
+    if ($SourceInfo.IsScoredCodeSource) {
         if ($lineCount -le 250) { return 100.0 }
         elseif ($lineCount -le 400) { return 90.0 }
         elseif ($lineCount -le 600) { return 75.0 }
@@ -651,14 +666,6 @@ function Get-CleanCodeLineScore {
         elseif ($lineCount -le 1000) { return 45.0 }
         elseif ($lineCount -le 1400) { return 30.0 }
         return 15.0
-    }
-
-    if ($SourceInfo.IsEntryPointSource) {
-        if ($lineCount -le 150) { return 100.0 }
-        elseif ($lineCount -le 250) { return 85.0 }
-        elseif ($lineCount -le 400) { return 70.0 }
-        elseif ($lineCount -le 600) { return 50.0 }
-        return 25.0
     }
 
     if ($SourceInfo.IsTestSource) {
@@ -682,15 +689,9 @@ function Get-CleanCodeSizeBand {
 
     $lineCount = [int]$SourceInfo.LineCount
 
-    if ($SourceInfo.IsRuntimeSource) {
+    if ($SourceInfo.IsScoredCodeSource) {
         if ($lineCount -le 400) { return "compact" }
         elseif ($lineCount -le 800) { return "large" }
-        return "oversized"
-    }
-
-    if ($SourceInfo.IsEntryPointSource) {
-        if ($lineCount -le 250) { return "compact" }
-        elseif ($lineCount -le 500) { return "large" }
         return "oversized"
     }
 
@@ -844,7 +845,7 @@ function Invoke-CleanCodeReport {
             $category = Get-SourceCategoryLabel -SourceInfo $source
             $sizeBand = Get-CleanCodeSizeBand -SourceInfo $source
 
-            if (($source.IsRuntimeSource -or $source.IsEntryPointSource) -and $source.HasInlineTests) {
+            if ($source.IsScoredCodeSource -and $source.HasInlineTests) {
                 $penalty += 35.0
                 $reasons.Add("Inline #[test] functions are still mixed into production code.")
             }
@@ -856,10 +857,7 @@ function Invoke-CleanCodeReport {
                 $reasons.Add("This file is larger than ideal and should keep trending downward.")
             }
 
-            if ($source.IsRuntimeSource -and $source.LineCount -gt 1000) {
-                $penalty += 10.0
-            }
-            if ($source.IsEntryPointSource -and $source.LineCount -gt 500) {
+            if ($source.IsScoredCodeSource -and $source.LineCount -gt 1000) {
                 $penalty += 10.0
             }
             if ($source.IsTestSource -and $source.LineCount -gt 1800) {
@@ -879,12 +877,12 @@ function Invoke-CleanCodeReport {
             }
         }
 
-        $runtimeFiles = @($scoredFiles | Where-Object { $_.Category -in @("Runtime", "Entrypoint") })
+        $codeFiles = @($scoredFiles | Where-Object { $_.Category -eq "Code" })
         $testFiles = @($scoredFiles | Where-Object { $_.Category -eq "Test" })
-        $supplementalFiles = @($scoredFiles | Where-Object { $_.Category -in @("Tooling", "Other") })
+        $supplementalFiles = @($scoredFiles | Where-Object { $_.Category -in @("Tooling", "Other", "Unknown") })
 
-        $runtimeAverage = if ($runtimeFiles.Count -gt 0) {
-            [double](($runtimeFiles | Measure-Object -Property Score -Average).Average)
+        $codeAverage = if ($codeFiles.Count -gt 0) {
+            [double](($codeFiles | Measure-Object -Property Score -Average).Average)
         }
         else {
             100.0
@@ -895,20 +893,20 @@ function Invoke-CleanCodeReport {
         else {
             100.0
         }
-        $compactRuntimePercent = if ($runtimeFiles.Count -gt 0) {
-            ((@($runtimeFiles | Where-Object { $_.LineCount -le 600 -and -not $_.HasInlineTests }).Count) / $runtimeFiles.Count) * 100.0
+        $compactCodePercent = if ($codeFiles.Count -gt 0) {
+            ((@($codeFiles | Where-Object { $_.LineCount -le 600 -and -not $_.HasInlineTests }).Count) / $codeFiles.Count) * 100.0
         }
         else {
             100.0
         }
 
         $structureScoreSummary = New-ScoreSummary `
-            -Score (($runtimeAverage * 0.7) + ($testAverage * 0.2) + ($compactRuntimePercent * 0.1)) `
-            -Formula "70% average runtime/entrypoint structure score + 20% average test structure score + 10% runtime/entrypoint files at <=600 lines without inline tests" `
+            -Score (($codeAverage * 0.7) + ($testAverage * 0.2) + ($compactCodePercent * 0.1)) `
+            -Formula "70% average non-test code structure score + 20% average test structure score + 10% non-test code files at <=600 lines without inline tests" `
             -Breakdown @(
-                "Average runtime/entrypoint structure score: $("{0:N2}" -f $runtimeAverage)",
+                "Average non-test code structure score: $("{0:N2}" -f $codeAverage)",
                 "Average test structure score: $("{0:N2}" -f $testAverage)",
-                "Runtime/entrypoint files at <=600 lines without inline tests: $(Format-Percent -Value $compactRuntimePercent)"
+                "Non-test code files at <=600 lines without inline tests: $(Format-Percent -Value $compactCodePercent)"
             )
         $clippySummary = Invoke-ClippyAnalysisSummary
         $scoreSummary = New-ScoreSummary `
@@ -919,21 +917,21 @@ function Invoke-CleanCodeReport {
                 "cargo clippy static-analysis score: $("{0:N2}" -f $clippySummary.Score) (warnings: $($clippySummary.WarningCount), exit code: $($clippySummary.ExitCode))"
             )
 
-        $oversizedRuntimeFiles = @($runtimeFiles | Where-Object { $_.SizeBand -eq "oversized" })
+        $oversizedCodeFiles = @($codeFiles | Where-Object { $_.SizeBand -eq "oversized" })
         $oversizedTestFiles = @($testFiles | Where-Object { $_.SizeBand -eq "oversized" })
-        $runtimeInlineTests = @($runtimeFiles | Where-Object { $_.HasInlineTests })
+        $codeInlineTests = @($codeFiles | Where-Object { $_.HasInlineTests })
         $largestFile = $scoredFiles | Select-Object -First 1
 
         $notes.Add("This report is heuristic. It scores structural cleanliness signals: file size, production/test separation, and whether the largest files are still trending toward smaller modules.")
         $notes.Add("Clippy and the complexity report remain the primary logic-level signals. This report complements them by grading file-level structure.")
-        $notes.Add("Runtime and entrypoint files are held to tighter size thresholds than tests and tooling.")
-        $notes.Add("Inline #[test] functions inside runtime or entrypoint files incur a direct penalty because they mix production and test concerns.")
+        $notes.Add("All non-test Rust code under crates/ and bin/ now uses the same clean-code thresholds and contributes equally to the headline score.")
+        $notes.Add("Inline #[test] functions inside non-test code incur a direct penalty because they mix production and test concerns.")
         $notes.Add("A file can still be perfectly valid Rust and pass tests while scoring poorly here if it is too large or blends multiple responsibilities.")
         foreach ($note in $clippySummary.Notes) {
             $notes.Add($note)
         }
 
-        $runtimeRows = foreach ($file in ($runtimeFiles | Sort-Object @{ Expression = "Score"; Ascending = $true }, @{ Expression = "LineCount"; Descending = $true }, DisplayPath | Select-Object -First 20)) {
+        $codeRows = foreach ($file in ($codeFiles | Sort-Object @{ Expression = "Score"; Ascending = $true }, @{ Expression = "LineCount"; Descending = $true }, DisplayPath | Select-Object -First 20)) {
             $reasons = if ($file.Reasons.Count -gt 0) { Escape-Html ($file.Reasons -join " | ") } else { "Healthy for its category." }
             @"
 <tr>
@@ -982,14 +980,14 @@ function Invoke-CleanCodeReport {
 
         $body = @"
 <h1>Clean Code Report</h1>
-<p class="muted">This report grades structural cleanliness heuristics for the Rust codebase. It is intentionally stricter on runtime and entrypoint files than on tests and tooling.</p>
+<p class="muted">This report grades structural cleanliness heuristics for the Rust codebase. All non-test Rust code under <code>crates/</code> and <code>bin/</code> is now scored by the same size and separation rules.</p>
 <div class="grid">
   <div class="metric"><span class="muted">Clean-code score</span><strong>$(Format-Score -Score $scoreSummary.Score) $(Format-GradeBadge -Grade $scoreSummary.Grade)</strong><div class="detail">$(Escape-Html $scoreSummary.Formula)</div></div>
-  <div class="metric"><span class="muted">Runtime + entrypoint files</span><strong>$($runtimeFiles.Count)</strong><div class="detail">$($oversizedRuntimeFiles.Count) oversized</div></div>
+  <div class="metric"><span class="muted">Scored code files</span><strong>$($codeFiles.Count)</strong><div class="detail">$($oversizedCodeFiles.Count) oversized</div></div>
   <div class="metric"><span class="muted">Test files</span><strong>$($testFiles.Count)</strong><div class="detail">$($oversizedTestFiles.Count) oversized</div></div>
-  <div class="metric"><span class="muted">Runtime files with inline tests</span><strong>$($runtimeInlineTests.Count)</strong></div>
+  <div class="metric"><span class="muted">Code files with inline tests</span><strong>$($codeInlineTests.Count)</strong></div>
   <div class="metric"><span class="muted">Largest tracked file</span><strong>$(if ($null -ne $largestFile) { Escape-Html $largestFile.DisplayPath } else { 'n/a' })</strong><div class="detail">$(if ($null -ne $largestFile) { "$($largestFile.LineCount) lines" } else { "" })</div></div>
-  <div class="metric"><span class="muted">Compact runtime coverage</span><strong>$(Format-Percent -Value $compactRuntimePercent)</strong><div class="detail"><=600 lines with no inline tests</div></div>
+  <div class="metric"><span class="muted">Compact code coverage</span><strong>$(Format-Percent -Value $compactCodePercent)</strong><div class="detail"><=600 lines with no inline tests</div></div>
   <div class="metric"><span class="muted">cargo clippy</span><strong>$(Format-Score -Score $clippySummary.Score) $(Format-GradeBadge -Grade $clippySummary.Grade)</strong><div class="detail">$($clippySummary.WarningCount) warnings, exit code $($clippySummary.ExitCode)</div></div>
 </div>
 <div class="panel">
@@ -1007,7 +1005,7 @@ function Invoke-CleanCodeReport {
 })
 </div>
 <div class="panel">
-  <h2>Scored runtime and entrypoint files</h2>
+  <h2>Scored non-test code files</h2>
   <table>
     <thead>
       <tr>
@@ -1022,7 +1020,7 @@ function Invoke-CleanCodeReport {
       </tr>
     </thead>
     <tbody>
-$(($runtimeRows -join "`n"))
+$(($codeRows -join "`n"))
     </tbody>
   </table>
 </div>
@@ -1093,12 +1091,12 @@ $(($noteItems -join "`n"))
                 sample_warnings = @($clippySummary.SampleWarnings)
             }
             files = [pscustomobject]@{
-                runtime = $runtimeFiles.Count
+                code = $codeFiles.Count
                 tests = $testFiles.Count
                 supplemental = $supplementalFiles.Count
-                oversized_runtime = $oversizedRuntimeFiles.Count
+                oversized_code = $oversizedCodeFiles.Count
                 oversized_tests = $oversizedTestFiles.Count
-                runtime_inline_tests = $runtimeInlineTests.Count
+                code_inline_tests = $codeInlineTests.Count
             }
             largest = if ($null -ne $largestFile) {
                 [pscustomobject]@{
@@ -1919,7 +1917,7 @@ function Invoke-ComplexityReport {
         }
 
         $scoredPathSet = @{}
-        foreach ($source in @($SourceInventory.Values | Where-Object { $_.IsRuntimeSource })) {
+        foreach ($source in @($SourceInventory.Values | Where-Object { $_.IsScoredCodeSource })) {
             $scoredPathSet[$source.DisplayPath] = $true
         }
 
@@ -1953,23 +1951,23 @@ function Invoke-ComplexityReport {
             0.0
         }
         $manageableFiles = @($filesWithFunctions | Where-Object { $_.WorstFunctionGrade -notin @("E", "F") })
-        $manageableRuntimePercent = if ($filesWithFunctions.Count -eq 0) {
+        $manageableCodePercent = if ($filesWithFunctions.Count -eq 0) {
             0.0
         }
         else {
             ($manageableFiles.Count / $filesWithFunctions.Count) * 100.0
         }
         $scoreSummary = New-ScoreSummary `
-            -Score (($averageWorstFunctionScore * 0.5) + ($averageFunctionScore * 0.3) + ($manageableRuntimePercent * 0.2)) `
-            -Formula "50% average runtime worst-function grade + 30% average runtime per-file function grade + 20% runtime files without E/F hotspots" `
+            -Score (($averageWorstFunctionScore * 0.5) + ($averageFunctionScore * 0.3) + ($manageableCodePercent * 0.2)) `
+            -Formula "50% average non-test code worst-function grade + 30% average non-test code per-file function grade + 20% non-test code files without E/F hotspots" `
             -Breakdown @(
-                "Average runtime worst-function grade score: $("{0:N2}" -f $averageWorstFunctionScore)",
-                "Average runtime function grade score: $("{0:N2}" -f $averageFunctionScore)",
-                "Runtime files without E/F hotspots: $(Format-Percent -Value $manageableRuntimePercent)"
+                "Average non-test code worst-function grade score: $("{0:N2}" -f $averageWorstFunctionScore)",
+                "Average non-test code function grade score: $("{0:N2}" -f $averageFunctionScore)",
+                "Non-test code files without E/F hotspots: $(Format-Percent -Value $manageableCodePercent)"
             )
 
-        $notes.Add("Headline complexity scoring is scoped to backend runtime source files under crates/*/src/*.rs.")
-        $notes.Add("Entrypoints, tooling binaries, and integration tests stay visible in the supplemental table but do not affect the headline complexity score.")
+        $notes.Add("Headline complexity scoring is scoped to all non-test Rust code under crates/ and bin/, with fuzzing code excluded.")
+        $notes.Add("Tests stay visible in the supplemental table but do not affect the headline complexity score.")
         $notes.Add("File-level maintainability index is still shown for context, but the headline score is driven by function-grade health because rust-code-analysis file MI is unstable on several larger Rust modules in this repo.")
         $notes.Add("Placeholder crates with only crate-level docs and attributes have no meaningful complexity data yet.")
         $notes.Add("Cyclomatic grades use Xenon/Radon bands: A 1-5, B 6-10, C 11-20, D 21-30, E 31-40, F 41+.")
@@ -2069,21 +2067,21 @@ $(($supplementalRows -join "`n"))
 <p class="muted">Commit <code>$(Escape-Html (Get-GitValue -CommandArgs @("rev-parse", "--short", "HEAD") -Fallback "unknown"))</code>. Raw analyzer output lives under <code>target/reports/complexity/data</code>.</p>
 <div class="grid">
   <div class="metric"><span class="muted">Complexity score</span><strong>$(Format-Score -Score $scoreSummary.Score) $(Format-GradeBadge -Grade $scoreSummary.Grade)</strong><div class="detail">$(Escape-Html $scoreSummary.Formula)</div></div>
-  <div class="metric"><span class="muted">Scored runtime files</span><strong>$($scoredFileMetrics.Count)</strong></div>
+  <div class="metric"><span class="muted">Scored code files</span><strong>$($scoredFileMetrics.Count)</strong></div>
   <div class="metric"><span class="muted">Supplemental files</span><strong>$($supplementalFileMetrics.Count)</strong></div>
-  <div class="metric"><span class="muted">Tracked runtime functions</span><strong>$($scoredFunctionMetrics.Count)</strong></div>
+  <div class="metric"><span class="muted">Tracked code functions</span><strong>$($scoredFunctionMetrics.Count)</strong></div>
   <div class="metric"><span class="muted">Worst function CC</span><strong>$(if ($null -ne $worstFunction) { '{0} ({1:N0})' -f $worstFunction.CyclomaticGrade, $worstFunction.Cyclomatic } else { 'n/a' })</strong></div>
   <div class="metric"><span class="muted">Worst file avg CC</span><strong>$(if (($null -ne $worstFile) -and ($null -ne $worstFile.AverageFunctionCyclomatic)) { '{0} ({1:N2})' -f $worstFile.AverageFunctionGrade, $worstFile.AverageFunctionCyclomatic } else { 'n/a' })</strong></div>
-  <div class="metric"><span class="muted">Runtime files without E/F</span><strong>$(Format-Percent -Value $manageableRuntimePercent)</strong></div>
+  <div class="metric"><span class="muted">Code files without E/F</span><strong>$(Format-Percent -Value $manageableCodePercent)</strong></div>
 </div>
 <div class="panel">
   <h2>Grade scale</h2>
   <p><strong>Cyclomatic:</strong> A 1-5, B 6-10, C 11-20, D 21-30, E 31-40, F 41+.</p>
   <p><strong>Maintainability:</strong> A &gt;19, B 10-19, C &lt;=9.</p>
-  <p class="muted">The headline score is based on runtime function health, while raw MI stays visible as a supporting signal.</p>
+  <p class="muted">The headline score is based on non-test code function health, while raw MI stays visible as a supporting signal.</p>
 </div>
 <div class="panel">
-  <h2>Scored backend runtime files</h2>
+  <h2>Scored non-test code files</h2>
   <table>
     <thead>
       <tr>
@@ -2103,7 +2101,7 @@ $(($fileRows -join "`n"))
   </table>
 </div>
 <div class="panel">
-  <h2>Top runtime function hotspots</h2>
+  <h2>Top non-test code function hotspots</h2>
   <table>
     <thead>
       <tr>
@@ -2141,11 +2139,11 @@ $(($noteItems -join "`n"))
                 formula = $scoreSummary.Formula
                 breakdown = @($scoreSummary.Breakdown)
             }
-            runtime = [pscustomobject]@{
+            code = [pscustomobject]@{
                 file_count = $scoredFileMetrics.Count
                 supplemental_file_count = $supplementalFileMetrics.Count
                 function_count = $scoredFunctionMetrics.Count
-                files_without_ef_hotspots_percent = [math]::Round([double]$manageableRuntimePercent, 2)
+                files_without_ef_hotspots_percent = [math]::Round([double]$manageableCodePercent, 2)
             }
             worst = [pscustomobject]@{
                 function = if ($null -ne $worstFunction) {
