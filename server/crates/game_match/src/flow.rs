@@ -4,7 +4,7 @@ use game_domain::{LoadoutProgress, MatchOutcome, SkillChoice, TeamAssignment, Te
 
 use super::{
     known_round, MatchConfig, MatchError, MatchEvent, MatchId, MatchPhase, MatchPlayer,
-    MatchSession, PlayerId, ScoreBoard, ROUND_OBJECTIVE_TARGET_MS,
+    MatchSession, PlayerId, ScoreBoard,
 };
 
 impl MatchSession {
@@ -206,17 +206,17 @@ impl MatchSession {
             self.objective_team_a_ms = self
                 .objective_team_a_ms
                 .saturating_add(u32::from(delta_ms))
-                .min(ROUND_OBJECTIVE_TARGET_MS.saturating_mul(2));
+                .min(self.config.objective_target_ms.saturating_mul(2));
         }
         if team_b_present {
             self.objective_team_b_ms = self
                 .objective_team_b_ms
                 .saturating_add(u32::from(delta_ms))
-                .min(ROUND_OBJECTIVE_TARGET_MS.saturating_mul(2));
+                .min(self.config.objective_target_ms.saturating_mul(2));
         }
 
-        let winner = if self.objective_team_a_ms >= ROUND_OBJECTIVE_TARGET_MS
-            && self.objective_team_b_ms >= ROUND_OBJECTIVE_TARGET_MS
+        let winner = if self.objective_team_a_ms >= self.config.objective_target_ms
+            && self.objective_team_b_ms >= self.config.objective_target_ms
         {
             if self.objective_team_a_ms > self.objective_team_b_ms {
                 Some(TeamSide::TeamA)
@@ -225,9 +225,9 @@ impl MatchSession {
             } else {
                 None
             }
-        } else if self.objective_team_a_ms >= ROUND_OBJECTIVE_TARGET_MS {
+        } else if self.objective_team_a_ms >= self.config.objective_target_ms {
             Some(TeamSide::TeamA)
-        } else if self.objective_team_b_ms >= ROUND_OBJECTIVE_TARGET_MS {
+        } else if self.objective_team_b_ms >= self.config.objective_target_ms {
             Some(TeamSide::TeamB)
         } else {
             None

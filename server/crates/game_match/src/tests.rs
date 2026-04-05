@@ -4,6 +4,8 @@ use game_domain::{
     TeamSide,
 };
 
+const TEST_OBJECTIVE_TARGET_MS: u32 = 180_000;
+
 fn player_id(raw: u32) -> PlayerId {
     PlayerId::new(raw).expect("valid player id")
 }
@@ -24,7 +26,7 @@ fn session() -> MatchSession {
             assignment(1, "Alice", TeamSide::TeamA),
             assignment(2, "Bob", TeamSide::TeamB),
         ],
-        MatchConfig::v1(),
+        MatchConfig::v1(TEST_OBJECTIVE_TARGET_MS),
     )
     .expect("match session should build")
 }
@@ -35,10 +37,11 @@ fn skill(tree: SkillTree, tier: u8) -> SkillChoice {
 
 #[test]
 fn match_config_scoreboard_and_error_display_are_stable() {
-    let config = MatchConfig::v1();
+    let config = MatchConfig::v1(TEST_OBJECTIVE_TARGET_MS);
     assert_eq!(config.total_rounds.get(), 5);
     assert_eq!(config.skill_pick_seconds, SKILL_PICK_SECONDS);
     assert_eq!(config.pre_combat_seconds, PRE_COMBAT_SECONDS);
+    assert_eq!(config.objective_target_ms, TEST_OBJECTIVE_TARGET_MS);
 
     let mut score = ScoreBoard::new();
     score.award_round(TeamSide::TeamA);
@@ -88,7 +91,7 @@ fn match_config_scoreboard_and_error_display_are_stable() {
 
 #[test]
 fn match_new_requires_players_on_both_teams_and_unique_ids() {
-    let config = MatchConfig::v1();
+    let config = MatchConfig::v1(TEST_OBJECTIVE_TARGET_MS);
     let match_id = MatchId::new(1).expect("valid match id");
 
     assert!(matches!(
@@ -135,6 +138,7 @@ fn submit_skill_pick_accepts_valid_progression_and_rejects_invalid_inputs() {
         session.submit_skill_pick(player_id(1), skill(SkillTree::Mage, 1)),
         Ok(vec![MatchEvent::SkillChosen {
             player_id: player_id(1),
+            slot: 1,
             choice: skill(SkillTree::Mage, 1),
         }])
     );
@@ -162,6 +166,7 @@ fn all_skill_choices_transition_the_match_into_pre_combat() {
         vec![
             MatchEvent::SkillChosen {
                 player_id: player_id(2),
+                slot: 1,
                 choice: skill(SkillTree::Rogue, 1),
             },
             MatchEvent::PreCombatStarted {

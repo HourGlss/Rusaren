@@ -619,7 +619,11 @@ impl ServerApp {
             return;
         };
         let match_id = self.allocate_match_id();
-        let session = match MatchSession::new(match_id, roster.clone(), MatchConfig::v1()) {
+        let session = match MatchSession::new(
+            match_id,
+            roster.clone(),
+            MatchConfig::v1(lobby_map.objective_target_ms),
+        ) {
             Ok(session) => session,
             Err(error) => {
                 self.broadcast_event(
@@ -691,7 +695,8 @@ impl ServerApp {
                     Ok(round) => round,
                     Err(error) => panic!("round one must be valid: {error}"),
                 },
-                skill_pick_seconds: MatchConfig::v1().skill_pick_seconds,
+                skill_pick_seconds: MatchConfig::v1(lobby_map.objective_target_ms)
+                    .skill_pick_seconds,
             },
         );
         self.broadcast_arena_state_snapshot(transport, match_id);

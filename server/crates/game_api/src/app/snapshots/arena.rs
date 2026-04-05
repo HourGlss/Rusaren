@@ -35,12 +35,11 @@ impl ServerApp {
 
     pub(in super::super) fn arena_obstacles_snapshot(
         obstacles: &[ArenaObstacle],
-        map: &ArenaMapDefinition,
-        explored_tiles: &[u8],
+        _map: &ArenaMapDefinition,
+        _explored_tiles: &[u8],
     ) -> Vec<ArenaObstacleSnapshot> {
         obstacles
             .iter()
-            .filter(|obstacle| Self::mask_intersects_obstacle(map, explored_tiles, obstacle))
             .map(Self::arena_obstacle_snapshot)
             .collect()
     }

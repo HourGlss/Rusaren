@@ -16,6 +16,7 @@ fn generated_maps_preserve_the_template_contract_and_roundtrip_to_ascii() {
     assert_eq!(generated.width_tiles, template.width_tiles);
     assert_eq!(generated.height_tiles, template.height_tiles);
     assert_eq!(generated.tile_units, template.tile_units);
+    assert_eq!(generated.objective_target_ms, template.objective_target_ms);
     assert_eq!(generated.footprint_mask, template.footprint_mask);
     assert_eq!(generated.objective_mask, template.objective_mask);
     assert_eq!(generated.team_a_anchors, template.team_a_anchors);
@@ -27,10 +28,13 @@ fn generated_maps_preserve_the_template_contract_and_roundtrip_to_ascii() {
     );
 
     let rendered = render_ascii_map(&generated).expect("generated map should render");
-    let reparsed = parse_ascii_map("sample_001.txt", &rendered).expect("rendered map should parse");
+    let mut reparsed =
+        parse_ascii_map("sample_001.txt", &rendered).expect("rendered map should parse");
+    reparsed.objective_target_ms = generated.objective_target_ms;
 
     assert_eq!(reparsed.width_tiles, generated.width_tiles);
     assert_eq!(reparsed.height_tiles, generated.height_tiles);
+    assert_eq!(reparsed.objective_target_ms, generated.objective_target_ms);
     assert_eq!(reparsed.footprint_mask, generated.footprint_mask);
     assert_eq!(reparsed.objective_mask, generated.objective_mask);
     assert_eq!(reparsed.team_a_anchors, generated.team_a_anchors);
@@ -58,6 +62,23 @@ fn generated_maps_keep_spawn_paths_open_and_preserve_diagonal_symmetry() {
         assert!(
             obstacles_are_diagonally_symmetric(&generated),
             "generated obstacle layout should remain diagonally symmetric on seed {seed}"
+        );
+    }
+}
+
+#[test]
+fn generated_maps_include_short_contiguous_pillar_walls() {
+    let content = GameContent::bundled().expect("bundled content should load");
+    let template = content
+        .map_by_id("template_arena")
+        .expect("template arena should exist");
+
+    for seed in 1..=24_u64 {
+        let generated = generate_template_match_map(template, format!("wall_seed_{seed:03}"), seed)
+            .expect("map");
+        assert!(
+            has_contiguous_pillar_wall(&generated),
+            "generated map should include at least one 2-3 tile contiguous pillar wall on seed {seed}"
         );
     }
 }
@@ -147,6 +168,21 @@ fn blocked_tiles(map: &ArenaMapDefinition) -> BTreeSet<usize> {
         .filter(|obstacle| obstacle.kind == ArenaMapObstacleKind::Pillar)
         .map(|obstacle| tile_index_for_center(map, obstacle.center_x, obstacle.center_y))
         .collect()
+}
+
+fn has_contiguous_pillar_wall(map: &ArenaMapDefinition) -> bool {
+    let blocked = blocked_tiles(map);
+    blocked.iter().any(|index| {
+        let (column, row) = index_to_coord(map, *index);
+        neighbors(
+            column,
+            row,
+            usize::from(map.width_tiles),
+            usize::from(map.height_tiles),
+        )
+        .into_iter()
+        .any(|(next_column, next_row)| blocked.contains(&tile_index(map, next_column, next_row)))
+    })
 }
 
 fn neighbors(column: usize, row: usize, width: usize, height: usize) -> Vec<(usize, usize)> {

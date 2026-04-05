@@ -329,7 +329,7 @@ fn force_team_a_round_win_via_objective(
     transport: &mut InMemoryTransport,
     match_id: MatchId,
 ) {
-    let mut remaining_ms = game_match::ROUND_OBJECTIVE_TARGET_MS;
+    let mut remaining_ms = server.matches[&match_id].session.objective_target_ms();
     while remaining_ms > 0 {
         let slice_ms = remaining_ms.min(60_000) as u16;
         let events = {
@@ -483,6 +483,12 @@ fn launch_match(
             _ => None,
         })
         .expect("match should start");
+    let runtime_map = server
+        .matches
+        .get(&match_id)
+        .expect("match runtime should exist")
+        .map
+        .clone();
     let alice_player_id = alice.player_id().expect("alice id");
     let bob_player_id = bob.player_id().expect("bob id");
     let alice_snapshot =
@@ -517,19 +523,21 @@ fn launch_match(
             .any(|player| player.player_id == alice_player_id),
         "bob should not receive hidden opposing actors in the first snapshot"
     );
-    assert_eq!(alice_snapshot.tile_units, server.content.map().tile_units);
-    assert_eq!(bob_snapshot.tile_units, server.content.map().tile_units);
+    assert_eq!(alice_snapshot.tile_units, runtime_map.tile_units);
+    assert_eq!(bob_snapshot.tile_units, runtime_map.tile_units);
     assert!(
         !alice_snapshot.visible_tiles.is_empty() && !bob_snapshot.visible_tiles.is_empty(),
         "initial arena snapshots should include visibility masks"
     );
-    assert!(
-        alice_snapshot.obstacles.len() < server.content.map().obstacles.len(),
-        "alice should not receive the full terrain layout before exploring it"
+    assert_eq!(
+        alice_snapshot.obstacles.len(),
+        runtime_map.obstacles.len(),
+        "alice should receive the full obstacle layout immediately"
     );
-    assert!(
-        bob_snapshot.obstacles.len() < server.content.map().obstacles.len(),
-        "bob should not receive the full terrain layout before exploring it"
+    assert_eq!(
+        bob_snapshot.obstacles.len(),
+        runtime_map.obstacles.len(),
+        "bob should receive the full obstacle layout immediately"
     );
     assert!(bob_events.iter().any(|event| matches!(
         event,

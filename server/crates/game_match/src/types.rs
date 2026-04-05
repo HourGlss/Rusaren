@@ -12,15 +12,17 @@ pub struct MatchConfig {
     pub total_rounds: RoundNumber,
     pub skill_pick_seconds: u8,
     pub pre_combat_seconds: u8,
+    pub objective_target_ms: u32,
 }
 
 impl MatchConfig {
     #[must_use]
-    pub fn v1() -> Self {
+    pub fn v1(objective_target_ms: u32) -> Self {
         Self {
             total_rounds: known_round(5),
             skill_pick_seconds: SKILL_PICK_SECONDS,
             pre_combat_seconds: PRE_COMBAT_SECONDS,
+            objective_target_ms,
         }
     }
 }

@@ -5,6 +5,7 @@ use super::{
 };
 
 const MAX_GENERATION_ATTEMPTS: usize = 256;
+const CARDINAL_DIRECTIONS: [(i32, i32); 4] = [(1, 0), (0, 1), (-1, 0), (0, -1)];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct GenerationStyle {
@@ -12,7 +13,8 @@ struct GenerationStyle {
     shrub_radius_tiles: i32,
     shrub_soft_radius_tiles: i32,
     shrub_fill_percent: u8,
-    pillar_pairs: usize,
+    wall_segments: usize,
+    isolated_pillars: usize,
 }
 
 pub fn generate_template_match_map(
@@ -43,7 +45,8 @@ pub fn generate_template_match_map(
     for _attempt in 0..MAX_GENERATION_ATTEMPTS {
         let mut orbit_order = candidate_orbits.clone();
         shuffle(&mut orbit_order, &mut rng);
-        let layout = build_obstacle_layout(template, &orbit_order, style, &mut rng);
+        let layout =
+            build_obstacle_layout(template, &orbit_order, &protected_tiles, style, &mut rng);
         if all_spawn_anchors_reach_objective(template, &layout) {
             return Ok(ArenaMapDefinition {
                 map_id: map_id.clone(),
@@ -52,6 +55,7 @@ pub fn generate_template_match_map(
                 tile_units: template.tile_units,
                 width_units: template.width_units,
                 height_units: template.height_units,
+                objective_target_ms: template.objective_target_ms,
                 footprint_mask: template.footprint_mask.clone(),
                 objective_mask: template.objective_mask.clone(),
                 team_a_anchors: template.team_a_anchors.clone(),
@@ -137,35 +141,40 @@ fn pick_generation_style(rng: &mut MapRng) -> GenerationStyle {
             shrub_radius_tiles: 1,
             shrub_soft_radius_tiles: 2,
             shrub_fill_percent: 16,
-            pillar_pairs: 2,
+            wall_segments: 1,
+            isolated_pillars: 2,
         },
         1 => GenerationStyle {
             shrub_clusters: 2,
             shrub_radius_tiles: 2,
             shrub_soft_radius_tiles: 3,
             shrub_fill_percent: 24,
-            pillar_pairs: 3,
+            wall_segments: 2,
+            isolated_pillars: 2,
         },
         2 => GenerationStyle {
             shrub_clusters: 3,
             shrub_radius_tiles: 2,
             shrub_soft_radius_tiles: 4,
             shrub_fill_percent: 38,
-            pillar_pairs: 3,
+            wall_segments: 2,
+            isolated_pillars: 3,
         },
         3 => GenerationStyle {
             shrub_clusters: 3,
             shrub_radius_tiles: 3,
             shrub_soft_radius_tiles: 5,
             shrub_fill_percent: 50,
-            pillar_pairs: 4,
+            wall_segments: 3,
+            isolated_pillars: 3,
         },
         _ => GenerationStyle {
             shrub_clusters: 4,
             shrub_radius_tiles: 3,
             shrub_soft_radius_tiles: 5,
             shrub_fill_percent: 62,
-            pillar_pairs: 5,
+            wall_segments: 3,
+            isolated_pillars: 4,
         },
     }
 }
@@ -173,6 +182,7 @@ fn pick_generation_style(rng: &mut MapRng) -> GenerationStyle {
 fn build_obstacle_layout(
     template: &ArenaMapDefinition,
     orbit_order: &[Vec<usize>],
+    protected_tiles: &[bool],
     style: GenerationStyle,
     rng: &mut MapRng,
 ) -> Vec<Option<ArenaMapObstacleKind>> {
@@ -185,8 +195,56 @@ fn build_obstacle_layout(
         .map(|orbit| index_to_coord(template, orbit[0]))
         .collect::<Vec<_>>();
 
-    let mut pillar_representatives = Vec::new();
-    let mut pillar_pairs_remaining = style.pillar_pairs;
+    let mut wall_representatives = Vec::new();
+    let mut wall_segments_remaining = style.wall_segments;
+    for orbit in orbit_order {
+        if wall_segments_remaining == 0 {
+            break;
+        }
+        let representative = index_to_coord(template, orbit[0]);
+        if wall_representatives
+            .iter()
+            .any(|existing| manhattan_distance(representative, *existing) <= 4)
+            || rng.roll_percent(35)
+        {
+            continue;
+        }
+
+        let mut directions = CARDINAL_DIRECTIONS.to_vec();
+        shuffle(&mut directions, rng);
+        let preferred_length = if rng.roll_percent(42) { 3 } else { 2 };
+        let mut placed = false;
+        for direction in directions {
+            if try_place_wall_segment(
+                template,
+                &mut layout,
+                protected_tiles,
+                representative,
+                direction,
+                preferred_length,
+            ) || (preferred_length == 3
+                && try_place_wall_segment(
+                    template,
+                    &mut layout,
+                    protected_tiles,
+                    representative,
+                    direction,
+                    2,
+                ))
+            {
+                wall_representatives.push(representative);
+                wall_segments_remaining = wall_segments_remaining.saturating_sub(1);
+                placed = true;
+                break;
+            }
+        }
+        if placed {
+            continue;
+        }
+    }
+
+    let mut pillar_representatives = wall_representatives;
+    let mut pillar_pairs_remaining = style.isolated_pillars;
     for orbit in orbit_order {
         if pillar_pairs_remaining == 0 {
             break;
@@ -238,6 +296,51 @@ fn build_obstacle_layout(
     }
 
     layout
+}
+
+fn try_place_wall_segment(
+    template: &ArenaMapDefinition,
+    layout: &mut [Option<ArenaMapObstacleKind>],
+    protected_tiles: &[bool],
+    start: (i32, i32),
+    direction: (i32, i32),
+    length: i32,
+) -> bool {
+    let width = i32::from(template.width_tiles);
+    let height = i32::from(template.height_tiles);
+    let mut indices = BTreeSet::new();
+    for step in 0..length {
+        let column = start.0 + direction.0 * step;
+        let row = start.1 + direction.1 * step;
+        if column < 0 || row < 0 || column >= width || row >= height {
+            return false;
+        }
+        let orbit = mirror_orbit(
+            template,
+            usize::try_from(column).unwrap_or(0),
+            usize::try_from(row).unwrap_or(0),
+        );
+        if !orbit_is_pillar_safe(template, &orbit) {
+            return false;
+        }
+        for orbit_index in orbit {
+            if !mask_has_tile(&template.footprint_mask, orbit_index)
+                || protected_tiles.get(orbit_index).copied().unwrap_or(false)
+                || layout[orbit_index].is_some()
+            {
+                return false;
+            }
+            indices.insert(orbit_index);
+        }
+    }
+
+    if indices.len() < usize::try_from(length).unwrap_or(0) {
+        return false;
+    }
+    for index in indices {
+        layout[index] = Some(ArenaMapObstacleKind::Pillar);
+    }
+    true
 }
 
 fn collect_candidate_orbits(

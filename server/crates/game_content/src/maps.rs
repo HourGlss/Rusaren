@@ -1,4 +1,7 @@
+use std::collections::BTreeMap;
 use std::path::Path;
+
+use serde::Deserialize;
 
 use super::{
     AnchorPoint, ArenaMapDefinition, ArenaMapFeature, ArenaMapFeatureKind, ArenaMapObstacle,
@@ -19,6 +22,7 @@ pub fn parse_ascii_map(source: &str, ascii_map: &str) -> Result<ArenaMapDefiniti
         tile_units: DEFAULT_TILE_UNITS,
         width_units,
         height_units,
+        objective_target_ms: 0,
         footprint_mask,
         objective_mask,
         team_a_anchors,
@@ -26,6 +30,64 @@ pub fn parse_ascii_map(source: &str, ascii_map: &str) -> Result<ArenaMapDefiniti
         obstacles,
         features,
     })
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MapRegistryYaml {
+    maps: Vec<MapObjectiveSettingsYaml>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MapObjectiveSettingsYaml {
+    id: String,
+    objective_target_ms: u32,
+}
+
+pub fn parse_map_registry_yaml(
+    source: &str,
+    yaml: &str,
+) -> Result<BTreeMap<String, u32>, ContentError> {
+    let parsed: MapRegistryYaml =
+        serde_yaml::from_str(yaml).map_err(|error| ContentError::Parse {
+            source: String::from(source),
+            message: error.to_string(),
+        })?;
+    if parsed.maps.is_empty() {
+        return Err(ContentError::Validation {
+            source: String::from(source),
+            message: String::from("map registry must contain at least one map entry"),
+        });
+    }
+
+    let mut settings = BTreeMap::new();
+    for entry in parsed.maps {
+        let map_id = entry.id.trim();
+        if map_id.is_empty() {
+            return Err(ContentError::Validation {
+                source: String::from(source),
+                message: String::from("map registry entries must have a non-empty id"),
+            });
+        }
+        if entry.objective_target_ms == 0 {
+            return Err(ContentError::Validation {
+                source: String::from(source),
+                message: format!("map '{map_id}' objective_target_ms must be greater than zero"),
+            });
+        }
+        if settings
+            .insert(String::from(map_id), entry.objective_target_ms)
+            .is_some()
+        {
+            return Err(ContentError::Validation {
+                source: String::from(source),
+                message: format!("map registry contains duplicate entry '{map_id}'"),
+            });
+        }
+    }
+
+    Ok(settings)
 }
 
 type ParsedMapLayout = (

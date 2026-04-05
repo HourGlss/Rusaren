@@ -5,8 +5,8 @@ use std::path::Path;
 use game_domain::{SkillChoice, SkillTree};
 
 use super::{
-    load_skill_catalog_from_pairs_with_mechanics, parse_ascii_map, parse_mechanics_yaml,
-    read_skill_file_pairs, workspace_content_root, ContentError,
+    load_skill_catalog_from_pairs_with_mechanics, parse_ascii_map, parse_map_registry_yaml,
+    parse_mechanics_yaml, read_skill_file_pairs, workspace_content_root, ContentError,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -412,6 +412,7 @@ pub struct ArenaMapDefinition {
     pub tile_units: u16,
     pub width_units: u16,
     pub height_units: u16,
+    pub objective_target_ms: u32,
     pub footprint_mask: Vec<u8>,
     pub objective_mask: Vec<u8>,
     pub team_a_anchors: Vec<(i16, i16)>,
@@ -483,6 +484,14 @@ impl GameContent {
         let skills = load_skill_catalog_from_pairs_with_mechanics(&owned_pairs, &mechanics)?;
 
         let maps_dir = root.join("maps");
+        let map_registry_path = maps_dir.join("registry.yaml");
+        let map_registry_yaml =
+            fs::read_to_string(&map_registry_path).map_err(|error| ContentError::Io {
+                path: map_registry_path.clone(),
+                message: error.to_string(),
+            })?;
+        let map_registry =
+            parse_map_registry_yaml(&map_registry_path.display().to_string(), &map_registry_yaml)?;
         let mut map_paths = fs::read_dir(&maps_dir)
             .map_err(|error| ContentError::Io {
                 path: maps_dir.clone(),
@@ -509,7 +518,17 @@ impl GameContent {
                 path: path.clone(),
                 message: error.to_string(),
             })?;
-            let map = parse_ascii_map(&path.display().to_string(), &map_text)?;
+            let mut map = parse_ascii_map(&path.display().to_string(), &map_text)?;
+            let Some(objective_target_ms) = map_registry.get(&map.map_id).copied() else {
+                return Err(ContentError::Validation {
+                    source: map_registry_path.display().to_string(),
+                    message: format!(
+                        "map registry is missing objective_target_ms for '{}'",
+                        map.map_id
+                    ),
+                });
+            };
+            map.objective_target_ms = objective_target_ms;
             if maps.insert(map.map_id.clone(), map).is_some() {
                 return Err(ContentError::Validation {
                     source: path.display().to_string(),

@@ -92,7 +92,7 @@ pub(crate) fn run_demo() -> Result<Vec<String>, String> {
     let mut session = MatchSession::new(
         MatchId::new(1).map_err(|error| error.to_string())?,
         roster.clone(),
-        MatchConfig::v1(),
+        MatchConfig::v1(content.map().objective_target_ms),
     )
     .map_err(|error| error.to_string())?;
 

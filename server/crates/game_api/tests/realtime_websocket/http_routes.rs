@@ -141,7 +141,10 @@ async fn session_bootstrap_rate_limits_repeated_requests_from_one_client_ip() {
         assert_eq!(status_code, 200, "bootstrap should succeed below the limit");
         let payload: serde_json::Value =
             serde_json::from_str(&body).expect("bootstrap JSON should parse");
-        assert!(payload.get("token").and_then(serde_json::Value::as_str).is_some());
+        assert!(payload
+            .get("token")
+            .and_then(serde_json::Value::as_str)
+            .is_some());
     }
 
     let (status_code, body) = http_get_with_headers(

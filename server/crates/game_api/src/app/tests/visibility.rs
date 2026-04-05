@@ -52,26 +52,32 @@ fn visibility_masks_tiles_players_projectiles_and_effects_are_precise() {
     let map = runtime.map.clone();
     let (visible_tiles, explored_tiles) = build_runtime_visibility_masks(runtime, alice_id, &map);
     let alice_state = runtime.world.player_state(alice_id).expect("alice state");
-    let close_shrub = *runtime
+    let explored_shrub = *runtime
         .world
         .obstacles()
         .iter()
-        .filter(|obstacle| obstacle.kind == game_sim::ArenaObstacleKind::Shrub)
+        .filter(|obstacle| {
+            obstacle.kind == game_sim::ArenaObstacleKind::Shrub
+                && ServerApp::mask_intersects_obstacle(&map, &explored_tiles, obstacle)
+        })
         .min_by_key(|obstacle| {
             (i32::from(obstacle.center_x) - i32::from(alice_state.x)).abs()
                 + (i32::from(obstacle.center_y) - i32::from(alice_state.y)).abs()
         })
-        .expect("close shrub should exist");
-    let far_shrub = *runtime
+        .expect("an explored shrub should exist near the viewer");
+    let hidden_shrub = *runtime
         .world
         .obstacles()
         .iter()
-        .filter(|obstacle| obstacle.kind == game_sim::ArenaObstacleKind::Shrub)
+        .filter(|obstacle| {
+            obstacle.kind == game_sim::ArenaObstacleKind::Shrub
+                && !ServerApp::mask_intersects_obstacle(&map, &visible_tiles, obstacle)
+        })
         .max_by_key(|obstacle| {
             (i32::from(obstacle.center_x) - i32::from(alice_state.x)).abs()
                 + (i32::from(obstacle.center_y) - i32::from(alice_state.y)).abs()
         })
-        .expect("far shrub should exist");
+        .expect("a hidden shrub should exist outside the current visible mask");
 
     assert!(ServerApp::mask_contains_point(
         &map,
@@ -88,12 +94,12 @@ fn visibility_masks_tiles_players_projectiles_and_effects_are_precise() {
     assert!(ServerApp::mask_intersects_obstacle(
         &map,
         &explored_tiles,
-        &close_shrub
+        &explored_shrub
     ));
     assert!(!ServerApp::mask_intersects_obstacle(
         &map,
         &visible_tiles,
-        &far_shrub
+        &hidden_shrub
     ));
     let expected_top_left = (
         i16::try_from(-i32::from(map.width_units) / 2 + i32::from(map.tile_units) / 2)
@@ -139,8 +145,8 @@ fn visibility_masks_tiles_players_projectiles_and_effects_are_precise() {
     );
     assert!(ServerApp::containing_shrub(
         runtime.world.obstacles(),
-        close_shrub.center_x,
-        close_shrub.center_y
+        explored_shrub.center_x,
+        explored_shrub.center_y
     )
     .is_some());
     assert!(
@@ -162,7 +168,7 @@ fn visibility_masks_tiles_players_projectiles_and_effects_are_precise() {
     ));
     assert!(!ServerApp::point_is_visible_to_viewer(
         (alice_state.x, alice_state.y),
-        (close_shrub.center_x, close_shrub.center_y),
+        (explored_shrub.center_x, explored_shrub.center_y),
         runtime.world.obstacles(),
     ));
 
@@ -204,10 +210,10 @@ fn visibility_masks_tiles_players_projectiles_and_effects_are_precise() {
             kind: game_net::ArenaEffectKind::SkillShot,
             owner: bob_id,
             slot: 1,
-            x: far_shrub.center_x,
-            y: far_shrub.center_y,
-            target_x: far_shrub.center_x,
-            target_y: far_shrub.center_y,
+            x: hidden_shrub.center_x,
+            y: hidden_shrub.center_y,
+            target_x: hidden_shrub.center_x,
+            target_y: hidden_shrub.center_y,
             radius: 24,
         },
     ];
@@ -226,6 +232,7 @@ fn visibility_helper_boundaries_and_shared_shrubs_are_precise() {
         tile_units: 100,
         width_units: 400,
         height_units: 400,
+        objective_target_ms: 180_000,
         footprint_mask: vec![0xFF, 0xFF],
         objective_mask: vec![0x00, 0x00],
         team_a_anchors: vec![(-150, -150)],
@@ -749,7 +756,7 @@ fn manual_runtime(content: &GameContent, seeds: Vec<game_sim::SimPlayerSeed>) ->
     let session = MatchSession::new(
         MatchId::new(1).expect("match id"),
         roster.clone(),
-        game_match::MatchConfig::v1(),
+        game_match::MatchConfig::v1(map.objective_target_ms),
     )
     .expect("match session");
     let world = game_sim::SimulationWorld::new(seeds, &map).expect("world");

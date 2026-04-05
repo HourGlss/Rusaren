@@ -124,6 +124,10 @@ Toggleable auras are deliberately limited to self-anchored aura shapes. Validati
 ## Generated Match Maps And Center Control
 Live match arenas are now generated per lobby from `content/maps/template_arena.txt`.
 
+The center-control timer is authored in `content/maps/registry.yaml` under each map's
+`objective_target_ms` entry. Changing that YAML value changes the round-win timer without
+recompiling Rust code.
+
 The runtime contract is:
 - authored `A` and `B` spawn anchors in the template never move
 - authored `X` tiles define the center objective and stay fixed
@@ -131,7 +135,7 @@ The runtime contract is:
 - every authored spawn anchor must retain at least one route to the center objective
 - each team's center timer advances whenever that team has at least one living player in the center
 - both teams continue accumulating time if both are present together
-- the round ends when one team reaches `180000 ms` (`3:00`) of cumulative center time
+- the round ends when one team reaches the authored `objective_target_ms` cumulative center time
 - objective timers reset at the start of each round
 
 The live per-lobby map is not written back to content. It exists in memory for that lobby and match only.

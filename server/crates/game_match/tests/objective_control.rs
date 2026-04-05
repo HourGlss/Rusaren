@@ -1,10 +1,9 @@
 use game_domain::{
     MatchId, PlayerId, PlayerName, PlayerRecord, SkillChoice, SkillTree, TeamAssignment, TeamSide,
 };
-use game_match::{
-    MatchConfig, MatchEvent, MatchPhase, MatchSession, ROUND_OBJECTIVE_TARGET_MS,
-    SKILL_PICK_SECONDS,
-};
+use game_match::{MatchConfig, MatchEvent, MatchPhase, MatchSession, SKILL_PICK_SECONDS};
+
+const TEST_OBJECTIVE_TARGET_MS: u32 = 180_000;
 
 fn player_id(raw: u32) -> PlayerId {
     PlayerId::new(raw).expect("valid player id")
@@ -30,7 +29,7 @@ fn combat_session() -> MatchSession {
             assignment(1, "Alice", TeamSide::TeamA),
             assignment(2, "Bob", TeamSide::TeamB),
         ],
-        MatchConfig::v1(),
+        MatchConfig::v1(TEST_OBJECTIVE_TARGET_MS),
     )
     .expect("session");
     session
@@ -61,7 +60,7 @@ fn objective_control_accumulates_for_both_teams_when_they_share_the_center() {
 
     assert_eq!(
         session.objective_control_ms(),
-        (ROUND_OBJECTIVE_TARGET_MS, ROUND_OBJECTIVE_TARGET_MS)
+        (TEST_OBJECTIVE_TARGET_MS, TEST_OBJECTIVE_TARGET_MS)
     );
     assert_eq!(session.phase(), &MatchPhase::Combat);
 

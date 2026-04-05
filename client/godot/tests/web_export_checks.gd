@@ -28,6 +28,7 @@ func _init() -> void:
 	success = _assert_remote_cast_labels_use_known_roster_skills() and success
 	success = _assert_resource_labels_only_show_for_local_player() and success
 	success = _assert_fog_rounds_only_on_visibility_boundary() and success
+	success = _assert_unexplored_shrubs_remain_readable_in_fog() and success
 	success = _assert_spell_audio_manifest_defaults_load() and success
 	quit(0 if success else 1)
 
@@ -900,6 +901,39 @@ func _assert_fog_rounds_only_on_visibility_boundary() -> bool:
 		return _fail("fog tiles away from visibility edges should remain solid")
 	if arena_view._has_fog_edge(2, 2, Vector2i.DOWN):
 		return _fail("visible tiles should not be treated as fog edges")
+	arena_view.free()
+	return true
+
+
+func _assert_unexplored_shrubs_remain_readable_in_fog() -> bool:
+	var state := ClientStateScript.new()
+	state.arena_width = 300
+	state.arena_height = 300
+	state.arena_tile_units = 100
+	state.footprint_tiles = _mask_with_visible_tiles(3, 3, [
+		Vector2i(0, 0), Vector2i(1, 0), Vector2i(2, 0),
+		Vector2i(0, 1), Vector2i(1, 1), Vector2i(2, 1),
+		Vector2i(0, 2), Vector2i(1, 2), Vector2i(2, 2),
+	])
+	state.visible_tiles = _mask_with_visible_tiles(3, 3, [Vector2i(0, 0)])
+	state.explored_tiles = PackedByteArray()
+	state.arena_obstacles = [
+		{
+			"kind": "Shrub",
+			"center_x": 0,
+			"center_y": 0,
+			"half_width": 50,
+			"half_height": 50,
+		},
+	]
+	var arena_view := ArenaViewScript.new()
+	arena_view.set_client_state(state)
+	var image := arena_view._build_visibility_image(Rect2(Vector2.ZERO, Vector2(300, 300)))
+	var center_color := image.get_pixel(150, 150)
+	if center_color.g <= center_color.r or center_color.g <= center_color.b:
+		return _fail("unexplored shrubs should still render as green terrain cues through fog")
+	if center_color.a < 0.95:
+		return _fail("unexplored shrub fog tiles should remain opaque enough to be legible")
 	arena_view.free()
 	return true
 

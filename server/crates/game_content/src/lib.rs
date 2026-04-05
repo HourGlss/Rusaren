@@ -111,7 +111,7 @@ mod mechanics;
 mod skills;
 
 pub use map_generation::{generate_template_match_map, render_ascii_map};
-pub use maps::parse_ascii_map;
+pub use maps::{parse_ascii_map, parse_map_registry_yaml};
 pub use mechanics::parse_mechanics_yaml;
 pub use skills::parse_skill_yaml;
 

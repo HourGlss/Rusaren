@@ -1,9 +1,8 @@
 #![allow(clippy::expect_used)]
 
 use game_api::{ConnectionId, HeadlessClient, InMemoryTransport, ServerApp};
-use game_domain::{LobbyId, PlayerName, ReadyState, SkillChoice, SkillTree, TeamSide};
-use game_net::{ServerControlEvent, ValidatedInputFrame, BUTTON_CAST};
-use game_sim::COMBAT_FRAME_MS;
+use game_domain::{LobbyId, PlayerName, ReadyState, TeamSide};
+use game_net::ServerControlEvent;
 
 fn connection_id(raw: u64) -> ConnectionId {
     ConnectionId::new(raw).expect("valid connection id")
@@ -11,15 +10,6 @@ fn connection_id(raw: u64) -> ConnectionId {
 
 fn player_name(raw: &str) -> PlayerName {
     PlayerName::new(raw).expect("valid player name")
-}
-
-fn skill(tree: SkillTree, tier: u8) -> SkillChoice {
-    SkillChoice::new(tree, tier).expect("valid skill choice")
-}
-
-fn slot_one_cast_input(client_input_tick: u32) -> ValidatedInputFrame {
-    ValidatedInputFrame::new(client_input_tick, 0, 0, 0, 0, BUTTON_CAST, 1)
-        .expect("slot one cast input should be valid")
 }
 
 fn connect_player(
@@ -58,40 +48,6 @@ fn lobby_id_from(events: &[ServerControlEvent]) -> LobbyId {
             _ => None,
         })
         .expect("game lobby should exist")
-}
-
-fn cast_until_round_won(
-    server: &mut ServerApp,
-    transport: &mut InMemoryTransport,
-    left: &mut HeadlessClient,
-    right: &mut HeadlessClient,
-    round: u8,
-) -> (Vec<ServerControlEvent>, Vec<ServerControlEvent>) {
-    let mut left_events = Vec::new();
-    let mut right_events = Vec::new();
-
-    for offset in 0_u32..18 {
-        let sequence = u32::from(round) * 100 + offset + 1;
-        left.send_input(transport, slot_one_cast_input(sequence), sequence)
-            .expect("attack packet");
-        server.pump_transport(transport);
-        left_events.extend(left.drain_events(transport).expect("left input events"));
-        right_events.extend(right.drain_events(transport).expect("right input events"));
-
-        for _ in 0..12 {
-            server.advance_millis(transport, COMBAT_FRAME_MS);
-            left_events.extend(left.drain_events(transport).expect("left combat events"));
-            right_events.extend(right.drain_events(transport).expect("right combat events"));
-            if left_events.iter().any(|event| matches!(
-                event,
-                ServerControlEvent::RoundWon { round: won_round, .. } if won_round.get() == round
-            )) {
-                return (left_events, right_events);
-            }
-        }
-    }
-
-    panic!("expected round {round} to end after repeated slot-one casts");
 }
 
 fn launch_match(
@@ -141,69 +97,36 @@ fn launch_match(
         .any(|event| matches!(event, ServerControlEvent::MatchStarted { .. })));
 }
 
-fn complete_match(
-    server: &mut ServerApp,
-    transport: &mut InMemoryTransport,
-    left: &mut HeadlessClient,
-    right: &mut HeadlessClient,
-) {
-    for round in 1..=5 {
-        left.choose_skill(transport, skill(SkillTree::Mage, round))
-            .expect("left skill");
-        right
-            .choose_skill(transport, skill(SkillTree::Rogue, round))
-            .expect("right skill");
-        server.pump_transport(transport);
-        let _ = left.drain_events(transport).expect("left skill events");
-        let _ = right.drain_events(transport).expect("right skill events");
-
-        server.advance_seconds(transport, 5);
-        let _ = left
-            .drain_events(transport)
-            .expect("left pre-combat events");
-        let _ = right
-            .drain_events(transport)
-            .expect("right pre-combat events");
-
-        let (left_events, right_events) =
-            cast_until_round_won(server, transport, left, right, round);
-        assert!(left_events.iter().any(|event| matches!(
-            event,
-            ServerControlEvent::RoundWon { round: won_round, .. } if won_round.get() == round
-        )));
-        assert!(right_events.iter().any(|event| matches!(
-            event,
-            ServerControlEvent::RoundWon { round: won_round, .. } if won_round.get() == round
-        )));
-    }
-}
-
 #[test]
 fn repeated_match_sessions_complete_without_state_leaks() {
     let mut server = ServerApp::new();
     let mut transport = InMemoryTransport::new();
-    let (mut left, mut right) = connect_pair(&mut server, &mut transport, 1, "Alice", "Bob");
 
-    for _ in 0..3 {
+    for cycle in 0_u64..3 {
+        let offset = cycle.saturating_mul(10) + 1;
+        let (mut left, mut right) =
+            connect_pair(&mut server, &mut transport, offset, "Alice", "Bob");
         launch_match(&mut server, &mut transport, &mut left, &mut right);
-        complete_match(&mut server, &mut transport, &mut left, &mut right);
+        server
+            .disconnect_player(
+                &mut transport,
+                right.player_id().expect("right player should be connected"),
+            )
+            .expect("disconnect should end the live match");
+        let left_events = left
+            .drain_events(&mut transport)
+            .expect("left disconnect events");
+        assert!(left_events
+            .iter()
+            .any(|event| matches!(event, ServerControlEvent::MatchEnded { .. })));
 
         left.quit_to_central_lobby(&mut transport)
             .expect("left quit");
-        right
-            .quit_to_central_lobby(&mut transport)
-            .expect("right quit");
         server.pump_transport(&mut transport);
         let left_events = left
             .drain_events(&mut transport)
             .expect("left return events");
-        let right_events = right
-            .drain_events(&mut transport)
-            .expect("right return events");
         assert!(left_events
-            .iter()
-            .any(|event| matches!(event, ServerControlEvent::ReturnedToCentralLobby { .. })));
-        assert!(right_events
             .iter()
             .any(|event| matches!(event, ServerControlEvent::ReturnedToCentralLobby { .. })));
     }

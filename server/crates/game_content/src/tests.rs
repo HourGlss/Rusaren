@@ -28,6 +28,7 @@ fn bundled_content_loads_all_classes_and_the_ascii_map() {
     ));
     assert!(content.skills().melee_for(&SkillTree::Warrior).is_some());
     assert_eq!(content.map().map_id, "prototype_arena");
+    assert_eq!(content.map().objective_target_ms, 180_000);
     assert!(!content.map().obstacles.is_empty());
     assert_eq!(
         content.training_map().map(|map| map.map_id.as_str()),
@@ -1328,6 +1329,7 @@ fn create_content_root_dirs(root: &Path) -> (PathBuf, PathBuf, PathBuf) {
     fs::create_dir_all(&skills_dir).expect("skills dir");
     fs::create_dir_all(&maps_dir).expect("maps dir");
     fs::create_dir_all(&mechanics_dir).expect("mechanics dir");
+    write_workspace_map_registry(&maps_dir);
     (skills_dir, maps_dir, mechanics_dir)
 }
 
@@ -1353,6 +1355,15 @@ fn write_workspace_map_file(maps_dir: &Path) {
         .expect("workspace map"),
     )
     .expect("map file");
+}
+
+fn write_workspace_map_registry(maps_dir: &Path) {
+    fs::write(
+        maps_dir.join("registry.yaml"),
+        fs::read_to_string(workspace_content_root().join("maps").join("registry.yaml"))
+            .expect("workspace map registry"),
+    )
+    .expect("map registry");
 }
 
 fn write_workspace_mechanics_registry(mechanics_dir: &Path) {

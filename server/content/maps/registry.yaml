@@ -1,0 +1,7 @@
+maps:
+  - id: prototype_arena
+    objective_target_ms: 180000
+  - id: template_arena
+    objective_target_ms: 180000
+  - id: training_arena
+    objective_target_ms: 180000

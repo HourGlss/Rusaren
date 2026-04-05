@@ -9,7 +9,6 @@ use game_domain::{MatchId, PlayerId, RoundNumber};
 
 pub const SKILL_PICK_SECONDS: u8 = 25;
 pub const PRE_COMBAT_SECONDS: u8 = 5;
-pub const ROUND_OBJECTIVE_TARGET_MS: u32 = 180_000;
 
 fn known_round(value: u8) -> RoundNumber {
     match RoundNumber::new(value) {

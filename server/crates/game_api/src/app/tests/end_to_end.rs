@@ -17,7 +17,7 @@ fn launched_matches_broadcast_generated_objective_maps() {
     let mut transport = InMemoryTransport::new();
     let (mut alice, mut bob) = connect_pair(&mut server, &mut transport);
 
-    let _ = launch_match(&mut server, &mut transport, &mut alice, &mut bob);
+    let match_id = launch_match(&mut server, &mut transport, &mut alice, &mut bob);
 
     alice
         .choose_skill(&mut transport, skill(SkillTree::Rogue, 1))
@@ -42,7 +42,7 @@ fn launched_matches_broadcast_generated_objective_maps() {
     );
     assert_eq!(
         snapshot.objective_target_ms,
-        game_match::ROUND_OBJECTIVE_TARGET_MS
+        server.matches[&match_id].map.objective_target_ms
     );
     assert_eq!(snapshot.objective_team_a_ms, 0);
     assert_eq!(snapshot.objective_team_b_ms, 0);

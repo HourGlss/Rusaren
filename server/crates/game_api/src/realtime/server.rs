@@ -8,8 +8,8 @@ use super::{
     MAX_SIGNAL_MESSAGE_BYTES, SESSION_BOOTSTRAP_RATE_LIMIT_MAX_REQUESTS,
     SESSION_BOOTSTRAP_RATE_LIMIT_WINDOW, SESSION_BOOTSTRAP_TOKEN_TTL,
 };
-use std::fmt::Write as _;
 use axum::extract::ConnectInfo;
+use std::fmt::Write as _;
 
 use super::signaling::{handle_signaling_socket, handle_websocket_dev_socket};
 
@@ -101,8 +101,11 @@ pub async fn spawn_dev_server_with_options(
     let app = build_router(state);
 
     let server_task = tokio::spawn(async move {
-        let server = axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
-            .with_graceful_shutdown(async {
+        let server = axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .with_graceful_shutdown(async {
             let _ = shutdown_rx.await;
         });
         let _ = server.await;

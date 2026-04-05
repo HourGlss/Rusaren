@@ -28,6 +28,11 @@ impl MatchSession {
     }
 
     #[must_use]
+    pub fn objective_target_ms(&self) -> u32 {
+        self.config.objective_target_ms
+    }
+
+    #[must_use]
     pub fn equipped_choice(&self, player_id: PlayerId, slot: u8) -> Option<SkillChoice> {
         if !(1..=5).contains(&slot) {
             return None;

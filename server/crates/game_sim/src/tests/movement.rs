@@ -506,6 +506,7 @@ fn multi_anchor_spawns_cycle_across_authored_spawn_points() {
         tile_units: 100,
         width_units: 1000,
         height_units: 600,
+        objective_target_ms: 180_000,
         footprint_mask: vec![0xFF; (10_usize * 6).div_ceil(8)],
         objective_mask: vec![0x00; (10_usize * 6).div_ceil(8)],
         team_a_anchors: vec![(-350, -120), (-350, 0), (-350, 120)],

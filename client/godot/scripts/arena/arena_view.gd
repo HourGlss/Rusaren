@@ -16,6 +16,11 @@ const ARENA_VOID_COLOR := Color8(20, 21, 25)
 const ARENA_FLOOR_COLOR := Color8(232, 232, 236)
 const OBJECTIVE_FLOOR_COLOR := Color8(171, 74, 74)
 const GRID_COLOR := Color8(205, 206, 212)
+const SHRUB_COLOR := Color8(98, 139, 86)
+const SHRUB_FOG_COLOR := Color8(33, 71, 31)
+const PILLAR_COLOR := Color8(84, 84, 93)
+const PILLAR_INNER_COLOR := Color8(203, 217, 228)
+const PILLAR_FOG_COLOR := Color8(60, 63, 70)
 
 var app_state: ClientState = null
 var _last_render_revision: int = -1
@@ -423,12 +428,13 @@ func _background_signature(arena_rect: Rect2) -> String:
 
 
 func _visibility_signature(arena_rect: Rect2) -> String:
-	return "%d|%d|%d|%d|%d|%d|%d" % [
+	return "%d|%d|%d|%d|%d|%d|%d|%d" % [
 		int(round(arena_rect.size.x)),
 		int(round(arena_rect.size.y)),
 		app_state.arena_width,
 		app_state.arena_height,
 		app_state.arena_tile_units,
+		hash(app_state.arena_obstacles),
 		hash(app_state.visible_tiles),
 		hash(app_state.explored_tiles),
 	]
@@ -479,6 +485,7 @@ func _build_visibility_image(arena_rect: Rect2) -> Image:
 					_fog_fill_color(run_explored)
 				)
 				run_start = -1
+	_paint_fogged_obstacles(image, image_size)
 	return image
 
 
@@ -548,16 +555,45 @@ func _paint_obstacles(image: Image, image_size: Vector2i) -> void:
 		var kind_name := String(obstacle.get("kind", ""))
 		match kind_name:
 			"Shrub":
-				image.fill_rect(rect, Color8(185, 215, 180))
+				image.fill_rect(rect, SHRUB_COLOR)
 			"Pillar":
-				image.fill_rect(rect, Color8(84, 84, 93))
+				image.fill_rect(rect, PILLAR_COLOR)
 				var inset_x := maxi(1, int(round(float(rect.size.x) * 0.24)))
 				var inset_y := maxi(1, int(round(float(rect.size.y) * 0.24)))
 				var inner := rect.grow_individual(-inset_x, -inset_y, -inset_x, -inset_y)
 				if inner.size.x > 0 and inner.size.y > 0:
-					image.fill_rect(inner, Color8(203, 217, 228))
+					image.fill_rect(inner, PILLAR_INNER_COLOR)
 			_:
 				image.fill_rect(rect, Color8(140, 140, 140))
+
+
+func _paint_fogged_obstacles(image: Image, image_size: Vector2i) -> void:
+	for obstacle in app_state.arena_obstacles:
+		var kind_name := String(obstacle.get("kind", ""))
+		if kind_name == "":
+			continue
+		var tile := _world_to_tile(
+			float(obstacle.get("center_x", 0)),
+			float(obstacle.get("center_y", 0))
+		)
+		if app_state.is_tile_visible(tile.x, tile.y):
+			continue
+		var rect := _world_rect_to_image(
+			image_size,
+			float(obstacle.get("center_x", 0)),
+			float(obstacle.get("center_y", 0)),
+			float(obstacle.get("half_width", 0)),
+			float(obstacle.get("half_height", 0))
+		)
+		if rect.size.x <= 0 or rect.size.y <= 0:
+			continue
+		match kind_name:
+			"Shrub":
+				image.fill_rect(rect, SHRUB_FOG_COLOR)
+			"Pillar":
+				image.fill_rect(rect, PILLAR_FOG_COLOR)
+			_:
+				image.fill_rect(rect, Color8(96, 96, 102))
 
 
 func _arena_image_size(arena_rect: Rect2) -> Vector2i:
@@ -608,6 +644,15 @@ func _world_rect_to_image(
 		draw_height
 	)
 	return rect.intersection(Rect2i(Vector2i.ZERO, image_size))
+
+
+func _world_to_tile(world_x: float, world_y: float) -> Vector2i:
+	if app_state == null or app_state.arena_tile_units <= 0:
+		return Vector2i(-1, -1)
+	var tile_units := float(app_state.arena_tile_units)
+	var column := int(floor((world_x + float(app_state.arena_width) * 0.5) / tile_units))
+	var row := int(floor((world_y + float(app_state.arena_height) * 0.5) / tile_units))
+	return Vector2i(column, row)
 
 
 func _world_to_image(image_size: Vector2i, world_point: Vector2) -> Vector2:
