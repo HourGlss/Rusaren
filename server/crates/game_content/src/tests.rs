@@ -1414,9 +1414,10 @@ fn append_class_profile_to_workspace_configuration(
 ) {
     let path = config_dir.join("configurations.yaml");
     let mut configuration = fs::read_to_string(&path).expect("configuration");
-    configuration.push_str(&format!(
+    let _ = write!(
+        configuration,
         "\n  {tree_name}:\n    hit_points: {hit_points}\n    max_mana: {max_mana}\n    move_speed_units_per_second: {move_speed_units_per_second}\n"
-    ));
+    );
     fs::write(path, configuration).expect("configuration");
 }
 
@@ -1526,3 +1527,4 @@ fn to_pair<'a>(pairs: &'a [(String, String)], suffix: &str) -> (&'a str, &'a str
         .unwrap_or_else(|| panic!("expected skill file ending with {suffix}"));
     (source.as_str(), yaml.as_str())
 }
+use std::fmt::Write as _;

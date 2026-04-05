@@ -138,6 +138,7 @@ fn pick_generation_style(
     generation.styles[style_index]
 }
 
+#[allow(clippy::too_many_lines)]
 fn build_obstacle_layout(
     template: &ArenaMapDefinition,
     generation: &MapGenerationConfiguration,
@@ -179,7 +180,6 @@ fn build_obstacle_layout(
         } else {
             short_wall_length
         };
-        let mut placed = false;
         for direction in directions {
             if try_place_wall_segment(
                 template,
@@ -202,12 +202,8 @@ fn build_obstacle_layout(
             {
                 wall_representatives.push(representative);
                 wall_segments_remaining = wall_segments_remaining.saturating_sub(1);
-                placed = true;
                 break;
             }
-        }
-        if placed {
-            continue;
         }
     }
 
@@ -246,7 +242,7 @@ fn build_obstacle_layout(
             .iter()
             .map(|center| manhattan_distance(representative, *center))
             .min()
-            .map(|distance| {
+            .map_or(style.shrub_fill_percent / 4, |distance| {
                 if distance <= style.shrub_radius_tiles {
                     90
                 } else if distance <= style.shrub_soft_radius_tiles {
@@ -254,8 +250,7 @@ fn build_obstacle_layout(
                 } else {
                     style.shrub_fill_percent / 4
                 }
-            })
-            .unwrap_or(style.shrub_fill_percent / 4);
+            });
         if !rng.roll_percent(shrub_probability) {
             continue;
         }
@@ -409,6 +404,7 @@ fn mirror_orbit(template: &ArenaMapDefinition, column: usize, row: usize) -> Vec
     orbit.into_iter().collect()
 }
 
+#[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
 fn mirror_coordinate_across_diagonal(
     template: &ArenaMapDefinition,
     column: usize,

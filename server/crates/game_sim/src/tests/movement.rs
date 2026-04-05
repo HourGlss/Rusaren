@@ -307,6 +307,7 @@ fn movement_audio_emits_footsteps_with_the_configured_radius() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn movement_audio_uses_stealth_and_brush_specific_rules() {
     let content = content();
     let shrub = {

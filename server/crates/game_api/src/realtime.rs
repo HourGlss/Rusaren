@@ -411,10 +411,9 @@ impl SessionBootstrapRateLimiter {
         self.prune_expired(now);
         let entry = self.requests_by_ip.entry(client_ip).or_default();
         if entry.len() >= self.max_requests {
-            let retry_after = entry
-                .front()
-                .map(|oldest| (*oldest + self.window).saturating_duration_since(now))
-                .unwrap_or(self.window);
+            let retry_after = entry.front().map_or(self.window, |oldest| {
+                (*oldest + self.window).saturating_duration_since(now)
+            });
             return Err(retry_after.max(Duration::from_secs(1)));
         }
         entry.push_back(now);

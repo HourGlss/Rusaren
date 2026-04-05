@@ -604,6 +604,7 @@ impl ServerApp {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     pub(super) fn start_match_from_lobby<T: AppTransport>(
         &mut self,
         transport: &mut T,

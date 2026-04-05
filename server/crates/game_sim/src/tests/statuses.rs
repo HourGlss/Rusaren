@@ -64,7 +64,7 @@ fn poison_and_hot_tick_with_expected_stacking_behavior() {
         .player_state(player_id(2))
         .expect("bob")
         .hit_points;
-    assert!(damaged_hit_points < class_hit_points(&content, SkillTree::Warrior));
+    assert!(damaged_hit_points < class_hit_points(&content, &SkillTree::Warrior));
 
     let druid_tree = SkillTree::new("Druid").expect("druid tree");
     let mut hot_world = world(
@@ -1382,7 +1382,7 @@ fn shield_stacks_and_absorbs_damage_before_hit_points() {
     let first_hit = resolve_skill_cast(&mut world, player_id(2), 1, beam_skill.behavior.clone());
     assert_eq!(
         world.player_state(player_id(1)).expect("cleric").hit_points,
-        class_hit_points(&content, SkillTree::Cleric),
+        class_hit_points(&content, &SkillTree::Cleric),
         "stacked shields should absorb the first hit before HP changes"
     );
     assert!(

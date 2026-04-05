@@ -171,6 +171,7 @@ impl SimulationWorld {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     pub(super) fn move_players(&mut self, delta_ms: u16, events: &mut Vec<SimulationEvent>) {
         let arena_width_units = self.arena_width_units;
         let arena_height_units = self.arena_height_units;

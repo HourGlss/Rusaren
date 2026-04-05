@@ -1,3 +1,9 @@
+#![allow(
+    clippy::expect_used,
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation
+)]
+
 use std::collections::{BTreeSet, VecDeque};
 
 use game_content::{
@@ -15,7 +21,7 @@ fn generated_maps_preserve_the_template_contract_and_roundtrip_to_ascii() {
         template,
         &content.configuration().maps.generation,
         "sample_001",
-        0xC0FFEE_u64,
+        0x00C0_FFEE_u64,
     )
     .expect("map");
 

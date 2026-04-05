@@ -1,4 +1,5 @@
 use super::*;
+use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -225,9 +226,10 @@ fn append_class_profile(
     move_speed_units_per_second: u16,
 ) {
     let mut configuration = fs::read_to_string(configuration_path).expect("configuration");
-    configuration.push_str(&format!(
+    let _ = write!(
+        configuration,
         "\n  {tree_name}:\n    hit_points: {hit_points}\n    max_mana: {max_mana}\n    move_speed_units_per_second: {move_speed_units_per_second}\n"
-    ));
+    );
     fs::write(configuration_path, configuration).expect("configuration");
 }
 

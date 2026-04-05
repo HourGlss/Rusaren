@@ -469,6 +469,7 @@ pub struct MapsConfiguration {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(clippy::struct_field_names)]
 pub struct PassiveBonusCaps {
     pub player_speed_bps: u16,
     pub projectile_speed_bps: u16,
@@ -477,6 +478,7 @@ pub struct PassiveBonusCaps {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(clippy::struct_field_names)]
 pub struct MovementModifierCaps {
     pub chill_bps: u16,
     pub haste_bps: u16,
@@ -583,6 +585,7 @@ impl GameContent {
         Self::load_from_root(workspace_content_root())
     }
 
+    #[allow(clippy::too_many_lines)]
     pub fn load_from_root(root: impl AsRef<Path>) -> Result<Self, ContentError> {
         let root = root.as_ref();
         let mechanics_path = root.join("mechanics").join("registry.yaml");

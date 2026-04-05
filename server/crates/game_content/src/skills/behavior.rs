@@ -974,21 +974,20 @@ fn read_numeric_field(
             source: String::from(source),
             message: format!("{field} must be greater than zero"),
         }),
-        (NumericFieldRule::Required, Some(value)) => Ok(Some(value)),
-        (NumericFieldRule::Required, None) => Err(ContentError::Validation {
-            source: String::from(source),
-            message: format!("{field} is required"),
-        }),
+        (NumericFieldRule::Required | NumericFieldRule::NonNegative, Some(value)) => {
+            Ok(Some(value))
+        }
+        (NumericFieldRule::Required | NumericFieldRule::NonNegative, None) => {
+            Err(ContentError::Validation {
+                source: String::from(source),
+                message: format!("{field} is required"),
+            })
+        }
         (NumericFieldRule::Optional, Some(0)) => Err(ContentError::Validation {
             source: String::from(source),
             message: format!("{field} must be greater than zero when provided"),
         }),
         (NumericFieldRule::Optional, value) => Ok(value),
-        (NumericFieldRule::NonNegative, Some(value)) => Ok(Some(value)),
-        (NumericFieldRule::NonNegative, None) => Err(ContentError::Validation {
-            source: String::from(source),
-            message: format!("{field} is required"),
-        }),
         (NumericFieldRule::Zero, Some(0) | None) => Ok(Some(0)),
         (NumericFieldRule::Zero, Some(_)) => Err(ContentError::Validation {
             source: String::from(source),

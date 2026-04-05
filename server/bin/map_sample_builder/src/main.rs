@@ -1,3 +1,5 @@
+#![cfg_attr(test, allow(clippy::expect_used))]
+
 use std::error::Error;
 use std::ffi::OsString;
 use std::fs;
@@ -134,10 +136,10 @@ mod tests {
     }
 
     fn unique_temp_dir() -> PathBuf {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system time should be after epoch")
-            .as_nanos();
+        let nanos = match SystemTime::now().duration_since(UNIX_EPOCH) {
+            Ok(value) => value.as_nanos(),
+            Err(error) => panic!("system time should be after epoch: {error}"),
+        };
         std::env::temp_dir().join(format!("rarena-map-sample-builder-{nanos}"))
     }
 

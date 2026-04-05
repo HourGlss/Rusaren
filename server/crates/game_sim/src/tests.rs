@@ -161,9 +161,9 @@ fn status_expiration_frames(duration_ms: u16) -> usize {
     usize::from(duration_ms.div_ceil(COMBAT_FRAME_MS)) + 1
 }
 
-fn class_hit_points(content: &GameContent, tree: SkillTree) -> u16 {
+fn class_hit_points(content: &GameContent, tree: &SkillTree) -> u16 {
     content
-        .class_profile(&tree)
+        .class_profile(tree)
         .expect("class profile should exist")
         .hit_points
 }

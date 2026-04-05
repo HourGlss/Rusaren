@@ -169,13 +169,13 @@ pub(super) struct ConfigurationsYaml {
     pub(super) classes: BTreeMap<String, ClassProfileYaml>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct LobbyConfigurationYaml {
     pub(super) launch_countdown_seconds: u8,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct MatchConfigurationYaml {
     pub(super) total_rounds: u8,
@@ -206,7 +206,7 @@ pub(super) struct MapGenerationConfigurationYaml {
     pub(super) styles: Vec<MapGenerationStyleYaml>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct MapGenerationStyleYaml {
     pub(super) shrub_clusters: usize,
@@ -239,8 +239,9 @@ pub(super) struct SimulationConfigurationYaml {
     pub(super) training_dummy: TrainingDummyConfigurationYaml,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[allow(clippy::struct_field_names)]
 pub(super) struct PassiveBonusCapsYaml {
     pub(super) player_speed_bps: u16,
     pub(super) projectile_speed_bps: u16,
@@ -248,8 +249,9 @@ pub(super) struct PassiveBonusCapsYaml {
     pub(super) cast_time_bps: u16,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[allow(clippy::struct_field_names)]
 pub(super) struct MovementModifierCapsYaml {
     pub(super) chill_bps: u16,
     pub(super) haste_bps: u16,
@@ -268,7 +270,7 @@ pub(super) struct CrowdControlDiminishingReturnsYaml {
     pub(super) stages_bps: Vec<u16>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct TrainingDummyConfigurationYaml {
     pub(super) base_hit_points: u16,

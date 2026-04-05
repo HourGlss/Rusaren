@@ -607,6 +607,7 @@ fn server_control_event_round_trips_arena_combat_text_batch() {
     assert_eq!(decoded, event);
 }
 
+#[allow(clippy::too_many_lines)]
 fn sample_full_arena_snapshot_event() -> ServerControlEvent {
     ServerControlEvent::ArenaStateSnapshot {
         snapshot: ArenaStateSnapshot {

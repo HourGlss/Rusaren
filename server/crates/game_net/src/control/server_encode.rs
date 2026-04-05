@@ -180,7 +180,7 @@ fn encode_lobby_body(event: ServerControlEvent, payload: &mut Vec<u8>) -> Result
             player_name,
             record,
             skill_catalog,
-        } => encode_connected_event(payload, player_id, &player_name, record, &skill_catalog),
+        } => encode_connected_event(payload, player_id, &player_name, &record, &skill_catalog),
         ServerControlEvent::GameLobbyCreated { lobby_id } => {
             encode_lobby_id_event(payload, lobby_id);
             Ok(())
@@ -308,7 +308,7 @@ fn encode_connected_event(
     payload: &mut Vec<u8>,
     player_id: PlayerId,
     player_name: &PlayerName,
-    record: PlayerRecord,
+    record: &PlayerRecord,
     skill_catalog: &[SkillCatalogEntry],
 ) -> Result<(), PacketError> {
     payload.extend_from_slice(&player_id.get().to_le_bytes());
@@ -318,7 +318,7 @@ fn encode_connected_event(
         player_name.as_str(),
         game_domain::MAX_PLAYER_NAME_LEN,
     )?;
-    encode_player_record(payload, &record)?;
+    encode_player_record(payload, record)?;
     encode_skill_catalog(payload, skill_catalog)?;
     Ok(())
 }

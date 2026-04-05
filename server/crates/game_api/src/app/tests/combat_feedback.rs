@@ -6,6 +6,7 @@ use crate::combat_log::{
 use game_net::ArenaCombatTextStyle;
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn combat_feedback_tracks_totals_and_combat_text_from_runtime_log_entries() {
     let mut server = ServerApp::new();
     let mut transport = InMemoryTransport::new();

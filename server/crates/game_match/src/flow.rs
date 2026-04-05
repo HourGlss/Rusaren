@@ -218,12 +218,10 @@ impl MatchSession {
         let winner = if self.objective_team_a_ms >= self.config.objective_target_ms
             && self.objective_team_b_ms >= self.config.objective_target_ms
         {
-            if self.objective_team_a_ms > self.objective_team_b_ms {
-                Some(TeamSide::TeamA)
-            } else if self.objective_team_b_ms > self.objective_team_a_ms {
-                Some(TeamSide::TeamB)
-            } else {
-                None
+            match self.objective_team_a_ms.cmp(&self.objective_team_b_ms) {
+                std::cmp::Ordering::Greater => Some(TeamSide::TeamA),
+                std::cmp::Ordering::Less => Some(TeamSide::TeamB),
+                std::cmp::Ordering::Equal => None,
             }
         } else if self.objective_team_a_ms >= self.config.objective_target_ms {
             Some(TeamSide::TeamA)

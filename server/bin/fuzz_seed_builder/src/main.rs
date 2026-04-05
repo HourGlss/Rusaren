@@ -759,6 +759,7 @@ fn write_server_control_event_roundtrip_corpus(dir: &Path) -> Result<(), Box<dyn
             target_x: 40,
             target_y: 90,
             radius: 36,
+            audio_cue_id: String::from("cleric_t1_minor_heal"),
         }],
     }
     .encode_packet(3, 12)?;
@@ -1035,6 +1036,7 @@ fn server_control_event_arena_valid_seeds() -> Result<Vec<NamedSeed>, Box<dyn Er
                 target_x: 640,
                 target_y: 220,
                 radius: 28,
+                audio_cue_id: String::from("mage_t1_missile"),
             },
             ArenaEffectSnapshot {
                 kind: ArenaEffectKind::MeleeSwing,
@@ -1045,6 +1047,7 @@ fn server_control_event_arena_valid_seeds() -> Result<Vec<NamedSeed>, Box<dyn Er
                 target_x: 530,
                 target_y: 220,
                 radius: 48,
+                audio_cue_id: String::from("warrior_t1_bash"),
             },
         ],
     }
@@ -1083,6 +1086,7 @@ fn server_control_event_arena_valid_seeds() -> Result<Vec<NamedSeed>, Box<dyn Er
     ])
 }
 
+#[allow(clippy::too_many_lines)]
 fn server_control_event_invalid_seeds() -> Result<Vec<NamedSeed>, Box<dyn Error>> {
     let snapshot = ServerControlEvent::GameLobbySnapshot {
         lobby_id: lobby_id(3)?,
@@ -1318,6 +1322,7 @@ fn write_arena_full_snapshot_roundtrip_corpus(dir: &Path) -> Result<(), Box<dyn 
                 target_x: -220,
                 target_y: 210,
                 radius: 16,
+                audio_cue_id: String::from("warrior_t1_bash"),
             }],
         }
         .encode_packet(3, 12)?,
