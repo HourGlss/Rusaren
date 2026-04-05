@@ -5,8 +5,7 @@ use std::path::{Path, PathBuf};
 
 use game_content::{generate_template_match_map, render_ascii_map, GameContent};
 
-const USAGE: &str =
-    "usage: cargo run -p map_sample_builder -- [--count 100] [--output-dir PATH]";
+const USAGE: &str = "usage: cargo run -p map_sample_builder -- [--count 100] [--output-dir PATH]";
 
 fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse(std::env::args_os().skip(1))?;

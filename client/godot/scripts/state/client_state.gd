@@ -83,6 +83,14 @@ func _is_rendered_deployable_kind(kind_name: String) -> bool:
 	return kind_name != "Aura"
 
 
+func _is_rendered_effect_kind(kind_name: String) -> bool:
+	return not (
+		kind_name == "Footstep"
+		or kind_name == "BrushRustle"
+		or kind_name == "StealthFootstep"
+	)
+
+
 func prepare_for_connection(player_name: String) -> void:
 	_reset_diagnostics()
 	websocket_url = WebSocketConfigScript.new().runtime_default_url()
@@ -456,6 +464,8 @@ func _apply_arena_event(event_type: String, event: Dictionary) -> bool:
 		"ArenaEffectBatch":
 			for effect_data in event.get("effects", []):
 				var effect: Dictionary = (effect_data as Dictionary).duplicate(true)
+				if not _is_rendered_effect_kind(String(effect.get("kind", ""))):
+					continue
 				var ttl: float = _effect_ttl_seconds(String(effect.get("kind", "")))
 				effect["ttl"] = ttl
 				effect["ttl_max"] = ttl

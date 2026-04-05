@@ -70,7 +70,14 @@ For spell tiers:
 ```
 
 The matching frontend registry lives at `client/godot/content/audio/spell_cues.json`, and the default asset root there is `res://assets/audio/spells`.
-The current `0.9.7` work only wires the shared cue ID seam; real playback assets and movement audio still belong to the remaining sound items in the roadmap.
+The client now plays positional spell and movement audio from that manifest.
+If an authored cue points at no real asset yet, the client synthesizes a deterministic fallback clip from the cue id so shipped spells still sound distinct before final assets arrive.
+
+Movement sound tuning now lives in `content/config/configurations.yaml` under `simulation`:
+- `movement_audio_step_interval_ms`
+- `movement_audio_radius_units`
+- `stealth_audio_radius_units`
+- `brush_movement_audible_percent`
 
 ## Toggleable Aura Authoring
 Authored `aura` behaviors can now declare lifecycle payload hooks and self-toggling behavior directly in `content/skills/*.yaml`.

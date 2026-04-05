@@ -272,6 +272,196 @@ fn movement_ticks_update_vertical_position_only_when_resolution_changes() {
 }
 
 #[test]
+fn movement_audio_emits_footsteps_with_the_configured_radius() {
+    let content = content();
+    let mut world = world(
+        &content,
+        vec![seed(
+            &content,
+            1,
+            "Alice",
+            TeamSide::TeamA,
+            SkillTree::Warrior,
+            [None, None, None, None, None],
+        )],
+    );
+    world.configuration.movement_audio_step_interval_ms = COMBAT_FRAME_MS;
+    world.configuration.movement_audio_radius_units = 444;
+
+    world
+        .submit_input(player_id(1), MovementIntent::new(1, 0).expect("intent"))
+        .expect("movement input should apply");
+    let events = world.tick(COMBAT_FRAME_MS);
+    let effect = events
+        .into_iter()
+        .find_map(|event| match event {
+            SimulationEvent::EffectSpawned { effect }
+                if effect.owner == player_id(1) && effect.kind == ArenaEffectKind::Footstep =>
+            {
+                Some(effect)
+            }
+            _ => None,
+        })
+        .expect("moving in the open should emit a footstep cue");
+    assert_eq!(effect.radius, 444);
+}
+
+#[test]
+fn movement_audio_uses_stealth_and_brush_specific_rules() {
+    let content = content();
+    let shrub = {
+        let preview_world = world(
+            &content,
+            vec![seed(
+                &content,
+                1,
+                "Alice",
+                TeamSide::TeamA,
+                SkillTree::Rogue,
+                [None, None, None, None, None],
+            )],
+        );
+        *preview_world
+            .obstacles()
+            .iter()
+            .find(|obstacle| obstacle.kind == ArenaObstacleKind::Shrub)
+            .expect("shrub exists")
+    };
+
+    let mut stealth_world = world(
+        &content,
+        vec![seed(
+            &content,
+            1,
+            "Alice",
+            TeamSide::TeamA,
+            SkillTree::Rogue,
+            [None, None, None, None, None],
+        )],
+    );
+    stealth_world.configuration.movement_audio_step_interval_ms = COMBAT_FRAME_MS;
+    stealth_world.configuration.stealth_audio_radius_units = 133;
+    stealth_world
+        .players
+        .get_mut(&player_id(1))
+        .expect("alice")
+        .statuses
+        .push(StatusInstance {
+            source: player_id(1),
+            slot: 4,
+            kind: StatusKind::Stealth,
+            stacks: 1,
+            remaining_ms: 1200,
+            tick_interval_ms: None,
+            tick_progress_ms: 0,
+            magnitude: 0,
+            max_stacks: 1,
+            trigger_duration_ms: None,
+            shield_remaining: 0,
+            expire_payload: None,
+            dispel_payload: None,
+        });
+    stealth_world
+        .submit_input(player_id(1), MovementIntent::new(1, 0).expect("intent"))
+        .expect("stealth movement input should apply");
+    let stealth_events = stealth_world.tick(COMBAT_FRAME_MS);
+    let stealth_effect = stealth_events
+        .into_iter()
+        .find_map(|event| match event {
+            SimulationEvent::EffectSpawned { effect }
+                if effect.owner == player_id(1)
+                    && effect.kind == ArenaEffectKind::StealthFootstep =>
+            {
+                Some(effect)
+            }
+            _ => None,
+        })
+        .expect("stealthed movement outside brush should emit the stealth-only cue");
+    assert_eq!(stealth_effect.radius, 133);
+
+    let mut silent_brush_world = world(
+        &content,
+        vec![seed(
+            &content,
+            1,
+            "Alice",
+            TeamSide::TeamA,
+            SkillTree::Rogue,
+            [None, None, None, None, None],
+        )],
+    );
+    silent_brush_world
+        .configuration
+        .movement_audio_step_interval_ms = COMBAT_FRAME_MS;
+    silent_brush_world
+        .configuration
+        .brush_movement_audible_percent = 0;
+    set_player_pose(
+        &mut silent_brush_world,
+        player_id(1),
+        shrub.center_x,
+        shrub.center_y,
+        TEST_AIM_X,
+        TEST_AIM_Y,
+    );
+    silent_brush_world
+        .submit_input(player_id(1), MovementIntent::new(1, 0).expect("intent"))
+        .expect("brush movement input should apply");
+    let silent_brush_events = silent_brush_world.tick(COMBAT_FRAME_MS);
+    assert!(
+        silent_brush_events.iter().all(|event| !matches!(
+            event,
+            SimulationEvent::EffectSpawned { effect }
+                if effect.owner == player_id(1) && effect.kind == ArenaEffectKind::BrushRustle
+        )),
+        "brush movement should stay silent when the authored audible percent is zero"
+    );
+
+    let mut loud_brush_world = world(
+        &content,
+        vec![seed(
+            &content,
+            1,
+            "Alice",
+            TeamSide::TeamA,
+            SkillTree::Rogue,
+            [None, None, None, None, None],
+        )],
+    );
+    loud_brush_world
+        .configuration
+        .movement_audio_step_interval_ms = COMBAT_FRAME_MS;
+    loud_brush_world.configuration.movement_audio_radius_units = 321;
+    loud_brush_world
+        .configuration
+        .brush_movement_audible_percent = 100;
+    set_player_pose(
+        &mut loud_brush_world,
+        player_id(1),
+        shrub.center_x,
+        shrub.center_y,
+        TEST_AIM_X,
+        TEST_AIM_Y,
+    );
+    loud_brush_world
+        .submit_input(player_id(1), MovementIntent::new(1, 0).expect("intent"))
+        .expect("brush movement input should apply");
+    let loud_brush_events = loud_brush_world.tick(COMBAT_FRAME_MS);
+    let brush_effect = loud_brush_events
+        .into_iter()
+        .find_map(|event| match event {
+            SimulationEvent::EffectSpawned { effect }
+                if effect.owner == player_id(1) && effect.kind == ArenaEffectKind::BrushRustle =>
+            {
+                Some(effect)
+            }
+            _ => None,
+        })
+        .expect("brush movement should emit a rustle when the authored percent is 100");
+    assert_eq!(brush_effect.radius, 321);
+}
+
+#[test]
 fn projectile_spawn_and_advance_follow_authored_math() {
     let content = content();
     let mage_skill = content

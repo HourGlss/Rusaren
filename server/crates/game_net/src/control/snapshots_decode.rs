@@ -15,7 +15,7 @@ use super::server_types::{
     ArenaStatusSnapshot, LobbyDirectoryEntry, LobbySnapshotPlayer, ServerControlEvent,
     TrainingMetricsSnapshot,
 };
-use super::MAX_MESSAGE_BYTES;
+use super::{MAX_MESSAGE_BYTES, MAX_SKILL_AUDIO_CUE_BYTES};
 
 pub(super) fn decode_lobby_directory_snapshot(
     payload: &[u8],
@@ -394,6 +394,13 @@ pub(super) fn decode_arena_effect_batch(
             target_x: read_i16(payload, index, "ArenaEffectBatch")?,
             target_y: read_i16(payload, index, "ArenaEffectBatch")?,
             radius: read_u16(payload, index, "ArenaEffectBatch")?,
+            audio_cue_id: read_string(
+                payload,
+                index,
+                "ArenaEffectBatch",
+                "audio_cue_id",
+                MAX_SKILL_AUDIO_CUE_BYTES,
+            )?,
         });
     }
 

@@ -266,9 +266,12 @@ pub enum ArenaEffectKind {
     Nova,
     Beam,
     HitSpark,
+    Footstep,
+    BrushRustle,
+    StealthFootstep,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ArenaEffectSnapshot {
     pub kind: ArenaEffectKind,
     pub owner: PlayerId,
@@ -278,6 +281,7 @@ pub struct ArenaEffectSnapshot {
     pub target_x: i16,
     pub target_y: i16,
     pub radius: u16,
+    pub audio_cue_id: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

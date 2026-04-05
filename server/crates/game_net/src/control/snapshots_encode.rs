@@ -389,6 +389,12 @@ pub(super) fn encode_arena_effect_batch(
         payload.extend_from_slice(&effect.target_x.to_le_bytes());
         payload.extend_from_slice(&effect.target_y.to_le_bytes());
         payload.extend_from_slice(&effect.radius.to_le_bytes());
+        push_len_prefixed_string(
+            payload,
+            "audio_cue_id",
+            &effect.audio_cue_id,
+            MAX_SKILL_AUDIO_CUE_BYTES,
+        )?;
     }
     Ok(())
 }

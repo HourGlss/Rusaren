@@ -30,7 +30,9 @@ impl CliArgs {
                     origin = Some(Self::parse_string_flag(&mut args, "--origin")?);
                 }
                 "--output" => {
-                    output = Some(PathBuf::from(Self::parse_string_flag(&mut args, "--output")?));
+                    output = Some(PathBuf::from(Self::parse_string_flag(
+                        &mut args, "--output",
+                    )?));
                 }
                 "--max-games" => {
                     max_games = Some(Self::parse_usize_flag(&mut args, "--max-games")?);
@@ -73,10 +75,7 @@ impl CliArgs {
             .ok_or_else(|| ProbeError::new(format!("expected a value after {flag}")))
     }
 
-    fn parse_usize_flag(
-        args: &mut impl Iterator<Item = String>,
-        flag: &str,
-    ) -> ProbeResult<usize> {
+    fn parse_usize_flag(args: &mut impl Iterator<Item = String>, flag: &str) -> ProbeResult<usize> {
         let raw = Self::parse_string_flag(args, flag)?;
         raw.parse::<usize>()
             .map_err(|error| ProbeError::new(format!("invalid {flag} value {raw:?}: {error}")))

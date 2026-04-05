@@ -104,7 +104,7 @@ impl ServerApp {
             let combat_frame_ms = self.content.configuration().simulation.combat_frame_ms;
             runtime.combat_frame_index = runtime.combat_frame_index.saturating_add(1);
             let simulation_events = runtime.world.tick(combat_frame_ms);
-            let effect_batch = Self::collect_effect_batch(&simulation_events);
+            let effect_batch = Self::collect_effect_batch(&runtime.world, &simulation_events);
             let (match_events, progress_errors) = Self::resolve_match_progress(
                 runtime,
                 &simulation_events,
@@ -146,7 +146,7 @@ impl ServerApp {
                 runtime.participant.player_id,
                 &simulation_events,
             );
-            let effect_batch = Self::collect_effect_batch(&simulation_events);
+            let effect_batch = Self::collect_effect_batch(&runtime.world, &simulation_events);
             (simulation_events, effect_batch)
         };
         Some((simulation_events, effect_batch, Vec::new()))

@@ -90,22 +90,26 @@ fn build_demo_roster(
     ));
     append_lobby_events(
         lines,
-        lobby.select_team(alice_id, TeamSide::TeamA)
+        lobby
+            .select_team(alice_id, TeamSide::TeamA)
             .map_err(|error| error.to_string())?,
     );
     append_lobby_events(
         lines,
-        lobby.select_team(bob_id, TeamSide::TeamB)
+        lobby
+            .select_team(bob_id, TeamSide::TeamB)
             .map_err(|error| error.to_string())?,
     );
     append_lobby_events(
         lines,
-        lobby.set_ready(alice_id, ReadyState::Ready)
+        lobby
+            .set_ready(alice_id, ReadyState::Ready)
             .map_err(|error| error.to_string())?,
     );
     append_lobby_events(
         lines,
-        lobby.set_ready(bob_id, ReadyState::Ready)
+        lobby
+            .set_ready(bob_id, ReadyState::Ready)
             .map_err(|error| error.to_string())?,
     );
 
@@ -206,7 +210,13 @@ fn build_demo_player_seed(
         max_mana: profile.max_mana,
         move_speed_units_per_second: profile.move_speed_units_per_second,
         melee,
-        skills: [content.skills().resolve(choice).cloned(), None, None, None, None],
+        skills: [
+            content.skills().resolve(choice).cloned(),
+            None,
+            None,
+            None,
+            None,
+        ],
     })
 }
 

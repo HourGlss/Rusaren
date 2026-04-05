@@ -179,6 +179,10 @@ simulation:
   default_aim_y_units: 0
   mana_regen_per_second: 12
   global_projectile_speed_bonus_bps: 2000
+  movement_audio_step_interval_ms: 240
+  movement_audio_radius_units: 520
+  stealth_audio_radius_units: 170
+  brush_movement_audible_percent: 22
   teleport_resolution_steps: 48
   passive_bonus_caps:
     ...
@@ -214,6 +218,18 @@ simulation:
   - `10000` means no change.
   - `12000` means `+20%`.
   - `8000` means `-20%`.
+- `movement_audio_step_interval_ms: u16`
+  - Minimum movement time that must accumulate before a player emits the next movement sound.
+  - Must be greater than `0`.
+- `movement_audio_radius_units: u16`
+  - Audible radius, in arena units, for ordinary footsteps and brush rustle sounds.
+  - Must be greater than `0`.
+- `stealth_audio_radius_units: u16`
+  - Smaller audible radius, in arena units, used for nearby stealth-only footstep cues.
+  - Must be greater than `0`.
+- `brush_movement_audible_percent: u8`
+  - Chance that movement inside brush emits a rustle instead of remaining silent for that step.
+  - Must be between `0` and `100`.
 - `teleport_resolution_steps: u16`
   - Number of interpolation steps used when validating teleport paths.
   - Must be greater than `0`.

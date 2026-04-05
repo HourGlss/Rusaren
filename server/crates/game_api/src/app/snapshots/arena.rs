@@ -278,6 +278,11 @@ impl ServerApp {
                     game_sim::ArenaEffectKind::Nova => ArenaEffectKind::Nova,
                     game_sim::ArenaEffectKind::Beam => ArenaEffectKind::Beam,
                     game_sim::ArenaEffectKind::HitSpark => ArenaEffectKind::HitSpark,
+                    game_sim::ArenaEffectKind::Footstep
+                    | game_sim::ArenaEffectKind::BrushRustle
+                    | game_sim::ArenaEffectKind::StealthFootstep => {
+                        unreachable!("movement audio effects must not appear in projectile state")
+                    }
                 },
                 x: projectile.x,
                 y: projectile.y,
@@ -306,9 +311,9 @@ impl ServerApp {
         };
         effects
             .iter()
-            .copied()
             .filter(|effect| {
                 effect.owner == viewer_id
+                    || Self::effect_is_audible_without_visibility(runtime, viewer_id, effect)
                     || Self::mask_contains_point(map, &visible_tiles, effect.x, effect.y)
                     || Self::mask_contains_point(
                         map,
@@ -317,7 +322,31 @@ impl ServerApp {
                         effect.target_y,
                     )
             })
+            .cloned()
             .collect()
+    }
+
+    fn effect_is_audible_without_visibility(
+        runtime: &MatchRuntime,
+        viewer_id: PlayerId,
+        effect: &ArenaEffectSnapshot,
+    ) -> bool {
+        if !matches!(
+            effect.kind,
+            ArenaEffectKind::Footstep
+                | ArenaEffectKind::BrushRustle
+                | ArenaEffectKind::StealthFootstep
+        ) {
+            return false;
+        }
+        let Some(viewer) = runtime.world.player_state(viewer_id) else {
+            return false;
+        };
+        let delta_x = i32::from(effect.x) - i32::from(viewer.x);
+        let delta_y = i32::from(effect.y) - i32::from(viewer.y);
+        let hearing_radius = i32::from(effect.radius);
+        delta_x.saturating_mul(delta_x) + delta_y.saturating_mul(delta_y)
+            <= hearing_radius.saturating_mul(hearing_radius)
     }
 
     pub(in super::super) fn build_skill_catalog(content: &GameContent) -> Vec<SkillCatalogEntry> {
@@ -332,7 +361,10 @@ impl ServerApp {
                 skill_description: skill.description.clone(),
                 skill_summary: build_skill_summary(skill),
                 ui_category: skill_ui_category(skill).to_string(),
-                audio_cue_id: skill.audio_cue_id.clone().unwrap_or_default(),
+                audio_cue_id: skill
+                    .audio_cue_id
+                    .clone()
+                    .unwrap_or_else(|| skill.id.clone()),
             })
             .collect()
     }
@@ -403,20 +435,24 @@ impl ServerApp {
     }
 
     pub(in super::super) fn collect_effect_batch(
+        world: &game_sim::SimulationWorld,
         events: &[SimulationEvent],
     ) -> Vec<ArenaEffectSnapshot> {
         events
             .iter()
             .filter_map(|event| match event {
                 SimulationEvent::EffectSpawned { effect } => {
-                    Some(Self::arena_effect_snapshot(effect))
+                    Some(Self::arena_effect_snapshot(world, effect))
                 }
                 _ => None,
             })
             .collect()
     }
 
-    pub(in super::super) fn arena_effect_snapshot(effect: &ArenaEffect) -> ArenaEffectSnapshot {
+    pub(in super::super) fn arena_effect_snapshot(
+        world: &game_sim::SimulationWorld,
+        effect: &ArenaEffect,
+    ) -> ArenaEffectSnapshot {
         ArenaEffectSnapshot {
             kind: match effect.kind {
                 game_sim::ArenaEffectKind::MeleeSwing => ArenaEffectKind::MeleeSwing,
@@ -426,6 +462,9 @@ impl ServerApp {
                 game_sim::ArenaEffectKind::Nova => ArenaEffectKind::Nova,
                 game_sim::ArenaEffectKind::Beam => ArenaEffectKind::Beam,
                 game_sim::ArenaEffectKind::HitSpark => ArenaEffectKind::HitSpark,
+                game_sim::ArenaEffectKind::Footstep => ArenaEffectKind::Footstep,
+                game_sim::ArenaEffectKind::BrushRustle => ArenaEffectKind::BrushRustle,
+                game_sim::ArenaEffectKind::StealthFootstep => ArenaEffectKind::StealthFootstep,
             },
             owner: effect.owner,
             slot: effect.slot,
@@ -434,6 +473,9 @@ impl ServerApp {
             target_x: effect.target_x,
             target_y: effect.target_y,
             radius: effect.radius,
+            audio_cue_id: world
+                .effect_audio_cue_id(effect.owner, effect.slot, effect.kind)
+                .unwrap_or_default(),
         }
     }
 }

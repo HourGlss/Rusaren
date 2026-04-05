@@ -577,6 +577,7 @@ func _assert_decode_arena_effect_batch() -> bool:
 	_push_i16(payload, 640)
 	_push_i16(payload, 220)
 	_push_u16(payload, 28)
+	_push_string(payload, "mage_t1_missile")
 	var decoded := Protocol.decode_server_event(_encode_server_event_packet(payload, 9, 21))
 	if not bool(decoded.get("ok", false)):
 		return _fail("arena effect batch should decode")
@@ -586,6 +587,8 @@ func _assert_decode_arena_effect_batch() -> bool:
 		return _fail("arena effect batch should use the ArenaEffectBatch event type")
 	if effects.size() != 1 or String(effects[0].get("kind", "")) != "SkillShot":
 		return _fail("arena effect batch should preserve the effect kind")
+	if String(effects[0].get("audio_cue_id", "")) != "mage_t1_missile":
+		return _fail("arena effect batch should decode effect audio cue ids")
 	return true
 
 

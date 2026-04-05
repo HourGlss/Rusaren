@@ -228,6 +228,7 @@ struct FuzzArenaEffectSnapshot {
     target_x: i16,
     target_y: i16,
     radius: u16,
+    audio_cue_id: String,
 }
 
 impl FuzzArenaEffectSnapshot {
@@ -241,6 +242,7 @@ impl FuzzArenaEffectSnapshot {
             target_x: self.target_x,
             target_y: self.target_y,
             radius: self.radius.max(1),
+            audio_cue_id: sanitize_ascii_label(self.audio_cue_id.as_bytes(), 48, "cue"),
         }
     }
 }

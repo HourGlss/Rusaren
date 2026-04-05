@@ -492,6 +492,9 @@ pub(super) fn encode_arena_effect_kind(kind: ArenaEffectKind) -> u8 {
         ArenaEffectKind::Nova => 5,
         ArenaEffectKind::Beam => 6,
         ArenaEffectKind::HitSpark => 7,
+        ArenaEffectKind::Footstep => 8,
+        ArenaEffectKind::BrushRustle => 9,
+        ArenaEffectKind::StealthFootstep => 10,
     }
 }
 
@@ -550,6 +553,9 @@ pub(super) fn read_arena_effect_kind(
         5 => Ok(ArenaEffectKind::Nova),
         6 => Ok(ArenaEffectKind::Beam),
         7 => Ok(ArenaEffectKind::HitSpark),
+        8 => Ok(ArenaEffectKind::Footstep),
+        9 => Ok(ArenaEffectKind::BrushRustle),
+        10 => Ok(ArenaEffectKind::StealthFootstep),
         other => Err(PacketError::InvalidEncodedArenaEffectKind(other)),
     }
 }

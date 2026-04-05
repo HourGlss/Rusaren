@@ -7,6 +7,7 @@ const InputBindingsScript := preload("res://scripts/input/input_bindings.gd")
 const PerfClockScript := preload("res://scripts/debug/perf_clock.gd")
 const MainShellFactoryScript := preload("res://scripts/main_shell_factory.gd")
 const ClientStateViewScript := preload("res://scripts/state/client_state_view.gd")
+const GameAudioRuntimeScript := preload("res://scripts/audio/game_audio_runtime.gd")
 const Protocol := preload("res://scripts/net/protocol.gd")
 const WebSocketConfigScript := preload("res://scripts/net/websocket_config.gd")
 
@@ -47,6 +48,7 @@ var auto_connect_enabled := true
 var app_state := ClientStateScript.new()
 var transport := DevSocketClientScript.new()
 var websocket_config := WebSocketConfigScript.new()
+var audio_runtime: Node2D = null
 
 var connection_panel: PanelContainer
 var player_name_input: LineEdit
@@ -135,6 +137,9 @@ var _capture_started_frame := -1
 func _ready() -> void:
 	_name_rng.randomize()
 	InputBindingsScript.install()
+	audio_runtime = GameAudioRuntimeScript.new()
+	audio_runtime.set_client_state(app_state)
+	add_child(audio_runtime)
 	_bootstrap_request = HTTPRequest.new()
 	add_child(_bootstrap_request)
 	_bootstrap_request.request_completed.connect(_on_bootstrap_request_completed)
@@ -690,6 +695,8 @@ func _on_packet_received(decoded_event: Dictionary) -> void:
 	var event_data: Dictionary = decoded_event.get("event", {})
 	var apply_started_us := PerfClockScript.now_us()
 	app_state.apply_server_event(event_data)
+	if audio_runtime != null and String(event_data.get("type", "")) == "ArenaEffectBatch":
+		audio_runtime.play_effect_batch(event_data.get("effects", []), size)
 	var header: Dictionary = decoded_event.get("header", {})
 	var packet_size := int(decoded_event.get("raw_packet_bytes", Protocol.HEADER_LEN + int(header.get("payload_len", 0))))
 	app_state.record_inbound_packet(

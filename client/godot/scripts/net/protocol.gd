@@ -363,6 +363,12 @@ class ByteCursor:
 				return "Beam"
 			7:
 				return "HitSpark"
+			8:
+				return "Footstep"
+			9:
+				return "BrushRustle"
+			10:
+				return "StealthFootstep"
 			_:
 				error_message = "encoded arena effect kind %d is invalid" % raw
 				return null
@@ -1174,6 +1180,7 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 				var target_x = cursor.read_i16()
 				var target_y = cursor.read_i16()
 				var radius = cursor.read_u16()
+				var audio_cue_id = cursor.read_string("audio_cue_id", MAX_SKILL_AUDIO_CUE_BYTES)
 				if cursor.has_error():
 					return _error(cursor.error_message)
 				effects.append({
@@ -1185,6 +1192,7 @@ static func decode_server_event(packet: PackedByteArray) -> Dictionary:
 					"target_x": target_x,
 					"target_y": target_y,
 					"radius": radius,
+					"audio_cue_id": audio_cue_id,
 				})
 			event = {
 				"type": "ArenaEffectBatch",

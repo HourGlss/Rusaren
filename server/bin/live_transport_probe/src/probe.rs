@@ -859,7 +859,11 @@ impl ProbeClientState {
             .then(|| Self::skill_cast_action(slot, AimTarget::Enemy, (enemy.x, enemy.y)))
     }
 
-    fn skill_cast_action(slot: u8, aim_target: AimTarget, aim_override: (i16, i16)) -> PlannedAction {
+    fn skill_cast_action(
+        slot: u8,
+        aim_target: AimTarget,
+        aim_override: (i16, i16),
+    ) -> PlannedAction {
         PlannedAction {
             buttons: game_net::BUTTON_CAST,
             ability_or_context: u16::from(slot),
@@ -1505,7 +1509,10 @@ fn is_transient_probe_error(message: &str) -> bool {
 
 pub async fn run_probe(config: ProbeConfig) -> ProbeResult<ProbeOutcome> {
     let mut logger = ProbeLogger::new(&config.output_path, &config.origin)?;
-    let content_root = config.content_root.clone().unwrap_or_else(repo_content_root);
+    let content_root = config
+        .content_root
+        .clone()
+        .unwrap_or_else(repo_content_root);
     let content = GameContent::load_from_root(&content_root)
         .map_err(|error| ProbeError::new(format!("probe content load failed: {error}")))?;
 

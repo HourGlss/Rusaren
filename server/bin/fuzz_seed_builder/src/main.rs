@@ -1212,7 +1212,10 @@ fn server_control_event_invalid_seeds() -> Result<Vec<NamedSeed>, Box<dyn Error>
             PacketHeader::new(ChannelId::Control, PacketKind::ControlEvent, 0, 4, 9, 12)?
                 .encode(&[14, 9, 0, 0]),
         ),
-        ("invalid_arena_obstacle_kind.bin", invalid_arena_obstacle_kind),
+        (
+            "invalid_arena_obstacle_kind.bin",
+            invalid_arena_obstacle_kind,
+        ),
         ("invalid_arena_effect_kind.bin", invalid_arena_effect_kind),
     ])
 }

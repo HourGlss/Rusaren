@@ -334,7 +334,8 @@ impl ServerApp {
         let aim_changed = world
             .update_aim(sender_id, frame.aim_horizontal_q, frame.aim_vertical_q)
             .map_err(|error| error.to_string())?;
-        world.submit_input(sender_id, movement)
+        world
+            .submit_input(sender_id, movement)
             .map_err(|error| error.to_string())?;
 
         let manual_cancel_slot = if frame.buttons & BUTTON_CANCEL != 0 {

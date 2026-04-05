@@ -248,6 +248,26 @@ fn parse_simulation_configuration(
         "simulation.teleport_resolution_steps",
         yaml.teleport_resolution_steps,
     )?;
+    require_positive_u16(
+        source,
+        "simulation.movement_audio_step_interval_ms",
+        yaml.movement_audio_step_interval_ms,
+    )?;
+    require_positive_u16(
+        source,
+        "simulation.movement_audio_radius_units",
+        yaml.movement_audio_radius_units,
+    )?;
+    require_positive_u16(
+        source,
+        "simulation.stealth_audio_radius_units",
+        yaml.stealth_audio_radius_units,
+    )?;
+    validate_percent(
+        source,
+        "simulation.brush_movement_audible_percent",
+        yaml.brush_movement_audible_percent,
+    )?;
 
     Ok(SimulationConfiguration {
         combat_frame_ms: yaml.combat_frame_ms,
@@ -259,6 +279,10 @@ fn parse_simulation_configuration(
         mana_regen_per_second: yaml.mana_regen_per_second,
         global_projectile_speed_bonus_bps: yaml.global_projectile_speed_bonus_bps,
         teleport_resolution_steps: yaml.teleport_resolution_steps,
+        movement_audio_step_interval_ms: yaml.movement_audio_step_interval_ms,
+        movement_audio_radius_units: yaml.movement_audio_radius_units,
+        stealth_audio_radius_units: yaml.stealth_audio_radius_units,
+        brush_movement_audible_percent: yaml.brush_movement_audible_percent,
         passive_bonus_caps: parse_passive_bonus_caps(source, yaml.passive_bonus_caps)?,
         movement_modifier_caps: parse_movement_modifier_caps(source, yaml.movement_modifier_caps)?,
         crowd_control_diminishing_returns: parse_crowd_control_diminishing_returns(

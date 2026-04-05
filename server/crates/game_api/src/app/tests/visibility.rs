@@ -205,6 +205,7 @@ fn visibility_masks_tiles_players_projectiles_and_effects_are_precise() {
             target_x: alice_state.x + 80,
             target_y: alice_state.y,
             radius: 24,
+            audio_cue_id: String::from("mage_t1_missile"),
         },
         game_net::ArenaEffectSnapshot {
             kind: game_net::ArenaEffectKind::SkillShot,
@@ -215,6 +216,7 @@ fn visibility_masks_tiles_players_projectiles_and_effects_are_precise() {
             target_x: hidden_shrub.center_x,
             target_y: hidden_shrub.center_y,
             radius: 24,
+            audio_cue_id: String::from("mage_t1_missile"),
         },
     ];
     let filtered = server.filter_arena_effects(match_id, alice_id, &effects, &map);
@@ -508,6 +510,7 @@ fn snapshot_filters_include_visible_non_owned_entities_and_repair_explored_masks
             target_x: hidden_position.0,
             target_y: hidden_position.1,
             radius: 24,
+            audio_cue_id: String::from("mage_t1_missile"),
         },
         game_net::ArenaEffectSnapshot {
             kind: game_net::ArenaEffectKind::SkillShot,
@@ -518,6 +521,7 @@ fn snapshot_filters_include_visible_non_owned_entities_and_repair_explored_masks
             target_x: alice_position.0,
             target_y: alice_position.1,
             radius: 24,
+            audio_cue_id: String::from("mage_t1_missile"),
         },
         game_net::ArenaEffectSnapshot {
             kind: game_net::ArenaEffectKind::SkillShot,
@@ -528,6 +532,7 @@ fn snapshot_filters_include_visible_non_owned_entities_and_repair_explored_masks
             target_x: hidden_position.0,
             target_y: hidden_position.1,
             radius: 24,
+            audio_cue_id: String::from("mage_t1_missile"),
         },
     ];
     let filtered = server.filter_arena_effects(match_id, alice_id, &effects, &map);
@@ -901,6 +906,95 @@ fn allied_wards_extend_visibility_masks_and_enemy_snapshots() {
             .any(|player| player.player_id == bob_id),
         "once a ward sees bob, the enemy should appear in the arena player snapshot"
     );
+
+    remove_dir_if_exists(&root);
+}
+
+#[test]
+fn nearby_stealth_footsteps_are_audible_without_revealing_the_player() {
+    let (content, root) = content_with_map(
+        "stealth-audio-hearing",
+        "......\n\
+..AB..\n\
+......\n",
+    );
+    let alice_id = manual_player_id(1);
+    let bob_id = manual_player_id(2);
+    let map = content.map().clone();
+    let match_id = MatchId::new(1).expect("match id");
+    let mut runtime = manual_runtime(
+        &content,
+        vec![
+            manual_seed(
+                &content,
+                1,
+                "Alice",
+                TeamSide::TeamA,
+                SkillTree::Mage,
+                [None, None, None, None, None],
+            ),
+            manual_seed(
+                &content,
+                2,
+                "Bob",
+                TeamSide::TeamB,
+                SkillTree::Rogue,
+                [None, None, None, Some(skill(SkillTree::Rogue, 4)), None],
+            ),
+        ],
+    );
+
+    runtime
+        .world
+        .queue_cast(bob_id, 4)
+        .expect("nightcloak should queue");
+    let _ = runtime.world.tick(COMBAT_FRAME_MS);
+
+    let alice_state = runtime.world.player_state(alice_id).expect("alice state");
+    let bob_state = runtime.world.player_state(bob_id).expect("bob state");
+    let (visible_tiles, _) = build_runtime_visibility_masks(&mut runtime, alice_id, &map);
+    assert!(
+        ServerApp::mask_contains_point(&map, &visible_tiles, bob_state.x, bob_state.y),
+        "bob should be in ordinary line-of-sight so stealth is the only reason he stays hidden"
+    );
+    assert!(
+        ServerApp::arena_players_snapshot(&runtime, alice_id, &map, &visible_tiles)
+            .iter()
+            .all(|player| player.player_id != bob_id),
+        "nearby stealth audio should not reveal the hidden player in the normal player snapshot"
+    );
+
+    let mut server = ServerApp::new();
+    server.matches.insert(match_id, runtime);
+    let effects = vec![
+        game_net::ArenaEffectSnapshot {
+            kind: game_net::ArenaEffectKind::StealthFootstep,
+            owner: bob_id,
+            slot: 0,
+            x: bob_state.x,
+            y: bob_state.y,
+            target_x: bob_state.x,
+            target_y: bob_state.y,
+            radius: 140,
+            audio_cue_id: String::from("movement_stealth_step"),
+        },
+        game_net::ArenaEffectSnapshot {
+            kind: game_net::ArenaEffectKind::StealthFootstep,
+            owner: bob_id,
+            slot: 0,
+            x: alice_state.x + 420,
+            y: alice_state.y,
+            target_x: alice_state.x + 420,
+            target_y: alice_state.y,
+            radius: 100,
+            audio_cue_id: String::from("movement_stealth_step"),
+        },
+    ];
+    let filtered = server.filter_arena_effects(match_id, alice_id, &effects, &map);
+    assert_eq!(filtered.len(), 1);
+    assert_eq!(filtered[0].kind, game_net::ArenaEffectKind::StealthFootstep);
+    assert_eq!(filtered[0].owner, bob_id);
+    assert_eq!((filtered[0].x, filtered[0].y), (bob_state.x, bob_state.y));
 
     remove_dir_if_exists(&root);
 }

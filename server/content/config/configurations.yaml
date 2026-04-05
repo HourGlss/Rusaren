@@ -64,6 +64,10 @@ simulation:
   mana_regen_per_second: 12
   global_projectile_speed_bonus_bps: 2000
   teleport_resolution_steps: 48
+  movement_audio_step_interval_ms: 240
+  movement_audio_radius_units: 520
+  stealth_audio_radius_units: 170
+  brush_movement_audible_percent: 22
   passive_bonus_caps:
     player_speed_bps: 9000
     projectile_speed_bps: 9000

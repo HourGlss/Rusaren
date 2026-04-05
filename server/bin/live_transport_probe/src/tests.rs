@@ -472,7 +472,10 @@ fn mechanic_probe_content_root(prefix: &str, skill_files: &[(&str, &str)]) -> Pa
     let root = temp_content_root(prefix);
     remove_dir_if_exists(&root);
     copy_dir_all(&repo_content_root(), &root);
-    let keep: Vec<&str> = skill_files.iter().map(|(file_name, _)| *file_name).collect();
+    let keep: Vec<&str> = skill_files
+        .iter()
+        .map(|(file_name, _)| *file_name)
+        .collect();
     prune_skill_files(&root, &keep);
     for (file_name, yaml) in skill_files {
         write_skill_override(&root, file_name, yaml);
@@ -486,7 +489,10 @@ fn dispel_probe_content_root() -> PathBuf {
         &[
             ("cleric.yaml", DISPEL_TEST_CLERIC_YAML),
             ("mage.yaml", DISPEL_TEST_MAGE_YAML),
-            ("warrior.yaml", include_str!("../../../content/skills/warrior.yaml")),
+            (
+                "warrior.yaml",
+                include_str!("../../../content/skills/warrior.yaml"),
+            ),
         ],
     )
 }
@@ -538,7 +544,10 @@ async fn start_server_fast() -> (game_api::DevServerHandle, String) {
 async fn run_probe_with_fresh_server(
     config: ProbeConfig,
 ) -> crate::ProbeResult<crate::ProbeOutcome> {
-    let content_root = config.content_root.clone().unwrap_or_else(repo_content_root);
+    let content_root = config
+        .content_root
+        .clone()
+        .unwrap_or_else(repo_content_root);
     let (server, base_url) = start_server_fast_with_content_root(content_root).await;
     let outcome = run_probe(ProbeConfig {
         origin: base_url,

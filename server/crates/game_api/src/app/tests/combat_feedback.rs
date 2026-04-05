@@ -127,12 +127,12 @@ fn combat_feedback_tracks_totals_and_combat_text_from_runtime_log_entries() {
     assert!(alice_text.iter().any(|entry| {
         entry.style == ArenaCombatTextStyle::DamageOutgoing && entry.text == "17"
     }));
-    assert!(alice_text.iter().any(|entry| {
-        entry.style == ArenaCombatTextStyle::HealIncoming && entry.text == "+9"
-    }));
-    assert!(alice_text.iter().any(|entry| {
-        entry.style == ArenaCombatTextStyle::Utility && entry.text == "Miss"
-    }));
+    assert!(alice_text
+        .iter()
+        .any(|entry| { entry.style == ArenaCombatTextStyle::HealIncoming && entry.text == "+9" }));
+    assert!(alice_text
+        .iter()
+        .any(|entry| { entry.style == ArenaCombatTextStyle::Utility && entry.text == "Miss" }));
     assert!(bob_text.iter().any(|entry| {
         entry.style == ArenaCombatTextStyle::DamageIncoming && entry.text == "-17"
     }));

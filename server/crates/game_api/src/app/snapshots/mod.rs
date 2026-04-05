@@ -494,9 +494,14 @@ impl ServerApp {
             };
             let filtered = effects
                 .iter()
-                .copied()
                 .filter(|effect| {
                     effect.owner == recipient
+                        || matches!(
+                            effect.kind,
+                            game_net::ArenaEffectKind::Footstep
+                                | game_net::ArenaEffectKind::BrushRustle
+                                | game_net::ArenaEffectKind::StealthFootstep
+                        )
                         || Self::mask_contains_point(&map, &visible_tiles, effect.x, effect.y)
                         || Self::mask_contains_point(
                             &map,
@@ -505,6 +510,7 @@ impl ServerApp {
                             effect.target_y,
                         )
                 })
+                .cloned()
                 .collect::<Vec<_>>();
             if filtered.is_empty() {
                 continue;

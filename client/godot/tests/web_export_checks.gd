@@ -5,6 +5,7 @@ const ArenaViewScript := preload("res://scripts/arena/arena_view.gd")
 const DevSocketClientScript := preload("res://scripts/net/dev_socket_client.gd")
 const WebSocketConfigScript := preload("res://scripts/net/websocket_config.gd")
 const SpellAudioRegistryScript := preload("res://scripts/content/spell_audio_registry.gd")
+const GameAudioRuntimeScript := preload("res://scripts/audio/game_audio_runtime.gd")
 
 
 func _init() -> void:
@@ -30,6 +31,7 @@ func _init() -> void:
 	success = _assert_fog_rounds_only_on_visibility_boundary() and success
 	success = _assert_unexplored_shrubs_remain_readable_in_fog() and success
 	success = _assert_spell_audio_manifest_defaults_load() and success
+	success = _assert_spell_audio_runtime_can_synthesize_cues() and success
 	quit(0 if success else 1)
 
 
@@ -106,6 +108,19 @@ func _assert_spell_audio_manifest_defaults_load() -> bool:
 	var cues: Variant = manifest.get("cues", {})
 	if typeof(cues) != TYPE_DICTIONARY:
 		return _fail("spell audio manifest cues should stay dictionary-shaped")
+	return true
+
+
+func _assert_spell_audio_runtime_can_synthesize_cues() -> bool:
+	var state := ClientStateScript.new()
+	var runtime := GameAudioRuntimeScript.new()
+	runtime.set_client_state(state)
+	var generated_stream := runtime.preview_stream_for_cue("mage_t1_missile")
+	var movement_stream := runtime.preview_stream_for_cue("movement_footstep")
+	if generated_stream == null:
+		return _fail("missing spell audio manifest entries should still synthesize deterministic cues")
+	if movement_stream == null:
+		return _fail("checked-in movement cue entries should resolve to playable streams")
 	return true
 
 

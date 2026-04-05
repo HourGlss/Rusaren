@@ -801,6 +801,7 @@ fn sample_arena_effect_batch_event() -> ServerControlEvent {
             target_x: 640,
             target_y: 220,
             radius: 28,
+            audio_cue_id: String::from("mage_t1_missile"),
         }],
     }
 }
@@ -901,7 +902,7 @@ fn server_control_event_rejects_invalid_arena_kinds() {
 
     let mut effect_payload = vec![21];
     effect_payload.extend_from_slice(&1_u16.to_le_bytes());
-    effect_payload.push(9);
+    effect_payload.push(11);
     effect_payload.extend_from_slice(&7_u32.to_le_bytes());
     effect_payload.push(1);
     effect_payload.extend_from_slice(&0_i16.to_le_bytes());
@@ -909,6 +910,7 @@ fn server_control_event_rejects_invalid_arena_kinds() {
     effect_payload.extend_from_slice(&0_i16.to_le_bytes());
     effect_payload.extend_from_slice(&0_i16.to_le_bytes());
     effect_payload.extend_from_slice(&28_u16.to_le_bytes());
+    effect_payload.push(0);
     let header = PacketHeader::new(
         ChannelId::Snapshot,
         PacketKind::EventBatch,
@@ -921,7 +923,7 @@ fn server_control_event_rejects_invalid_arena_kinds() {
     let packet = header.encode(&effect_payload);
     assert_eq!(
         ServerControlEvent::decode_packet(&packet),
-        Err(PacketError::InvalidEncodedArenaEffectKind(9))
+        Err(PacketError::InvalidEncodedArenaEffectKind(11))
     );
 }
 

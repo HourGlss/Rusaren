@@ -1,5 +1,39 @@
 {
-  "format_version": 1,
+  "format_version": 2,
   "asset_root": "res://assets/audio/spells",
-  "cues": {}
+  "cues": {
+    "movement_footstep": {
+      "waveform": "noise",
+      "duration_ms": 80,
+      "frequency_hz": 180,
+      "harmonic_hz": 320,
+      "harmonic_gain": 0.18,
+      "attack_ms": 3,
+      "release_ms": 36,
+      "amplitude": 0.42,
+      "volume_db": -13.0
+    },
+    "movement_brush_rustle": {
+      "waveform": "noise",
+      "duration_ms": 120,
+      "frequency_hz": 105,
+      "harmonic_hz": 240,
+      "harmonic_gain": 0.3,
+      "attack_ms": 6,
+      "release_ms": 52,
+      "amplitude": 0.4,
+      "volume_db": -12.0
+    },
+    "movement_stealth_step": {
+      "waveform": "triangle",
+      "duration_ms": 75,
+      "frequency_hz": 140,
+      "harmonic_hz": 210,
+      "harmonic_gain": 0.15,
+      "attack_ms": 4,
+      "release_ms": 28,
+      "amplitude": 0.25,
+      "volume_db": -17.0
+    }
+  }
 }

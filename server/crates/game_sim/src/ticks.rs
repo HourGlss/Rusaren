@@ -209,6 +209,10 @@ impl SimulationWorld {
             let origin_y = player_snapshot.y;
             let had_active_cast = player_snapshot.active_cast.is_some();
             let base_intent = player_snapshot.movement_intent;
+            let stealthed = player_snapshot
+                .statuses
+                .iter()
+                .any(|status| status.kind == StatusKind::Stealth);
 
             let movement = if movement_blocked {
                 MovementIntent::zero()
@@ -253,6 +257,9 @@ impl SimulationWorld {
                 &self.configuration.movement_modifier_caps,
             );
             if speed == 0 {
+                if let Some(player) = self.players.get_mut(&player_id) {
+                    player.movement_audio_progress_ms = 0;
+                }
                 continue;
             }
 
@@ -274,8 +281,17 @@ impl SimulationWorld {
                 &obstacles,
             );
 
+            let moved = resolved_x != origin_x || resolved_y != origin_y;
+            let inside_shrub = self.point_is_inside_shrub(resolved_x, resolved_y);
+            let elapsed_ms = self.elapsed_ms;
+            let movement_audio_interval_ms = self.configuration.movement_audio_step_interval_ms;
+            let movement_audio_radius_units = self.configuration.movement_audio_radius_units;
+            let stealth_audio_radius_units = self.configuration.stealth_audio_radius_units;
+            let brush_movement_audible_percent = self.configuration.brush_movement_audible_percent;
+            let mut movement_audio_effect = None;
+
             if let Some(player) = self.players.get_mut(&player_id) {
-                if resolved_x != origin_x || resolved_y != origin_y {
+                if moved {
                     player.x = resolved_x;
                     player.y = resolved_y;
                     events.push(SimulationEvent::PlayerMoved {
@@ -283,9 +299,83 @@ impl SimulationWorld {
                         x: player.x,
                         y: player.y,
                     });
+                    player.movement_audio_progress_ms =
+                        player.movement_audio_progress_ms.saturating_add(delta_ms);
+                    if player.movement_audio_progress_ms >= movement_audio_interval_ms {
+                        player.movement_audio_progress_ms %= movement_audio_interval_ms;
+                        let effect_kind = if inside_shrub {
+                            if Self::roll_brush_movement_audio(
+                                player_id,
+                                elapsed_ms,
+                                resolved_x,
+                                resolved_y,
+                                movement_audio_interval_ms,
+                                brush_movement_audible_percent,
+                            ) {
+                                Some(ArenaEffectKind::BrushRustle)
+                            } else {
+                                None
+                            }
+                        } else if stealthed {
+                            Some(ArenaEffectKind::StealthFootstep)
+                        } else {
+                            Some(ArenaEffectKind::Footstep)
+                        };
+                        if let Some(effect_kind) = effect_kind {
+                            let radius = if effect_kind == ArenaEffectKind::StealthFootstep {
+                                stealth_audio_radius_units
+                            } else {
+                                movement_audio_radius_units
+                            };
+                            movement_audio_effect = Some(ArenaEffect {
+                                kind: effect_kind,
+                                owner: player_id,
+                                slot: 0,
+                                x: resolved_x,
+                                y: resolved_y,
+                                target_x: resolved_x,
+                                target_y: resolved_y,
+                                radius,
+                            });
+                        }
+                    }
+                } else {
+                    player.movement_audio_progress_ms = 0;
                 }
             }
+            if let Some(effect) = movement_audio_effect {
+                events.push(SimulationEvent::EffectSpawned { effect });
+            }
         }
+    }
+
+    fn point_is_inside_shrub(&self, x: i16, y: i16) -> bool {
+        self.obstacles.iter().any(|obstacle| {
+            obstacle.kind == super::ArenaObstacleKind::Shrub
+                && super::obstacle_contains_point(x, y, obstacle)
+        })
+    }
+
+    fn roll_brush_movement_audio(
+        player_id: PlayerId,
+        elapsed_ms: u32,
+        x: i16,
+        y: i16,
+        interval_ms: u16,
+        audible_percent: u8,
+    ) -> bool {
+        if audible_percent == 0 {
+            return false;
+        }
+        if audible_percent >= 100 {
+            return true;
+        }
+        let step_index = elapsed_ms / u32::from(interval_ms);
+        let mut hash = u64::from(player_id.get()).wrapping_mul(0x9E37_79B1_85EB_CA87);
+        hash ^= u64::from(step_index.wrapping_add(1)).wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
+        hash ^= u64::from(u16::from_ne_bytes(x.to_ne_bytes())).wrapping_mul(0x1656_67B1_9E37_79F9);
+        hash ^= u64::from(u16::from_ne_bytes(y.to_ne_bytes())).wrapping_mul(0x85EB_CA77_C2B2_AE63);
+        (hash % 100) < u64::from(audible_percent)
     }
 
     #[allow(clippy::too_many_lines)]

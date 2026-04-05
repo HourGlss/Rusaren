@@ -87,6 +87,9 @@ pub enum ArenaEffectKind {
     Nova,
     Beam,
     HitSpark,
+    Footstep,
+    BrushRustle,
+    StealthFootstep,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -427,6 +430,7 @@ pub struct SimulationWorld {
     projectiles: Vec<ProjectileState>,
     deployables: Vec<DeployableState>,
     next_deployable_id: u32,
+    elapsed_ms: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -455,6 +459,7 @@ struct SimPlayer {
     primary_cooldown_remaining_ms: u16,
     slot_cooldown_remaining_ms: [u16; 5],
     mana_regen_progress: u16,
+    movement_audio_progress_ms: u16,
     statuses: Vec<StatusInstance>,
     hard_cc_dr: CrowdControlDrState,
     movement_cc_dr: CrowdControlDrState,
@@ -659,6 +664,7 @@ impl SimulationWorld {
                         primary_cooldown_remaining_ms: 0,
                         slot_cooldown_remaining_ms: [0; 5],
                         mana_regen_progress: 0,
+                        movement_audio_progress_ms: 0,
                         statuses: Vec::new(),
                         hard_cc_dr: CrowdControlDrState::default(),
                         movement_cc_dr: CrowdControlDrState::default(),
@@ -690,6 +696,7 @@ impl SimulationWorld {
             projectiles: Vec::new(),
             deployables: Vec::new(),
             next_deployable_id: 1,
+            elapsed_ms: 0,
         };
         if let Some(owner) = world.players.keys().next().copied() {
             let owner_team = world
@@ -799,6 +806,7 @@ impl SimulationWorld {
 
     pub fn reset_training_session(&mut self) {
         self.projectiles.clear();
+        self.elapsed_ms = 0;
         self.deployables.retain(|deployable| {
             matches!(
                 deployable.behavior,
@@ -834,6 +842,7 @@ impl SimulationWorld {
             player.primary_cooldown_remaining_ms = 0;
             player.slot_cooldown_remaining_ms = [0; 5];
             player.mana_regen_progress = 0;
+            player.movement_audio_progress_ms = 0;
             player.statuses.clear();
             player.hard_cc_dr = CrowdControlDrState::default();
             player.movement_cc_dr = CrowdControlDrState::default();
@@ -843,6 +852,7 @@ impl SimulationWorld {
 
     pub fn tick(&mut self, delta_ms: u16) -> Vec<SimulationEvent> {
         let mut events = Vec::new();
+        self.elapsed_ms = self.elapsed_ms.saturating_add(u32::from(delta_ms));
         self.advance_cooldowns(delta_ms);
         self.advance_mana(delta_ms);
         self.advance_crowd_control_diminishing_returns(delta_ms);
@@ -910,6 +920,21 @@ impl SimulationWorld {
     }
 
     #[must_use]
+    pub fn effect_audio_cue_id(
+        &self,
+        owner: PlayerId,
+        slot: u8,
+        kind: ArenaEffectKind,
+    ) -> Option<String> {
+        match kind {
+            ArenaEffectKind::Footstep => Some(String::from("movement_footstep")),
+            ArenaEffectKind::BrushRustle => Some(String::from("movement_brush_rustle")),
+            ArenaEffectKind::StealthFootstep => Some(String::from("movement_stealth_step")),
+            _ => self.player_audio_cue_id_for_slot(owner, slot),
+        }
+    }
+
+    #[must_use]
     pub fn statuses_for(&self, player_id: PlayerId) -> Option<Vec<SimStatusState>> {
         self.players.get(&player_id).map(|player| {
             player
@@ -924,6 +949,27 @@ impl SimulationWorld {
                 })
                 .collect()
         })
+    }
+
+    fn player_audio_cue_id_for_slot(&self, player_id: PlayerId, slot: u8) -> Option<String> {
+        let player = self.players.get(&player_id)?;
+        if slot == 0 {
+            return Some(
+                player
+                    .melee
+                    .audio_cue_id
+                    .clone()
+                    .unwrap_or_else(|| player.melee.id.clone()),
+            );
+        }
+        let slot_index = usize::from(slot.saturating_sub(1));
+        let skill = player.skills.get(slot_index)?.as_ref()?;
+        Some(
+            skill
+                .audio_cue_id
+                .clone()
+                .unwrap_or_else(|| skill.id.clone()),
+        )
     }
 
     #[must_use]

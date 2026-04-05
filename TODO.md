@@ -178,13 +178,13 @@ Milestone gate:
 - no major 0.9 architecture or observability gap remains
 
 ### 0.9.7 Audio, Input, And Combat Polish
-- [ ] Add semi-unique sound cues for shipped spells so players can distinguish major actions without relying only on visuals.
-- [ ] Add `3D` movement audio, but suppress it for stealthed players and for players currently inside brush.
+- [x] Add semi-unique sound cues for shipped spells so players can distinguish major actions without relying only on visuals.
+- [x] Add `3D` movement audio, but suppress it for stealthed players and for players currently inside brush.
 - [x] Add a self-cast shortcut on `x` so held self-cast targets the casting player while still respecting normal stun, silence, range, and cast-validity rules.
 - [x] Implement and test crowd-control diminishing returns.
 - [x] Add non-playback spell cue plumbing so backend-authored skills can declare optional `audio_cue_id` values and the Godot client can resolve them through a checked-in frontend manifest when real assets arrive.
-- [ ] Add a YAML-configurable chance for brush movement to make an audible sound instead of being perfectly silent every time.
-- [ ] Allow nearby stealthed players to be heard within a small radius without revealing them.
+- [x] Add a YAML-configurable chance for brush movement to make an audible sound instead of being perfectly silent every time.
+- [x] Allow nearby stealthed players to be heard within a small radius without revealing them.
 
 Milestone gate:
 - shipped spells and player movement have readable audio cues

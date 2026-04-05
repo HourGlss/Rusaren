@@ -158,6 +158,9 @@ pub enum FuzzArenaEffectKind {
     Nova,
     Beam,
     HitSpark,
+    Footstep,
+    BrushRustle,
+    StealthFootstep,
 }
 
 impl FuzzArenaEffectKind {
@@ -170,6 +173,9 @@ impl FuzzArenaEffectKind {
             Self::Nova => ArenaEffectKind::Nova,
             Self::Beam => ArenaEffectKind::Beam,
             Self::HitSpark => ArenaEffectKind::HitSpark,
+            Self::Footstep => ArenaEffectKind::Footstep,
+            Self::BrushRustle => ArenaEffectKind::BrushRustle,
+            Self::StealthFootstep => ArenaEffectKind::StealthFootstep,
         }
     }
 }

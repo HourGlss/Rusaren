@@ -15,8 +15,10 @@ Use the structure notes below to find the right file or subfolder quickly.
 - `export_presets.cfg`: Godot export preset definitions used by the web export script.
 - `project.godot`: Godot project manifest for the browser shell.
 
-## Future Spell Audio Assets
-The frontend spell-audio seam is now checked in even though playback is not enabled yet.
+## Spell And Movement Audio
+The frontend now plays positional arena audio from the checked-in cue manifest.
+If a cue points at a real file, the client loads it from the configured asset root.
+If no real asset exists yet, the client synthesizes a small deterministic fallback clip from the cue id and cue parameters so every shipped spell and movement cue still produces a readable sound.
 
 Use these paths when real assets arrive:
 - manifest: `client/godot/content/audio/spell_cues.json`
@@ -27,11 +29,15 @@ The manifest format is JSON because Godot can load it directly with `JSON.parse_
 
 ```json
 {
-  "format_version": 1,
+  "format_version": 2,
   "asset_root": "res://assets/audio/spells",
   "cues": {
     "mage_arc_bolt": {
       "file": "mage/arc_bolt.ogg"
+    },
+    "movement_footstep": {
+      "waveform": "triangle",
+      "duration_ms": 95
     }
   }
 }
@@ -58,7 +64,12 @@ To link that cue to an authored spell, add the same `audio_cue_id` in the backen
       amount: 18
 ```
 
-The client currently resolves cue metadata only. Real playback and movement audio still belong to the remaining sound items in `0.9.7`.
+Built-in movement cue ids currently used by the backend are:
+- `movement_footstep`
+- `movement_brush_rustle`
+- `movement_stealth_step`
+
+Spell effects also carry an `audio_cue_id` in arena effect batches. If authored content omits that field, the backend falls back to the melee or skill id so the client can still synthesize a semi-unique cue.
 
 ## Frontend Performance Monitoring
 The frontend now uses Godot's built-in `Performance` monitors together with repo-specific custom monitors.
