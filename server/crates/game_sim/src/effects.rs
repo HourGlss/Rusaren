@@ -4,12 +4,11 @@ use super::{
     CombatValueKind, MovementIntent, PlayerId, ProjectileState, SimCastCancelReason, SimMissReason,
     SimRemovedStatus, SimStatusRemovedReason, SimTargetKind, SimTriggerReason, SimulationEvent,
     SimulationWorld, StatusDefinition, StatusInstance, StatusKind, TargetEntity,
-    PLAYER_RADIUS_UNITS,
 };
 
 impl SimulationWorld {
-    fn player_overlap_radius(radius: u16) -> u16 {
-        radius.saturating_add(PLAYER_RADIUS_UNITS)
+    fn player_overlap_radius(&self, radius: u16) -> u16 {
+        radius.saturating_add(self.configuration.player_radius_units)
     }
 
     fn deployable_overlap_radius(radius: u16, deployable_radius: u16) -> u16 {
@@ -371,10 +370,14 @@ impl SimulationWorld {
                     else {
                         continue;
                     };
+                    let execute_threshold_bps =
+                        self.configuration.training_dummy.execute_threshold_bps;
                     let applied_damage = amount.min(deployable.hit_points);
                     deployable.hit_points = deployable.hit_points.saturating_sub(applied_damage);
-                    let threshold_hit_points =
-                        Self::training_dummy_execute_hit_points(deployable.max_hit_points);
+                    let threshold_hit_points = Self::training_dummy_execute_hit_points(
+                        deployable.max_hit_points,
+                        execute_threshold_bps,
+                    );
                     let destroyed = match deployable.behavior {
                         super::DeployableBehavior::TrainingDummyResetFull => {
                             if deployable.hit_points <= threshold_hit_points {
@@ -625,8 +628,9 @@ impl SimulationWorld {
         if !player.alive {
             return None;
         }
+        let dr = self.configuration.crowd_control_diminishing_returns;
         let effective_duration_ms =
-            Self::apply_crowd_control_dr(player, definition.kind, definition.duration_ms)?;
+            Self::apply_crowd_control_dr(player, definition.kind, definition.duration_ms, dr)?;
 
         let mut stacks_after = 1_u8;
         let mut stack_delta = 1_u8;
@@ -715,7 +719,7 @@ impl SimulationWorld {
         include_deployables: bool,
     ) -> Option<TargetEntity> {
         let mut candidates = Vec::new();
-        let effective_radius = i32::from(Self::player_overlap_radius(radius));
+        let effective_radius = i32::from(self.player_overlap_radius(radius));
         let max_distance_sq = effective_radius * effective_radius;
         for (player_id, player) in &self.players {
             if *player_id == attacker || !player.alive {
@@ -755,7 +759,7 @@ impl SimulationWorld {
     ) -> Option<TargetEntity> {
         let mut candidates = Vec::new();
         let threshold_sq = {
-            let overlap = Self::player_overlap_radius(radius);
+            let overlap = self.player_overlap_radius(radius);
             f32::from(overlap) * f32::from(overlap)
         };
         for (player_id, player) in &self.players {
@@ -800,7 +804,7 @@ impl SimulationWorld {
         include_deployables: bool,
     ) -> Vec<TargetEntity> {
         let mut targets = Vec::new();
-        let effective_radius = i32::from(Self::player_overlap_radius(radius));
+        let effective_radius = i32::from(self.player_overlap_radius(radius));
         let max_distance_sq = effective_radius * effective_radius;
         for (player_id, player) in &self.players {
             if Some(*player_id) == exclude || !player.alive {

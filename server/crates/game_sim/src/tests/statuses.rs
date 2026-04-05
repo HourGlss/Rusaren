@@ -64,7 +64,7 @@ fn poison_and_hot_tick_with_expected_stacking_behavior() {
         .player_state(player_id(2))
         .expect("bob")
         .hit_points;
-    assert!(damaged_hit_points < 100);
+    assert!(damaged_hit_points < class_hit_points(&content, SkillTree::Warrior));
 
     let druid_tree = SkillTree::new("Druid").expect("druid tree");
     let mut hot_world = world(
@@ -865,6 +865,8 @@ fn haste_increases_movement_speed_and_expires_cleanly() {
         .expect("haste skill");
     let cast_events = resolve_skill_cast(&mut world, player_id(1), 4, haste_skill.behavior);
     assert!(status_applied_to(&cast_events, player_id(2), StatusKind::Haste).is_some());
+    let haste_duration_ms =
+        remaining_status_ms(&world, player_id(2), StatusKind::Haste).expect("haste");
 
     let bob_before = world.player_state(player_id(2)).expect("bob");
     world
@@ -887,7 +889,7 @@ fn haste_increases_movement_speed_and_expires_cleanly() {
     world
         .submit_input(player_id(2), MovementIntent::zero())
         .expect("stop movement");
-    let _ = collect_ticks(&mut world, 25);
+    let _ = collect_ticks(&mut world, status_expiration_frames(haste_duration_ms));
     assert!(
         world
             .statuses_for(player_id(2))
@@ -985,8 +987,10 @@ fn silence_blocks_skill_casts_but_not_primary_attacks_until_it_expires() {
         bob_state.slot_cooldown_remaining_ms[0], 0,
         "blocked casts should not start cooldowns"
     );
+    let silence_duration_ms =
+        remaining_status_ms(&world, player_id(2), StatusKind::Silence).expect("silence");
 
-    let _ = collect_ticks(&mut world, 13);
+    let _ = collect_ticks(&mut world, status_expiration_frames(silence_duration_ms));
     assert!(
         world
             .statuses_for(player_id(2))
@@ -1084,8 +1088,10 @@ fn stun_blocks_movement_and_all_actions_until_it_expires() {
         bob_after.slot_cooldown_remaining_ms[0], 0,
         "blocked stunned casts should not start cooldowns"
     );
+    let stun_duration_ms =
+        remaining_status_ms(&world, player_id(2), StatusKind::Stun).expect("stun");
 
-    let _ = collect_ticks(&mut world, 8);
+    let _ = collect_ticks(&mut world, status_expiration_frames(stun_duration_ms));
     assert!(
         world
             .statuses_for(player_id(2))
@@ -1173,7 +1179,15 @@ fn chill_reduces_movement_speed_before_root_expires_cleanly() {
         "chill should slow movement before rooting"
     );
 
-    let _ = collect_ticks(&mut world, 25);
+    let chill_expiration_frames = world
+        .statuses_for(player_id(2))
+        .expect("statuses")
+        .iter()
+        .filter(|status| matches!(status.kind, StatusKind::Chill | StatusKind::Root))
+        .map(|status| status_expiration_frames(status.remaining_ms))
+        .max()
+        .unwrap_or(0);
+    let _ = collect_ticks(&mut world, chill_expiration_frames);
     assert!(
         world
             .statuses_for(player_id(2))
@@ -1368,7 +1382,7 @@ fn shield_stacks_and_absorbs_damage_before_hit_points() {
     let first_hit = resolve_skill_cast(&mut world, player_id(2), 1, beam_skill.behavior.clone());
     assert_eq!(
         world.player_state(player_id(1)).expect("cleric").hit_points,
-        100,
+        class_hit_points(&content, SkillTree::Cleric),
         "stacked shields should absorb the first hit before HP changes"
     );
     assert!(
@@ -1746,6 +1760,7 @@ fn crowd_control_diminishing_returns_scale_hard_cc_and_reset_after_the_window() 
         2,
     );
     assert_eq!(stun.kind, StatusKind::Stun);
+    let stun_duration_ms = stun.duration_ms;
 
     let mut world = world(
         &content,
@@ -1769,7 +1784,9 @@ fn crowd_control_diminishing_returns_scale_hard_cc_and_reset_after_the_window() 
         ],
     );
 
-    for expected_remaining_ms in [600_u16, 300, 150] {
+    for expected_remaining_ms in
+        [0_usize, 1, 2].map(|stage| dr_scaled_duration_ms(&content, stun.duration_ms, stage))
+    {
         assert!(
             world
                 .apply_status(player_id(1), player_id(2), 2, stun.clone())
@@ -1799,7 +1816,13 @@ fn crowd_control_diminishing_returns_scale_hard_cc_and_reset_after_the_window() 
         None
     );
 
-    let reset_frames = usize::from(CROWD_CONTROL_DR_WINDOW_MS.div_ceil(COMBAT_FRAME_MS)) + 1;
+    let reset_frames = status_expiration_frames(
+        content
+            .configuration()
+            .simulation
+            .crowd_control_diminishing_returns
+            .window_ms,
+    );
     let _ = collect_ticks(&mut world, reset_frames);
     assert!(
         world
@@ -1809,7 +1832,7 @@ fn crowd_control_diminishing_returns_scale_hard_cc_and_reset_after_the_window() 
     );
     assert_eq!(
         remaining_status_ms(&world, player_id(2), StatusKind::Stun),
-        Some(600)
+        Some(dr_scaled_duration_ms(&content, stun_duration_ms, 0))
     );
 }
 
@@ -1821,6 +1844,9 @@ fn crowd_control_diminishing_returns_use_independent_buckets() {
         authored_status_definition(&content, SkillTree::new("Bard").expect("bard tree"), 3);
     let root =
         authored_status_definition(&content, SkillTree::new("Druid").expect("druid tree"), 4);
+    let fear_duration_ms = fear.duration_ms;
+    let silence_duration_ms = silence.duration_ms;
+    let root_duration_ms = root.duration_ms;
 
     let mut world = world(
         &content,
@@ -1858,7 +1884,7 @@ fn crowd_control_diminishing_returns_use_independent_buckets() {
         .is_some());
     assert_eq!(
         remaining_status_ms(&world, player_id(2), StatusKind::Fear),
-        Some(450)
+        Some(dr_scaled_duration_ms(&content, fear_duration_ms, 1))
     );
     world
         .players
@@ -1872,7 +1898,7 @@ fn crowd_control_diminishing_returns_use_independent_buckets() {
         .is_some());
     assert_eq!(
         remaining_status_ms(&world, player_id(2), StatusKind::Silence),
-        Some(1100),
+        Some(dr_scaled_duration_ms(&content, silence_duration_ms, 0)),
         "cast-control DR should not inherit the reduced hard-CC stage"
     );
     world
@@ -1887,7 +1913,7 @@ fn crowd_control_diminishing_returns_use_independent_buckets() {
         .is_some());
     assert_eq!(
         remaining_status_ms(&world, player_id(2), StatusKind::Root),
-        Some(900),
+        Some(dr_scaled_duration_ms(&content, root_duration_ms, 0)),
         "movement-control DR should stay independent from hard-CC DR"
     );
 }

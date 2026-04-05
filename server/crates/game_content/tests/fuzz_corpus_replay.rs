@@ -45,7 +45,7 @@ fn corpus_roots() -> Vec<PathBuf> {
 fn replay_ascii_map_parse_corpus() {
     for bytes in corpus_files("ascii_map_parse") {
         let input = String::from_utf8_lossy(&bytes);
-        let _ = parse_ascii_map("fuzz/maps/replay.txt", &input);
+        let _ = parse_ascii_map("fuzz/maps/replay.txt", &input, 50);
     }
 }
 

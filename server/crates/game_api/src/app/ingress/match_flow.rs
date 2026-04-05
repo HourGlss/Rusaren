@@ -5,12 +5,17 @@ use game_net::{
     ServerControlEvent, ValidatedInputFrame, BUTTON_CANCEL, BUTTON_CAST, BUTTON_PRIMARY,
     BUTTON_QUIT_TO_LOBBY, BUTTON_SELF_CAST,
 };
-use game_sim::MovementIntent;
+use game_sim::{MovementIntent, SimulationWorld};
 
 use super::super::{
     build_training_world, MatchRuntime, PlayerLocation, ServerApp, TrainingMetrics, TrainingRuntime,
 };
 use super::AppTransport;
+
+struct InputFrameOutcome {
+    aim_changed: bool,
+    manual_cancel_slot: Option<u8>,
+}
 
 impl ServerApp {
     pub(in super::super) fn handle_start_training<T: AppTransport>(
@@ -220,7 +225,6 @@ impl ServerApp {
         self.cleanup_finished_match(match_id);
     }
 
-    #[allow(clippy::too_many_lines)]
     pub(in super::super) fn handle_input_frame<T: AppTransport>(
         &mut self,
         transport: &mut T,
@@ -260,7 +264,6 @@ impl ServerApp {
                 return;
             }
         };
-        let (is_match, arena_id) = arena_id;
         let movement = match Self::decode_movement_input(&frame) {
             Ok(movement) => movement,
             Err(message) => {
@@ -268,97 +271,99 @@ impl ServerApp {
                 return;
             }
         };
-
-        let mut manual_cancel_slot = None;
-        let aim_changed = if is_match {
-            let runtime = match self.matches.get_mut(&arena_id) {
-                Some(runtime) => runtime,
-                None => {
-                    self.send_error(transport, sender_id, "match does not exist");
+        let (is_match, arena_id) = arena_id;
+        let outcome = if is_match {
+            match self.handle_match_input_frame(arena_id, sender_id, &frame, movement) {
+                Ok(outcome) => outcome,
+                Err(message) => {
+                    self.send_error(transport, sender_id, &message);
                     return;
                 }
-            };
-            let aim_changed = match runtime.world.update_aim(
-                sender_id,
-                frame.aim_horizontal_q,
-                frame.aim_vertical_q,
-            ) {
-                Ok(changed) => changed,
-                Err(error) => {
-                    self.send_error(transport, sender_id, &error.to_string());
-                    return;
-                }
-            };
-            if let Err(error) = runtime.world.submit_input(sender_id, movement) {
-                self.send_error(transport, sender_id, &error.to_string());
-                return;
             }
-
-            if frame.buttons & BUTTON_CANCEL != 0 {
-                manual_cancel_slot = runtime
-                    .world
-                    .player_state(sender_id)
-                    .and_then(|state| state.current_cast_slot);
-                runtime
-                    .world
-                    .cancel_active_cast(sender_id)
-                    .map_err(|error| error.to_string())
-                    .unwrap_or(false);
-            }
-
-            if let Err(message) =
-                Self::queue_requested_actions(&self.content, runtime, sender_id, &frame)
-            {
-                self.send_error(transport, sender_id, &message);
-                return;
-            }
-            aim_changed
         } else {
-            let runtime = match self.training_sessions.get_mut(&arena_id) {
-                Some(runtime) => runtime,
-                None => {
-                    self.send_error(transport, sender_id, "training session does not exist");
+            match self.handle_training_input_frame(arena_id, sender_id, &frame, movement) {
+                Ok(outcome) => outcome,
+                Err(message) => {
+                    self.send_error(transport, sender_id, &message);
                     return;
                 }
-            };
-            let aim_changed = match runtime.world.update_aim(
-                sender_id,
-                frame.aim_horizontal_q,
-                frame.aim_vertical_q,
-            ) {
-                Ok(changed) => changed,
-                Err(error) => {
-                    self.send_error(transport, sender_id, &error.to_string());
-                    return;
-                }
-            };
-            if let Err(error) = runtime.world.submit_input(sender_id, movement) {
-                self.send_error(transport, sender_id, &error.to_string());
-                return;
             }
-
-            if frame.buttons & BUTTON_CANCEL != 0 {
-                manual_cancel_slot = runtime
-                    .world
-                    .player_state(sender_id)
-                    .and_then(|state| state.current_cast_slot);
-                runtime
-                    .world
-                    .cancel_active_cast(sender_id)
-                    .map_err(|error| error.to_string())
-                    .unwrap_or(false);
-            }
-
-            if let Err(message) =
-                Self::queue_requested_training_actions(&self.content, runtime, sender_id, &frame)
-            {
-                self.send_error(transport, sender_id, &message);
-                return;
-            }
-            aim_changed
         };
 
-        if let Some(slot) = manual_cancel_slot {
+        self.finish_input_frame(transport, sender_id, is_match, arena_id, outcome);
+    }
+
+    fn handle_match_input_frame(
+        &mut self,
+        match_id: game_domain::MatchId,
+        sender_id: PlayerId,
+        frame: &ValidatedInputFrame,
+        movement: MovementIntent,
+    ) -> Result<InputFrameOutcome, String> {
+        let runtime = self
+            .matches
+            .get_mut(&match_id)
+            .ok_or_else(|| String::from("match does not exist"))?;
+        let outcome = Self::apply_world_input(&mut runtime.world, sender_id, frame, movement)?;
+        Self::queue_requested_actions(&self.content, runtime, sender_id, frame)?;
+        Ok(outcome)
+    }
+
+    fn handle_training_input_frame(
+        &mut self,
+        training_id: game_domain::MatchId,
+        sender_id: PlayerId,
+        frame: &ValidatedInputFrame,
+        movement: MovementIntent,
+    ) -> Result<InputFrameOutcome, String> {
+        let runtime = self
+            .training_sessions
+            .get_mut(&training_id)
+            .ok_or_else(|| String::from("training session does not exist"))?;
+        let outcome = Self::apply_world_input(&mut runtime.world, sender_id, frame, movement)?;
+        Self::queue_requested_training_actions(&self.content, runtime, sender_id, frame)?;
+        Ok(outcome)
+    }
+
+    fn apply_world_input(
+        world: &mut SimulationWorld,
+        sender_id: PlayerId,
+        frame: &ValidatedInputFrame,
+        movement: MovementIntent,
+    ) -> Result<InputFrameOutcome, String> {
+        let aim_changed = world
+            .update_aim(sender_id, frame.aim_horizontal_q, frame.aim_vertical_q)
+            .map_err(|error| error.to_string())?;
+        world.submit_input(sender_id, movement)
+            .map_err(|error| error.to_string())?;
+
+        let manual_cancel_slot = if frame.buttons & BUTTON_CANCEL != 0 {
+            let slot = world
+                .player_state(sender_id)
+                .and_then(|state| state.current_cast_slot);
+            let _ = world
+                .cancel_active_cast(sender_id)
+                .map_err(|error| error.to_string())?;
+            slot
+        } else {
+            None
+        };
+
+        Ok(InputFrameOutcome {
+            aim_changed,
+            manual_cancel_slot,
+        })
+    }
+
+    fn finish_input_frame<T: AppTransport>(
+        &mut self,
+        transport: &mut T,
+        sender_id: PlayerId,
+        is_match: bool,
+        arena_id: game_domain::MatchId,
+        outcome: InputFrameOutcome,
+    ) {
+        if let Some(slot) = outcome.manual_cancel_slot {
             if is_match {
                 let _ = self.append_match_log(
                     arena_id,
@@ -370,12 +375,13 @@ impl ServerApp {
                 );
             }
         }
-        if aim_changed {
-            if is_match {
-                self.broadcast_arena_delta_snapshot(transport, arena_id);
-            } else {
-                self.broadcast_training_delta_snapshot(transport, arena_id);
-            }
+        if !outcome.aim_changed {
+            return;
+        }
+        if is_match {
+            self.broadcast_arena_delta_snapshot(transport, arena_id);
+        } else {
+            self.broadcast_training_delta_snapshot(transport, arena_id);
         }
     }
 

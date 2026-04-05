@@ -11,14 +11,14 @@ use std::fmt;
 use std::path::Path;
 use std::path::PathBuf;
 
-use game_content::{ArenaMapDefinition, GameContent};
+use game_content::{ArenaMapDefinition, ClassProfile, GameContent};
 use game_domain::{
     LobbyId, MatchId, PlayerId, PlayerName, PlayerRecord, SkillChoice, TeamAssignment, TeamSide,
 };
 use game_lobby::{Lobby, LobbyEvent, LobbyPhase};
 use game_match::MatchSession;
 use game_net::{SequenceTracker, ServerControlEvent};
-use game_sim::{SimPlayerSeed, SimulationWorld, COMBAT_FRAME_MS};
+use game_sim::{SimPlayerSeed, SimulationWorld};
 use getrandom::fill as fill_random;
 
 mod ingress;
@@ -40,8 +40,6 @@ use crate::{
     transport::{AppTransport, ConnectionId},
     RecordStoreError,
 };
-
-const DEFAULT_HIT_POINTS: u16 = 100;
 
 /// Errors returned by the server application orchestration layer.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -466,10 +464,9 @@ impl ServerApp {
             .combat_accumulator_ms
             .saturating_add(u32::from(delta_ms));
 
-        while self.combat_accumulator_ms >= u32::from(COMBAT_FRAME_MS) {
-            self.combat_accumulator_ms = self
-                .combat_accumulator_ms
-                .saturating_sub(u32::from(COMBAT_FRAME_MS));
+        let combat_frame_ms = u32::from(self.content.configuration().simulation.combat_frame_ms);
+        while self.combat_accumulator_ms >= combat_frame_ms {
+            self.combat_accumulator_ms = self.combat_accumulator_ms.saturating_sub(combat_frame_ms);
             self.advance_combat_frames(transport);
         }
 
@@ -972,18 +969,13 @@ fn build_world(
                     .equipped_choice(player_id, 1)
                     .map(|choice| choice.tree)
                     .unwrap_or(game_domain::SkillTree::Warrior);
-                let melee = if let Some(melee) = content.skills().melee_for(&primary_tree) {
-                    melee.clone()
-                } else if let Some(melee) =
-                    content.skills().melee_for(&game_domain::SkillTree::Warrior)
-                {
-                    melee.clone()
-                } else {
-                    panic!("validated content should always define warrior melee");
-                };
+                let melee = melee_for_tree(content, &primary_tree);
+                let profile = class_profile_for_tree(content, &primary_tree);
                 SimPlayerSeed {
                     assignment,
-                    hit_points: DEFAULT_HIT_POINTS,
+                    hit_points: profile.hit_points,
+                    max_mana: profile.max_mana,
+                    move_speed_units_per_second: profile.move_speed_units_per_second,
                     melee,
                     skills: std::array::from_fn(|index| {
                         session
@@ -994,6 +986,7 @@ fn build_world(
             })
             .collect(),
         map,
+        content.configuration().simulation,
     ) {
         Ok(world) => world,
         Err(error) => panic!("valid match roster should build a simulation world: {error}"),
@@ -1011,6 +1004,7 @@ fn build_training_world(
     match SimulationWorld::new(
         vec![build_player_seed(participant.clone(), loadout, content)],
         map,
+        content.configuration().simulation,
     ) {
         Ok(world) => world,
         Err(error) => panic!("valid training loadout should build a simulation world: {error}"),
@@ -1026,16 +1020,13 @@ fn build_player_seed(
         .as_ref()
         .map(|choice| choice.tree.clone())
         .unwrap_or(game_domain::SkillTree::Warrior);
-    let melee = if let Some(melee) = content.skills().melee_for(&primary_tree) {
-        melee.clone()
-    } else if let Some(melee) = content.skills().melee_for(&game_domain::SkillTree::Warrior) {
-        melee.clone()
-    } else {
-        panic!("validated content should always define warrior melee");
-    };
+    let melee = melee_for_tree(content, &primary_tree);
+    let profile = class_profile_for_tree(content, &primary_tree);
     SimPlayerSeed {
         assignment,
-        hit_points: DEFAULT_HIT_POINTS,
+        hit_points: profile.hit_points,
+        max_mana: profile.max_mana,
+        move_speed_units_per_second: profile.move_speed_units_per_second,
         melee,
         skills: std::array::from_fn(|index| {
             loadout[index]
@@ -1043,6 +1034,31 @@ fn build_player_seed(
                 .and_then(|choice| content.skills().resolve(choice).cloned())
         }),
     }
+}
+
+fn melee_for_tree(
+    content: &GameContent,
+    tree: &game_domain::SkillTree,
+) -> game_content::MeleeDefinition {
+    if let Some(melee) = content.skills().melee_for(tree) {
+        melee.clone()
+    } else if let Some(melee) = content.skills().melee_for(&game_domain::SkillTree::Warrior) {
+        melee.clone()
+    } else {
+        panic!("validated content should always define warrior melee");
+    }
+}
+
+fn class_profile_for_tree(content: &GameContent, tree: &game_domain::SkillTree) -> ClassProfile {
+    content
+        .class_profile(tree)
+        .copied()
+        .or_else(|| {
+            content
+                .class_profile(&game_domain::SkillTree::Warrior)
+                .copied()
+        })
+        .unwrap_or_else(|| panic!("validated content should always define warrior class stats"))
 }
 
 #[cfg(test)]

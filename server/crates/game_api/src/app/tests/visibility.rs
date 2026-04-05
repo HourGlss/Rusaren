@@ -730,9 +730,14 @@ fn manual_seed(
     primary_tree: SkillTree,
     choices: [Option<SkillChoice>; 5],
 ) -> game_sim::SimPlayerSeed {
+    let profile = content
+        .class_profile(&primary_tree)
+        .expect("class profile should exist");
     game_sim::SimPlayerSeed {
         assignment: manual_assignment(raw_id, raw_name, team),
-        hit_points: 100,
+        hit_points: profile.hit_points,
+        max_mana: profile.max_mana,
+        move_speed_units_per_second: profile.move_speed_units_per_second,
         melee: content
             .skills()
             .melee_for(&primary_tree)
@@ -756,10 +761,17 @@ fn manual_runtime(content: &GameContent, seeds: Vec<game_sim::SimPlayerSeed>) ->
     let session = MatchSession::new(
         MatchId::new(1).expect("match id"),
         roster.clone(),
-        game_match::MatchConfig::v1(map.objective_target_ms),
+        game_match::MatchConfig::new(
+            content.configuration().match_flow.total_rounds,
+            content.configuration().match_flow.skill_pick_seconds,
+            content.configuration().match_flow.pre_combat_seconds,
+            map.objective_target_ms,
+        )
+        .expect("match config"),
     )
     .expect("match session");
-    let world = game_sim::SimulationWorld::new(seeds, &map).expect("world");
+    let world = game_sim::SimulationWorld::new(seeds, &map, content.configuration().simulation)
+        .expect("world");
     MatchRuntime {
         map,
         roster,

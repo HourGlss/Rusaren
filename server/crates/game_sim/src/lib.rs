@@ -13,8 +13,9 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use game_content::{
-    ArenaMapDefinition, ArenaMapFeatureKind, CombatValueKind, DispelScope, EffectPayload,
-    MeleeDefinition, SkillBehavior, SkillDefinition, StatusDefinition, StatusKind,
+    ArenaMapDefinition, ArenaMapFeatureKind, CombatValueKind, CrowdControlDiminishingReturns,
+    DispelScope, EffectPayload, MeleeDefinition, SimulationConfiguration, SkillBehavior,
+    SkillDefinition, StatusDefinition, StatusKind,
 };
 use game_domain::{PlayerId, TeamAssignment, TeamSide};
 
@@ -31,21 +32,6 @@ use helpers::{
     map_obstacle_to_sim_obstacle, movement_delta, resolve_movement, spawn_position,
     total_move_modifier_bps, travel_distance_units,
 };
-
-pub const PLAYER_RADIUS_UNITS: u16 = 28;
-pub const COMBAT_FRAME_MS: u16 = 100;
-pub const PLAYER_MOVE_SPEED_UNITS_PER_SECOND: u16 = 286;
-pub const PLAYER_MAX_MANA: u16 = 100;
-pub const PLAYER_MANA_REGEN_PER_SECOND: u16 = 12;
-pub const VISION_RADIUS_UNITS: u16 = 450;
-const SPAWN_SPACING_UNITS: i16 = 120;
-const DEFAULT_AIM_X: i16 = 120;
-const DEFAULT_AIM_Y: i16 = 0;
-const DEFAULT_PLAYER_HIT_POINTS: u16 = 100;
-const TRAINING_DUMMY_HEALTH_MULTIPLIER: u16 = 100;
-const TRAINING_DUMMY_RESET_THRESHOLD_BPS: u16 = 500;
-const CROWD_CONTROL_DR_WINDOW_MS: u16 = 15_000;
-const GLOBAL_PROJECTILE_SPEED_BPS: u16 = 2_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MovementIntent {
@@ -154,6 +140,8 @@ pub struct ArenaDeployable {
 pub struct SimPlayerSeed {
     pub assignment: TeamAssignment,
     pub hit_points: u16,
+    pub max_mana: u16,
+    pub move_speed_units_per_second: u16,
     pub melee: MeleeDefinition,
     pub skills: [Option<SkillDefinition>; 5],
 }
@@ -427,6 +415,7 @@ impl std::error::Error for SimulationError {}
 
 #[derive(Clone, Debug)]
 pub struct SimulationWorld {
+    configuration: SimulationConfiguration,
     arena_width_units: u16,
     arena_height_units: u16,
     arena_width_tiles: u16,
@@ -455,6 +444,7 @@ struct SimPlayer {
     max_hit_points: u16,
     mana: u16,
     max_mana: u16,
+    move_speed_units_per_second: u16,
     alive: bool,
     moving: bool,
     movement_intent: MovementIntent,
@@ -612,6 +602,7 @@ impl SimulationWorld {
     pub fn new(
         players: Vec<SimPlayerSeed>,
         map: &ArenaMapDefinition,
+        configuration: SimulationConfiguration,
     ) -> Result<Self, SimulationError> {
         let mut world_players = BTreeMap::new();
         let mut team_a_index = 0_u16;
@@ -638,7 +629,7 @@ impl SimulationWorld {
                 }
             };
             let (spawn_x, spawn_y, aim_x) =
-                spawn_position(player.assignment.team, spawn_index, map);
+                spawn_position(player.assignment.team, spawn_index, map, &configuration);
 
             if world_players
                 .insert(
@@ -648,15 +639,16 @@ impl SimulationWorld {
                         spawn_x,
                         spawn_y,
                         spawn_aim_x: aim_x,
-                        spawn_aim_y: DEFAULT_AIM_Y,
+                        spawn_aim_y: configuration.default_aim_y_units,
                         x: spawn_x,
                         y: spawn_y,
                         aim_x,
-                        aim_y: DEFAULT_AIM_Y,
+                        aim_y: configuration.default_aim_y_units,
                         hit_points: player.hit_points,
                         max_hit_points: player.hit_points,
-                        mana: PLAYER_MAX_MANA,
-                        max_mana: PLAYER_MAX_MANA,
+                        mana: player.max_mana,
+                        max_mana: player.max_mana,
+                        move_speed_units_per_second: player.move_speed_units_per_second,
                         alive: true,
                         moving: false,
                         movement_intent: MovementIntent::zero(),
@@ -682,6 +674,7 @@ impl SimulationWorld {
         }
 
         let mut world = Self {
+            configuration,
             arena_width_units: map.width_units,
             arena_height_units: map.height_units,
             arena_width_tiles: map.width_tiles,
@@ -818,7 +811,10 @@ impl SimulationWorld {
             deployable.hit_points = match deployable.behavior {
                 DeployableBehavior::TrainingDummyResetFull => deployable.max_hit_points,
                 DeployableBehavior::TrainingDummyExecute => {
-                    Self::training_dummy_execute_hit_points(deployable.max_hit_points)
+                    Self::training_dummy_execute_hit_points(
+                        deployable.max_hit_points,
+                        self.configuration.training_dummy.execute_threshold_bps,
+                    )
                 }
                 _ => deployable.hit_points,
             };
@@ -985,6 +981,16 @@ impl SimulationWorld {
     }
 
     #[must_use]
+    pub const fn configuration(&self) -> &SimulationConfiguration {
+        &self.configuration
+    }
+
+    #[must_use]
+    pub const fn vision_radius_units(&self) -> u16 {
+        self.configuration.vision_radius_units
+    }
+
+    #[must_use]
     pub fn is_team_defeated(&self, team: TeamSide) -> bool {
         self.players
             .values()
@@ -1005,16 +1011,23 @@ impl SimulationWorld {
                 cast_time_bps,
             } = skill.behavior
             {
+                let caps = self.configuration.passive_bonus_caps;
                 modifiers.player_speed = modifiers
                     .player_speed
                     .saturating_add(player_speed_bps)
-                    .min(9_000);
+                    .min(caps.player_speed_bps);
                 modifiers.projectile_speed = modifiers
                     .projectile_speed
                     .saturating_add(projectile_speed_bps)
-                    .min(9_000);
-                modifiers.cooldown = modifiers.cooldown.saturating_add(cooldown_bps).min(9_000);
-                modifiers.cast_time = modifiers.cast_time.saturating_add(cast_time_bps).min(9_500);
+                    .min(caps.projectile_speed_bps);
+                modifiers.cooldown = modifiers
+                    .cooldown
+                    .saturating_add(cooldown_bps)
+                    .min(caps.cooldown_bps);
+                modifiers.cast_time = modifiers
+                    .cast_time
+                    .saturating_add(cast_time_bps)
+                    .min(caps.cast_time_bps);
             }
         }
         modifiers
@@ -1055,17 +1068,23 @@ impl SimulationWorld {
             base_speed,
             self.passive_modifiers_for(player_id)
                 .projectile_speed
-                .saturating_add(GLOBAL_PROJECTILE_SPEED_BPS),
+                .saturating_add(self.configuration.global_projectile_speed_bonus_bps),
         )
     }
 
     fn effective_move_modifier_bps(&self, player_id: PlayerId, statuses: &[StatusInstance]) -> i16 {
-        let status_modifier = total_move_modifier_bps(statuses);
+        let status_modifier =
+            total_move_modifier_bps(statuses, &self.configuration.movement_modifier_caps);
         let passive_bonus =
             i16::try_from(self.passive_modifiers_for(player_id).player_speed).unwrap_or(i16::MAX);
-        status_modifier
-            .saturating_add(passive_bonus)
-            .clamp(-8_000, 9_000)
+        status_modifier.saturating_add(passive_bonus).clamp(
+            self.configuration
+                .movement_modifier_caps
+                .overall_total_min_bps,
+            self.configuration
+                .movement_modifier_caps
+                .overall_total_max_bps,
+        )
     }
 
     fn combat_obstacles(&self) -> Vec<ArenaObstacle> {
@@ -1085,10 +1104,11 @@ impl SimulationWorld {
     }
 
     fn is_walkable_position(&self, x: i16, y: i16) -> bool {
-        let min_x = -i32::from(self.arena_width_units / 2) + i32::from(PLAYER_RADIUS_UNITS);
-        let max_x = i32::from(self.arena_width_units / 2) - i32::from(PLAYER_RADIUS_UNITS);
-        let min_y = -i32::from(self.arena_height_units / 2) + i32::from(PLAYER_RADIUS_UNITS);
-        let max_y = i32::from(self.arena_height_units / 2) - i32::from(PLAYER_RADIUS_UNITS);
+        let player_radius_units = self.configuration.player_radius_units;
+        let min_x = -i32::from(self.arena_width_units / 2) + i32::from(player_radius_units);
+        let max_x = i32::from(self.arena_width_units / 2) - i32::from(player_radius_units);
+        let min_y = -i32::from(self.arena_height_units / 2) + i32::from(player_radius_units);
+        let max_y = i32::from(self.arena_height_units / 2) - i32::from(player_radius_units);
         let x_i32 = i32::from(x);
         let y_i32 = i32::from(y);
         if x_i32 < min_x || x_i32 > max_x || y_i32 < min_y || y_i32 > max_y {
@@ -1097,7 +1117,7 @@ impl SimulationWorld {
         if !circle_fits_map_footprint(
             x,
             y,
-            PLAYER_RADIUS_UNITS,
+            player_radius_units,
             self.arena_width_units,
             self.arena_height_units,
             self.arena_width_tiles,
@@ -1124,8 +1144,8 @@ impl SimulationWorld {
         if self.is_walkable_position(desired_x, desired_y) {
             return (desired_x, desired_y);
         }
-        for step in 1_u16..=48 {
-            let t = f32::from(step) / 48.0;
+        for step in 1_u16..=self.configuration.teleport_resolution_steps {
+            let t = f32::from(step) / f32::from(self.configuration.teleport_resolution_steps);
             let sample_x = saturating_i16(round_f32_to_i32(
                 f32::from(desired_x) + (f32::from(start_x) - f32::from(desired_x)) * t,
             ));
@@ -1218,19 +1238,15 @@ impl SimulationWorld {
         }
     }
 
-    fn crowd_control_dr_scale_bps(stage: u8) -> u16 {
-        match stage {
-            0 => 10_000,
-            1 => 5_000,
-            2 => 2_500,
-            _ => 0,
-        }
+    fn crowd_control_dr_scale_bps(stage: u8, dr: CrowdControlDiminishingReturns) -> u16 {
+        dr.stages_bps.get(usize::from(stage)).copied().unwrap_or(0)
     }
 
     fn apply_crowd_control_dr(
         player: &mut SimPlayer,
         kind: StatusKind,
         duration_ms: u16,
+        dr: CrowdControlDiminishingReturns,
     ) -> Option<u16> {
         let Some(bucket) = Self::crowd_control_bucket(kind) else {
             return Some(duration_ms);
@@ -1239,9 +1255,9 @@ impl SimulationWorld {
         if state.remaining_ms == 0 {
             state.stage = 0;
         }
-        let scale_bps = Self::crowd_control_dr_scale_bps(state.stage);
+        let scale_bps = Self::crowd_control_dr_scale_bps(state.stage, dr);
         state.stage = state.stage.saturating_add(1).min(3);
-        state.remaining_ms = CROWD_CONTROL_DR_WINDOW_MS;
+        state.remaining_ms = dr.window_ms;
         if scale_bps == 0 {
             return None;
         }
@@ -1308,7 +1324,11 @@ impl SimulationWorld {
             TeamSide::TeamA => TeamSide::TeamB,
             TeamSide::TeamB => TeamSide::TeamA,
         };
-        let hit_points = DEFAULT_PLAYER_HIT_POINTS.saturating_mul(TRAINING_DUMMY_HEALTH_MULTIPLIER);
+        let hit_points = self
+            .configuration
+            .training_dummy
+            .base_hit_points
+            .saturating_mul(self.configuration.training_dummy.health_multiplier);
         for feature in &map.features {
             let (kind, behavior) = match feature.kind {
                 ArenaMapFeatureKind::TrainingDummyResetFull => (
@@ -1329,7 +1349,7 @@ impl SimulationWorld {
                 kind,
                 x: feature.center_x,
                 y: feature.center_y,
-                radius: PLAYER_RADIUS_UNITS,
+                radius: self.configuration.player_radius_units,
                 hit_points,
                 max_hit_points: hit_points,
                 remaining_ms: u16::MAX,
@@ -1340,9 +1360,8 @@ impl SimulationWorld {
         }
     }
 
-    fn training_dummy_execute_hit_points(max_hit_points: u16) -> u16 {
-        let threshold =
-            (u32::from(max_hit_points) * u32::from(TRAINING_DUMMY_RESET_THRESHOLD_BPS)) / 10_000;
+    fn training_dummy_execute_hit_points(max_hit_points: u16, execute_threshold_bps: u16) -> u16 {
+        let threshold = (u32::from(max_hit_points) * u32::from(execute_threshold_bps)) / 10_000;
         u16::try_from(threshold.max(1)).unwrap_or(1)
     }
 }

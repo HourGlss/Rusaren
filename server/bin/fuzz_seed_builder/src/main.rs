@@ -9,8 +9,8 @@ use std::{
 use game_api::decode_client_signal_message;
 use game_content::{parse_ascii_map, parse_skill_yaml};
 use game_domain::{
-    LobbyId, MatchId, MatchOutcome, PlayerId, PlayerName, ReadyState, RoundNumber, SkillTree,
-    TeamSide,
+    LobbyId, MatchId, MatchOutcome, PlayerId, PlayerName, PlayerRecord, ReadyState, RoundNumber,
+    SkillTree, TeamSide,
 };
 use game_net::{
     ArenaDeltaSnapshot, ArenaDeployableKind, ArenaDeployableSnapshot, ArenaEffectKind,
@@ -26,6 +26,17 @@ const WARRIOR_SKILLS_YAML: &str = include_str!("../../../content/skills/warrior.
 const MAGE_SKILLS_YAML: &str = include_str!("../../../content/skills/mage.yaml");
 const ROGUE_SKILLS_YAML: &str = include_str!("../../../content/skills/rogue.yaml");
 const CLERIC_SKILLS_YAML: &str = include_str!("../../../content/skills/cleric.yaml");
+
+type NamedSeed = (&'static str, Vec<u8>);
+
+fn sample_player_record(wins: u16, losses: u16, no_contests: u16) -> PlayerRecord {
+    PlayerRecord {
+        wins,
+        losses,
+        no_contests,
+        ..PlayerRecord::new()
+    }
+}
 
 fn sample_skill_catalog() -> Vec<SkillCatalogEntry> {
     vec![
@@ -241,8 +252,12 @@ fn sample_arena_state_snapshot() -> Result<ArenaStateSnapshot, Box<dyn Error>> {
         height: 1200,
         tile_units: 50,
         footprint_tiles: vec![],
+        objective_tiles: vec![0b0000_1100, 0b0000_0011],
         visible_tiles: vec![0b0011_1111, 0b0000_0011],
         explored_tiles: vec![0b1111_1111, 0b0000_1111],
+        objective_target_ms: 180_000,
+        objective_team_a_ms: 30_000,
+        objective_team_b_ms: 15_000,
         obstacles: sample_arena_obstacles(),
         players: sample_arena_players()?,
         projectiles: sample_arena_projectiles()?,
@@ -287,8 +302,12 @@ fn sample_arena_delta_snapshot() -> Result<ArenaDeltaSnapshot, Box<dyn Error>> {
         phase_seconds_remaining: None,
         tile_units: 50,
         footprint_tiles: vec![],
+        objective_tiles: vec![0b0000_1100, 0b0000_0011],
         visible_tiles: vec![0b0011_1111, 0b0000_0011],
         explored_tiles: vec![0b1111_1111, 0b0000_1111],
+        objective_target_ms: 180_000,
+        objective_team_a_ms: 30_000,
+        objective_team_b_ms: 15_000,
         obstacles: vec![ArenaObstacleSnapshot {
             kind: ArenaObstacleKind::Shrub,
             center_x: -220,
@@ -449,7 +468,12 @@ fn write_packet_header_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
 
 fn write_control_command_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
     recreate_dir(dir)?;
+    let mut seeds = control_command_valid_seeds()?;
+    seeds.extend(control_command_invalid_seeds()?);
+    write_named_seeds(dir, seeds)
+}
 
+fn control_command_valid_seeds() -> Result<Vec<NamedSeed>, Box<dyn Error>> {
     let connect = ClientControlCommand::Connect {
         player_name: player_name("Alice")?,
     }
@@ -474,6 +498,24 @@ fn write_control_command_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
     }
     .encode_packet(7, 0)?;
     let quit = ClientControlCommand::QuitToCentralLobby.encode_packet(8, 0)?;
+
+    Ok(vec![
+        ("connect_valid.bin", connect),
+        ("create_valid.bin", create),
+        ("join_valid.bin", join),
+        ("leave_valid.bin", leave),
+        ("select_team_valid.bin", select_team),
+        ("set_ready_valid.bin", set_ready),
+        ("choose_skill_valid.bin", choose_skill),
+        ("quit_valid.bin", quit),
+    ])
+}
+
+fn control_command_invalid_seeds() -> Result<Vec<NamedSeed>, Box<dyn Error>> {
+    let connect = ClientControlCommand::Connect {
+        player_name: player_name("Alice")?,
+    }
+    .encode_packet(1, 0)?;
     let invalid_kind =
         PacketHeader::new(ChannelId::Control, PacketKind::ControlCommand, 0, 1, 4, 0)?
             .encode(&[255]);
@@ -520,24 +562,17 @@ fn write_control_command_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
         .encode(&payload)
     };
 
-    write_seed(dir, "connect_valid.bin", &connect)?;
-    write_seed(dir, "create_valid.bin", &create)?;
-    write_seed(dir, "join_valid.bin", &join)?;
-    write_seed(dir, "leave_valid.bin", &leave)?;
-    write_seed(dir, "select_team_valid.bin", &select_team)?;
-    write_seed(dir, "set_ready_valid.bin", &set_ready)?;
-    write_seed(dir, "choose_skill_valid.bin", &choose_skill)?;
-    write_seed(dir, "quit_valid.bin", &quit)?;
-    write_seed(dir, "invalid_kind.bin", &invalid_kind)?;
-    write_seed(dir, "truncated_connect.bin", &truncated)?;
-    write_seed(dir, "wrong_packet_kind.bin", &wrong_packet_kind)?;
-    write_seed(dir, "invalid_lobby_id.bin", &invalid_lobby_id)?;
-    write_seed(dir, "invalid_team.bin", &invalid_team)?;
-    write_seed(dir, "invalid_ready.bin", &invalid_ready)?;
-    write_seed(dir, "invalid_skill_tree.bin", &invalid_skill_tree)?;
-    write_seed(dir, "trailing_bytes.bin", &trailing_bytes)?;
-    write_seed(dir, "bad_name.bin", &bad_name)?;
-    Ok(())
+    Ok(vec![
+        ("invalid_kind.bin", invalid_kind),
+        ("truncated_connect.bin", truncated),
+        ("wrong_packet_kind.bin", wrong_packet_kind),
+        ("invalid_lobby_id.bin", invalid_lobby_id),
+        ("invalid_team.bin", invalid_team),
+        ("invalid_ready.bin", invalid_ready),
+        ("invalid_skill_tree.bin", invalid_skill_tree),
+        ("trailing_bytes.bin", trailing_bytes),
+        ("bad_name.bin", bad_name),
+    ])
 }
 
 fn write_input_frame_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
@@ -696,11 +731,7 @@ fn write_server_control_event_roundtrip_corpus(dir: &Path) -> Result<(), Box<dyn
     let connected = ServerControlEvent::Connected {
         player_id: player_id(7)?,
         player_name: player_name("Alice")?,
-        record: game_domain::PlayerRecord {
-            wins: 1,
-            losses: 2,
-            no_contests: 3,
-        },
+        record: sample_player_record(1, 2, 3),
         skill_catalog: sample_skill_catalog(),
     }
     .encode_packet(1, 0)?;
@@ -754,154 +785,245 @@ fn write_server_control_event_roundtrip_corpus(dir: &Path) -> Result<(), Box<dyn
     Ok(())
 }
 
-#[allow(clippy::too_many_lines)]
 fn write_server_control_event_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
     recreate_dir(dir)?;
+    let mut seeds = server_control_event_valid_seeds()?;
+    seeds.extend(server_control_event_invalid_seeds()?);
+    write_named_seeds(dir, seeds)
+}
 
-    let connected = ServerControlEvent::Connected {
-        player_id: player_id(7)?,
-        player_name: player_name("Alice")?,
-        record: game_domain::PlayerRecord {
-            wins: 1,
-            losses: 2,
-            no_contests: 3,
+fn server_control_event_valid_seeds() -> Result<Vec<NamedSeed>, Box<dyn Error>> {
+    let mut seeds = server_control_event_scalar_valid_seeds()?;
+    seeds.extend(server_control_event_arena_valid_seeds()?);
+    Ok(seeds)
+}
+
+fn server_control_event_scalar_valid_seeds() -> Result<Vec<NamedSeed>, Box<dyn Error>> {
+    let mut seeds = connected_event_seeds()?;
+    seeds.extend(lobby_transition_event_seeds()?);
+    seeds.extend(match_transition_event_seeds()?);
+    seeds.extend(snapshot_event_seeds()?);
+    Ok(seeds)
+}
+
+fn encode_server_event_seed(
+    name: &'static str,
+    event: ServerControlEvent,
+    sequence: u32,
+    session: u32,
+) -> Result<NamedSeed, Box<dyn Error>> {
+    Ok((name, event.encode_packet(sequence, session)?))
+}
+
+fn connected_event_seeds() -> Result<Vec<NamedSeed>, Box<dyn Error>> {
+    Ok(vec![encode_server_event_seed(
+        "connected_valid.bin",
+        ServerControlEvent::Connected {
+            player_id: player_id(7)?,
+            player_name: player_name("Alice")?,
+            record: sample_player_record(1, 2, 3),
+            skill_catalog: sample_skill_catalog(),
         },
-        skill_catalog: sample_skill_catalog(),
-    }
-    .encode_packet(1, 0)?;
-    let created = ServerControlEvent::GameLobbyCreated {
-        lobby_id: lobby_id(3)?,
-    }
-    .encode_packet(2, 10)?;
-    let joined = ServerControlEvent::GameLobbyJoined {
-        lobby_id: lobby_id(3)?,
-        player_id: player_id(8)?,
-    }
-    .encode_packet(3, 10)?;
-    let left = ServerControlEvent::GameLobbyLeft {
-        lobby_id: lobby_id(3)?,
-        player_id: player_id(8)?,
-    }
-    .encode_packet(4, 10)?;
-    let team_selected = ServerControlEvent::TeamSelected {
-        player_id: player_id(8)?,
-        team: TeamSide::TeamB,
-        ready_reset: true,
-    }
-    .encode_packet(5, 10)?;
-    let ready_changed = ServerControlEvent::ReadyChanged {
-        player_id: player_id(8)?,
-        ready: ReadyState::Ready,
-    }
-    .encode_packet(6, 10)?;
-    let countdown_started = ServerControlEvent::LaunchCountdownStarted {
-        lobby_id: lobby_id(3)?,
-        seconds_remaining: 5,
-        roster_size: 2,
-    }
-    .encode_packet(7, 10)?;
-    let countdown_tick = ServerControlEvent::LaunchCountdownTick {
-        lobby_id: lobby_id(3)?,
-        seconds_remaining: 4,
-    }
-    .encode_packet(8, 10)?;
-    let match_started = ServerControlEvent::MatchStarted {
-        match_id: match_id(9)?,
-        round: round_number(1)?,
-        skill_pick_seconds: 25,
-    }
-    .encode_packet(9, 11)?;
-    let skill_chosen = ServerControlEvent::SkillChosen {
-        player_id: player_id(8)?,
-        tree: SkillTree::Rogue,
-        tier: 3,
-    }
-    .encode_packet(10, 11)?;
-    let precombat_started = ServerControlEvent::PreCombatStarted {
-        seconds_remaining: 5,
-    }
-    .encode_packet(11, 11)?;
-    let combat_started = ServerControlEvent::CombatStarted.encode_packet(12, 11)?;
-    let round_won = ServerControlEvent::RoundWon {
-        round: round_number(1)?,
-        winning_team: TeamSide::TeamA,
-        score_a: 1,
-        score_b: 0,
-    }
-    .encode_packet(13, 11)?;
-    let match_ended = ServerControlEvent::MatchEnded {
-        outcome: MatchOutcome::NoContest,
-        score_a: 1,
-        score_b: 0,
-        message: String::from("Bob has disconnected. Game is over."),
-    }
-    .encode_packet(14, 12)?;
-    let returned = ServerControlEvent::ReturnedToCentralLobby {
-        record: game_domain::PlayerRecord {
-            wins: 1,
-            losses: 0,
-            no_contests: 1,
-        },
-    }
-    .encode_packet(15, 12)?;
-    let error = ServerControlEvent::Error {
-        message: String::from("bad packet"),
-    }
-    .encode_packet(16, 12)?;
-    let directory = ServerControlEvent::LobbyDirectorySnapshot {
-        lobbies: vec![LobbyDirectoryEntry {
-            lobby_id: lobby_id(3)?,
-            player_count: 2,
-            team_a_count: 1,
-            team_b_count: 1,
-            ready_count: 2,
-            phase: LobbySnapshotPhase::LaunchCountdown {
-                seconds_remaining: 5,
+        1,
+        0,
+    )?])
+}
+
+fn lobby_transition_event_seeds() -> Result<Vec<NamedSeed>, Box<dyn Error>> {
+    Ok(vec![
+        encode_server_event_seed(
+            "created_valid.bin",
+            ServerControlEvent::GameLobbyCreated {
+                lobby_id: lobby_id(3)?,
             },
-        }],
-    }
-    .encode_packet(2, 10)?;
-    let snapshot = ServerControlEvent::GameLobbySnapshot {
-        lobby_id: lobby_id(3)?,
-        phase: LobbySnapshotPhase::Open,
-        players: vec![
-            LobbySnapshotPlayer {
-                player_id: player_id(7)?,
-                player_name: player_name("Alice")?,
-                record: game_domain::PlayerRecord::new(),
-                team: Some(TeamSide::TeamA),
+            2,
+            10,
+        )?,
+        encode_server_event_seed(
+            "joined_valid.bin",
+            ServerControlEvent::GameLobbyJoined {
+                lobby_id: lobby_id(3)?,
+                player_id: player_id(8)?,
+            },
+            3,
+            10,
+        )?,
+        encode_server_event_seed(
+            "left_valid.bin",
+            ServerControlEvent::GameLobbyLeft {
+                lobby_id: lobby_id(3)?,
+                player_id: player_id(8)?,
+            },
+            4,
+            10,
+        )?,
+        encode_server_event_seed(
+            "team_selected_valid.bin",
+            ServerControlEvent::TeamSelected {
+                player_id: player_id(8)?,
+                team: TeamSide::TeamB,
+                ready_reset: true,
+            },
+            5,
+            10,
+        )?,
+        encode_server_event_seed(
+            "ready_changed_valid.bin",
+            ServerControlEvent::ReadyChanged {
+                player_id: player_id(8)?,
                 ready: ReadyState::Ready,
             },
-            LobbySnapshotPlayer {
-                player_id: player_id(8)?,
-                player_name: player_name("Bob")?,
-                record: game_domain::PlayerRecord {
-                    wins: 4,
-                    losses: 1,
-                    no_contests: 0,
-                },
-                team: Some(TeamSide::TeamB),
-                ready: ReadyState::NotReady,
+            6,
+            10,
+        )?,
+        encode_server_event_seed(
+            "countdown_started_valid.bin",
+            ServerControlEvent::LaunchCountdownStarted {
+                lobby_id: lobby_id(3)?,
+                seconds_remaining: 5,
+                roster_size: 2,
             },
-        ],
-    }
-    .encode_packet(3, 11)?;
-    let arena_state = ServerControlEvent::ArenaStateSnapshot {
-        snapshot: sample_arena_state_snapshot()?,
-    }
-    .encode_packet(4, 12)?;
-    let arena_state_variant = ServerControlEvent::ArenaStateSnapshot {
-        snapshot: sample_arena_state_snapshot_variant()?,
-    }
-    .encode_packet(5, 12)?;
-    let arena_delta = ServerControlEvent::ArenaDeltaSnapshot {
-        snapshot: sample_arena_delta_snapshot()?,
-    }
-    .encode_packet(6, 13)?;
-    let arena_delta_variant = ServerControlEvent::ArenaDeltaSnapshot {
-        snapshot: sample_arena_delta_snapshot_variant()?,
-    }
-    .encode_packet(7, 13)?;
+            7,
+            10,
+        )?,
+        encode_server_event_seed(
+            "countdown_tick_valid.bin",
+            ServerControlEvent::LaunchCountdownTick {
+                lobby_id: lobby_id(3)?,
+                seconds_remaining: 4,
+            },
+            8,
+            10,
+        )?,
+    ])
+}
+
+fn match_transition_event_seeds() -> Result<Vec<NamedSeed>, Box<dyn Error>> {
+    Ok(vec![
+        encode_server_event_seed(
+            "match_started_valid.bin",
+            ServerControlEvent::MatchStarted {
+                match_id: match_id(9)?,
+                round: round_number(1)?,
+                skill_pick_seconds: 25,
+            },
+            9,
+            11,
+        )?,
+        encode_server_event_seed(
+            "skill_chosen_valid.bin",
+            ServerControlEvent::SkillChosen {
+                player_id: player_id(8)?,
+                slot: 3,
+                tree: SkillTree::Rogue,
+                tier: 3,
+            },
+            10,
+            11,
+        )?,
+        encode_server_event_seed(
+            "precombat_valid.bin",
+            ServerControlEvent::PreCombatStarted {
+                seconds_remaining: 5,
+            },
+            11,
+            11,
+        )?,
+        encode_server_event_seed(
+            "combat_started_valid.bin",
+            ServerControlEvent::CombatStarted,
+            12,
+            11,
+        )?,
+        encode_server_event_seed(
+            "round_won_valid.bin",
+            ServerControlEvent::RoundWon {
+                round: round_number(1)?,
+                winning_team: TeamSide::TeamA,
+                score_a: 1,
+                score_b: 0,
+            },
+            13,
+            11,
+        )?,
+        encode_server_event_seed(
+            "match_ended_valid.bin",
+            ServerControlEvent::MatchEnded {
+                outcome: MatchOutcome::NoContest,
+                score_a: 1,
+                score_b: 0,
+                message: String::from("Bob has disconnected. Game is over."),
+            },
+            14,
+            12,
+        )?,
+        encode_server_event_seed(
+            "returned_valid.bin",
+            ServerControlEvent::ReturnedToCentralLobby {
+                record: sample_player_record(1, 0, 1),
+            },
+            15,
+            12,
+        )?,
+        encode_server_event_seed(
+            "error_valid.bin",
+            ServerControlEvent::Error {
+                message: String::from("bad packet"),
+            },
+            16,
+            12,
+        )?,
+    ])
+}
+
+fn snapshot_event_seeds() -> Result<Vec<NamedSeed>, Box<dyn Error>> {
+    Ok(vec![
+        encode_server_event_seed(
+            "directory_valid.bin",
+            ServerControlEvent::LobbyDirectorySnapshot {
+                lobbies: vec![LobbyDirectoryEntry {
+                    lobby_id: lobby_id(3)?,
+                    player_count: 2,
+                    team_a_count: 1,
+                    team_b_count: 1,
+                    ready_count: 2,
+                    phase: LobbySnapshotPhase::LaunchCountdown {
+                        seconds_remaining: 5,
+                    },
+                }],
+            },
+            2,
+            10,
+        )?,
+        encode_server_event_seed(
+            "snapshot_valid.bin",
+            ServerControlEvent::GameLobbySnapshot {
+                lobby_id: lobby_id(3)?,
+                phase: LobbySnapshotPhase::Open,
+                players: vec![
+                    LobbySnapshotPlayer {
+                        player_id: player_id(7)?,
+                        player_name: player_name("Alice")?,
+                        record: game_domain::PlayerRecord::new(),
+                        team: Some(TeamSide::TeamA),
+                        ready: ReadyState::Ready,
+                    },
+                    LobbySnapshotPlayer {
+                        player_id: player_id(8)?,
+                        player_name: player_name("Bob")?,
+                        record: sample_player_record(4, 1, 0),
+                        team: Some(TeamSide::TeamB),
+                        ready: ReadyState::NotReady,
+                    },
+                ],
+            },
+            3,
+            11,
+        )?,
+    ])
+}
+
+fn server_control_event_arena_valid_seeds() -> Result<Vec<NamedSeed>, Box<dyn Error>> {
     let arena_effects = ServerControlEvent::ArenaEffectBatch {
         effects: vec![
             ArenaEffectSnapshot {
@@ -927,6 +1049,53 @@ fn write_server_control_event_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
         ],
     }
     .encode_packet(5, 12)?;
+
+    Ok(vec![
+        (
+            "arena_state_valid.bin",
+            ServerControlEvent::ArenaStateSnapshot {
+                snapshot: sample_arena_state_snapshot()?,
+            }
+            .encode_packet(4, 12)?,
+        ),
+        (
+            "arena_state_variant_valid.bin",
+            ServerControlEvent::ArenaStateSnapshot {
+                snapshot: sample_arena_state_snapshot_variant()?,
+            }
+            .encode_packet(5, 12)?,
+        ),
+        (
+            "arena_delta_valid.bin",
+            ServerControlEvent::ArenaDeltaSnapshot {
+                snapshot: sample_arena_delta_snapshot()?,
+            }
+            .encode_packet(6, 13)?,
+        ),
+        (
+            "arena_delta_variant_valid.bin",
+            ServerControlEvent::ArenaDeltaSnapshot {
+                snapshot: sample_arena_delta_snapshot_variant()?,
+            }
+            .encode_packet(7, 13)?,
+        ),
+        ("arena_effects_valid.bin", arena_effects),
+    ])
+}
+
+fn server_control_event_invalid_seeds() -> Result<Vec<NamedSeed>, Box<dyn Error>> {
+    let snapshot = ServerControlEvent::GameLobbySnapshot {
+        lobby_id: lobby_id(3)?,
+        phase: LobbySnapshotPhase::Open,
+        players: vec![LobbySnapshotPlayer {
+            player_id: player_id(7)?,
+            player_name: player_name("Alice")?,
+            record: game_domain::PlayerRecord::new(),
+            team: Some(TeamSide::TeamA),
+            ready: ReadyState::Ready,
+        }],
+    }
+    .encode_packet(3, 11)?;
     let truncated = snapshot[..snapshot.len() - 1].to_vec();
     let wrong_packet_kind =
         PacketHeader::new(ChannelId::Control, PacketKind::ControlCommand, 0, 1, 4, 12)?
@@ -944,16 +1113,7 @@ fn write_server_control_event_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
     invalid_optional_team_payload.extend_from_slice(&0_u16.to_le_bytes());
     invalid_optional_team_payload.push(9);
     invalid_optional_team_payload.push(0);
-    let invalid_optional_team_payload_len = u16::try_from(invalid_optional_team_payload.len())?;
-    let invalid_optional_team = PacketHeader::new(
-        ChannelId::Control,
-        PacketKind::ControlEvent,
-        0,
-        invalid_optional_team_payload_len,
-        4,
-        12,
-    )?
-    .encode(&invalid_optional_team_payload);
+
     let invalid_lobby_phase = {
         let mut payload = vec![17];
         payload.extend_from_slice(&1_u16.to_le_bytes());
@@ -973,18 +1133,6 @@ fn write_server_control_event_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
         )?
         .encode(&payload)
     };
-    let invalid_bool =
-        PacketHeader::new(ChannelId::Control, PacketKind::ControlEvent, 0, 7, 6, 12)?
-            .encode(&[5, 8, 0, 0, 0, 2, 9]);
-    let invalid_ready =
-        PacketHeader::new(ChannelId::Control, PacketKind::ControlEvent, 0, 6, 7, 12)?
-            .encode(&[6, 8, 0, 0, 0, 9]);
-    let invalid_team =
-        PacketHeader::new(ChannelId::Control, PacketKind::ControlEvent, 0, 5, 8, 12)?
-            .encode(&[13, 1, 9, 1, 0]);
-    let invalid_match_outcome =
-        PacketHeader::new(ChannelId::Control, PacketKind::ControlEvent, 0, 4, 9, 12)?
-            .encode(&[14, 9, 0, 0]);
     let invalid_arena_obstacle_kind = {
         let mut payload = vec![19];
         payload.extend_from_slice(&1800_u16.to_le_bytes());
@@ -1028,48 +1176,45 @@ fn write_server_control_event_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
         .encode(&payload)
     };
 
-    write_seed(dir, "connected_valid.bin", &connected)?;
-    write_seed(dir, "created_valid.bin", &created)?;
-    write_seed(dir, "joined_valid.bin", &joined)?;
-    write_seed(dir, "left_valid.bin", &left)?;
-    write_seed(dir, "team_selected_valid.bin", &team_selected)?;
-    write_seed(dir, "ready_changed_valid.bin", &ready_changed)?;
-    write_seed(dir, "countdown_started_valid.bin", &countdown_started)?;
-    write_seed(dir, "countdown_tick_valid.bin", &countdown_tick)?;
-    write_seed(dir, "match_started_valid.bin", &match_started)?;
-    write_seed(dir, "skill_chosen_valid.bin", &skill_chosen)?;
-    write_seed(dir, "precombat_valid.bin", &precombat_started)?;
-    write_seed(dir, "combat_started_valid.bin", &combat_started)?;
-    write_seed(dir, "round_won_valid.bin", &round_won)?;
-    write_seed(dir, "match_ended_valid.bin", &match_ended)?;
-    write_seed(dir, "returned_valid.bin", &returned)?;
-    write_seed(dir, "error_valid.bin", &error)?;
-    write_seed(dir, "directory_valid.bin", &directory)?;
-    write_seed(dir, "snapshot_valid.bin", &snapshot)?;
-    write_seed(dir, "arena_state_valid.bin", &arena_state)?;
-    write_seed(dir, "arena_state_variant_valid.bin", &arena_state_variant)?;
-    write_seed(dir, "arena_delta_valid.bin", &arena_delta)?;
-    write_seed(dir, "arena_delta_variant_valid.bin", &arena_delta_variant)?;
-    write_seed(dir, "arena_effects_valid.bin", &arena_effects)?;
-    write_seed(dir, "truncated_snapshot.bin", &truncated)?;
-    write_seed(dir, "wrong_packet_kind.bin", &wrong_packet_kind)?;
-    write_seed(dir, "invalid_optional_team.bin", &invalid_optional_team)?;
-    write_seed(dir, "invalid_lobby_phase.bin", &invalid_lobby_phase)?;
-    write_seed(dir, "invalid_bool.bin", &invalid_bool)?;
-    write_seed(dir, "invalid_ready.bin", &invalid_ready)?;
-    write_seed(dir, "invalid_team.bin", &invalid_team)?;
-    write_seed(dir, "invalid_match_outcome.bin", &invalid_match_outcome)?;
-    write_seed(
-        dir,
-        "invalid_arena_obstacle_kind.bin",
-        &invalid_arena_obstacle_kind,
-    )?;
-    write_seed(
-        dir,
-        "invalid_arena_effect_kind.bin",
-        &invalid_arena_effect_kind,
-    )?;
-    Ok(())
+    Ok(vec![
+        ("truncated_snapshot.bin", truncated),
+        ("wrong_packet_kind.bin", wrong_packet_kind),
+        (
+            "invalid_optional_team.bin",
+            PacketHeader::new(
+                ChannelId::Control,
+                PacketKind::ControlEvent,
+                0,
+                u16::try_from(invalid_optional_team_payload.len())?,
+                4,
+                12,
+            )?
+            .encode(&invalid_optional_team_payload),
+        ),
+        ("invalid_lobby_phase.bin", invalid_lobby_phase),
+        (
+            "invalid_bool.bin",
+            PacketHeader::new(ChannelId::Control, PacketKind::ControlEvent, 0, 7, 6, 12)?
+                .encode(&[5, 8, 0, 0, 0, 2, 9]),
+        ),
+        (
+            "invalid_ready.bin",
+            PacketHeader::new(ChannelId::Control, PacketKind::ControlEvent, 0, 6, 7, 12)?
+                .encode(&[6, 8, 0, 0, 0, 9]),
+        ),
+        (
+            "invalid_team.bin",
+            PacketHeader::new(ChannelId::Control, PacketKind::ControlEvent, 0, 5, 8, 12)?
+                .encode(&[13, 1, 9, 1, 0]),
+        ),
+        (
+            "invalid_match_outcome.bin",
+            PacketHeader::new(ChannelId::Control, PacketKind::ControlEvent, 0, 4, 9, 12)?
+                .encode(&[14, 9, 0, 0]),
+        ),
+        ("invalid_arena_obstacle_kind.bin", invalid_arena_obstacle_kind),
+        ("invalid_arena_effect_kind.bin", invalid_arena_effect_kind),
+    ])
 }
 
 fn write_arena_full_snapshot_decode_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
@@ -1200,11 +1345,7 @@ fn write_arena_delta_snapshot_roundtrip_corpus(dir: &Path) -> Result<(), Box<dyn
             players: vec![LobbySnapshotPlayer {
                 player_id: player_id(8)?,
                 player_name: player_name("Bob")?,
-                record: game_domain::PlayerRecord {
-                    wins: 3,
-                    losses: 1,
-                    no_contests: 0,
-                },
+                record: sample_player_record(3, 1, 0),
                 team: Some(TeamSide::TeamB),
                 ready: ReadyState::NotReady,
             }],
@@ -1312,7 +1453,7 @@ fn write_ascii_map_parse_corpus(dir: &Path) -> Result<(), Box<dyn Error>> {
     let invalid_glyph = "A..\n.%.\n..B\n";
     let duplicate_anchor = "A..B\n.A..\n....\n";
 
-    let _ = parse_ascii_map("maps/prototype_arena.txt", PROTOTYPE_ARENA_ASCII)?;
+    let _ = parse_ascii_map("maps/prototype_arena.txt", PROTOTYPE_ARENA_ASCII, 50)?;
 
     write_seed(dir, "prototype_arena.txt", PROTOTYPE_ARENA_ASCII.as_bytes())?;
     write_seed(dir, "missing_team_b.txt", missing_team_b.as_bytes())?;
@@ -1547,6 +1688,13 @@ fn recreate_dir(path: &Path) -> Result<(), Box<dyn Error>> {
 
 fn write_seed(dir: &Path, name: &str, bytes: &[u8]) -> Result<(), Box<dyn Error>> {
     fs::write(dir.join(name), bytes)?;
+    Ok(())
+}
+
+fn write_named_seeds(dir: &Path, seeds: Vec<NamedSeed>) -> Result<(), Box<dyn Error>> {
+    for (name, bytes) in seeds {
+        write_seed(dir, name, &bytes)?;
+    }
     Ok(())
 }
 

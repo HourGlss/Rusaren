@@ -157,3 +157,125 @@ pub(super) struct SkillBehaviorYaml {
     pub(super) cast_end_payload: Option<EffectPayloadYaml>,
     pub(super) payload: Option<EffectPayloadYaml>,
 }
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ConfigurationsYaml {
+    pub(super) lobby: LobbyConfigurationYaml,
+    #[serde(rename = "match")]
+    pub(super) match_flow: MatchConfigurationYaml,
+    pub(super) maps: MapsConfigurationYaml,
+    pub(super) simulation: SimulationConfigurationYaml,
+    pub(super) classes: BTreeMap<String, ClassProfileYaml>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct LobbyConfigurationYaml {
+    pub(super) launch_countdown_seconds: u8,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct MatchConfigurationYaml {
+    pub(super) total_rounds: u8,
+    pub(super) skill_pick_seconds: u8,
+    pub(super) pre_combat_seconds: u8,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct MapsConfigurationYaml {
+    pub(super) tile_units: u16,
+    pub(super) objective_target_ms_by_map: BTreeMap<String, u32>,
+    pub(super) generation: MapGenerationConfigurationYaml,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct MapGenerationConfigurationYaml {
+    pub(super) max_generation_attempts: usize,
+    pub(super) protected_tile_buffer_radius_tiles: i32,
+    pub(super) obstacle_edge_padding_tiles: i32,
+    pub(super) wall_segment_lengths_tiles: Vec<i32>,
+    pub(super) long_wall_percent: u8,
+    pub(super) wall_candidate_skip_percent: u8,
+    pub(super) wall_min_spacing_manhattan_tiles: i32,
+    pub(super) pillar_candidate_skip_percent: u8,
+    pub(super) pillar_min_spacing_manhattan_tiles: i32,
+    pub(super) styles: Vec<MapGenerationStyleYaml>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct MapGenerationStyleYaml {
+    pub(super) shrub_clusters: usize,
+    pub(super) shrub_radius_tiles: i32,
+    pub(super) shrub_soft_radius_tiles: i32,
+    pub(super) shrub_fill_percent: u8,
+    pub(super) wall_segments: usize,
+    pub(super) isolated_pillars: usize,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct SimulationConfigurationYaml {
+    pub(super) combat_frame_ms: u16,
+    pub(super) player_radius_units: u16,
+    pub(super) vision_radius_units: u16,
+    pub(super) spawn_spacing_units: i16,
+    pub(super) default_aim_x_units: i16,
+    pub(super) default_aim_y_units: i16,
+    pub(super) mana_regen_per_second: u16,
+    pub(super) global_projectile_speed_bonus_bps: u16,
+    pub(super) teleport_resolution_steps: u16,
+    pub(super) passive_bonus_caps: PassiveBonusCapsYaml,
+    pub(super) movement_modifier_caps: MovementModifierCapsYaml,
+    pub(super) crowd_control_diminishing_returns: CrowdControlDiminishingReturnsYaml,
+    pub(super) training_dummy: TrainingDummyConfigurationYaml,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct PassiveBonusCapsYaml {
+    pub(super) player_speed_bps: u16,
+    pub(super) projectile_speed_bps: u16,
+    pub(super) cooldown_bps: u16,
+    pub(super) cast_time_bps: u16,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct MovementModifierCapsYaml {
+    pub(super) chill_bps: u16,
+    pub(super) haste_bps: u16,
+    pub(super) status_total_min_bps: i16,
+    pub(super) status_total_max_bps: i16,
+    pub(super) overall_total_min_bps: i16,
+    pub(super) overall_total_max_bps: i16,
+    pub(super) effective_scale_min_bps: u16,
+    pub(super) effective_scale_max_bps: u16,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct CrowdControlDiminishingReturnsYaml {
+    pub(super) window_ms: u16,
+    pub(super) stages_bps: Vec<u16>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct TrainingDummyConfigurationYaml {
+    pub(super) base_hit_points: u16,
+    pub(super) health_multiplier: u16,
+    pub(super) execute_threshold_bps: u16,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ClassProfileYaml {
+    pub(super) hit_points: u16,
+    pub(super) max_mana: u16,
+    pub(super) move_speed_units_per_second: u16,
+}

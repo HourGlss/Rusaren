@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use game_api::{AdminAuthConfig, WebRtcRuntimeConfig};
-use game_sim::COMBAT_FRAME_MS;
+use game_content::GameContent;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ServerConfig {
@@ -13,6 +13,7 @@ pub(crate) struct ServerConfig {
     pub content_root: PathBuf,
     pub web_client_root: PathBuf,
     pub tick_interval: Duration,
+    pub simulation_step_ms: u16,
     pub webrtc: WebRtcRuntimeConfig,
     pub admin_auth: Option<AdminAuthConfig>,
 }
@@ -21,6 +22,13 @@ impl ServerConfig {
     pub(crate) fn from_env() -> Result<Self, String> {
         let record_store_path = env::var_os("RARENA_RECORD_STORE_PATH")
             .map_or_else(default_record_store_path, PathBuf::from);
+        let content_root =
+            env::var_os("RARENA_CONTENT_ROOT").map_or_else(default_content_root, PathBuf::from);
+        let simulation_step_ms = GameContent::load_from_root(&content_root)
+            .map_err(|error| format!("failed to load content configuration: {error}"))?
+            .configuration()
+            .simulation
+            .combat_frame_ms;
         Ok(Self {
             bind_address: env::var("RARENA_BIND")
                 .unwrap_or_else(|_| String::from("127.0.0.1:3000")),
@@ -29,11 +37,14 @@ impl ServerConfig {
                 PathBuf::from,
             ),
             record_store_path,
-            content_root: env::var_os("RARENA_CONTENT_ROOT")
-                .map_or_else(default_content_root, PathBuf::from),
+            content_root,
             web_client_root: env::var_os("RARENA_WEB_CLIENT_ROOT")
                 .map_or_else(default_web_client_root, PathBuf::from),
-            tick_interval: parse_tick_interval(env::var("RARENA_TICK_INTERVAL_MS").ok()),
+            tick_interval: parse_tick_interval(
+                env::var("RARENA_TICK_INTERVAL_MS").ok(),
+                simulation_step_ms,
+            ),
+            simulation_step_ms,
             webrtc: parse_webrtc_config_from_env()?,
             admin_auth: parse_admin_auth_from_env()?,
         })
@@ -76,11 +87,11 @@ pub(crate) fn default_web_client_root() -> PathBuf {
         .join("webclient")
 }
 
-pub(crate) fn parse_tick_interval(raw: Option<String>) -> Duration {
+pub(crate) fn parse_tick_interval(raw: Option<String>, default_millis: u16) -> Duration {
     raw.and_then(|value| value.parse::<u64>().ok())
         .filter(|millis| *millis > 0)
         .map_or_else(
-            || Duration::from_millis(u64::from(COMBAT_FRAME_MS)),
+            || Duration::from_millis(u64::from(default_millis)),
             Duration::from_millis,
         )
 }

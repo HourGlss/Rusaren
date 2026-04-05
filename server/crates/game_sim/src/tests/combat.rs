@@ -1014,7 +1014,10 @@ fn damage_breaks_sleep_and_stealth_and_shields_absorb_precisely() {
         "fully absorbed hits should not report any applied damage"
     );
     let bob = world.player_state(player_id(2)).expect("bob");
-    assert_eq!(bob.hit_points, 100);
+    assert_eq!(
+        bob.hit_points,
+        class_hit_points(&content, SkillTree::Warrior)
+    );
     let statuses = world.statuses_for(player_id(2)).expect("statuses");
     assert!(statuses
         .iter()

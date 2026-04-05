@@ -2,7 +2,7 @@ use super::{
     adjusted_move_speed, movement_delta, resolve_movement, ArenaEffect, ArenaEffectKind,
     CombatValueKind, DeployableBehavior, MovementIntent, PlayerId, SimCastCancelReason,
     SimMissReason, SimStatusRemovedReason, SimTargetKind, SimTriggerReason, SimulationEvent,
-    SimulationWorld, StatusKind, TargetEntity, PLAYER_MANA_REGEN_PER_SECOND,
+    SimulationWorld, StatusKind, TargetEntity,
 };
 
 impl SimulationWorld {
@@ -40,7 +40,7 @@ impl SimulationWorld {
             }
 
             let total_progress = u32::from(player.mana_regen_progress)
-                + (u32::from(delta_ms) * u32::from(PLAYER_MANA_REGEN_PER_SECOND));
+                + (u32::from(delta_ms) * u32::from(self.configuration.mana_regen_per_second));
             let gained = u16::try_from(total_progress / 1000).unwrap_or(u16::MAX);
             player.mana_regen_progress = u16::try_from(total_progress % 1000).unwrap_or(0);
             if gained == 0 {
@@ -244,7 +244,14 @@ impl SimulationWorld {
                 }
             }
 
-            let speed = adjusted_move_speed(delta_ms, speed_modifier_bps);
+            let speed = adjusted_move_speed(
+                delta_ms,
+                self.players
+                    .get(&player_id)
+                    .map_or(0, |player| player.move_speed_units_per_second),
+                speed_modifier_bps,
+                &self.configuration.movement_modifier_caps,
+            );
             if speed == 0 {
                 continue;
             }
@@ -257,6 +264,7 @@ impl SimulationWorld {
                 origin_y,
                 next_x,
                 next_y,
+                self.configuration.player_radius_units,
                 arena_width_units,
                 arena_height_units,
                 arena_width_tiles,
@@ -525,7 +533,8 @@ impl SimulationWorld {
             .filter(|(player_id, player)| **player_id != attacker && player.alive)
             .filter(|(player_id, _)| self.can_enemy_target_player(attacker, **player_id))
             .filter_map(|(player_id, player)| {
-                let overlap_radius = i32::from(radius.saturating_add(super::PLAYER_RADIUS_UNITS));
+                let overlap_radius =
+                    i32::from(radius.saturating_add(self.configuration.player_radius_units));
                 let distance_sq = super::point_distance_sq(point, (player.x, player.y));
                 (distance_sq <= overlap_radius * overlap_radius)
                     .then_some((*player_id, distance_sq))

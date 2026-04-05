@@ -39,7 +39,6 @@ pub(crate) struct MatchCombatFeedback {
 }
 
 impl MatchCombatFeedback {
-    #[allow(clippy::too_many_lines)]
     pub(crate) fn observe_entry(
         &mut self,
         content: &GameContent,
@@ -51,199 +50,66 @@ impl MatchCombatFeedback {
         match &entry.event {
             CombatLogEvent::CastStarted {
                 player_id, slot, ..
-            } => {
-                let Some(source) = parse_player_id(*player_id) else {
-                    return;
-                };
-                if *slot == 0 || !skill_is_cc_capable(content, session, source, *slot) {
-                    return;
-                }
-                self.bump_cc_used(source);
-            }
+            } => self.observe_cast_started(content, session, *player_id, *slot),
             CombatLogEvent::DamageApplied {
                 source_player_id,
                 target_kind,
                 target_id,
                 amount,
                 ..
-            } => {
-                let Some(source) = parse_player_id(*source_player_id) else {
-                    return;
-                };
-                self.bump_damage(source, *amount);
-                let Some(target_position) = target_position(world, *target_kind, *target_id) else {
-                    return;
-                };
-                self.push_text(
-                    source,
-                    target_position,
-                    ArenaCombatTextStyle::DamageOutgoing,
-                    amount.to_string(),
-                );
-                if *target_kind == CombatLogTargetKind::Player {
-                    if let Some(target_player) = parse_player_id(*target_id) {
-                        self.push_text(
-                            target_player,
-                            target_position,
-                            ArenaCombatTextStyle::DamageIncoming,
-                            format!("-{amount}"),
-                        );
-                    }
-                }
-            }
+            } => self.observe_damage_applied(
+                world,
+                *source_player_id,
+                *target_kind,
+                *target_id,
+                *amount,
+            ),
             CombatLogEvent::HealingApplied {
                 source_player_id,
                 target_player_id,
                 amount,
                 ..
-            } => {
-                let (Some(source), Some(target)) = (
-                    parse_player_id(*source_player_id),
-                    parse_player_id(*target_player_id),
-                ) else {
-                    return;
-                };
-                let Some(target_position) = player_position(world, target) else {
-                    return;
-                };
-                let allied = same_team(roster, source, target);
-                if allied {
-                    self.bump_healing_to_allies(source, *amount);
-                } else {
-                    self.bump_healing_to_enemies(source, *amount);
-                }
-                if source != target {
-                    self.push_text(
-                        source,
-                        target_position,
-                        ArenaCombatTextStyle::HealOutgoing,
-                        format!("+{amount}"),
-                    );
-                }
-                self.push_text(
-                    target,
-                    target_position,
-                    ArenaCombatTextStyle::HealIncoming,
-                    format!("+{amount}"),
-                );
-            }
+            } => self.observe_healing_applied(
+                roster,
+                world,
+                *source_player_id,
+                *target_player_id,
+                *amount,
+            ),
             CombatLogEvent::StatusApplied {
                 source_player_id,
                 target_player_id,
                 status_kind,
                 stacks,
                 ..
-            } => {
-                if status_kind == "stealth" {
-                    return;
-                }
-                let (Some(source), Some(target)) = (
-                    parse_player_id(*source_player_id),
-                    parse_player_id(*target_player_id),
-                ) else {
-                    return;
-                };
-                let Some(target_position) = player_position(world, target) else {
-                    return;
-                };
-                let positive = is_positive_status(status_kind);
-                if !positive && is_control_status(status_kind) && !same_team(roster, source, target)
-                {
-                    self.bump_cc_hits(source);
-                }
-                let style = if positive {
-                    ArenaCombatTextStyle::PositiveStatus
-                } else {
-                    ArenaCombatTextStyle::NegativeStatus
-                };
-                let label = status_text(status_kind, *stacks);
-                if source != target {
-                    self.push_text(source, target_position, style, label.clone());
-                }
-                self.push_text(target, target_position, style, label);
-            }
+            } => self.observe_status_applied(
+                roster,
+                world,
+                *source_player_id,
+                *target_player_id,
+                status_kind,
+                *stacks,
+            ),
             CombatLogEvent::StatusRemoved {
                 target_player_id,
                 status_kind,
                 reason,
                 ..
-            } => {
-                if status_kind == "stealth" {
-                    return;
-                }
-                let Some(target) = parse_player_id(*target_player_id) else {
-                    return;
-                };
-                let Some(target_position) = player_position(world, target) else {
-                    return;
-                };
-                let style = if is_positive_status(status_kind) {
-                    ArenaCombatTextStyle::PositiveStatus
-                } else {
-                    ArenaCombatTextStyle::NegativeStatus
-                };
-                let text = match reason {
-                    CombatLogStatusRemovedReason::Dispelled => {
-                        format!("{} dispelled", title_case(status_kind))
-                    }
-                    CombatLogStatusRemovedReason::DamageBroken => {
-                        format!("{} broken", title_case(status_kind))
-                    }
-                    CombatLogStatusRemovedReason::ShieldConsumed => String::from("Shield spent"),
-                    CombatLogStatusRemovedReason::Expired => {
-                        format!("{} faded", title_case(status_kind))
-                    }
-                    CombatLogStatusRemovedReason::Defeat => String::from("Cleared on defeat"),
-                };
-                self.push_text(target, target_position, style, text);
-            }
+            } => self.observe_status_removed(world, *target_player_id, status_kind, *reason),
             CombatLogEvent::DispelResult {
                 source_player_id,
                 target_player_id,
                 removed_statuses,
                 ..
-            } => {
-                if removed_statuses.is_empty() {
-                    return;
-                }
-                let (Some(source), Some(target)) = (
-                    parse_player_id(*source_player_id),
-                    parse_player_id(*target_player_id),
-                ) else {
-                    return;
-                };
-                let Some(target_position) = player_position(world, target) else {
-                    return;
-                };
-                self.push_text(
-                    source,
-                    target_position,
-                    ArenaCombatTextStyle::Utility,
-                    format!("Dispel x{}", removed_statuses.len()),
-                );
-                self.push_text(
-                    target,
-                    target_position,
-                    ArenaCombatTextStyle::NegativeStatus,
-                    String::from("Dispelled"),
-                );
-            }
+            } => self.observe_dispel_result(
+                world,
+                *source_player_id,
+                *target_player_id,
+                removed_statuses.len(),
+            ),
             CombatLogEvent::DispelCast {
                 source_player_id, ..
-            } => {
-                let Some(source) = parse_player_id(*source_player_id) else {
-                    return;
-                };
-                let Some(position) = player_position(world, source) else {
-                    return;
-                };
-                self.push_text(
-                    source,
-                    position,
-                    ArenaCombatTextStyle::Utility,
-                    String::from("Dispel"),
-                );
-            }
+            } => self.observe_dispel_cast(world, *source_player_id),
             CombatLogEvent::TriggerResolved {
                 source_player_id,
                 target_kind,
@@ -251,74 +117,311 @@ impl MatchCombatFeedback {
                 payload_kind,
                 amount,
                 ..
-            } => {
-                let Some(source) = parse_player_id(*source_player_id) else {
-                    return;
-                };
-                let Some(position) = target_position(world, *target_kind, *target_id) else {
-                    return;
-                };
-                let (style, text) = if payload_kind == "heal" {
-                    (
-                        ArenaCombatTextStyle::HealOutgoing,
-                        format!("Bloom +{amount}"),
-                    )
-                } else {
-                    (ArenaCombatTextStyle::Utility, format!("Bloom -{amount}"))
-                };
-                self.push_text(source, position, style, text.clone());
-                if *target_kind == CombatLogTargetKind::Player {
-                    if let Some(target) = parse_player_id(*target_id) {
-                        let target_style = if payload_kind == "heal" {
-                            ArenaCombatTextStyle::HealIncoming
-                        } else {
-                            ArenaCombatTextStyle::DamageIncoming
-                        };
-                        self.push_text(target, position, target_style, text);
-                    }
-                }
-            }
+            } => self.observe_trigger_resolved(
+                world,
+                *source_player_id,
+                *target_kind,
+                *target_id,
+                payload_kind,
+                *amount,
+            ),
             CombatLogEvent::ImpactMiss {
                 source_player_id, ..
-            } => {
-                let Some(source) = parse_player_id(*source_player_id) else {
-                    return;
-                };
-                let Some(position) = player_position(world, source) else {
-                    return;
-                };
-                self.push_text(
-                    source,
-                    position,
-                    ArenaCombatTextStyle::Utility,
-                    String::from("Miss"),
-                );
-            }
+            } => self.observe_impact_miss(world, *source_player_id),
             CombatLogEvent::CastCanceled {
                 player_id, reason, ..
-            } => {
-                let Some(player_id) = parse_player_id(*player_id) else {
-                    return;
-                };
-                let Some(position) = player_position(world, player_id) else {
-                    return;
-                };
-                let text = match reason {
-                    CombatLogCastCancelReason::Interrupt => "Interrupted",
-                    CombatLogCastCancelReason::ControlLoss => "Control lost",
-                    CombatLogCastCancelReason::Movement => "Cast canceled",
-                    CombatLogCastCancelReason::Manual => "Canceled",
-                    CombatLogCastCancelReason::Defeat => "Defeated",
-                };
-                self.push_text(
-                    player_id,
-                    position,
-                    ArenaCombatTextStyle::Utility,
-                    text.to_string(),
-                );
-            }
+            } => self.observe_cast_canceled(world, *player_id, *reason),
             _ => {}
         }
+    }
+
+    fn observe_cast_started(
+        &mut self,
+        content: &GameContent,
+        session: &MatchSession,
+        player_id: u32,
+        slot: u8,
+    ) {
+        let Some(source) = parse_player_id(player_id) else {
+            return;
+        };
+        if slot == 0 || !skill_is_cc_capable(content, session, source, slot) {
+            return;
+        }
+        self.bump_cc_used(source);
+    }
+
+    fn observe_damage_applied(
+        &mut self,
+        world: &SimulationWorld,
+        source_player_id: u32,
+        target_kind: CombatLogTargetKind,
+        target_id: u32,
+        amount: u16,
+    ) {
+        let Some(source) = parse_player_id(source_player_id) else {
+            return;
+        };
+        self.bump_damage(source, amount);
+        let Some(target_position) = target_position(world, target_kind, target_id) else {
+            return;
+        };
+        self.push_text(
+            source,
+            target_position,
+            ArenaCombatTextStyle::DamageOutgoing,
+            amount.to_string(),
+        );
+        if target_kind != CombatLogTargetKind::Player {
+            return;
+        }
+        if let Some(target_player) = parse_player_id(target_id) {
+            self.push_text(
+                target_player,
+                target_position,
+                ArenaCombatTextStyle::DamageIncoming,
+                format!("-{amount}"),
+            );
+        }
+    }
+
+    fn observe_healing_applied(
+        &mut self,
+        roster: &[TeamAssignment],
+        world: &SimulationWorld,
+        source_player_id: u32,
+        target_player_id: u32,
+        amount: u16,
+    ) {
+        let (Some(source), Some(target)) = (
+            parse_player_id(source_player_id),
+            parse_player_id(target_player_id),
+        ) else {
+            return;
+        };
+        let Some(target_position) = player_position(world, target) else {
+            return;
+        };
+        if same_team(roster, source, target) {
+            self.bump_healing_to_allies(source, amount);
+        } else {
+            self.bump_healing_to_enemies(source, amount);
+        }
+        if source != target {
+            self.push_text(
+                source,
+                target_position,
+                ArenaCombatTextStyle::HealOutgoing,
+                format!("+{amount}"),
+            );
+        }
+        self.push_text(
+            target,
+            target_position,
+            ArenaCombatTextStyle::HealIncoming,
+            format!("+{amount}"),
+        );
+    }
+
+    fn observe_status_applied(
+        &mut self,
+        roster: &[TeamAssignment],
+        world: &SimulationWorld,
+        source_player_id: u32,
+        target_player_id: u32,
+        status_kind: &str,
+        stacks: u8,
+    ) {
+        if status_kind == "stealth" {
+            return;
+        }
+        let (Some(source), Some(target)) = (
+            parse_player_id(source_player_id),
+            parse_player_id(target_player_id),
+        ) else {
+            return;
+        };
+        let Some(target_position) = player_position(world, target) else {
+            return;
+        };
+        let positive = is_positive_status(status_kind);
+        if !positive && is_control_status(status_kind) && !same_team(roster, source, target) {
+            self.bump_cc_hits(source);
+        }
+        let style = if positive {
+            ArenaCombatTextStyle::PositiveStatus
+        } else {
+            ArenaCombatTextStyle::NegativeStatus
+        };
+        let label = status_text(status_kind, stacks);
+        if source != target {
+            self.push_text(source, target_position, style, label.clone());
+        }
+        self.push_text(target, target_position, style, label);
+    }
+
+    fn observe_status_removed(
+        &mut self,
+        world: &SimulationWorld,
+        target_player_id: u32,
+        status_kind: &str,
+        reason: CombatLogStatusRemovedReason,
+    ) {
+        if status_kind == "stealth" {
+            return;
+        }
+        let Some(target) = parse_player_id(target_player_id) else {
+            return;
+        };
+        let Some(target_position) = player_position(world, target) else {
+            return;
+        };
+        let style = if is_positive_status(status_kind) {
+            ArenaCombatTextStyle::PositiveStatus
+        } else {
+            ArenaCombatTextStyle::NegativeStatus
+        };
+        let text = match reason {
+            CombatLogStatusRemovedReason::Dispelled => {
+                format!("{} dispelled", title_case(status_kind))
+            }
+            CombatLogStatusRemovedReason::DamageBroken => {
+                format!("{} broken", title_case(status_kind))
+            }
+            CombatLogStatusRemovedReason::ShieldConsumed => String::from("Shield spent"),
+            CombatLogStatusRemovedReason::Expired => {
+                format!("{} faded", title_case(status_kind))
+            }
+            CombatLogStatusRemovedReason::Defeat => String::from("Cleared on defeat"),
+        };
+        self.push_text(target, target_position, style, text);
+    }
+
+    fn observe_dispel_result(
+        &mut self,
+        world: &SimulationWorld,
+        source_player_id: u32,
+        target_player_id: u32,
+        removed_status_count: usize,
+    ) {
+        if removed_status_count == 0 {
+            return;
+        }
+        let (Some(source), Some(target)) = (
+            parse_player_id(source_player_id),
+            parse_player_id(target_player_id),
+        ) else {
+            return;
+        };
+        let Some(target_position) = player_position(world, target) else {
+            return;
+        };
+        self.push_text(
+            source,
+            target_position,
+            ArenaCombatTextStyle::Utility,
+            format!("Dispel x{removed_status_count}"),
+        );
+        self.push_text(
+            target,
+            target_position,
+            ArenaCombatTextStyle::NegativeStatus,
+            String::from("Dispelled"),
+        );
+    }
+
+    fn observe_dispel_cast(&mut self, world: &SimulationWorld, source_player_id: u32) {
+        let Some(source) = parse_player_id(source_player_id) else {
+            return;
+        };
+        let Some(position) = player_position(world, source) else {
+            return;
+        };
+        self.push_text(
+            source,
+            position,
+            ArenaCombatTextStyle::Utility,
+            String::from("Dispel"),
+        );
+    }
+
+    fn observe_trigger_resolved(
+        &mut self,
+        world: &SimulationWorld,
+        source_player_id: u32,
+        target_kind: CombatLogTargetKind,
+        target_id: u32,
+        payload_kind: &str,
+        amount: u16,
+    ) {
+        let Some(source) = parse_player_id(source_player_id) else {
+            return;
+        };
+        let Some(position) = target_position(world, target_kind, target_id) else {
+            return;
+        };
+        let (style, text) = if payload_kind == "heal" {
+            (
+                ArenaCombatTextStyle::HealOutgoing,
+                format!("Bloom +{amount}"),
+            )
+        } else {
+            (ArenaCombatTextStyle::Utility, format!("Bloom -{amount}"))
+        };
+        self.push_text(source, position, style, text.clone());
+        if target_kind != CombatLogTargetKind::Player {
+            return;
+        }
+        if let Some(target) = parse_player_id(target_id) {
+            let target_style = if payload_kind == "heal" {
+                ArenaCombatTextStyle::HealIncoming
+            } else {
+                ArenaCombatTextStyle::DamageIncoming
+            };
+            self.push_text(target, position, target_style, text);
+        }
+    }
+
+    fn observe_impact_miss(&mut self, world: &SimulationWorld, source_player_id: u32) {
+        let Some(source) = parse_player_id(source_player_id) else {
+            return;
+        };
+        let Some(position) = player_position(world, source) else {
+            return;
+        };
+        self.push_text(
+            source,
+            position,
+            ArenaCombatTextStyle::Utility,
+            String::from("Miss"),
+        );
+    }
+
+    fn observe_cast_canceled(
+        &mut self,
+        world: &SimulationWorld,
+        player_id: u32,
+        reason: CombatLogCastCancelReason,
+    ) {
+        let Some(player_id) = parse_player_id(player_id) else {
+            return;
+        };
+        let Some(position) = player_position(world, player_id) else {
+            return;
+        };
+        let text = match reason {
+            CombatLogCastCancelReason::Interrupt => "Interrupted",
+            CombatLogCastCancelReason::ControlLoss => "Control lost",
+            CombatLogCastCancelReason::Movement => "Cast canceled",
+            CombatLogCastCancelReason::Manual => "Canceled",
+            CombatLogCastCancelReason::Defeat => "Defeated",
+        };
+        self.push_text(
+            player_id,
+            position,
+            ArenaCombatTextStyle::Utility,
+            text.to_string(),
+        );
     }
 
     pub(crate) fn finalize_round(

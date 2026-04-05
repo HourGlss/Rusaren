@@ -5,8 +5,6 @@ use game_domain::{
     TeamSide,
 };
 
-use super::{known_round, PRE_COMBAT_SECONDS, SKILL_PICK_SECONDS};
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MatchConfig {
     pub total_rounds: RoundNumber,
@@ -16,14 +14,37 @@ pub struct MatchConfig {
 }
 
 impl MatchConfig {
-    #[must_use]
-    pub fn v1(objective_target_ms: u32) -> Self {
-        Self {
-            total_rounds: known_round(5),
-            skill_pick_seconds: SKILL_PICK_SECONDS,
-            pre_combat_seconds: PRE_COMBAT_SECONDS,
-            objective_target_ms,
+    pub fn new(
+        total_rounds: u8,
+        skill_pick_seconds: u8,
+        pre_combat_seconds: u8,
+        objective_target_ms: u32,
+    ) -> Result<Self, MatchError> {
+        if skill_pick_seconds == 0 {
+            return Err(MatchError::InvalidConfiguration {
+                message: String::from("skill_pick_seconds must be greater than zero"),
+            });
         }
+        if pre_combat_seconds == 0 {
+            return Err(MatchError::InvalidConfiguration {
+                message: String::from("pre_combat_seconds must be greater than zero"),
+            });
+        }
+        if objective_target_ms == 0 {
+            return Err(MatchError::InvalidConfiguration {
+                message: String::from("objective_target_ms must be greater than zero"),
+            });
+        }
+        let total_rounds =
+            RoundNumber::new(total_rounds).map_err(|error| MatchError::InvalidConfiguration {
+                message: format!("total_rounds is invalid: {error}"),
+            })?;
+        Ok(Self {
+            total_rounds,
+            skill_pick_seconds,
+            pre_combat_seconds,
+            objective_target_ms,
+        })
     }
 }
 
@@ -102,6 +123,9 @@ pub enum MatchEvent {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MatchError {
+    InvalidConfiguration {
+        message: String,
+    },
     DuplicatePlayer(PlayerId),
     MissingTeam(TeamSide),
     PlayerMissing(PlayerId),
@@ -117,6 +141,9 @@ pub enum MatchError {
 impl fmt::Display for MatchError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidConfiguration { message } => {
+                write!(f, "match configuration is invalid: {message}")
+            }
             Self::DuplicatePlayer(player_id) => {
                 write!(
                     f,

@@ -2,7 +2,7 @@ use game_content::ArenaMapDefinition;
 use game_domain::PlayerId;
 use game_sim::{
     obstacle_blocks_vision, obstacle_contains_point, segment_hits_obstacle, ArenaObstacle,
-    ArenaObstacleKind as SimArenaObstacleKind, VISION_RADIUS_UNITS,
+    ArenaObstacleKind as SimArenaObstacleKind,
 };
 
 use std::collections::BTreeMap;
@@ -19,7 +19,7 @@ impl ServerApp {
         let viewer_state = world.player_state(viewer_id)?;
         let mut visible_tiles = Self::blank_visibility_mask(map);
         let viewer_position = (viewer_state.x, viewer_state.y);
-        let mut vision_sources = vec![(viewer_position, VISION_RADIUS_UNITS)];
+        let mut vision_sources = vec![(viewer_position, world.vision_radius_units())];
         for deployable in world.deployables() {
             if deployable.team == viewer_state.team
                 && deployable.kind == game_sim::ArenaDeployableKind::Ward
@@ -110,11 +110,14 @@ impl ServerApp {
         target_position: (i16, i16),
         obstacles: &[ArenaObstacle],
     ) -> bool {
+        let vision_radius_units = game_content::GameContent::bundled()
+            .map(|content| content.configuration().simulation.vision_radius_units)
+            .unwrap_or(450);
         Self::point_is_visible_from_source(
             viewer_position,
             target_position,
             obstacles,
-            VISION_RADIUS_UNITS,
+            vision_radius_units,
         )
     }
 
@@ -163,6 +166,7 @@ impl ServerApp {
         Self::mask_has_tile(mask, index)
     }
 
+    #[cfg(test)]
     pub(in super::super) fn mask_intersects_obstacle(
         map: &ArenaMapDefinition,
         mask: &[u8],

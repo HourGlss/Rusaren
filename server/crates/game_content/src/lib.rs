@@ -6,6 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
+mod config;
 mod error;
 mod model;
 mod yaml;
@@ -17,7 +18,6 @@ use yaml::{
     StackRuleYaml,
 };
 
-const DEFAULT_TILE_UNITS: u16 = 50;
 const MAX_MAP_DIMENSION_TILES: usize = 128;
 const MAX_SKILL_TEXT_LEN: usize = 120;
 const REQUIRED_TIERS: [u8; 5] = [1, 2, 3, 4, 5];
@@ -110,6 +110,7 @@ mod maps;
 mod mechanics;
 mod skills;
 
+pub use config::parse_configuration_yaml;
 pub use map_generation::{generate_template_match_map, render_ascii_map};
 pub use maps::{parse_ascii_map, parse_map_registry_yaml};
 pub use mechanics::parse_mechanics_yaml;

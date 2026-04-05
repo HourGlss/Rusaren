@@ -2,7 +2,6 @@ use game_domain::{LobbyId, MatchId, MatchOutcome, PlayerId, TeamAssignment, Team
 use game_lobby::{LobbyEvent, LobbyPhase};
 use game_match::{MatchConfig, MatchEvent, MatchPhase, MatchSession};
 use game_net::ServerControlEvent;
-use game_sim::COMBAT_FRAME_MS;
 
 use crate::combat_log::CombatLogEvent;
 
@@ -102,11 +101,16 @@ impl ServerApp {
     )> {
         let (simulation_events, effect_batch, match_events, mut combined_errors) = {
             let runtime = self.matches.get_mut(&match_id)?;
+            let combat_frame_ms = self.content.configuration().simulation.combat_frame_ms;
             runtime.combat_frame_index = runtime.combat_frame_index.saturating_add(1);
-            let simulation_events = runtime.world.tick(COMBAT_FRAME_MS);
+            let simulation_events = runtime.world.tick(combat_frame_ms);
             let effect_batch = Self::collect_effect_batch(&simulation_events);
-            let (match_events, progress_errors) =
-                Self::resolve_match_progress(runtime, &simulation_events, &self.content);
+            let (match_events, progress_errors) = Self::resolve_match_progress(
+                runtime,
+                &simulation_events,
+                &self.content,
+                combat_frame_ms,
+            );
             (
                 simulation_events,
                 effect_batch,
@@ -130,12 +134,13 @@ impl ServerApp {
     )> {
         let (simulation_events, effect_batch) = {
             let runtime = self.training_sessions.get_mut(&training_id)?;
+            let combat_frame_ms = self.content.configuration().simulation.combat_frame_ms;
             runtime.combat_frame_index = runtime.combat_frame_index.saturating_add(1);
             runtime.metrics.elapsed_ms = runtime
                 .metrics
                 .elapsed_ms
-                .saturating_add(u32::from(COMBAT_FRAME_MS));
-            let simulation_events = runtime.world.tick(COMBAT_FRAME_MS);
+                .saturating_add(u32::from(combat_frame_ms));
+            let simulation_events = runtime.world.tick(combat_frame_ms);
             Self::accumulate_training_metrics(
                 &mut runtime.metrics,
                 runtime.participant.player_id,
@@ -173,6 +178,7 @@ impl ServerApp {
         runtime: &mut MatchRuntime,
         simulation_events: &[game_sim::SimulationEvent],
         content: &game_content::GameContent,
+        combat_frame_ms: u16,
     ) -> (Vec<MatchEvent>, Vec<String>) {
         let mut match_events = Vec::new();
         let mut errors = Vec::new();
@@ -188,7 +194,7 @@ impl ServerApp {
             match runtime.session.advance_objective_control(
                 team_a_present,
                 team_b_present,
-                COMBAT_FRAME_MS,
+                combat_frame_ms,
             ) {
                 Ok(events) => match_events.extend(events),
                 Err(error) => errors.push(error.to_string()),
@@ -619,11 +625,25 @@ impl ServerApp {
             return;
         };
         let match_id = self.allocate_match_id();
-        let session = match MatchSession::new(
-            match_id,
-            roster.clone(),
-            MatchConfig::v1(lobby_map.objective_target_ms),
+        let match_config = match MatchConfig::new(
+            self.content.configuration().match_flow.total_rounds,
+            self.content.configuration().match_flow.skill_pick_seconds,
+            self.content.configuration().match_flow.pre_combat_seconds,
+            lobby_map.objective_target_ms,
         ) {
+            Ok(config) => config,
+            Err(error) => {
+                self.broadcast_event(
+                    transport,
+                    &self.lobby_members(lobby_id),
+                    ServerControlEvent::Error {
+                        message: error.to_string(),
+                    },
+                );
+                return;
+            }
+        };
+        let session = match MatchSession::new(match_id, roster.clone(), match_config) {
             Ok(session) => session,
             Err(error) => {
                 self.broadcast_event(
@@ -695,8 +715,7 @@ impl ServerApp {
                     Ok(round) => round,
                     Err(error) => panic!("round one must be valid: {error}"),
                 },
-                skill_pick_seconds: MatchConfig::v1(lobby_map.objective_target_ms)
-                    .skill_pick_seconds,
+                skill_pick_seconds: self.content.configuration().match_flow.skill_pick_seconds,
             },
         );
         self.broadcast_arena_state_snapshot(transport, match_id);
@@ -725,7 +744,9 @@ impl ServerApp {
             ),
             None => return,
         };
-        let combat_ms = combat_frame_index.saturating_mul(u32::from(COMBAT_FRAME_MS));
+        let combat_ms = combat_frame_index.saturating_mul(u32::from(
+            self.content.configuration().simulation.combat_frame_ms,
+        ));
 
         let mut dirty_players = Vec::new();
         for assignment in roster {

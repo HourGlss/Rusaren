@@ -10,10 +10,10 @@ use game_api::{
 use game_content::GameContent;
 use game_domain::{LobbyId, MatchId, PlayerName, ReadyState, SkillChoice, SkillTree, TeamSide};
 use game_net::ServerControlEvent;
-use game_sim::COMBAT_FRAME_MS;
 
 const MATCH_PAIR_COUNT: usize = 10;
 const IDLE_CLIENT_COUNT: usize = 100;
+const COMBAT_FRAME_MS: u16 = 100;
 
 #[derive(Default)]
 struct DurationSamples {

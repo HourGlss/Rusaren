@@ -1,5 +1,6 @@
 use game_content::{
-    ArenaMapDefinition, ArenaMapObstacle, ArenaMapObstacleKind, SkillEffectKind, StatusKind,
+    ArenaMapDefinition, ArenaMapObstacle, ArenaMapObstacleKind, MovementModifierCaps,
+    SimulationConfiguration, SkillEffectKind, StatusKind,
 };
 use game_domain::TeamSide;
 
@@ -8,15 +9,13 @@ use crate::{
     obstacle_blocks_movement, ArenaEffectKind, ArenaObstacle, ArenaObstacleKind, MovementIntent,
 };
 
-use super::{
-    StatusInstance, DEFAULT_AIM_X, PLAYER_MOVE_SPEED_UNITS_PER_SECOND, PLAYER_RADIUS_UNITS,
-    SPAWN_SPACING_UNITS,
-};
+use super::StatusInstance;
 
 pub(crate) fn spawn_position(
     team: TeamSide,
     index: u16,
     map: &ArenaMapDefinition,
+    configuration: &SimulationConfiguration,
 ) -> (i16, i16, i16) {
     let anchors = match team {
         TeamSide::TeamA => &map.team_a_anchors,
@@ -25,11 +24,20 @@ pub(crate) fn spawn_position(
     let anchor_count = u16::try_from(anchors.len()).unwrap_or(1).max(1);
     let anchor_index = usize::from(index % anchor_count);
     let lane_index = index / anchor_count;
-    let vertical_offset = i16::try_from(lane_index).unwrap_or(i16::MAX) * SPAWN_SPACING_UNITS;
+    let vertical_offset =
+        i16::try_from(lane_index).unwrap_or(i16::MAX) * configuration.spawn_spacing_units;
     let anchor = anchors[anchor_index];
     match team {
-        TeamSide::TeamA => (anchor.0, anchor.1 + vertical_offset, DEFAULT_AIM_X),
-        TeamSide::TeamB => (anchor.0, anchor.1 + vertical_offset, -DEFAULT_AIM_X),
+        TeamSide::TeamA => (
+            anchor.0,
+            anchor.1 + vertical_offset,
+            configuration.default_aim_x_units,
+        ),
+        TeamSide::TeamB => (
+            anchor.0,
+            anchor.1 + vertical_offset,
+            -configuration.default_aim_x_units,
+        ),
     }
 }
 
@@ -58,7 +66,7 @@ pub(crate) fn arena_effect_kind(kind: SkillEffectKind) -> ArenaEffectKind {
     }
 }
 
-pub(crate) fn total_slow_bps(statuses: &[StatusInstance]) -> u16 {
+pub(crate) fn total_slow_bps(statuses: &[StatusInstance], caps: &MovementModifierCaps) -> u16 {
     statuses
         .iter()
         .filter(|status| status.kind == StatusKind::Chill)
@@ -66,12 +74,12 @@ pub(crate) fn total_slow_bps(statuses: &[StatusInstance]) -> u16 {
             let slow = status
                 .magnitude
                 .saturating_mul(u16::from(status.stacks))
-                .min(8_000);
-            accumulator.saturating_add(slow).min(8_000)
+                .min(caps.chill_bps);
+            accumulator.saturating_add(slow).min(caps.chill_bps)
         })
 }
 
-fn total_haste_bps(statuses: &[StatusInstance]) -> u16 {
+fn total_haste_bps(statuses: &[StatusInstance], caps: &MovementModifierCaps) -> u16 {
     statuses
         .iter()
         .filter(|status| status.kind == StatusKind::Haste)
@@ -79,23 +87,38 @@ fn total_haste_bps(statuses: &[StatusInstance]) -> u16 {
             let haste = status
                 .magnitude
                 .saturating_mul(u16::from(status.stacks))
-                .min(6_000);
-            accumulator.saturating_add(haste).min(6_000)
+                .min(caps.haste_bps);
+            accumulator.saturating_add(haste).min(caps.haste_bps)
         })
 }
 
-pub(crate) fn total_move_modifier_bps(statuses: &[StatusInstance]) -> i16 {
-    let haste = i32::from(total_haste_bps(statuses));
-    let slow = i32::from(total_slow_bps(statuses));
-    i16::try_from((haste - slow).clamp(-8_000, 6_000)).unwrap_or(0)
+pub(crate) fn total_move_modifier_bps(
+    statuses: &[StatusInstance],
+    caps: &MovementModifierCaps,
+) -> i16 {
+    let haste = i32::from(total_haste_bps(statuses, caps));
+    let slow = i32::from(total_slow_bps(statuses, caps));
+    i16::try_from((haste - slow).clamp(
+        i32::from(caps.status_total_min_bps),
+        i32::from(caps.status_total_max_bps),
+    ))
+    .unwrap_or(0)
 }
 
-pub(crate) fn adjusted_move_speed(delta_ms: u16, move_modifier_bps: i16) -> u16 {
+pub(crate) fn adjusted_move_speed(
+    delta_ms: u16,
+    base_move_speed_units_per_second: u16,
+    move_modifier_bps: i16,
+    caps: &MovementModifierCaps,
+) -> u16 {
     let scale_bps = (10_000_i32 + i32::from(move_modifier_bps))
-        .clamp(2_000, 16_000)
+        .clamp(
+            i32::from(caps.effective_scale_min_bps),
+            i32::from(caps.effective_scale_max_bps),
+        )
         .cast_unsigned();
     let effective_speed =
-        u32::from(PLAYER_MOVE_SPEED_UNITS_PER_SECOND).saturating_mul(scale_bps) / 10_000;
+        u32::from(base_move_speed_units_per_second).saturating_mul(scale_bps) / 10_000;
     let distance = effective_speed.saturating_mul(u32::from(delta_ms)) / 1000;
     u16::try_from(distance).unwrap_or(u16::MAX)
 }
@@ -126,6 +149,7 @@ pub(crate) fn resolve_movement(
     start_y: i16,
     desired_x: i32,
     desired_y: i32,
+    player_radius_units: u16,
     arena_width_units: u16,
     arena_height_units: u16,
     width_tiles: u16,
@@ -139,12 +163,12 @@ pub(crate) fn resolve_movement(
     let min_y = -i32::from(arena_height_units / 2);
     let max_y = i32::from(arena_height_units / 2);
     let candidate_x = desired_x.clamp(
-        min_x + i32::from(PLAYER_RADIUS_UNITS),
-        max_x - i32::from(PLAYER_RADIUS_UNITS),
+        min_x + i32::from(player_radius_units),
+        max_x - i32::from(player_radius_units),
     );
     let candidate_y = desired_y.clamp(
-        min_y + i32::from(PLAYER_RADIUS_UNITS),
-        max_y - i32::from(PLAYER_RADIUS_UNITS),
+        min_y + i32::from(player_radius_units),
+        max_y - i32::from(player_radius_units),
     );
 
     let mut resolved_x = saturating_i16(candidate_x);
@@ -152,7 +176,7 @@ pub(crate) fn resolve_movement(
     if !circle_fits_map_footprint(
         resolved_x,
         resolved_y,
-        PLAYER_RADIUS_UNITS,
+        player_radius_units,
         arena_width_units,
         arena_height_units,
         width_tiles,
@@ -167,7 +191,7 @@ pub(crate) fn resolve_movement(
         .iter()
         .filter(|obstacle| obstacle_blocks_movement(obstacle))
         .any(|obstacle| {
-            circle_intersects_rect(resolved_x, resolved_y, PLAYER_RADIUS_UNITS, obstacle)
+            circle_intersects_rect(resolved_x, resolved_y, player_radius_units, obstacle)
         })
     {
         resolved_x = start_x;

@@ -21,6 +21,7 @@ use crate::{ProbeError, ProbeResult};
 pub struct ProbeConfig {
     pub origin: String,
     pub output_path: PathBuf,
+    pub content_root: Option<PathBuf>,
     pub max_games: Option<usize>,
     pub connect_timeout: Duration,
     pub stage_timeout: Duration,
@@ -460,6 +461,7 @@ impl ProbeClientState {
         match event {
             ServerControlEvent::SkillChosen {
                 player_id,
+                slot,
                 tree,
                 tier,
             } => {
@@ -476,6 +478,7 @@ impl ProbeClientState {
                     json!({
                         "client": self.label,
                         "player_id": player_id.get(),
+                        "slot": slot,
                         "tree": tree.as_str(),
                         "tier": tier,
                     }),
@@ -778,6 +781,16 @@ impl ProbeClientState {
         nearest_enemy: Option<&TargetState>,
         allied_focus: Option<&TargetState>,
     ) -> Option<PlannedAction> {
+        let (slot, skill) = self.ready_current_skill(me)?;
+
+        match skill.role {
+            SkillRole::Damage => self.damage_skill_action(me, nearest_enemy, slot, &skill),
+            SkillRole::Support => self.support_skill_action(me, allied_focus, slot, &skill),
+            SkillRole::Engage => self.engage_skill_action(me, nearest_enemy, slot, &skill),
+        }
+    }
+
+    fn ready_current_skill(&self, me: &ArenaPlayerSnapshot) -> Option<(u8, SkillProfile)> {
         if me.current_cast_slot.is_some() {
             return None;
         }
@@ -790,64 +803,68 @@ impl ProbeClientState {
         if me.slot_cooldown_remaining_ms[slot_index] > 0 || me.mana < skill.behavior.mana_cost() {
             return None;
         }
+        Some((slot, skill))
+    }
 
-        match skill.role {
-            SkillRole::Damage => {
-                let enemy = self.preferred_enemy_target(nearest_enemy, &skill)?;
-                let distance = i32::from(distance_between(me.x, me.y, enemy.x, enemy.y));
-                if Self::attack_window_for_skill(&skill).contains(distance) {
-                    Some(PlannedAction {
-                        buttons: game_net::BUTTON_CAST,
-                        ability_or_context: u16::from(slot),
-                        aim_target: AimTarget::Enemy,
-                        aim_override: Some((enemy.x, enemy.y)),
-                    })
-                } else {
-                    None
-                }
+    fn damage_skill_action(
+        &self,
+        me: &ArenaPlayerSnapshot,
+        nearest_enemy: Option<&TargetState>,
+        slot: u8,
+        skill: &SkillProfile,
+    ) -> Option<PlannedAction> {
+        let enemy = self.preferred_enemy_target(nearest_enemy, skill)?;
+        let distance = i32::from(distance_between(me.x, me.y, enemy.x, enemy.y));
+        Self::attack_window_for_skill(skill)
+            .contains(distance)
+            .then(|| Self::skill_cast_action(slot, AimTarget::Enemy, (enemy.x, enemy.y)))
+    }
+
+    fn support_skill_action(
+        &self,
+        me: &ArenaPlayerSnapshot,
+        allied_focus: Option<&TargetState>,
+        slot: u8,
+        skill: &SkillProfile,
+    ) -> Option<PlannedAction> {
+        if self.current_skill_exercised {
+            return None;
+        }
+        let ally = allied_focus?;
+        if let Some(scope) = Self::skill_dispel_scope(skill) {
+            if self.dispellable_status_count_for_target(ally.player_id, scope) == 0 {
+                return None;
             }
-            SkillRole::Support => {
-                if self.current_skill_exercised {
-                    return None;
-                }
-                let ally = allied_focus?;
-                if let Some(scope) = Self::skill_dispel_scope(&skill) {
-                    if self.dispellable_status_count_for_target(ally.player_id, scope) == 0 {
-                        return None;
-                    }
-                }
-                let distance = i32::from(distance_between(me.x, me.y, ally.x, ally.y));
-                if Self::attack_window_for_skill(&skill).contains(distance) {
-                    Some(PlannedAction {
-                        buttons: game_net::BUTTON_CAST,
-                        ability_or_context: u16::from(slot),
-                        aim_target: AimTarget::Ally,
-                        aim_override: Some((ally.x, ally.y)),
-                    })
-                } else {
-                    None
-                }
-            }
-            SkillRole::Engage => {
-                if self.current_skill_exercised {
-                    return None;
-                }
-                let enemy = nearest_enemy?;
-                let distance = i32::from(distance_between(me.x, me.y, enemy.x, enemy.y));
-                let primary_window = self.primary_attack_window();
-                if Self::attack_window_for_skill(&skill).contains(distance)
-                    && distance > primary_window.max
-                {
-                    Some(PlannedAction {
-                        buttons: game_net::BUTTON_CAST,
-                        ability_or_context: u16::from(slot),
-                        aim_target: AimTarget::Enemy,
-                        aim_override: Some((enemy.x, enemy.y)),
-                    })
-                } else {
-                    None
-                }
-            }
+        }
+        let distance = i32::from(distance_between(me.x, me.y, ally.x, ally.y));
+        Self::attack_window_for_skill(skill)
+            .contains(distance)
+            .then(|| Self::skill_cast_action(slot, AimTarget::Ally, (ally.x, ally.y)))
+    }
+
+    fn engage_skill_action(
+        &self,
+        me: &ArenaPlayerSnapshot,
+        nearest_enemy: Option<&TargetState>,
+        slot: u8,
+        skill: &SkillProfile,
+    ) -> Option<PlannedAction> {
+        if self.current_skill_exercised {
+            return None;
+        }
+        let enemy = nearest_enemy?;
+        let distance = i32::from(distance_between(me.x, me.y, enemy.x, enemy.y));
+        let primary_window = self.primary_attack_window();
+        (Self::attack_window_for_skill(skill).contains(distance) && distance > primary_window.max)
+            .then(|| Self::skill_cast_action(slot, AimTarget::Enemy, (enemy.x, enemy.y)))
+    }
+
+    fn skill_cast_action(slot: u8, aim_target: AimTarget, aim_override: (i16, i16)) -> PlannedAction {
+        PlannedAction {
+            buttons: game_net::BUTTON_CAST,
+            ability_or_context: u16::from(slot),
+            aim_target,
+            aim_override: Some(aim_override),
         }
     }
 
@@ -1488,7 +1505,8 @@ fn is_transient_probe_error(message: &str) -> bool {
 
 pub async fn run_probe(config: ProbeConfig) -> ProbeResult<ProbeOutcome> {
     let mut logger = ProbeLogger::new(&config.output_path, &config.origin)?;
-    let content = GameContent::load_from_root(repo_content_root())
+    let content_root = config.content_root.clone().unwrap_or_else(repo_content_root);
+    let content = GameContent::load_from_root(&content_root)
         .map_err(|error| ProbeError::new(format!("probe content load failed: {error}")))?;
 
     let labels = ["probe-a1", "probe-a2", "probe-b1", "probe-b2"];

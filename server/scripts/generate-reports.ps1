@@ -1594,6 +1594,7 @@ function Invoke-CoverageReport {
     }
 
     $usedNextest = Test-ToolAvailable -CommandName "cargo-nextest"
+    $executionMode = "cargo llvm-cov test"
     if (-not $usedNextest) {
         $notes.Add("cargo-nextest is not installed; coverage fell back to cargo test.")
     }
@@ -1609,13 +1610,42 @@ function Invoke-CoverageReport {
         New-Item -ItemType Directory -Force -Path $coverageRoot | Out-Null
 
         if ($usedNextest) {
-            Invoke-CheckedCommand -Description "cargo llvm-cov nextest" -Command {
-                rustup run stable cargo llvm-cov nextest --workspace --all-features --no-report | Out-Host
+            try {
+                Invoke-CheckedCommand -Description "cargo llvm-cov nextest" -Command {
+                    $env:RARENA_SKIP_LIVE_PROBE_TESTS = "1"
+                    try {
+                        rustup run stable cargo llvm-cov nextest --workspace --all-features --no-report | Out-Host
+                    }
+                    finally {
+                        Remove-Item Env:RARENA_SKIP_LIVE_PROBE_TESTS -ErrorAction SilentlyContinue
+                    }
+                }
+                $executionMode = "cargo llvm-cov nextest"
+            }
+            catch {
+                $notes.Add("cargo llvm-cov nextest failed on this host; coverage fell back to cargo llvm-cov test.")
+                $notes.Add("nextest failure detail: $($_.Exception.Message)")
+                $usedNextest = $false
+                Invoke-CheckedCommand -Description "cargo llvm-cov test" -Command {
+                    $env:RARENA_SKIP_LIVE_PROBE_TESTS = "1"
+                    try {
+                        rustup run stable cargo llvm-cov --workspace --all-features --no-report | Out-Host
+                    }
+                    finally {
+                        Remove-Item Env:RARENA_SKIP_LIVE_PROBE_TESTS -ErrorAction SilentlyContinue
+                    }
+                }
             }
         }
         else {
             Invoke-CheckedCommand -Description "cargo llvm-cov test" -Command {
-                rustup run stable cargo llvm-cov --workspace --all-features --no-report | Out-Host
+                $env:RARENA_SKIP_LIVE_PROBE_TESTS = "1"
+                try {
+                    rustup run stable cargo llvm-cov --workspace --all-features --no-report | Out-Host
+                }
+                finally {
+                    Remove-Item Env:RARENA_SKIP_LIVE_PROBE_TESTS -ErrorAction SilentlyContinue
+                }
             }
         }
 
@@ -1740,7 +1770,7 @@ function Invoke-CoverageReport {
   <div class="metric"><span class="muted">Runtime function coverage</span><strong>$(Format-Percent -Value $runtimeFunctionPercent)</strong></div>
   <div class="metric"><span class="muted">Runtime region coverage</span><strong>$(Format-Percent -Value $runtimeRegionPercent)</strong></div>
   <div class="metric"><span class="muted">Scored runtime files</span><strong>$($runtimeFiles.Count)</strong></div>
-  <div class="metric"><span class="muted">Execution mode</span><strong>$(if ($usedNextest) { "cargo llvm-cov nextest" } else { "cargo llvm-cov test" })</strong></div>
+  <div class="metric"><span class="muted">Execution mode</span><strong>$(Escape-Html $executionMode)</strong></div>
 </div>
 <div class="panel">
   <p class="muted">The headline score is based on backend runtime source files. The table below still includes tooling and test files emitted by the coverage export.</p>

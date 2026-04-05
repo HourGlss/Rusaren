@@ -7,9 +7,6 @@ use std::collections::BTreeMap;
 
 use game_domain::{MatchId, PlayerId, RoundNumber};
 
-pub const SKILL_PICK_SECONDS: u8 = 25;
-pub const PRE_COMBAT_SECONDS: u8 = 5;
-
 fn known_round(value: u8) -> RoundNumber {
     match RoundNumber::new(value) {
         Ok(round) => round,

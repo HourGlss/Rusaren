@@ -2,23 +2,14 @@ use std::collections::{BTreeSet, VecDeque};
 
 use super::{
     ArenaMapDefinition, ArenaMapFeatureKind, ArenaMapObstacle, ArenaMapObstacleKind, ContentError,
+    MapGenerationConfiguration, MapGenerationStyle,
 };
 
-const MAX_GENERATION_ATTEMPTS: usize = 256;
 const CARDINAL_DIRECTIONS: [(i32, i32); 4] = [(1, 0), (0, 1), (-1, 0), (0, -1)];
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct GenerationStyle {
-    shrub_clusters: usize,
-    shrub_radius_tiles: i32,
-    shrub_soft_radius_tiles: i32,
-    shrub_fill_percent: u8,
-    wall_segments: usize,
-    isolated_pillars: usize,
-}
 
 pub fn generate_template_match_map(
     template: &ArenaMapDefinition,
+    generation: &MapGenerationConfiguration,
     map_id: impl Into<String>,
     seed: u64,
 ) -> Result<ArenaMapDefinition, ContentError> {
@@ -31,7 +22,7 @@ pub fn generate_template_match_map(
         });
     }
 
-    let protected_tiles = protected_tiles(template)?;
+    let protected_tiles = protected_tiles(template, generation.protected_tile_buffer_radius_tiles)?;
     let candidate_orbits = collect_candidate_orbits(template, &protected_tiles);
     if candidate_orbits.is_empty() {
         return Err(ContentError::Validation {
@@ -41,12 +32,18 @@ pub fn generate_template_match_map(
     }
 
     let mut rng = MapRng::new(seed);
-    let style = pick_generation_style(&mut rng);
-    for _attempt in 0..MAX_GENERATION_ATTEMPTS {
+    let style = pick_generation_style(generation, &mut rng);
+    for _attempt in 0..generation.max_generation_attempts {
         let mut orbit_order = candidate_orbits.clone();
         shuffle(&mut orbit_order, &mut rng);
-        let layout =
-            build_obstacle_layout(template, &orbit_order, &protected_tiles, style, &mut rng);
+        let layout = build_obstacle_layout(
+            template,
+            generation,
+            &orbit_order,
+            &protected_tiles,
+            &style,
+            &mut rng,
+        );
         if all_spawn_anchors_reach_objective(template, &layout) {
             return Ok(ArenaMapDefinition {
                 map_id: map_id.clone(),
@@ -76,14 +73,13 @@ pub fn generate_template_match_map(
 
 pub fn render_ascii_map(map: &ArenaMapDefinition) -> Result<String, ContentError> {
     let width = usize::from(map.width_tiles);
-    let height = usize::from(map.height_tiles);
-    let mut glyphs = vec![vec![' '; width]; height];
+    let mut glyphs = vec![vec![' '; width]; usize::from(map.height_tiles)];
 
-    for row in 0..height {
-        for column in 0..width {
-            let index = tile_index(width, column, row);
+    for (row_index, row) in glyphs.iter_mut().enumerate() {
+        for (column_index, glyph) in row.iter_mut().enumerate() {
+            let index = tile_index(width, column_index, row_index);
             if mask_has_tile(&map.footprint_mask, index) {
-                glyphs[row][column] = '.';
+                *glyph = '.';
             }
         }
     }
@@ -134,56 +130,20 @@ pub fn render_ascii_map(map: &ArenaMapDefinition) -> Result<String, ContentError
         .join("\n"))
 }
 
-fn pick_generation_style(rng: &mut MapRng) -> GenerationStyle {
-    match rng.next_u32() % 5 {
-        0 => GenerationStyle {
-            shrub_clusters: 1,
-            shrub_radius_tiles: 1,
-            shrub_soft_radius_tiles: 2,
-            shrub_fill_percent: 16,
-            wall_segments: 1,
-            isolated_pillars: 2,
-        },
-        1 => GenerationStyle {
-            shrub_clusters: 2,
-            shrub_radius_tiles: 2,
-            shrub_soft_radius_tiles: 3,
-            shrub_fill_percent: 24,
-            wall_segments: 2,
-            isolated_pillars: 2,
-        },
-        2 => GenerationStyle {
-            shrub_clusters: 3,
-            shrub_radius_tiles: 2,
-            shrub_soft_radius_tiles: 4,
-            shrub_fill_percent: 38,
-            wall_segments: 2,
-            isolated_pillars: 3,
-        },
-        3 => GenerationStyle {
-            shrub_clusters: 3,
-            shrub_radius_tiles: 3,
-            shrub_soft_radius_tiles: 5,
-            shrub_fill_percent: 50,
-            wall_segments: 3,
-            isolated_pillars: 3,
-        },
-        _ => GenerationStyle {
-            shrub_clusters: 4,
-            shrub_radius_tiles: 3,
-            shrub_soft_radius_tiles: 5,
-            shrub_fill_percent: 62,
-            wall_segments: 3,
-            isolated_pillars: 4,
-        },
-    }
+fn pick_generation_style(
+    generation: &MapGenerationConfiguration,
+    rng: &mut MapRng,
+) -> MapGenerationStyle {
+    let style_index = usize::try_from(rng.next_u32()).unwrap_or(0) % generation.styles.len();
+    generation.styles[style_index]
 }
 
 fn build_obstacle_layout(
     template: &ArenaMapDefinition,
+    generation: &MapGenerationConfiguration,
     orbit_order: &[Vec<usize>],
     protected_tiles: &[bool],
-    style: GenerationStyle,
+    style: &MapGenerationStyle,
     rng: &mut MapRng,
 ) -> Vec<Option<ArenaMapObstacleKind>> {
     let tile_count = tile_count(template);
@@ -202,34 +162,42 @@ fn build_obstacle_layout(
             break;
         }
         let representative = index_to_coord(template, orbit[0]);
-        if wall_representatives
-            .iter()
-            .any(|existing| manhattan_distance(representative, *existing) <= 4)
-            || rng.roll_percent(35)
+        if wall_representatives.iter().any(|existing| {
+            manhattan_distance(representative, *existing)
+                <= generation.wall_min_spacing_manhattan_tiles
+        }) || rng.roll_percent(generation.wall_candidate_skip_percent)
         {
             continue;
         }
 
         let mut directions = CARDINAL_DIRECTIONS.to_vec();
         shuffle(&mut directions, rng);
-        let preferred_length = if rng.roll_percent(42) { 3 } else { 2 };
+        let short_wall_length = generation.wall_segment_lengths_tiles[0];
+        let long_wall_length = generation.wall_segment_lengths_tiles[1];
+        let preferred_length = if rng.roll_percent(generation.long_wall_percent) {
+            long_wall_length
+        } else {
+            short_wall_length
+        };
         let mut placed = false;
         for direction in directions {
             if try_place_wall_segment(
                 template,
+                generation,
                 &mut layout,
                 protected_tiles,
                 representative,
                 direction,
                 preferred_length,
-            ) || (preferred_length == 3
+            ) || (preferred_length == long_wall_length
                 && try_place_wall_segment(
                     template,
+                    generation,
                     &mut layout,
                     protected_tiles,
                     representative,
                     direction,
-                    2,
+                    short_wall_length,
                 ))
             {
                 wall_representatives.push(representative);
@@ -250,11 +218,12 @@ fn build_obstacle_layout(
             break;
         }
         let representative = index_to_coord(template, orbit[0]);
-        if !orbit_is_pillar_safe(template, orbit)
-            || pillar_representatives
-                .iter()
-                .any(|existing| manhattan_distance(representative, *existing) <= 3)
-            || rng.roll_percent(55)
+        if !orbit_is_pillar_safe(template, generation, orbit)
+            || pillar_representatives.iter().any(|existing| {
+                manhattan_distance(representative, *existing)
+                    <= generation.pillar_min_spacing_manhattan_tiles
+            })
+            || rng.roll_percent(generation.pillar_candidate_skip_percent)
         {
             continue;
         }
@@ -300,6 +269,7 @@ fn build_obstacle_layout(
 
 fn try_place_wall_segment(
     template: &ArenaMapDefinition,
+    generation: &MapGenerationConfiguration,
     layout: &mut [Option<ArenaMapObstacleKind>],
     protected_tiles: &[bool],
     start: (i32, i32),
@@ -320,7 +290,7 @@ fn try_place_wall_segment(
             usize::try_from(column).unwrap_or(0),
             usize::try_from(row).unwrap_or(0),
         );
-        if !orbit_is_pillar_safe(template, &orbit) {
+        if !orbit_is_pillar_safe(template, generation, &orbit) {
             return false;
         }
         for orbit_index in orbit {
@@ -376,10 +346,10 @@ fn collect_candidate_orbits(
     orbits
 }
 
-fn protected_tiles(template: &ArenaMapDefinition) -> Result<Vec<bool>, ContentError> {
+fn protected_tiles(template: &ArenaMapDefinition, radius: i32) -> Result<Vec<bool>, ContentError> {
     let mut protected = vec![false; tile_count(template)];
     for index in objective_indices(template) {
-        mark_with_buffer(template, &mut protected, index, 1);
+        mark_with_buffer(template, &mut protected, index, radius);
     }
     for &(center_x, center_y) in template
         .team_a_anchors
@@ -387,11 +357,11 @@ fn protected_tiles(template: &ArenaMapDefinition) -> Result<Vec<bool>, ContentEr
         .chain(template.team_b_anchors.iter())
     {
         let index = tile_index_for_center(template, center_x, center_y)?;
-        mark_with_buffer(template, &mut protected, index, 1);
+        mark_with_buffer(template, &mut protected, index, radius);
     }
     for feature in &template.features {
         let index = tile_index_for_center(template, feature.center_x, feature.center_y)?;
-        mark_with_buffer(template, &mut protected, index, 1);
+        mark_with_buffer(template, &mut protected, index, radius);
     }
     Ok(protected)
 }
@@ -460,14 +430,18 @@ fn mirror_coordinate_across_diagonal(
     )
 }
 
-fn orbit_is_pillar_safe(template: &ArenaMapDefinition, orbit: &[usize]) -> bool {
+fn orbit_is_pillar_safe(
+    template: &ArenaMapDefinition,
+    generation: &MapGenerationConfiguration,
+    orbit: &[usize],
+) -> bool {
     orbit.iter().all(|&index| {
         let (column, row) = index_to_coord(template, index);
         let edge_distance = i32::min(
             i32::min(column, i32::from(template.width_tiles) - 1 - column),
             i32::min(row, i32::from(template.height_tiles) - 1 - row),
         );
-        edge_distance >= 1
+        edge_distance >= generation.obstacle_edge_padding_tiles
     })
 }
 

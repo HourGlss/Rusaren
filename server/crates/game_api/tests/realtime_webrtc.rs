@@ -12,7 +12,6 @@ use game_api::{
 };
 use game_domain::{PlayerName, ReadyState, SkillTree, TeamSide};
 use game_net::{ClientControlCommand, ServerControlEvent, ValidatedInputFrame, BUTTON_CAST};
-use game_sim::COMBAT_FRAME_MS;
 use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -30,6 +29,8 @@ use webrtc::peer_connection::RTCPeerConnection;
 
 type SignalStream =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+const COMBAT_FRAME_MS: u16 = 100;
 
 #[path = "realtime_webrtc/client.rs"]
 mod client;

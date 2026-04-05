@@ -14,7 +14,6 @@ mod tests;
 use std::env;
 
 use game_api::{spawn_dev_server_with_options, DevServerOptions};
-use game_sim::COMBAT_FRAME_MS;
 use tracing::{error, info};
 
 use crate::config::ServerConfig;
@@ -102,7 +101,7 @@ async fn main() {
         listener,
         DevServerOptions {
             tick_interval: config.tick_interval,
-            simulation_step_ms: COMBAT_FRAME_MS,
+            simulation_step_ms: config.simulation_step_ms,
             record_store_path: config.record_store_path,
             combat_log_path: config.combat_log_path,
             content_root: config.content_root,

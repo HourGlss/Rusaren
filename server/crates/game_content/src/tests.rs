@@ -5,6 +5,8 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+const TEST_TILE_UNITS: u16 = 50;
+
 #[test]
 fn bundled_content_loads_all_classes_and_the_ascii_map() {
     let content = GameContent::bundled().expect("bundled content should load");
@@ -1061,7 +1063,8 @@ fn parse_skill_yaml_accepts_aura_cast_start_and_end_payloads() {
 #[test]
 fn parse_ascii_map_accepts_ragged_rows_and_rejects_bad_glyphs_and_missing_anchors() {
     let ragged = " A.d\nA..B\n  D B\n";
-    let parsed = parse_ascii_map("maps/ragged.txt", ragged).expect("ragged rows should parse");
+    let parsed = parse_ascii_map("maps/ragged.txt", ragged, TEST_TILE_UNITS)
+        .expect("ragged rows should parse");
     assert_eq!(parsed.width_tiles, 5);
     assert_eq!(parsed.height_tiles, 3);
     assert_eq!(parsed.team_a_anchors.len(), 2);
@@ -1082,19 +1085,19 @@ fn parse_ascii_map_accepts_ragged_rows_and_rejects_bad_glyphs_and_missing_anchor
 
     let invalid_glyph = "A..\n.@.\n..B\n";
     assert!(matches!(
-        parse_ascii_map("maps/invalid.txt", invalid_glyph),
+        parse_ascii_map("maps/invalid.txt", invalid_glyph, TEST_TILE_UNITS),
         Err(ContentError::Validation { .. })
     ));
 
     let missing_anchor = "...\n.#.\n...\n";
     assert!(matches!(
-        parse_ascii_map("maps/missing.txt", missing_anchor),
+        parse_ascii_map("maps/missing.txt", missing_anchor, TEST_TILE_UNITS),
         Err(ContentError::Validation { .. })
     ));
 
     let too_many_anchors = "AAAB\nA..B\n...B\n";
     assert!(matches!(
-        parse_ascii_map("maps/too-many.txt", too_many_anchors),
+        parse_ascii_map("maps/too-many.txt", too_many_anchors, TEST_TILE_UNITS),
         Err(ContentError::Validation { .. })
     ));
 }
@@ -1281,7 +1284,7 @@ fn load_skill_catalog_requires_at_least_one_class_file() {
 #[test]
 fn load_from_root_fails_cleanly_for_invalid_yaml_and_map_content() {
     let root = temp_content_root("invalid-content");
-    let (skills_dir, maps_dir, mechanics_dir) = create_content_root_dirs(&root);
+    let (skills_dir, maps_dir, mechanics_dir, config_dir) = create_content_root_dirs(&root);
 
     for (source, yaml) in workspace_skill_pairs() {
         let path = skills_dir.join(
@@ -1298,6 +1301,7 @@ fn load_from_root_fails_cleanly_for_invalid_yaml_and_map_content() {
     }
     fs::write(maps_dir.join("prototype_arena.txt"), "A..\n..B\n").expect("map file");
     write_workspace_mechanics_registry(&mechanics_dir);
+    write_workspace_configuration(&config_dir);
 
     let error = GameContent::load_from_root(&root).expect_err("invalid content should fail");
     assert!(matches!(error, ContentError::Validation { .. }));
@@ -1306,11 +1310,13 @@ fn load_from_root_fails_cleanly_for_invalid_yaml_and_map_content() {
 #[test]
 fn load_from_root_accepts_custom_class_files_without_rust_registry_changes() {
     let root = temp_content_root("custom-class");
-    let (skills_dir, maps_dir, mechanics_dir) = create_content_root_dirs(&root);
+    let (skills_dir, maps_dir, mechanics_dir, config_dir) = create_content_root_dirs(&root);
     write_workspace_skill_files(&skills_dir);
     fs::write(skills_dir.join("druid.yaml"), druid_yaml()).expect("custom class file");
     write_workspace_map_file(&maps_dir);
     write_workspace_mechanics_registry(&mechanics_dir);
+    write_workspace_configuration(&config_dir);
+    append_class_profile_to_workspace_configuration(&config_dir, "Druid", 102, 115, 290);
 
     let content = GameContent::load_from_root(&root).expect("custom class content should load");
     let druid = SkillTree::new("Druid").expect("custom tree");
@@ -1322,15 +1328,17 @@ fn load_from_root_accepts_custom_class_files_without_rust_registry_changes() {
     assert!(content.skills().melee_for(&druid).is_some());
 }
 
-fn create_content_root_dirs(root: &Path) -> (PathBuf, PathBuf, PathBuf) {
+fn create_content_root_dirs(root: &Path) -> (PathBuf, PathBuf, PathBuf, PathBuf) {
     let skills_dir = root.join("skills");
     let maps_dir = root.join("maps");
     let mechanics_dir = root.join("mechanics");
+    let config_dir = root.join("config");
     fs::create_dir_all(&skills_dir).expect("skills dir");
     fs::create_dir_all(&maps_dir).expect("maps dir");
     fs::create_dir_all(&mechanics_dir).expect("mechanics dir");
+    fs::create_dir_all(&config_dir).expect("config dir");
     write_workspace_map_registry(&maps_dir);
-    (skills_dir, maps_dir, mechanics_dir)
+    (skills_dir, maps_dir, mechanics_dir, config_dir)
 }
 
 fn write_workspace_skill_files(skills_dir: &Path) {
@@ -1345,16 +1353,21 @@ fn write_workspace_skill_files(skills_dir: &Path) {
 }
 
 fn write_workspace_map_file(maps_dir: &Path) {
-    fs::write(
-        maps_dir.join("prototype_arena.txt"),
-        fs::read_to_string(
-            workspace_content_root()
-                .join("maps")
-                .join("prototype_arena.txt"),
-        )
-        .expect("workspace map"),
-    )
-    .expect("map file");
+    for entry in fs::read_dir(workspace_content_root().join("maps")).expect("workspace maps dir") {
+        let entry = entry.expect("workspace map entry");
+        let path = entry.path();
+        if path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("txt"))
+        {
+            fs::write(
+                maps_dir.join(path.file_name().expect("map file name")),
+                fs::read_to_string(&path).expect("workspace map"),
+            )
+            .expect("map file");
+        }
+    }
 }
 
 fn write_workspace_map_registry(maps_dir: &Path) {
@@ -1377,6 +1390,34 @@ fn write_workspace_mechanics_registry(mechanics_dir: &Path) {
         .expect("workspace mechanics registry"),
     )
     .expect("mechanics registry");
+}
+
+fn write_workspace_configuration(config_dir: &Path) {
+    fs::write(
+        config_dir.join("configurations.yaml"),
+        fs::read_to_string(
+            workspace_content_root()
+                .join("config")
+                .join("configurations.yaml"),
+        )
+        .expect("workspace configuration"),
+    )
+    .expect("configuration");
+}
+
+fn append_class_profile_to_workspace_configuration(
+    config_dir: &Path,
+    tree_name: &str,
+    hit_points: u16,
+    max_mana: u16,
+    move_speed_units_per_second: u16,
+) {
+    let path = config_dir.join("configurations.yaml");
+    let mut configuration = fs::read_to_string(&path).expect("configuration");
+    configuration.push_str(&format!(
+        "\n  {tree_name}:\n    hit_points: {hit_points}\n    max_mana: {max_mana}\n    move_speed_units_per_second: {move_speed_units_per_second}\n"
+    ));
+    fs::write(path, configuration).expect("configuration");
 }
 
 fn druid_yaml() -> &'static str {

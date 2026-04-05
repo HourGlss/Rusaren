@@ -1,7 +1,6 @@
 use std::time::Duration;
 
 use game_api::WebRtcRuntimeConfig;
-use game_sim::COMBAT_FRAME_MS;
 
 use crate::config::{
     companion_combat_log_path, parse_admin_auth_from_env, parse_csv_urls, parse_tick_interval,
@@ -23,24 +22,21 @@ fn demo_script_produces_the_expected_vertical_slice_markers() {
 
 #[test]
 fn parse_tick_interval_uses_default_for_missing_zero_or_invalid_values() {
+    assert_eq!(parse_tick_interval(None, 100), Duration::from_millis(100));
     assert_eq!(
-        parse_tick_interval(None),
-        Duration::from_millis(u64::from(COMBAT_FRAME_MS))
+        parse_tick_interval(Some(String::from("0")), 100),
+        Duration::from_millis(100)
     );
     assert_eq!(
-        parse_tick_interval(Some(String::from("0"))),
-        Duration::from_millis(u64::from(COMBAT_FRAME_MS))
-    );
-    assert_eq!(
-        parse_tick_interval(Some(String::from("abc"))),
-        Duration::from_millis(u64::from(COMBAT_FRAME_MS))
+        parse_tick_interval(Some(String::from("abc")), 100),
+        Duration::from_millis(100)
     );
 }
 
 #[test]
 fn parse_tick_interval_accepts_positive_milliseconds() {
     assert_eq!(
-        parse_tick_interval(Some(String::from("25"))),
+        parse_tick_interval(Some(String::from("25")), 100),
         Duration::from_millis(25)
     );
 }

@@ -11,7 +11,13 @@ fn generated_maps_preserve_the_template_contract_and_roundtrip_to_ascii() {
     let template = content
         .map_by_id("template_arena")
         .expect("template arena should exist");
-    let generated = generate_template_match_map(template, "sample_001", 0xC0FFEE_u64).expect("map");
+    let generated = generate_template_match_map(
+        template,
+        &content.configuration().maps.generation,
+        "sample_001",
+        0xC0FFEE_u64,
+    )
+    .expect("map");
 
     assert_eq!(generated.width_tiles, template.width_tiles);
     assert_eq!(generated.height_tiles, template.height_tiles);
@@ -28,8 +34,8 @@ fn generated_maps_preserve_the_template_contract_and_roundtrip_to_ascii() {
     );
 
     let rendered = render_ascii_map(&generated).expect("generated map should render");
-    let mut reparsed =
-        parse_ascii_map("sample_001.txt", &rendered).expect("rendered map should parse");
+    let mut reparsed = parse_ascii_map("sample_001.txt", &rendered, generated.tile_units)
+        .expect("rendered map should parse");
     reparsed.objective_target_ms = generated.objective_target_ms;
 
     assert_eq!(reparsed.width_tiles, generated.width_tiles);
@@ -53,8 +59,13 @@ fn generated_maps_keep_spawn_paths_open_and_preserve_diagonal_symmetry() {
         .expect("template arena should exist");
 
     for seed in 1..=24_u64 {
-        let generated =
-            generate_template_match_map(template, format!("seed_{seed:03}"), seed).expect("map");
+        let generated = generate_template_match_map(
+            template,
+            &content.configuration().maps.generation,
+            format!("seed_{seed:03}"),
+            seed,
+        )
+        .expect("map");
         assert!(
             all_anchors_reach_objective(&generated),
             "all anchors should have a route to the center on seed {seed}"
@@ -74,8 +85,13 @@ fn generated_maps_include_short_contiguous_pillar_walls() {
         .expect("template arena should exist");
 
     for seed in 1..=24_u64 {
-        let generated = generate_template_match_map(template, format!("wall_seed_{seed:03}"), seed)
-            .expect("map");
+        let generated = generate_template_match_map(
+            template,
+            &content.configuration().maps.generation,
+            format!("wall_seed_{seed:03}"),
+            seed,
+        )
+        .expect("map");
         assert!(
             has_contiguous_pillar_wall(&generated),
             "generated map should include at least one 2-3 tile contiguous pillar wall on seed {seed}"

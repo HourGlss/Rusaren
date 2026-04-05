@@ -5,7 +5,7 @@ use game_content::GameContent;
 use game_domain::{
     PlayerId, PlayerName, PlayerRecord, SkillChoice, SkillTree, TeamAssignment, TeamSide,
 };
-use game_sim::{MovementIntent, SimPlayerSeed, SimulationWorld, COMBAT_FRAME_MS};
+use game_sim::{MovementIntent, SimPlayerSeed, SimulationWorld};
 
 fn player_id(raw: u32) -> PlayerId {
     must(PlayerId::new(raw), "bench player ids should be valid")
@@ -36,9 +36,14 @@ fn seed(
     primary_tree: SkillTree,
     slot_one_choice: SkillChoice,
 ) -> SimPlayerSeed {
+    let profile = content
+        .class_profile(&primary_tree)
+        .unwrap_or_else(|| panic!("bench class profile should exist for {primary_tree}"));
     SimPlayerSeed {
         assignment: assignment(raw_id, raw_name, team),
-        hit_points: 100,
+        hit_points: profile.hit_points,
+        max_mana: profile.max_mana,
+        move_speed_units_per_second: profile.move_speed_units_per_second,
         melee: content
             .skills()
             .melee_for(&primary_tree)
@@ -113,6 +118,7 @@ fn build_world(content: &GameContent) -> SimulationWorld {
             ),
         ],
         content.map(),
+        content.configuration().simulation,
     )
     .unwrap_or_else(|error| panic!("bench world should build: {error}"))
 }
@@ -127,6 +133,7 @@ fn must<T, E: std::fmt::Display>(result: Result<T, E>, context: &str) -> T {
 fn bench_simulation_tick(c: &mut Criterion) {
     let content = must(GameContent::bundled(), "bundled content should load");
     let base_world = build_world(&content);
+    let combat_frame_ms = content.configuration().simulation.combat_frame_ms;
     let move_right = must(MovementIntent::new(1, 0), "movement should be valid");
     let move_left = must(MovementIntent::new(-1, 0), "movement should be valid");
 
@@ -144,7 +151,7 @@ fn bench_simulation_tick(c: &mut Criterion) {
                     must(world.update_aim(player, -120, 0), "aim update");
                     must(world.queue_cast(player, 1), "cast queue");
                 }
-                let events = world.tick(COMBAT_FRAME_MS);
+                let events = world.tick(combat_frame_ms);
                 black_box(events);
             },
             BatchSize::SmallInput,

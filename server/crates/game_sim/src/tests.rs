@@ -2,6 +2,12 @@ use super::*;
 use game_content::{ArenaMapObstacleKind, GameContent};
 use game_domain::{PlayerName, PlayerRecord, SkillChoice, SkillTree};
 
+const COMBAT_FRAME_MS: u16 = 100;
+const PLAYER_MOVE_SPEED_UNITS_PER_SECOND: u16 = 280;
+const PLAYER_RADIUS_UNITS: u16 = 28;
+const SPAWN_SPACING_UNITS: i16 = 120;
+const DEFAULT_AIM_X: i16 = 120;
+const DEFAULT_AIM_Y: i16 = 0;
 const TEST_ATTACKER_X: i16 = -620;
 const TEST_OPEN_LANE_Y: i16 = 0;
 const TEST_AIM_X: i16 = 120;
@@ -37,9 +43,14 @@ fn seed(
     primary_tree: SkillTree,
     choices: [Option<SkillChoice>; 5],
 ) -> SimPlayerSeed {
+    let profile = content
+        .class_profile(&primary_tree)
+        .expect("class profile should exist");
     SimPlayerSeed {
         assignment: assignment(raw_id, raw_name, team),
-        hit_points: 100,
+        hit_points: profile.hit_points,
+        max_mana: profile.max_mana,
+        move_speed_units_per_second: profile.move_speed_units_per_second,
         melee: content
             .skills()
             .melee_for(&primary_tree)
@@ -52,7 +63,46 @@ fn seed(
 }
 
 fn world(content: &GameContent, seeds: Vec<SimPlayerSeed>) -> SimulationWorld {
-    SimulationWorld::new(seeds, content.map()).expect("world should build")
+    SimulationWorld::new(seeds, content.map(), content.configuration().simulation)
+        .expect("world should build")
+}
+
+fn spawn_position(
+    team: TeamSide,
+    index: u16,
+    map: &game_content::ArenaMapDefinition,
+) -> (i16, i16, i16) {
+    super::spawn_position(team, index, map, &content().configuration().simulation)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn resolve_movement(
+    start_x: i16,
+    start_y: i16,
+    desired_x: i32,
+    desired_y: i32,
+    arena_width_units: u16,
+    arena_height_units: u16,
+    width_tiles: u16,
+    height_tiles: u16,
+    tile_units: u16,
+    footprint_mask: &[u8],
+    obstacles: &[ArenaObstacle],
+) -> (i16, i16) {
+    super::resolve_movement(
+        start_x,
+        start_y,
+        desired_x,
+        desired_y,
+        PLAYER_RADIUS_UNITS,
+        arena_width_units,
+        arena_height_units,
+        width_tiles,
+        height_tiles,
+        tile_units,
+        footprint_mask,
+        obstacles,
+    )
 }
 
 #[allow(clippy::needless_pass_by_value)]
@@ -64,9 +114,14 @@ fn seed_with_slot_one_skill(
     tree: SkillTree,
     skill: &SkillDefinition,
 ) -> SimPlayerSeed {
+    let profile = content
+        .class_profile(&tree)
+        .expect("class profile should exist");
     SimPlayerSeed {
         assignment: assignment(raw_id, raw_name, team),
-        hit_points: 100,
+        hit_points: profile.hit_points,
+        max_mana: profile.max_mana,
+        move_speed_units_per_second: profile.move_speed_units_per_second,
         melee: content
             .skills()
             .melee_for(&tree)
@@ -100,6 +155,30 @@ fn collect_ticks(world: &mut SimulationWorld, frames: usize) -> Vec<SimulationEv
         events.extend(world.tick(COMBAT_FRAME_MS));
     }
     events
+}
+
+fn status_expiration_frames(duration_ms: u16) -> usize {
+    usize::from(duration_ms.div_ceil(COMBAT_FRAME_MS)) + 1
+}
+
+fn class_hit_points(content: &GameContent, tree: SkillTree) -> u16 {
+    content
+        .class_profile(&tree)
+        .expect("class profile should exist")
+        .hit_points
+}
+
+fn dr_scaled_duration_ms(content: &GameContent, base_duration_ms: u16, stage_index: usize) -> u16 {
+    let scale_bps = u32::from(
+        content
+            .configuration()
+            .simulation
+            .crowd_control_diminishing_returns
+            .stages_bps[stage_index],
+    );
+    let scaled = u32::from(base_duration_ms).saturating_mul(scale_bps);
+    let rounded = scaled.div_ceil(10_000);
+    u16::try_from(rounded).unwrap_or(u16::MAX)
 }
 
 fn projectile_frame_budget(speed: u16, range: u16) -> usize {

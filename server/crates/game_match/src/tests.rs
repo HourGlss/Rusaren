@@ -5,6 +5,9 @@ use game_domain::{
 };
 
 const TEST_OBJECTIVE_TARGET_MS: u32 = 180_000;
+const TEST_SKILL_PICK_SECONDS: u8 = 25;
+const TEST_PRE_COMBAT_SECONDS: u8 = 5;
+const TEST_TOTAL_ROUNDS: u8 = 5;
 
 fn player_id(raw: u32) -> PlayerId {
     PlayerId::new(raw).expect("valid player id")
@@ -26,7 +29,13 @@ fn session() -> MatchSession {
             assignment(1, "Alice", TeamSide::TeamA),
             assignment(2, "Bob", TeamSide::TeamB),
         ],
-        MatchConfig::v1(TEST_OBJECTIVE_TARGET_MS),
+        MatchConfig::new(
+            TEST_TOTAL_ROUNDS,
+            TEST_SKILL_PICK_SECONDS,
+            TEST_PRE_COMBAT_SECONDS,
+            TEST_OBJECTIVE_TARGET_MS,
+        )
+        .expect("config"),
     )
     .expect("match session should build")
 }
@@ -37,10 +46,16 @@ fn skill(tree: SkillTree, tier: u8) -> SkillChoice {
 
 #[test]
 fn match_config_scoreboard_and_error_display_are_stable() {
-    let config = MatchConfig::v1(TEST_OBJECTIVE_TARGET_MS);
-    assert_eq!(config.total_rounds.get(), 5);
-    assert_eq!(config.skill_pick_seconds, SKILL_PICK_SECONDS);
-    assert_eq!(config.pre_combat_seconds, PRE_COMBAT_SECONDS);
+    let config = MatchConfig::new(
+        TEST_TOTAL_ROUNDS,
+        TEST_SKILL_PICK_SECONDS,
+        TEST_PRE_COMBAT_SECONDS,
+        TEST_OBJECTIVE_TARGET_MS,
+    )
+    .expect("config");
+    assert_eq!(config.total_rounds.get(), TEST_TOTAL_ROUNDS);
+    assert_eq!(config.skill_pick_seconds, TEST_SKILL_PICK_SECONDS);
+    assert_eq!(config.pre_combat_seconds, TEST_PRE_COMBAT_SECONDS);
     assert_eq!(config.objective_target_ms, TEST_OBJECTIVE_TARGET_MS);
 
     let mut score = ScoreBoard::new();
@@ -91,7 +106,13 @@ fn match_config_scoreboard_and_error_display_are_stable() {
 
 #[test]
 fn match_new_requires_players_on_both_teams_and_unique_ids() {
-    let config = MatchConfig::v1(TEST_OBJECTIVE_TARGET_MS);
+    let config = MatchConfig::new(
+        TEST_TOTAL_ROUNDS,
+        TEST_SKILL_PICK_SECONDS,
+        TEST_PRE_COMBAT_SECONDS,
+        TEST_OBJECTIVE_TARGET_MS,
+    )
+    .expect("config");
     let match_id = MatchId::new(1).expect("valid match id");
 
     assert!(matches!(
@@ -170,14 +191,14 @@ fn all_skill_choices_transition_the_match_into_pre_combat() {
                 choice: skill(SkillTree::Rogue, 1),
             },
             MatchEvent::PreCombatStarted {
-                seconds_remaining: PRE_COMBAT_SECONDS,
+                seconds_remaining: TEST_PRE_COMBAT_SECONDS,
             },
         ]
     );
     assert_eq!(
         session.phase(),
         &MatchPhase::PreCombat {
-            seconds_remaining: PRE_COMBAT_SECONDS,
+            seconds_remaining: TEST_PRE_COMBAT_SECONDS,
         }
     );
 }
@@ -216,7 +237,7 @@ fn pre_combat_countdown_transitions_into_combat() {
 fn skill_pick_timeout_requires_manual_resolution_until_policy_is_defined() {
     let mut session = session();
     assert_eq!(
-        session.advance_phase_by(SKILL_PICK_SECONDS),
+        session.advance_phase_by(TEST_SKILL_PICK_SECONDS),
         Ok(vec![MatchEvent::ManualResolutionRequired {
             reason: "skill-pick timeout reached without a timeout resolution policy",
         }])
@@ -247,7 +268,7 @@ fn mark_player_defeated_requires_combat_and_rejects_invalid_targets() {
         .submit_skill_pick(player_id(2), skill(SkillTree::Rogue, 1))
         .expect("second pick should work");
     session
-        .advance_phase_by(PRE_COMBAT_SECONDS)
+        .advance_phase_by(TEST_PRE_COMBAT_SECONDS)
         .expect("combat should start");
 
     assert_eq!(
@@ -266,7 +287,7 @@ fn defeating_the_last_player_on_a_team_awards_the_round_and_resets_the_next_roun
         .submit_skill_pick(player_id(2), skill(SkillTree::Rogue, 1))
         .expect("second pick should work");
     session
-        .advance_phase_by(PRE_COMBAT_SECONDS)
+        .advance_phase_by(TEST_PRE_COMBAT_SECONDS)
         .expect("combat should start");
 
     let events = session
@@ -288,7 +309,7 @@ fn defeating_the_last_player_on_a_team_awards_the_round_and_resets_the_next_roun
     assert_eq!(
         session.phase(),
         &MatchPhase::SkillPick {
-            seconds_remaining: SKILL_PICK_SECONDS,
+            seconds_remaining: TEST_SKILL_PICK_SECONDS,
         }
     );
     assert!(session.player(player_id(1)).expect("alice exists").alive);
@@ -306,7 +327,7 @@ fn chosen_skills_are_bound_to_round_slots_and_persist_across_rounds() {
         .submit_skill_pick(player_id(2), skill(SkillTree::Rogue, 1))
         .expect("bob round one pick");
     session
-        .advance_phase_by(PRE_COMBAT_SECONDS)
+        .advance_phase_by(TEST_PRE_COMBAT_SECONDS)
         .expect("combat should start");
     session
         .mark_player_defeated(player_id(2))
@@ -347,7 +368,7 @@ fn fifth_round_completes_the_match_instead_of_ending_early() {
             .submit_skill_pick(player_id(2), skill(SkillTree::Rogue, round))
             .expect("bob should progress each round");
         session
-            .advance_phase_by(PRE_COMBAT_SECONDS)
+            .advance_phase_by(TEST_PRE_COMBAT_SECONDS)
             .expect("combat should start");
         let events = session
             .mark_player_defeated(player_id(2))
@@ -403,7 +424,7 @@ fn defeat_rejects_double_kills_on_the_same_player() {
         .submit_skill_pick(player_id(2), skill(SkillTree::Rogue, 1))
         .expect("second pick should work");
     session
-        .advance_phase_by(PRE_COMBAT_SECONDS)
+        .advance_phase_by(TEST_PRE_COMBAT_SECONDS)
         .expect("combat should start");
 
     session

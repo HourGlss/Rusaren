@@ -14,12 +14,13 @@ use game_domain::{MatchOutcome, PlayerId, PlayerName, ReadyState, SkillTree, Tea
 use game_net::{
     ClientControlCommand, ServerControlEvent, ValidatedInputFrame, BUTTON_CAST, BUTTON_PRIMARY,
 };
-use game_sim::COMBAT_FRAME_MS;
 use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message as ClientMessage;
+
+const COMBAT_FRAME_MS: u16 = 100;
 
 type ClientStream =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;

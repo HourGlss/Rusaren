@@ -1,6 +1,8 @@
 use super::*;
 use proptest::prelude::*;
 
+const TEST_LAUNCH_COUNTDOWN_SECONDS: u8 = 5;
+
 fn player_id(raw: u32) -> PlayerId {
     PlayerId::new(raw).expect("valid player id")
 }
@@ -10,7 +12,10 @@ fn player_name(raw: &str) -> PlayerName {
 }
 
 fn lobby() -> Lobby {
-    Lobby::new(LobbyId::new(1).expect("valid lobby id"))
+    Lobby::new(
+        LobbyId::new(1).expect("valid lobby id"),
+        TEST_LAUNCH_COUNTDOWN_SECONDS,
+    )
 }
 
 #[test]
@@ -163,7 +168,7 @@ fn set_ready_starts_the_countdown_once_both_teams_are_ready() {
                 ready: ReadyState::Ready,
             },
             LobbyEvent::LaunchCountdownStarted {
-                seconds_remaining: LAUNCH_COUNTDOWN_SECONDS,
+                seconds_remaining: TEST_LAUNCH_COUNTDOWN_SECONDS,
                 roster: vec![
                     TeamAssignment {
                         player_id: player_id(1),
@@ -262,7 +267,7 @@ fn advance_countdown_ticks_and_then_launches_the_locked_roster() {
         .set_ready(player_id(2), ReadyState::Ready)
         .expect("ready should start countdown");
 
-    for remaining in (2..=LAUNCH_COUNTDOWN_SECONDS).rev() {
+    for remaining in (2..=TEST_LAUNCH_COUNTDOWN_SECONDS).rev() {
         assert_eq!(
             lobby.advance_countdown(),
             Ok(LobbyEvent::LaunchCountdownTick {

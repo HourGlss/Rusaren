@@ -647,6 +647,69 @@ fn end_to_end_rejects_quit_button_frames_during_combat() {
 }
 
 #[test]
+fn training_input_frames_use_training_specific_validation_paths() {
+    let mut server = ServerApp::new();
+    let mut transport = InMemoryTransport::new();
+    let mut alice = connect_player(&mut server, &mut transport, 41, "Alice");
+
+    alice
+        .start_training(&mut transport)
+        .expect("start training");
+    server.pump_transport(&mut transport);
+    let _ = alice
+        .drain_events(&mut transport)
+        .expect("training start events");
+
+    alice
+        .send_input(&mut transport, quit_input_frame(1), 1)
+        .expect("training quit input");
+    server.pump_transport(&mut transport);
+    let quit_events = alice
+        .drain_events(&mut transport)
+        .expect("training quit validation events");
+    assert!(quit_events.iter().any(|event| matches!(
+        event,
+        ServerControlEvent::Error { message }
+            if message == "quit-to-lobby input is not valid during training"
+    )));
+
+    alice
+        .send_input(&mut transport, slot_cast_input(2, 1), 2)
+        .expect("training cast input");
+    server.pump_transport(&mut transport);
+    let cast_events = alice
+        .drain_events(&mut transport)
+        .expect("training cast validation events");
+    assert!(cast_events.iter().any(|event| matches!(
+        event,
+        ServerControlEvent::Error { message }
+            if message == "skill slot 1 is not equipped"
+    )));
+
+    alice
+        .choose_skill(&mut transport, skill(SkillTree::Cleric, 1))
+        .expect("equip training skill");
+    server.pump_transport(&mut transport);
+    let _ = alice
+        .drain_events(&mut transport)
+        .expect("training skill choice events");
+
+    alice
+        .send_input(&mut transport, slot_cast_input(3, 1), 3)
+        .expect("equipped training cast input");
+    server.pump_transport(&mut transport);
+    let equipped_cast_events = alice
+        .drain_events(&mut transport)
+        .expect("equipped training cast events");
+    assert!(
+        equipped_cast_events
+            .iter()
+            .all(|event| !matches!(event, ServerControlEvent::Error { .. })),
+        "equipped training casts should not hit the training validation errors"
+    );
+}
+
+#[test]
 fn primary_and_cast_button_paths_are_independent() {
     let mut server = ServerApp::new();
     let mut transport = InMemoryTransport::new();

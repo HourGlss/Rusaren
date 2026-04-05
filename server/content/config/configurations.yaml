@@ -1,0 +1,125 @@
+lobby:
+  launch_countdown_seconds: 5
+
+match:
+  total_rounds: 5
+  skill_pick_seconds: 25
+  pre_combat_seconds: 5
+
+maps:
+  tile_units: 50
+  objective_target_ms_by_map:
+    prototype_arena: 180000
+    template_arena: 30000
+    training_arena: 180000
+  generation:
+    max_generation_attempts: 256
+    protected_tile_buffer_radius_tiles: 1
+    obstacle_edge_padding_tiles: 1
+    wall_segment_lengths_tiles: [2, 3]
+    long_wall_percent: 42
+    wall_candidate_skip_percent: 35
+    wall_min_spacing_manhattan_tiles: 4
+    pillar_candidate_skip_percent: 55
+    pillar_min_spacing_manhattan_tiles: 3
+    styles:
+      - shrub_clusters: 1
+        shrub_radius_tiles: 1
+        shrub_soft_radius_tiles: 2
+        shrub_fill_percent: 16
+        wall_segments: 1
+        isolated_pillars: 2
+      - shrub_clusters: 2
+        shrub_radius_tiles: 2
+        shrub_soft_radius_tiles: 3
+        shrub_fill_percent: 24
+        wall_segments: 2
+        isolated_pillars: 2
+      - shrub_clusters: 3
+        shrub_radius_tiles: 2
+        shrub_soft_radius_tiles: 4
+        shrub_fill_percent: 38
+        wall_segments: 2
+        isolated_pillars: 3
+      - shrub_clusters: 3
+        shrub_radius_tiles: 3
+        shrub_soft_radius_tiles: 5
+        shrub_fill_percent: 50
+        wall_segments: 3
+        isolated_pillars: 3
+      - shrub_clusters: 4
+        shrub_radius_tiles: 3
+        shrub_soft_radius_tiles: 5
+        shrub_fill_percent: 62
+        wall_segments: 3
+        isolated_pillars: 4
+
+simulation:
+  combat_frame_ms: 100
+  player_radius_units: 28
+  vision_radius_units: 450
+  spawn_spacing_units: 120
+  default_aim_x_units: 120
+  default_aim_y_units: 0
+  mana_regen_per_second: 12
+  global_projectile_speed_bonus_bps: 2000
+  teleport_resolution_steps: 48
+  passive_bonus_caps:
+    player_speed_bps: 9000
+    projectile_speed_bps: 9000
+    cooldown_bps: 9000
+    cast_time_bps: 9500
+  movement_modifier_caps:
+    chill_bps: 8000
+    haste_bps: 6000
+    status_total_min_bps: -8000
+    status_total_max_bps: 6000
+    overall_total_min_bps: -8000
+    overall_total_max_bps: 9000
+    effective_scale_min_bps: 2000
+    effective_scale_max_bps: 16000
+  crowd_control_diminishing_returns:
+    window_ms: 15000
+    stages_bps: [10000, 5000, 2500, 0]
+  training_dummy:
+    base_hit_points: 100
+    health_multiplier: 100
+    execute_threshold_bps: 500
+
+classes:
+  Warrior:
+    hit_points: 120
+    max_mana: 80
+    move_speed_units_per_second: 280
+  Rogue:
+    hit_points: 95
+    max_mana: 90
+    move_speed_units_per_second: 320
+  Mage:
+    hit_points: 90
+    max_mana: 130
+    move_speed_units_per_second: 285
+  Cleric:
+    hit_points: 105
+    max_mana: 120
+    move_speed_units_per_second: 275
+  Bard:
+    hit_points: 100
+    max_mana: 110
+    move_speed_units_per_second: 295
+  Druid:
+    hit_points: 102
+    max_mana: 115
+    move_speed_units_per_second: 290
+  Necromancer:
+    hit_points: 95
+    max_mana: 125
+    move_speed_units_per_second: 280
+  Paladin:
+    hit_points: 115
+    max_mana: 105
+    move_speed_units_per_second: 270
+  Ranger:
+    hit_points: 100
+    max_mana: 95
+    move_speed_units_per_second: 305

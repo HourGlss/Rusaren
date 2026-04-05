@@ -5,21 +5,25 @@ use serde::Deserialize;
 
 use super::{
     AnchorPoint, ArenaMapDefinition, ArenaMapFeature, ArenaMapFeatureKind, ArenaMapObstacle,
-    ArenaMapObstacleKind, ContentError, DEFAULT_TILE_UNITS, MAX_MAP_DIMENSION_TILES,
+    ArenaMapObstacleKind, ContentError, MAX_MAP_DIMENSION_TILES,
 };
 
-pub fn parse_ascii_map(source: &str, ascii_map: &str) -> Result<ArenaMapDefinition, ContentError> {
+pub fn parse_ascii_map(
+    source: &str,
+    ascii_map: &str,
+    tile_units: u16,
+) -> Result<ArenaMapDefinition, ContentError> {
     let rows = collect_map_rows(source, ascii_map)?;
     let (width_tiles, height_tiles, width_units, height_units) =
-        validate_map_dimensions(source, &rows)?;
+        validate_map_dimensions(source, &rows, tile_units)?;
     let (footprint_mask, objective_mask, team_a_anchors, team_b_anchors, obstacles, features) =
-        parse_map_layout(source, &rows, width_tiles, height_tiles)?;
+        parse_map_layout(source, &rows, width_tiles, height_tiles, tile_units)?;
 
     Ok(ArenaMapDefinition {
         map_id: map_identifier(source),
         width_tiles,
         height_tiles,
-        tile_units: DEFAULT_TILE_UNITS,
+        tile_units,
         width_units,
         height_units,
         objective_target_ms: 0,
@@ -117,7 +121,14 @@ fn collect_map_rows<'a>(source: &str, ascii_map: &'a str) -> Result<Vec<&'a str>
 fn validate_map_dimensions(
     source: &str,
     rows: &[&str],
+    tile_units: u16,
 ) -> Result<(u16, u16, u16, u16), ContentError> {
+    if tile_units == 0 {
+        return Err(ContentError::Validation {
+            source: String::from(source),
+            message: String::from("map tile_units must be greater than zero"),
+        });
+    }
     let width = rows
         .iter()
         .map(|row| row.chars().count())
@@ -151,17 +162,18 @@ fn validate_map_dimensions(
     })?;
     let width_units =
         width_tiles
-            .checked_mul(DEFAULT_TILE_UNITS)
+            .checked_mul(tile_units)
             .ok_or_else(|| ContentError::Validation {
                 source: String::from(source),
                 message: String::from("map width in world units overflowed u16"),
             })?;
-    let height_units = height_tiles
-        .checked_mul(DEFAULT_TILE_UNITS)
-        .ok_or_else(|| ContentError::Validation {
-            source: String::from(source),
-            message: String::from("map height in world units overflowed u16"),
-        })?;
+    let height_units =
+        height_tiles
+            .checked_mul(tile_units)
+            .ok_or_else(|| ContentError::Validation {
+                source: String::from(source),
+                message: String::from("map height in world units overflowed u16"),
+            })?;
     Ok((width_tiles, height_tiles, width_units, height_units))
 }
 
@@ -170,6 +182,7 @@ fn parse_map_layout(
     rows: &[&str],
     width_tiles: u16,
     height_tiles: u16,
+    tile_units: u16,
 ) -> Result<ParsedMapLayout, ContentError> {
     let mut footprint_mask = blank_map_mask(width_tiles, height_tiles);
     let mut objective_mask = blank_map_mask(width_tiles, height_tiles);
@@ -185,7 +198,7 @@ fn parse_map_layout(
             let (center_x, center_y) = map_cell_center(
                 width_tiles,
                 height_tiles,
-                DEFAULT_TILE_UNITS,
+                tile_units,
                 column_index,
                 row_index,
             )?;
@@ -197,6 +210,7 @@ fn parse_map_layout(
                 &mut footprint_mask,
                 &mut objective_mask,
                 width_tiles,
+                tile_units,
                 center_x,
                 center_y,
                 &mut team_a_anchors,
@@ -264,6 +278,7 @@ fn parse_map_glyph(
     footprint_mask: &mut [u8],
     objective_mask: &mut [u8],
     width_tiles: u16,
+    tile_units: u16,
     center_x: i16,
     center_y: i16,
     team_a_anchors: &mut Vec<AnchorPoint>,
@@ -298,6 +313,7 @@ fn parse_map_glyph(
                 ArenaMapObstacleKind::Pillar,
                 center_x,
                 center_y,
+                tile_units,
             ));
             Ok(())
         }
@@ -307,6 +323,7 @@ fn parse_map_glyph(
                 ArenaMapObstacleKind::Shrub,
                 center_x,
                 center_y,
+                tile_units,
             ));
             Ok(())
         }
@@ -339,13 +356,18 @@ fn parse_map_glyph(
     }
 }
 
-fn map_obstacle(kind: ArenaMapObstacleKind, center_x: i16, center_y: i16) -> ArenaMapObstacle {
+fn map_obstacle(
+    kind: ArenaMapObstacleKind,
+    center_x: i16,
+    center_y: i16,
+    tile_units: u16,
+) -> ArenaMapObstacle {
     ArenaMapObstacle {
         kind,
         center_x,
         center_y,
-        half_width: DEFAULT_TILE_UNITS / 2,
-        half_height: DEFAULT_TILE_UNITS / 2,
+        half_width: tile_units / 2,
+        half_height: tile_units / 2,
     }
 }
 

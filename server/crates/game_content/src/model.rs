@@ -5,7 +5,7 @@ use std::path::Path;
 use game_domain::{SkillChoice, SkillTree};
 
 use super::{
-    load_skill_catalog_from_pairs_with_mechanics, parse_ascii_map, parse_map_registry_yaml,
+    load_skill_catalog_from_pairs_with_mechanics, parse_ascii_map, parse_configuration_yaml,
     parse_mechanics_yaml, read_skill_file_pairs, workspace_content_root, ContentError,
 };
 
@@ -374,6 +374,10 @@ impl SkillCatalog {
     pub fn all(&self) -> impl Iterator<Item = &SkillDefinition> {
         self.by_choice.values()
     }
+
+    pub fn trees(&self) -> impl Iterator<Item = &SkillTree> {
+        self.melee_by_tree.keys()
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -421,6 +425,115 @@ pub struct ArenaMapDefinition {
     pub features: Vec<ArenaMapFeature>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LobbyConfiguration {
+    pub launch_countdown_seconds: u8,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MatchConfiguration {
+    pub total_rounds: u8,
+    pub skill_pick_seconds: u8,
+    pub pre_combat_seconds: u8,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MapGenerationStyle {
+    pub shrub_clusters: usize,
+    pub shrub_radius_tiles: i32,
+    pub shrub_soft_radius_tiles: i32,
+    pub shrub_fill_percent: u8,
+    pub wall_segments: usize,
+    pub isolated_pillars: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MapGenerationConfiguration {
+    pub max_generation_attempts: usize,
+    pub protected_tile_buffer_radius_tiles: i32,
+    pub obstacle_edge_padding_tiles: i32,
+    pub wall_segment_lengths_tiles: [i32; 2],
+    pub long_wall_percent: u8,
+    pub wall_candidate_skip_percent: u8,
+    pub wall_min_spacing_manhattan_tiles: i32,
+    pub pillar_candidate_skip_percent: u8,
+    pub pillar_min_spacing_manhattan_tiles: i32,
+    pub styles: Vec<MapGenerationStyle>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MapsConfiguration {
+    pub tile_units: u16,
+    pub objective_target_ms_by_map: BTreeMap<String, u32>,
+    pub generation: MapGenerationConfiguration,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PassiveBonusCaps {
+    pub player_speed_bps: u16,
+    pub projectile_speed_bps: u16,
+    pub cooldown_bps: u16,
+    pub cast_time_bps: u16,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MovementModifierCaps {
+    pub chill_bps: u16,
+    pub haste_bps: u16,
+    pub status_total_min_bps: i16,
+    pub status_total_max_bps: i16,
+    pub overall_total_min_bps: i16,
+    pub overall_total_max_bps: i16,
+    pub effective_scale_min_bps: u16,
+    pub effective_scale_max_bps: u16,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CrowdControlDiminishingReturns {
+    pub window_ms: u16,
+    pub stages_bps: [u16; 4],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TrainingDummyConfiguration {
+    pub base_hit_points: u16,
+    pub health_multiplier: u16,
+    pub execute_threshold_bps: u16,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SimulationConfiguration {
+    pub combat_frame_ms: u16,
+    pub player_radius_units: u16,
+    pub vision_radius_units: u16,
+    pub spawn_spacing_units: i16,
+    pub default_aim_x_units: i16,
+    pub default_aim_y_units: i16,
+    pub mana_regen_per_second: u16,
+    pub global_projectile_speed_bonus_bps: u16,
+    pub teleport_resolution_steps: u16,
+    pub passive_bonus_caps: PassiveBonusCaps,
+    pub movement_modifier_caps: MovementModifierCaps,
+    pub crowd_control_diminishing_returns: CrowdControlDiminishingReturns,
+    pub training_dummy: TrainingDummyConfiguration,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ClassProfile {
+    pub hit_points: u16,
+    pub max_mana: u16,
+    pub move_speed_units_per_second: u16,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GameConfiguration {
+    pub lobby: LobbyConfiguration,
+    pub match_flow: MatchConfiguration,
+    pub maps: MapsConfiguration,
+    pub simulation: SimulationConfiguration,
+    pub classes: BTreeMap<SkillTree, ClassProfile>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MechanicDefinition {
     pub id: String,
@@ -458,6 +571,7 @@ pub struct GameContent {
     default_map_id: String,
     training_map_id: Option<String>,
     mechanics: MechanicCatalog,
+    configuration: GameConfiguration,
 }
 
 impl GameContent {
@@ -476,22 +590,36 @@ impl GameContent {
         let mechanics =
             parse_mechanics_yaml(&mechanics_path.display().to_string(), &mechanics_yaml)?;
 
+        let configuration_path = root.join("config").join("configurations.yaml");
+        let configuration_yaml =
+            fs::read_to_string(&configuration_path).map_err(|error| ContentError::Io {
+                path: configuration_path.clone(),
+                message: error.to_string(),
+            })?;
+        let configuration = parse_configuration_yaml(
+            &configuration_path.display().to_string(),
+            &configuration_yaml,
+        )?;
+
         let pairs = read_skill_file_pairs(root)?;
         let owned_pairs = pairs
             .iter()
             .map(|(source, yaml)| (source.as_str(), yaml.as_str()))
             .collect::<Vec<_>>();
         let skills = load_skill_catalog_from_pairs_with_mechanics(&owned_pairs, &mechanics)?;
+        for tree in skills.trees() {
+            if !configuration.classes.contains_key(tree) {
+                return Err(ContentError::Validation {
+                    source: configuration_path.display().to_string(),
+                    message: format!(
+                        "classes is missing a profile for authored tree '{}'",
+                        tree.as_str()
+                    ),
+                });
+            }
+        }
 
         let maps_dir = root.join("maps");
-        let map_registry_path = maps_dir.join("registry.yaml");
-        let map_registry_yaml =
-            fs::read_to_string(&map_registry_path).map_err(|error| ContentError::Io {
-                path: map_registry_path.clone(),
-                message: error.to_string(),
-            })?;
-        let map_registry =
-            parse_map_registry_yaml(&map_registry_path.display().to_string(), &map_registry_yaml)?;
         let mut map_paths = fs::read_dir(&maps_dir)
             .map_err(|error| ContentError::Io {
                 path: maps_dir.clone(),
@@ -518,10 +646,19 @@ impl GameContent {
                 path: path.clone(),
                 message: error.to_string(),
             })?;
-            let mut map = parse_ascii_map(&path.display().to_string(), &map_text)?;
-            let Some(objective_target_ms) = map_registry.get(&map.map_id).copied() else {
+            let mut map = parse_ascii_map(
+                &path.display().to_string(),
+                &map_text,
+                configuration.maps.tile_units,
+            )?;
+            let Some(objective_target_ms) = configuration
+                .maps
+                .objective_target_ms_by_map
+                .get(&map.map_id)
+                .copied()
+            else {
                 return Err(ContentError::Validation {
-                    source: map_registry_path.display().to_string(),
+                    source: String::from("config/configurations.yaml"),
                     message: format!(
                         "map registry is missing objective_target_ms for '{}'",
                         map.map_id
@@ -542,6 +679,16 @@ impl GameContent {
                 message: String::from("maps must include prototype_arena.txt"),
             });
         }
+        for map_id in configuration.maps.objective_target_ms_by_map.keys() {
+            if !maps.contains_key(map_id) {
+                return Err(ContentError::Validation {
+                    source: configuration_path.display().to_string(),
+                    message: format!(
+                        "maps.objective_target_ms_by_map contains unknown map '{map_id}'"
+                    ),
+                });
+            }
+        }
         let training_map_id = maps
             .contains_key("training_arena")
             .then_some(String::from("training_arena"));
@@ -552,6 +699,7 @@ impl GameContent {
             default_map_id: String::from("prototype_arena"),
             training_map_id,
             mechanics,
+            configuration,
         })
     }
 
@@ -587,5 +735,15 @@ impl GameContent {
     #[must_use]
     pub const fn mechanics(&self) -> &MechanicCatalog {
         &self.mechanics
+    }
+
+    #[must_use]
+    pub const fn configuration(&self) -> &GameConfiguration {
+        &self.configuration
+    }
+
+    #[must_use]
+    pub fn class_profile(&self, tree: &SkillTree) -> Option<&ClassProfile> {
+        self.configuration.classes.get(tree)
     }
 }

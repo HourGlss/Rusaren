@@ -10,8 +10,6 @@ use game_domain::{
     LobbyId, PlayerId, PlayerName, PlayerRecord, ReadyState, TeamAssignment, TeamSide,
 };
 
-pub const LAUNCH_COUNTDOWN_SECONDS: u8 = 5;
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LobbyPlayer {
     pub player_id: PlayerId,
@@ -98,15 +96,17 @@ impl std::error::Error for LobbyError {}
 #[derive(Clone, Debug)]
 pub struct Lobby {
     _lobby_id: LobbyId,
+    launch_countdown_seconds: u8,
     players: BTreeMap<PlayerId, LobbyPlayer>,
     phase: LobbyPhase,
 }
 
 impl Lobby {
     #[must_use]
-    pub fn new(lobby_id: LobbyId) -> Self {
+    pub fn new(lobby_id: LobbyId, launch_countdown_seconds: u8) -> Self {
         Self {
             _lobby_id: lobby_id,
+            launch_countdown_seconds,
             players: BTreeMap::new(),
             phase: LobbyPhase::Open,
         }
@@ -284,12 +284,12 @@ impl Lobby {
 
         let roster = self.locked_roster();
         self.phase = LobbyPhase::LaunchCountdown {
-            seconds_remaining: LAUNCH_COUNTDOWN_SECONDS,
+            seconds_remaining: self.launch_countdown_seconds,
             locked_roster: roster.clone(),
         };
 
         vec![LobbyEvent::LaunchCountdownStarted {
-            seconds_remaining: LAUNCH_COUNTDOWN_SECONDS,
+            seconds_remaining: self.launch_countdown_seconds,
             roster,
         }]
     }

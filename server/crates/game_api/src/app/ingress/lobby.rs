@@ -17,7 +17,10 @@ impl ServerApp {
         }
 
         let lobby_id = self.allocate_lobby_id();
-        let mut lobby = Lobby::new(lobby_id);
+        let mut lobby = Lobby::new(
+            lobby_id,
+            self.content.configuration().lobby.launch_countdown_seconds,
+        );
         let (player_name, record) = match self.players.get(&sender_id) {
             Some(player) => (player.player_name.clone(), player.record.clone()),
             None => {
@@ -47,6 +50,7 @@ impl ServerApp {
         };
         let map = match generate_template_match_map(
             template_map,
+            &self.content.configuration().maps.generation,
             format!("lobby_{}_arena", lobby_id.get()),
             seed,
         ) {

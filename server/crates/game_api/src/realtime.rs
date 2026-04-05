@@ -25,7 +25,6 @@ use game_net::{
     ChannelId, NetworkSessionGuard, PacketHeader, PacketKind, ServerControlEvent,
     MAX_INGRESS_PACKET_BYTES, PROTOCOL_VERSION,
 };
-use game_sim::COMBAT_FRAME_MS;
 use getrandom::fill as getrandom_fill;
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
@@ -309,9 +308,12 @@ pub struct DevServerOptions {
 
 impl Default for DevServerOptions {
     fn default() -> Self {
+        let simulation_step_ms = GameContent::bundled()
+            .map(|content| content.configuration().simulation.combat_frame_ms)
+            .unwrap_or(100);
         Self {
-            tick_interval: Duration::from_millis(u64::from(COMBAT_FRAME_MS)),
-            simulation_step_ms: COMBAT_FRAME_MS,
+            tick_interval: Duration::from_millis(u64::from(simulation_step_ms)),
+            simulation_step_ms,
             record_store_path: server::default_record_store_path(),
             combat_log_path: server::default_combat_log_path(),
             content_root: server::default_content_root(),

@@ -4,7 +4,7 @@ use super::{
     ArenaEffectKind, CombatValueKind, DeployableBehavior, DeployableState, PendingCast, PlayerId,
     ProjectileState, QueuedActions, SimCastCancelReason, SimCastMode, SimMissReason,
     SimPlayerState, SimTargetKind, SimulationEvent, SimulationWorld, SkillBehavior, StatusKind,
-    TargetEntity, PLAYER_RADIUS_UNITS,
+    TargetEntity,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -1180,7 +1180,8 @@ impl SimulationWorld {
         }
         let direction = normalize_aim(attacker_state.aim_x, attacker_state.aim_y);
         let spawn_distance =
-            i16::try_from(i32::from(PLAYER_RADIUS_UNITS) + i32::from(radius)).unwrap_or(i16::MAX);
+            i16::try_from(i32::from(self.configuration.player_radius_units) + i32::from(radius))
+                .unwrap_or(i16::MAX);
         let start_x = saturating_i16(
             i32::from(attacker_state.x) + round_f32_to_i32(direction.0 * f32::from(spawn_distance)),
         );
@@ -1305,6 +1306,7 @@ impl SimulationWorld {
             cast.attacker_state.y,
             i32::from(desired.0),
             i32::from(desired.1),
+            self.configuration.player_radius_units,
             self.arena_width_units,
             self.arena_height_units,
             self.arena_width_tiles,
@@ -1329,7 +1331,7 @@ impl SimulationWorld {
                     y: cast.attacker_state.y,
                     target_x: resolved_x,
                     target_y: resolved_y,
-                    radius: PLAYER_RADIUS_UNITS,
+                    radius: self.configuration.player_radius_units,
                 },
             },
             SimulationEvent::PlayerMoved {
@@ -1486,7 +1488,7 @@ impl SimulationWorld {
                     y: attacker_state.y,
                     target_x: resolved_x,
                     target_y: resolved_y,
-                    radius: PLAYER_RADIUS_UNITS,
+                    radius: self.configuration.player_radius_units,
                 },
             },
             SimulationEvent::PlayerMoved {

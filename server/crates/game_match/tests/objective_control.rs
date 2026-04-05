@@ -1,9 +1,12 @@
 use game_domain::{
     MatchId, PlayerId, PlayerName, PlayerRecord, SkillChoice, SkillTree, TeamAssignment, TeamSide,
 };
-use game_match::{MatchConfig, MatchEvent, MatchPhase, MatchSession, SKILL_PICK_SECONDS};
+use game_match::{MatchConfig, MatchEvent, MatchPhase, MatchSession};
 
 const TEST_OBJECTIVE_TARGET_MS: u32 = 180_000;
+const TEST_SKILL_PICK_SECONDS: u8 = 25;
+const TEST_PRE_COMBAT_SECONDS: u8 = 5;
+const TEST_TOTAL_ROUNDS: u8 = 5;
 
 fn player_id(raw: u32) -> PlayerId {
     PlayerId::new(raw).expect("valid player id")
@@ -29,7 +32,13 @@ fn combat_session() -> MatchSession {
             assignment(1, "Alice", TeamSide::TeamA),
             assignment(2, "Bob", TeamSide::TeamB),
         ],
-        MatchConfig::v1(TEST_OBJECTIVE_TARGET_MS),
+        MatchConfig::new(
+            TEST_TOTAL_ROUNDS,
+            TEST_SKILL_PICK_SECONDS,
+            TEST_PRE_COMBAT_SECONDS,
+            TEST_OBJECTIVE_TARGET_MS,
+        )
+        .expect("config"),
     )
     .expect("session");
     session
@@ -39,7 +48,7 @@ fn combat_session() -> MatchSession {
         .submit_skill_pick(player_id(2), skill(SkillTree::Rogue, 1))
         .expect("team B pick");
     session
-        .advance_phase_by(game_match::PRE_COMBAT_SECONDS)
+        .advance_phase_by(TEST_PRE_COMBAT_SECONDS)
         .expect("combat should start");
     session
 }
@@ -81,7 +90,7 @@ fn objective_control_accumulates_for_both_teams_when_they_share_the_center() {
     assert_eq!(
         session.phase(),
         &MatchPhase::SkillPick {
-            seconds_remaining: SKILL_PICK_SECONDS,
+            seconds_remaining: TEST_SKILL_PICK_SECONDS,
         }
     );
     assert_eq!(session.objective_control_ms(), (0, 0));

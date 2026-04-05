@@ -11,7 +11,10 @@ use game_net::{
     LobbySnapshotPhase, LobbySnapshotPlayer, ServerControlEvent, ValidatedInputFrame, BUTTON_CAST,
     BUTTON_PRIMARY, BUTTON_QUIT_TO_LOBBY,
 };
-use game_sim::{PLAYER_MOVE_SPEED_UNITS_PER_SECOND, VISION_RADIUS_UNITS};
+
+const COMBAT_FRAME_MS: u16 = 100;
+const PLAYER_MOVE_SPEED_UNITS_PER_SECOND: u16 = 280;
+const VISION_RADIUS_UNITS: u16 = 450;
 
 fn connection_id(raw: u64) -> ConnectionId {
     ConnectionId::new(raw).expect("valid connection id")
@@ -184,6 +187,13 @@ fn custom_content() -> (GameContent, PathBuf) {
         custom_class_yaml(),
     )
     .expect("custom class file should write");
+    append_class_profile(
+        &root.join("config").join("configurations.yaml"),
+        "MutationSentinel",
+        112,
+        118,
+        288,
+    );
     let content =
         GameContent::load_from_root(&root).expect("custom content root should load cleanly");
     (content, root)
@@ -205,6 +215,20 @@ fn compact_match_template_map() -> &'static str {
 ..A.....XXX..B.\n\
 ...............\n\
 ...............\n"
+}
+
+fn append_class_profile(
+    configuration_path: &Path,
+    tree_name: &str,
+    hit_points: u16,
+    max_mana: u16,
+    move_speed_units_per_second: u16,
+) {
+    let mut configuration = fs::read_to_string(configuration_path).expect("configuration");
+    configuration.push_str(&format!(
+        "\n  {tree_name}:\n    hit_points: {hit_points}\n    max_mana: {max_mana}\n    move_speed_units_per_second: {move_speed_units_per_second}\n"
+    ));
+    fs::write(configuration_path, configuration).expect("configuration");
 }
 
 fn assert_connected(events: &[ServerControlEvent], player_id: PlayerId, player_name: &str) {
@@ -571,6 +595,7 @@ fn enter_combat(
     match_id
 }
 
+mod combat_feedback;
 mod end_to_end;
 mod state;
 mod visibility;

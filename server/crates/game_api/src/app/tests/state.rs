@@ -780,7 +780,7 @@ fn training_sessions_reset_metrics_without_restarting_the_map() {
                 game_sim::MovementIntent::new(1, 0).expect("movement intent"),
             )
             .expect("movement input should apply");
-        let _ = runtime.world.tick(game_sim::COMBAT_FRAME_MS);
+        let _ = runtime.world.tick(COMBAT_FRAME_MS);
         runtime
             .world
             .submit_input(player_id, game_sim::MovementIntent::zero())
@@ -789,7 +789,7 @@ fn training_sessions_reset_metrics_without_restarting_the_map() {
             .world
             .queue_cast(player_id, 4)
             .expect("ward cast should queue");
-        let _ = runtime.world.tick(game_sim::COMBAT_FRAME_MS);
+        let _ = runtime.world.tick(COMBAT_FRAME_MS);
         assert!(
             runtime
                 .world
