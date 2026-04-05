@@ -43,9 +43,14 @@ pub(crate) fn render_lobby_event(event: &LobbyEvent) -> String {
 
 pub(crate) fn render_match_event(event: &MatchEvent) -> String {
     match event {
-        MatchEvent::SkillChosen { player_id, choice } => format!(
-            "player {} locked {:?} tier {}",
+        MatchEvent::SkillChosen {
+            player_id,
+            slot,
+            choice,
+        } => format!(
+            "player {} locked slot {} as {:?} tier {}",
             player_id.get(),
+            slot,
             choice.tree,
             choice.tier
         ),
