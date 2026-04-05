@@ -3,6 +3,7 @@ extends Control
 const ClientStateScript := preload("res://scripts/state/client_state.gd")
 const DevSocketClientScript := preload("res://scripts/net/dev_socket_client.gd")
 const GodotPerfMonitorsScript := preload("res://scripts/debug/godot_perf_monitors.gd")
+const InputBindingsScript := preload("res://scripts/input/input_bindings.gd")
 const PerfClockScript := preload("res://scripts/debug/perf_clock.gd")
 const MainShellFactoryScript := preload("res://scripts/main_shell_factory.gd")
 const ClientStateViewScript := preload("res://scripts/state/client_state_view.gd")
@@ -14,6 +15,7 @@ const MENU_SECTION_LOADOUT := "loadout"
 const MENU_SECTION_RECORD := "record"
 const MENU_SECTION_ROSTER := "roster"
 const MENU_SECTION_EVENTS := "events"
+const MENU_SECTION_CONTROLS := "controls"
 const MENU_SECTION_DIAGNOSTICS := "diagnostics"
 
 const MENU_ACTION_CHANGE_NAME := 1
@@ -21,7 +23,8 @@ const MENU_ACTION_TRAINING_LOADOUT := 2
 const MENU_ACTION_PLAYER_RECORD := 3
 const MENU_ACTION_ROSTER_WATCH := 4
 const MENU_ACTION_EVENT_FEED := 5
-const MENU_ACTION_DIAGNOSTICS := 6
+const MENU_ACTION_CONTROLS := 6
+const MENU_ACTION_DIAGNOSTICS := 7
 
 const AUTO_RECONNECT_DELAY_SECONDS := 2.0
 const PASSIVE_UI_REFRESH_INTERVAL_SECONDS := 0.10
@@ -55,6 +58,10 @@ var training_loadout_view: VBoxContainer
 var record_view: VBoxContainer
 var roster_view: VBoxContainer
 var event_view: VBoxContainer
+var controls_view: VBoxContainer
+var controls_status_label: Label
+var controls_bindings_host: VBoxContainer
+var controls_reset_all_button: Button
 var diagnostics_view: VBoxContainer
 var banner_label: Label
 var status_label: Label
@@ -107,6 +114,7 @@ var skill_buttons: Array[Button] = []
 var _rendered_skill_catalog_signature := ""
 var _rendered_skill_button_state_signature := ""
 var _rendered_menu_popup_signature := ""
+var _rendered_controls_signature := ""
 var _next_client_input_tick := 1
 var _pending_primary_attack := false
 var _pending_cast_slot := 0
@@ -118,10 +126,15 @@ var _menu_section := ""
 var _auto_connect_retry_seconds := -1.0
 var _name_rng := RandomNumberGenerator.new()
 var _passive_ui_refresh_remaining := 0.0
+var _controls_rebind_buttons: Dictionary = {}
+var _controls_reset_buttons: Dictionary = {}
+var _capturing_input_action := ""
+var _capture_started_frame := -1
 
 
 func _ready() -> void:
 	_name_rng.randomize()
+	InputBindingsScript.install()
 	_bootstrap_request = HTTPRequest.new()
 	add_child(_bootstrap_request)
 	_bootstrap_request.request_completed.connect(_on_bootstrap_request_completed)
@@ -151,31 +164,38 @@ func _process(delta: float) -> void:
 
 
 func _input(event: InputEvent) -> void:
+	if _handle_control_capture(event):
+		return
+
+	if fullscreen_menu != null and fullscreen_menu.visible:
+		return
+
 	if not app_state.can_send_combat_input():
 		return
 
-	if event is InputEventMouseButton:
-		var mouse_button := event as InputEventMouseButton
-		if mouse_button.button_index == MOUSE_BUTTON_LEFT and mouse_button.pressed and arena_view != null and arena_view.has_mouse_in_arena():
+	if event.is_action_pressed(InputBindingsScript.ACTION_PRIMARY_ATTACK, false, true):
+		if arena_view != null and arena_view.has_mouse_in_arena():
 			_pending_primary_attack = true
 			_drive_combat_input()
 		return
 
-	if event is InputEventKey and event.pressed and not event.echo:
-		match event.keycode:
-			KEY_1:
-				_queue_combat_cast(1)
-			KEY_2:
-				_queue_combat_cast(2)
-			KEY_3:
-				_queue_combat_cast(3)
-			KEY_4:
-				_queue_combat_cast(4)
-			KEY_5:
-				_queue_combat_cast(5)
-			KEY_X:
-				if _pending_cast_slot > 0:
-					_drive_combat_input()
+	if event.is_action_pressed(InputBindingsScript.ACTION_SLOT_1, false, true):
+		_queue_combat_cast(1)
+		return
+	if event.is_action_pressed(InputBindingsScript.ACTION_SLOT_2, false, true):
+		_queue_combat_cast(2)
+		return
+	if event.is_action_pressed(InputBindingsScript.ACTION_SLOT_3, false, true):
+		_queue_combat_cast(3)
+		return
+	if event.is_action_pressed(InputBindingsScript.ACTION_SLOT_4, false, true):
+		_queue_combat_cast(4)
+		return
+	if event.is_action_pressed(InputBindingsScript.ACTION_SLOT_5, false, true):
+		_queue_combat_cast(5)
+		return
+	if event.is_action_pressed(InputBindingsScript.ACTION_SELF_CAST, false, true) and _pending_cast_slot > 0:
+		_drive_combat_input()
 
 
 func _bind_transport() -> void:
@@ -207,6 +227,10 @@ func _assign_shell_refs(refs) -> void:
 	record_view = refs.record_view
 	roster_view = refs.roster_view
 	event_view = refs.event_view
+	controls_view = refs.controls_view
+	controls_status_label = refs.controls_status_label
+	controls_bindings_host = refs.controls_bindings_host
+	controls_reset_all_button = refs.controls_reset_all_button
 	diagnostics_view = refs.diagnostics_view
 	banner_label = refs.banner_label
 	status_label = refs.status_label
@@ -357,6 +381,7 @@ func _rebuild_menu_popup() -> void:
 	popup.add_item("Player Record", MENU_ACTION_PLAYER_RECORD)
 	popup.add_item("Roster Watch", MENU_ACTION_ROSTER_WATCH)
 	popup.add_item("Event Feed", MENU_ACTION_EVENT_FEED)
+	popup.add_item("Controls", MENU_ACTION_CONTROLS)
 	popup.add_item("Diagnostics", MENU_ACTION_DIAGNOSTICS)
 	_rendered_menu_popup_signature = _menu_popup_signature()
 
@@ -381,6 +406,7 @@ func _open_fullscreen_menu(section: String) -> void:
 	record_view.visible = section == MENU_SECTION_RECORD
 	roster_view.visible = section == MENU_SECTION_ROSTER
 	event_view.visible = section == MENU_SECTION_EVENTS
+	controls_view.visible = section == MENU_SECTION_CONTROLS
 	diagnostics_view.visible = section == MENU_SECTION_DIAGNOSTICS
 
 	match section:
@@ -396,6 +422,8 @@ func _open_fullscreen_menu(section: String) -> void:
 			fullscreen_menu_title.text = "Roster Watch"
 		MENU_SECTION_EVENTS:
 			fullscreen_menu_title.text = "Event Feed"
+		MENU_SECTION_CONTROLS:
+			fullscreen_menu_title.text = "Controls"
 		MENU_SECTION_DIAGNOSTICS:
 			fullscreen_menu_title.text = "Diagnostics"
 		_:
@@ -422,6 +450,8 @@ func _on_menu_option_selected(menu_id: int) -> void:
 			_open_fullscreen_menu(MENU_SECTION_ROSTER)
 		MENU_ACTION_EVENT_FEED:
 			_open_fullscreen_menu(MENU_SECTION_EVENTS)
+		MENU_ACTION_CONTROLS:
+			_open_fullscreen_menu(MENU_SECTION_CONTROLS)
 		MENU_ACTION_DIAGNOSTICS:
 			_open_fullscreen_menu(MENU_SECTION_DIAGNOSTICS)
 
@@ -692,6 +722,7 @@ func _refresh_ui_impl() -> void:
 	_refresh_ui_catalog()
 	var view_state := _refresh_ui_labels()
 	_refresh_ui_logs(view_state)
+	_refresh_controls_view()
 	_refresh_ui_diagnostics(diagnostics_panel_visible)
 	_refresh_ui_buttons(bool(view_state.get("is_training", false)))
 	_refresh_ui_visibility(view_state)
@@ -798,6 +829,40 @@ func _refresh_ui_diagnostics(diagnostics_panel_visible: bool) -> void:
 	if diagnostics_log != null and diagnostics_panel_visible:
 		diagnostics_log.text = app_state.diagnostics_text(transport.telemetry_snapshot())
 	app_state.record_client_timing("ui_refresh_diagnostics", PerfClockScript.elapsed_us(phase_started_us))
+
+
+func _refresh_controls_view() -> void:
+	if controls_bindings_host == null or controls_status_label == null:
+		return
+	if not fullscreen_menu.visible or _menu_section != MENU_SECTION_CONTROLS:
+		return
+
+	var controls_signature := _controls_signature()
+	if controls_signature != _rendered_controls_signature:
+		_rebuild_controls_rows()
+	_rendered_controls_signature = controls_signature
+
+	controls_status_label.text = (
+		"Click Rebind beside any action."
+		if _capturing_input_action == ""
+		else "Press a key or mouse button for %s. Press Escape to cancel." % InputBindingsScript.action_label(_capturing_input_action)
+	)
+	if controls_reset_all_button != null:
+		controls_reset_all_button.disabled = _capturing_input_action != ""
+
+	for spec in InputBindingsScript.action_specs():
+		var action_name := String(spec.get("action", ""))
+		var rebind_button := _controls_rebind_buttons.get(action_name) as Button
+		var reset_button := _controls_reset_buttons.get(action_name) as Button
+		if rebind_button != null:
+			rebind_button.text = (
+				"Capturing..."
+				if _capturing_input_action == action_name
+				else InputBindingsScript.binding_text(action_name)
+			)
+			rebind_button.disabled = _capturing_input_action != "" and _capturing_input_action != action_name
+		if reset_button != null:
+			reset_button.disabled = _capturing_input_action != ""
 
 
 func _refresh_ui_buttons(is_training: bool) -> void:
@@ -954,6 +1019,14 @@ func _menu_popup_signature() -> String:
 	]
 
 
+func _controls_signature() -> String:
+	var binding_parts: Array[String] = []
+	for spec in InputBindingsScript.action_specs():
+		var action_name := String(spec.get("action", ""))
+		binding_parts.append("%s=%s" % [action_name, InputBindingsScript.binding_text(action_name)])
+	return "%s|%s" % [_capturing_input_action, "|".join(binding_parts)]
+
+
 func _skill_button_state_signature(is_training: bool) -> String:
 	var next_tiers: Array[String] = []
 	for tree_name in app_state.skill_tree_names():
@@ -982,7 +1055,7 @@ func _tick_passive_ui_refresh(delta: float) -> void:
 func _needs_passive_ui_refresh() -> bool:
 	return (
 		app_state.screen == "match"
-		or fullscreen_menu.visible
+		or (fullscreen_menu != null and fullscreen_menu.visible)
 		or _bootstrap_request_active
 	)
 
@@ -1165,8 +1238,8 @@ func _drive_combat_input() -> void:
 		_pending_cast_slot = 0
 		return
 
-	var move_x := int(Input.is_key_pressed(KEY_D)) - int(Input.is_key_pressed(KEY_A))
-	var move_y := int(Input.is_key_pressed(KEY_S)) - int(Input.is_key_pressed(KEY_W))
+	var move_x := int(Input.is_action_pressed(InputBindingsScript.ACTION_MOVE_RIGHT)) - int(Input.is_action_pressed(InputBindingsScript.ACTION_MOVE_LEFT))
+	var move_y := int(Input.is_action_pressed(InputBindingsScript.ACTION_MOVE_DOWN)) - int(Input.is_action_pressed(InputBindingsScript.ACTION_MOVE_UP))
 	var aim := _current_aim_vector()
 	var aim_changed := aim != _last_sent_aim
 	var should_send := (
@@ -1190,7 +1263,7 @@ func _drive_combat_input() -> void:
 	if _pending_cast_slot > 0:
 		payload["cast"] = true
 		payload["ability_or_context"] = _pending_cast_slot
-		payload["self_cast"] = Input.is_key_pressed(KEY_X)
+		payload["self_cast"] = Input.is_action_pressed(InputBindingsScript.ACTION_SELF_CAST)
 
 	if transport.send_input_frame(payload):
 		_next_client_input_tick += 1
@@ -1211,3 +1284,86 @@ func _current_aim_vector() -> Vector2i:
 		clampi(delta_x, Protocol.MIN_I16, Protocol.MAX_I16),
 		clampi(delta_y, Protocol.MIN_I16, Protocol.MAX_I16)
 	)
+
+
+func _rebuild_controls_rows() -> void:
+	_rendered_controls_signature = ""
+	_controls_rebind_buttons.clear()
+	_controls_reset_buttons.clear()
+	for child in controls_bindings_host.get_children():
+		child.queue_free()
+
+	for spec in InputBindingsScript.action_specs():
+		var action_name := String(spec.get("action", ""))
+		var row := HBoxContainer.new()
+		row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_theme_constant_override("separation", 12)
+		controls_bindings_host.add_child(row)
+
+		var label := Label.new()
+		label.text = String(spec.get("label", action_name))
+		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		label.add_theme_color_override("font_color", Color8(226, 232, 236))
+		row.add_child(label)
+
+		var rebind_button := _action_button(InputBindingsScript.binding_text(action_name), Color8(52, 94, 120))
+		rebind_button.custom_minimum_size = Vector2(220, 42)
+		rebind_button.pressed.connect(_on_control_rebind_pressed.bind(action_name))
+		row.add_child(rebind_button)
+		_controls_rebind_buttons[action_name] = rebind_button
+
+		var reset_button := _action_button("Reset", Color8(102, 72, 28))
+		reset_button.pressed.connect(_on_control_reset_pressed.bind(action_name))
+		row.add_child(reset_button)
+		_controls_reset_buttons[action_name] = reset_button
+
+
+func _on_control_rebind_pressed(action_name: String) -> void:
+	_capturing_input_action = action_name
+	_capture_started_frame = Engine.get_process_frames()
+	_refresh_ui()
+
+
+func _on_control_reset_pressed(action_name: String) -> void:
+	if _capturing_input_action != "":
+		return
+	InputBindingsScript.reset_binding(action_name)
+	_rendered_controls_signature = ""
+	app_state.announce_local("%s reset to default." % InputBindingsScript.action_label(action_name))
+	_refresh_ui()
+
+
+func _on_controls_reset_defaults_pressed() -> void:
+	if _capturing_input_action != "":
+		return
+	InputBindingsScript.reset_all_bindings()
+	_rendered_controls_signature = ""
+	app_state.announce_local("Controls reset to defaults.")
+	_refresh_ui()
+
+
+func _handle_control_capture(event: InputEvent) -> bool:
+	if _capturing_input_action == "":
+		return false
+	if Engine.get_process_frames() == _capture_started_frame:
+		return true
+	if event is InputEventKey:
+		var key_event := event as InputEventKey
+		if not key_event.pressed or key_event.echo:
+			return true
+		if key_event.keycode == KEY_ESCAPE:
+			_capturing_input_action = ""
+			app_state.announce_local("Input remap canceled.")
+			_refresh_ui()
+			return true
+	if not InputBindingsScript.is_capture_candidate(event):
+		return true
+	if InputBindingsScript.set_binding(_capturing_input_action, event):
+		var action_label := InputBindingsScript.action_label(_capturing_input_action)
+		var binding_text := InputBindingsScript.binding_text(_capturing_input_action)
+		_capturing_input_action = ""
+		_rendered_controls_signature = ""
+		app_state.announce_local("%s is now bound to %s." % [action_label, binding_text])
+		_refresh_ui()
+		return true
+	return true

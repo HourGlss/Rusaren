@@ -146,6 +146,12 @@ to track server-authored `slot` values, not just `tier` values.
 
 For live deploy issues, also collect the host bundle from `python3 -m rusaren_ops collect-logs` as documented in `server/README.md`.
 
+## Controls
+- Open `Menu -> Controls` in the running shell to remap gameplay inputs.
+- The current remappable actions are movement, primary attack, skill slots `1`-`5`, and self-cast.
+- Rebinds accept keyboard keys plus the common mouse buttons and are saved in `user://controls.cfg`.
+- Press `Escape` while the shell is waiting for a new binding to cancel capture.
+
 ## Manual Godot Profiling
 For local editor runs, use Godot's built-in tooling directly:
 - `Debugger -> Monitors` for built-in and custom `Rarena/*` counters

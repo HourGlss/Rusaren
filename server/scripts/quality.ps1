@@ -534,6 +534,7 @@ function Invoke-FrontendChecks {
         & $godotExe --headless --path $projectPath -s res://tests/protocol_checks.gd
         & $godotExe --headless --path $projectPath -s res://tests/web_export_checks.gd
         & $godotExe --headless --path $projectPath -s res://tests/shell_layout_checks.gd
+        & $godotExe --headless --path $projectPath -s res://tests/input_binding_checks.gd
         & $godotExe --headless --path $projectPath -s res://tests/performance_monitor_checks.gd
     }
     finally {

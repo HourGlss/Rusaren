@@ -67,6 +67,14 @@ func _assert_menu_opens_fullscreen_views() -> bool:
 	elif shell.diagnostics_log == null or not shell.diagnostics_log.text.contains("Client Diagnostics"):
 		success = _fail("diagnostics menu should surface the structured client diagnostics report") and success
 
+	shell._open_fullscreen_menu("controls")
+	if not shell.controls_view.visible or shell.record_view.visible or shell.roster_view.visible or shell.event_view.visible or shell.name_menu_view.visible or shell.diagnostics_view.visible:
+		success = _fail("controls menu should only show the controls view") and success
+	elif shell.controls_bindings_host == null or shell.controls_bindings_host.get_child_count() < 5:
+		success = _fail("controls menu should list the remappable gameplay actions") and success
+	elif shell.controls_status_label == null or not shell.controls_status_label.text.contains("Click Rebind"):
+		success = _fail("controls menu should explain how rebinding works") and success
+
 	shell._open_fullscreen_menu("name")
 	if not shell.name_menu_view.visible or shell.record_view.visible or shell.roster_view.visible or shell.event_view.visible:
 		success = _fail("change-name menu should only show the name editor") and success

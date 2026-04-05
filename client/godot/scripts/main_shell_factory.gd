@@ -17,6 +17,10 @@ class ShellRefs:
 	var record_view: VBoxContainer
 	var roster_view: VBoxContainer
 	var event_view: VBoxContainer
+	var controls_view: VBoxContainer
+	var controls_status_label: Label
+	var controls_bindings_host: VBoxContainer
+	var controls_reset_all_button: Button
 	var diagnostics_view: VBoxContainer
 	var banner_label: Label
 	var status_label: Label
@@ -573,12 +577,14 @@ static func _attach_fullscreen_menu_views(
 	refs.record_view = _build_record_view(refs)
 	refs.roster_view = _build_roster_view(refs)
 	refs.event_view = _build_event_view(refs)
+	refs.controls_view = _build_controls_view(owner, refs)
 	refs.diagnostics_view = _build_diagnostics_view(owner, refs)
 	body.add_child(refs.name_menu_view)
 	body.add_child(refs.training_loadout_view)
 	body.add_child(refs.record_view)
 	body.add_child(refs.roster_view)
 	body.add_child(refs.event_view)
+	body.add_child(refs.controls_view)
 	body.add_child(refs.diagnostics_view)
 
 
@@ -714,6 +720,41 @@ static func _build_event_view(refs: ShellRefs) -> VBoxContainer:
 	refs.event_log.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	refs.event_log.add_theme_color_override("default_color", Color8(212, 214, 226))
 	view.add_child(refs.event_log)
+
+	return view
+
+
+static func _build_controls_view(owner: Control, refs: ShellRefs) -> VBoxContainer:
+	var view := VBoxContainer.new()
+	view.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	view.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	view.add_theme_constant_override("separation", 12)
+
+	var note := Label.new()
+	note.text = "Click Rebind, then press a keyboard key or a mouse button. Bindings are saved to user://controls.cfg and reused on the next launch. Press Escape while capturing to cancel."
+	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	note.add_theme_color_override("font_color", Color8(188, 200, 210))
+	view.add_child(note)
+
+	refs.controls_status_label = Label.new()
+	refs.controls_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	refs.controls_status_label.add_theme_color_override("font_color", Color8(244, 219, 171))
+	view.add_child(refs.controls_status_label)
+
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	view.add_child(scroll)
+
+	refs.controls_bindings_host = VBoxContainer.new()
+	refs.controls_bindings_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	refs.controls_bindings_host.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	refs.controls_bindings_host.add_theme_constant_override("separation", 10)
+	scroll.add_child(refs.controls_bindings_host)
+
+	refs.controls_reset_all_button = _action_button("Reset Defaults", Color8(102, 72, 28))
+	refs.controls_reset_all_button.pressed.connect(Callable(owner, "_on_controls_reset_defaults_pressed"))
+	view.add_child(refs.controls_reset_all_button)
 
 	return view
 
