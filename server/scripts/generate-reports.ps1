@@ -41,6 +41,43 @@ function Escape-Html {
     return [System.Net.WebUtility]::HtmlEncode($Value)
 }
 
+function Get-RustAnalyzerScipDiagnostics {
+    param([string]$Path)
+
+    if (-not (Test-Path $Path)) {
+        return @()
+    }
+
+    return @(
+        Get-Content -Path $Path |
+            ForEach-Object { $_.TrimEnd() } |
+            Where-Object {
+                -not [string]::IsNullOrWhiteSpace($_) -and
+                -not $_.StartsWith("rust-analyzer: ") -and
+                -not $_.StartsWith("Generating SCIP ")
+            }
+    )
+}
+
+function Format-DiagnosticPreview {
+    param(
+        [string[]]$Lines,
+        [int]$MaxLines = 6
+    )
+
+    if (($null -eq $Lines) -or ($Lines.Count -eq 0)) {
+        return $null
+    }
+
+    $previewLines = @($Lines | Select-Object -First $MaxLines)
+    $preview = $previewLines -join " | "
+    if ($Lines.Count -gt $previewLines.Count) {
+        $preview += " | ..."
+    }
+
+    return $preview
+}
+
 function Write-ReportHtml {
     param(
         [string]$Path,
@@ -2271,6 +2308,7 @@ function Invoke-CallgraphReport {
     $outputPath = Join-Path $callgraphRoot "output.html"
     $fullScipPath = Join-Path $callgraphRoot "index.scip"
     $fullScipJsonPath = Join-Path $callgraphRoot "index.scip.json"
+    $scipIndexerDiagnosticsPath = Join-Path $callgraphRoot "rust-analyzer.scip.stderr.txt"
     $coreFallbackSvgPath = Join-Path $callgraphRoot "backend_core.simple.svg"
     $overviewFallbackSvgPath = Join-Path $callgraphRoot "backend_core.overview.simple.svg"
     $summaryJsonPath = Join-Path $callgraphRoot "backend_core.summary.json"
@@ -2307,31 +2345,55 @@ function Invoke-CallgraphReport {
 
         Push-Location $serverRoot
         try {
-            if (Test-Path "index.scip") {
-                Remove-Item -Force -Path "index.scip"
+            if (Test-Path $fullScipPath) {
+                Remove-Item -Force -Path $fullScipPath
+            }
+            if (Test-Path $scipIndexerDiagnosticsPath) {
+                Remove-Item -Force -Path $scipIndexerDiagnosticsPath
             }
 
             $scipIndexerWarning = $null
-            try {
-                & rust-analyzer scip . | Out-Host
-                if ($LASTEXITCODE -ne 0) {
-                    throw "rust-analyzer scip failed with exit code $LASTEXITCODE."
-                }
+            & rust-analyzer scip . --output $fullScipPath 2> $scipIndexerDiagnosticsPath | Out-Host
+            $scipIndexerExitCode = $LASTEXITCODE
+            $scipIndexerDiagnostics = @(Get-RustAnalyzerScipDiagnostics -Path $scipIndexerDiagnosticsPath)
+            if ($scipIndexerDiagnostics.Count -gt 0) {
+                Set-Content -Path $scipIndexerDiagnosticsPath -Value ($scipIndexerDiagnostics -join "`n") -Encoding utf8
             }
-            catch {
-                if (Test-Path "index.scip") {
-                    $scipIndexerWarning = $_.Exception.Message
+            elseif (($scipIndexerExitCode -eq 0) -and (Test-Path $scipIndexerDiagnosticsPath)) {
+                Remove-Item -Force -Path $scipIndexerDiagnosticsPath
+            }
+            if (-not (Test-Path $fullScipPath)) {
+                if ($scipIndexerExitCode -ne 0) {
+                    throw "rust-analyzer scip failed with exit code $scipIndexerExitCode."
+                }
+
+                throw "rust-analyzer did not produce $fullScipPath."
+            }
+            if (($scipIndexerExitCode -ne 0) -or ($scipIndexerDiagnostics.Count -gt 0)) {
+                $duplicateSymbolCount = @(
+                    $scipIndexerDiagnostics |
+                        Where-Object { $_ -like "*Duplicate symbol:*" }
+                ).Count
+                if ($duplicateSymbolCount -gt 0) {
+                    $scipIndexerWarning = "rust-analyzer scip emitted duplicate-symbol diagnostics for $duplicateSymbolCount symbols; see rust-analyzer.scip.stderr.txt."
+                    if ($scipIndexerExitCode -ne 0) {
+                        $scipIndexerWarning += " The process exited with code $scipIndexerExitCode."
+                    }
                 }
                 else {
-                    throw
+                    $scipIndexerWarning = if ($scipIndexerExitCode -ne 0) {
+                        "rust-analyzer scip exited with code $scipIndexerExitCode."
+                    }
+                    else {
+                        "rust-analyzer scip emitted diagnostics."
+                    }
+
+                    $diagnosticPreview = Format-DiagnosticPreview -Lines $scipIndexerDiagnostics
+                    if (-not [string]::IsNullOrWhiteSpace($diagnosticPreview)) {
+                        $scipIndexerWarning = "$scipIndexerWarning $diagnosticPreview"
+                    }
                 }
             }
-
-            if (-not (Test-Path "index.scip")) {
-                throw "rust-analyzer did not produce index.scip in the server workspace root."
-            }
-
-            Move-Item -Force -Path "index.scip" -Destination $fullScipPath
         }
         finally {
             Pop-Location
@@ -2384,6 +2446,7 @@ function Invoke-CallgraphReport {
         }
         if (-not [string]::IsNullOrWhiteSpace($scipIndexerWarning)) {
             $notes.Add("rust-analyzer scip reported upstream indexing errors but still produced a usable SCIP index; the curated callgraph artifacts were generated from that output.")
+            $notes.Add("Indexer diagnostics were captured in rust-analyzer.scip.stderr.txt so CI keeps upstream rust-analyzer warnings out of GitHub file annotations.")
             $notes.Add("Indexer warning: $scipIndexerWarning")
         }
 
@@ -2415,6 +2478,9 @@ function Invoke-CallgraphReport {
             '<li><a href="./backend_core.overview.simple.svg">Backend overview SVG</a></li>',
             '<li><a href="./backend_core.dot">Curated backend core DOT</a></li>'
         )
+        if (Test-Path $scipIndexerDiagnosticsPath) {
+            $artifactItems += '<li><a href="./rust-analyzer.scip.stderr.txt">rust-analyzer SCIP diagnostics</a></li>'
+        }
         if (Test-Path $coreFallbackSvgPath) {
             $artifactItems += '<li><a href="./backend_core.simple.svg">Curated backend core simple SVG</a></li>'
         }
