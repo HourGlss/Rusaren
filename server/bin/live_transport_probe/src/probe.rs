@@ -2,7 +2,7 @@ use std::collections::{btree_map::Entry, BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use game_content::{CombatValueKind, DispelScope, GameContent, SkillBehavior};
+use game_content::{ArenaMapDefinition, CombatValueKind, DispelScope, GameContent, SkillBehavior};
 use game_domain::{
     LobbyId, MatchId, PlayerId, PlayerRecord, ReadyState, SkillChoice, SkillTree, TeamSide,
 };
@@ -110,6 +110,19 @@ struct AttackWindow {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ObjectiveFocus {
+    center: (i16, i16),
+    hold_radius: u16,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ArenaGeometry {
+    width_units: u16,
+    height_units: u16,
+    tile_units: u16,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AimTarget {
     Enemy,
     Ally,
@@ -136,11 +149,20 @@ struct CombatProgressState {
     exercised_skills: usize,
 }
 
+// Once a real exchange is clearly underway, allow pure-heal coverage to land even if
+// the only available ally target is already full. This keeps hosted verification from
+// missing legal support casts just because the round closes quickly.
+const FULL_HEALTH_SUPPORT_CAST_EFFECT_THRESHOLD: usize = 48;
+const NAVIGATION_STALL_SNAPSHOT_THRESHOLD: usize = 8;
+const NAVIGATION_STALL_DETOUR_WINDOW: usize = 8;
+
 struct ProbeClientState {
     label: String,
     client: LiveClient,
     team_a_anchor: (i16, i16),
     team_b_anchor: (i16, i16),
+    objective_focus: Option<ObjectiveFocus>,
+    arena_geometry: Option<ArenaGeometry>,
     player_id: Option<PlayerId>,
     skill_catalog: Vec<SkillCatalogEntry>,
     current_lobby_id: Option<LobbyId>,
@@ -155,6 +177,7 @@ struct ProbeClientState {
     current_skill_choice: Option<SkillChoice>,
     current_skill_exercised: bool,
     observed_effects_this_round: usize,
+    stationary_combat_snapshots: usize,
     transport_broken: Option<String>,
     signal_detach_allowed: bool,
     observed_mechanics: BTreeSet<ProbeMechanicObservation>,
@@ -175,7 +198,9 @@ enum PhaseState {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CombatDriveOutcome {
     RoundFinished,
-    ProbeLimited,
+    RoundSkillCoverageSatisfied,
+    RequiredMechanicsSatisfied,
+    LoopLimitReached,
 }
 
 fn notice_breaks_transport(category: &str, signal_detach_allowed: bool) -> bool {
@@ -192,12 +217,15 @@ impl ProbeClientState {
         client: LiveClient,
         team_a_anchor: (i16, i16),
         team_b_anchor: (i16, i16),
+        objective_focus: Option<ObjectiveFocus>,
     ) -> Self {
         Self {
             label: String::from(label),
             client,
             team_a_anchor,
             team_b_anchor,
+            objective_focus,
+            arena_geometry: None,
             player_id: None,
             skill_catalog: Vec::new(),
             current_lobby_id: None,
@@ -212,6 +240,7 @@ impl ProbeClientState {
             current_skill_choice: None,
             current_skill_exercised: false,
             observed_effects_this_round: 0,
+            stationary_combat_snapshots: 0,
             transport_broken: None,
             signal_detach_allowed: false,
             observed_mechanics: BTreeSet::new(),
@@ -375,6 +404,7 @@ impl ProbeClientState {
                 self.current_skill_choice = None;
                 self.current_skill_exercised = false;
                 self.observed_effects_this_round = 0;
+                self.stationary_combat_snapshots = 0;
                 logger.info(
                     "match_started",
                     json!({
@@ -404,9 +434,6 @@ impl ProbeClientState {
                 self.last_completed_round = round.get();
                 self.current_round = round.get().saturating_add(1);
                 self.current_phase = PhaseState::SkillPick;
-                self.current_skill_choice = None;
-                self.current_skill_exercised = false;
-                self.observed_effects_this_round = 0;
                 logger.info(
                     "round_won",
                     json!({
@@ -440,10 +467,30 @@ impl ProbeClientState {
                 self.reset_after_match(logger)?;
             }
             ServerControlEvent::ArenaStateSnapshot { snapshot } => {
-                self.apply_snapshot(logger, &snapshot.players, snapshot.phase)?;
+                self.apply_snapshot(
+                    logger,
+                    &snapshot.players,
+                    snapshot.phase,
+                    Some(ArenaGeometry {
+                        width_units: snapshot.width,
+                        height_units: snapshot.height,
+                        tile_units: snapshot.tile_units,
+                    }),
+                    &snapshot.objective_tiles,
+                )?;
             }
             ServerControlEvent::ArenaDeltaSnapshot { snapshot } => {
-                self.apply_snapshot(logger, &snapshot.players, snapshot.phase)?;
+                self.apply_snapshot(
+                    logger,
+                    &snapshot.players,
+                    snapshot.phase,
+                    self.arena_geometry.map(|geometry| ArenaGeometry {
+                        width_units: geometry.width_units,
+                        height_units: geometry.height_units,
+                        tile_units: snapshot.tile_units,
+                    }),
+                    &snapshot.objective_tiles,
+                )?;
             }
             ServerControlEvent::ArenaEffectBatch { effects } => {
                 self.apply_effect_batch(logger, effects)?;
@@ -472,6 +519,7 @@ impl ProbeClientState {
                     );
                     self.current_skill_exercised = false;
                     self.observed_effects_this_round = 0;
+                    self.stationary_combat_snapshots = 0;
                 }
                 logger.info(
                     "skill_chosen",
@@ -524,9 +572,12 @@ impl ProbeClientState {
         self.last_completed_round = 0;
         self.roster.clear();
         self.arena_players.clear();
+        self.objective_focus = None;
+        self.arena_geometry = None;
         self.current_skill_choice = None;
         self.current_skill_exercised = false;
         self.observed_effects_this_round = 0;
+        self.stationary_combat_snapshots = 0;
         logger.info("returned_to_central", json!({ "client": self.label }))?;
         Ok(())
     }
@@ -536,7 +587,24 @@ impl ProbeClientState {
         logger: &mut ProbeLogger,
         players: &[ArenaPlayerSnapshot],
         phase: game_net::ArenaMatchPhase,
+        geometry: Option<ArenaGeometry>,
+        objective_tiles: &[u8],
     ) -> ProbeResult<()> {
+        if let Some(geometry) = geometry.filter(|geometry| {
+            geometry.width_units > 0 && geometry.height_units > 0 && geometry.tile_units > 0
+        }) {
+            self.arena_geometry = Some(geometry);
+        }
+        if let Some(runtime_objective_focus) = self.arena_geometry.and_then(|geometry| {
+            objective_focus_from_mask(
+                geometry.width_units,
+                geometry.height_units,
+                geometry.tile_units,
+                objective_tiles,
+            )
+        }) {
+            self.objective_focus = Some(runtime_objective_focus);
+        }
         let previous_players = std::mem::take(&mut self.arena_players);
         let previous_local = self
             .player_id
@@ -547,6 +615,17 @@ impl ProbeClientState {
             .map(|player| (player.player_id, player))
             .collect();
         self.current_phase = phase.into();
+        self.stationary_combat_snapshots = match (previous_local.as_ref(), self.local_player()) {
+            (Some(previous), Some(current))
+                if self.current_phase == PhaseState::Combat
+                    && current.alive
+                    && previous.x == current.x
+                    && previous.y == current.y =>
+            {
+                self.stationary_combat_snapshots.saturating_add(1)
+            }
+            _ => 0,
+        };
         self.observe_local_skill_state(logger, previous_local.as_ref(), &previous_players)?;
         self.observe_snapshot_mechanics(logger, previous_local.as_ref())?;
         Ok(())
@@ -631,7 +710,17 @@ impl ProbeClientState {
         let action = self.next_action(&me, nearest_enemy.as_ref(), allied_focus.as_ref());
         let (aim_x, aim_y) =
             Self::aim_vector(&me, nearest_enemy.as_ref(), allied_focus.as_ref(), action);
-        let (move_x, move_y) = self.navigation_target(&me, nearest_enemy.as_ref());
+        let (move_x, move_y) = if action.buttons & game_net::BUTTON_CAST != 0
+            && self.current_skill_requires_stillness()
+        {
+            (0, 0)
+        } else if let Some(adjustment) = self.support_skill_navigation(&me, allied_focus.as_ref()) {
+            adjustment
+        } else {
+            self.navigation_target(&me, nearest_enemy.as_ref())
+        };
+        let (move_x, move_y) =
+            self.unstick_navigation_vector(&me, nearest_enemy.as_ref(), (move_x, move_y));
         Some(PendingInput {
             move_x,
             move_y,
@@ -651,6 +740,25 @@ impl ProbeClientState {
     }
 
     fn best_ally_target(&self, me: &ArenaPlayerSnapshot) -> Option<TargetState> {
+        if let Some(skill) = self
+            .current_skill_profile()
+            .filter(|skill| skill.role == SkillRole::Support)
+        {
+            return self
+                .arena_players
+                .values()
+                .filter(|player| player.team == me.team && player.alive)
+                .max_by_key(|player| {
+                    Self::support_target_priority(
+                        me,
+                        player,
+                        &skill,
+                        self.observed_effects_this_round,
+                    )
+                })
+                .map(TargetState::from);
+        }
+
         let dispel_scope = self.current_skill_dispel_scope();
         self.arena_players
             .values()
@@ -701,9 +809,6 @@ impl ProbeClientState {
         if let Some(enemy) = nearest_enemy {
             let distance = i32::from(distance_between(me.x, me.y, enemy.x, enemy.y));
             let preferred_window = self.preferred_engagement_window(me);
-            if me.y.abs() > 48 && distance > preferred_window.max + 60 {
-                return (0, (-me.y).signum());
-            }
             if distance > preferred_window.max {
                 return (
                     enemy.x.saturating_sub(me.x).signum(),
@@ -721,6 +826,21 @@ impl ProbeClientState {
             return (0, 0);
         }
 
+        if let Some(ObjectiveFocus {
+            center: (target_x, target_y),
+            hold_radius,
+        }) = self.objective_focus
+        {
+            let distance = distance_between(me.x, me.y, target_x, target_y);
+            if distance > hold_radius {
+                return (
+                    target_x.saturating_sub(me.x).signum(),
+                    target_y.saturating_sub(me.y).signum(),
+                );
+            }
+            return Self::objective_patrol_vector(me, (target_x, target_y), hold_radius);
+        }
+
         let (target_x, target_y) = if me.team == TeamSide::TeamA {
             self.team_b_anchor
         } else {
@@ -732,11 +852,92 @@ impl ProbeClientState {
         )
     }
 
+    fn unstick_navigation_vector(
+        &self,
+        me: &ArenaPlayerSnapshot,
+        nearest_enemy: Option<&TargetState>,
+        desired: (i16, i16),
+    ) -> (i16, i16) {
+        if nearest_enemy.is_some() {
+            return desired;
+        }
+
+        Self::detour_navigation_vector(me.team, desired, self.stationary_combat_snapshots)
+    }
+
+    fn detour_navigation_vector(
+        team: TeamSide,
+        desired: (i16, i16),
+        stationary_combat_snapshots: usize,
+    ) -> (i16, i16) {
+        if desired == (0, 0) || stationary_combat_snapshots < NAVIGATION_STALL_SNAPSHOT_THRESHOLD {
+            return desired;
+        }
+
+        let stage = ((stationary_combat_snapshots - NAVIGATION_STALL_SNAPSHOT_THRESHOLD)
+            / NAVIGATION_STALL_DETOUR_WINDOW)
+            % 4;
+        let clockwise = match team {
+            TeamSide::TeamA => (desired.1, -desired.0),
+            TeamSide::TeamB => (-desired.1, desired.0),
+        };
+        let counter_clockwise = match team {
+            TeamSide::TeamA => (-desired.1, desired.0),
+            TeamSide::TeamB => (desired.1, -desired.0),
+        };
+
+        match stage {
+            0 if desired.0 != 0 => (desired.0, 0),
+            1 if desired.1 != 0 => (0, desired.1),
+            2 => clockwise,
+            _ => counter_clockwise,
+        }
+    }
+
     fn escape_overlap_vector(team: TeamSide) -> (i16, i16) {
         match team {
             TeamSide::TeamA => (-1, -1),
             TeamSide::TeamB => (1, 1),
         }
+    }
+
+    fn objective_patrol_vector(
+        me: &ArenaPlayerSnapshot,
+        center: (i16, i16),
+        hold_radius: u16,
+    ) -> (i16, i16) {
+        let rel_x = me.x.saturating_sub(center.0);
+        let rel_y = me.y.saturating_sub(center.1);
+        let distance = i32::from(distance_between(me.x, me.y, center.0, center.1));
+        let min_orbit_radius = i32::from(hold_radius.max(48));
+        let target_orbit_radius = min_orbit_radius + 72;
+        let outward = if rel_x == 0 && rel_y == 0 {
+            Self::escape_overlap_vector(me.team)
+        } else {
+            (rel_x.signum(), rel_y.signum())
+        };
+        let tangent = match me.team {
+            TeamSide::TeamA => (-outward.1, outward.0),
+            TeamSide::TeamB => (outward.1, -outward.0),
+        };
+        let inward = (
+            center.0.saturating_sub(me.x).signum(),
+            center.1.saturating_sub(me.y).signum(),
+        );
+
+        if distance < min_orbit_radius {
+            return (
+                (outward.0 + tangent.0).signum(),
+                (outward.1 + tangent.1).signum(),
+            );
+        }
+        if distance > target_orbit_radius + 48 {
+            return (
+                (inward.0 + tangent.0).signum(),
+                (inward.1 + tangent.1).signum(),
+            );
+        }
+        tangent
     }
 
     fn next_action(
@@ -747,6 +948,21 @@ impl ProbeClientState {
     ) -> PlannedAction {
         if let Some(skill_action) = self.current_skill_action(me, nearest_enemy, allied_focus) {
             return skill_action;
+        }
+
+        if self.ready_current_skill(me).is_some_and(|(_, skill)| {
+            Self::should_withhold_primary_for_skill(&skill, self.current_skill_exercised)
+        }) {
+            return PlannedAction {
+                buttons: 0,
+                ability_or_context: 0,
+                aim_target: if nearest_enemy.is_some() {
+                    AimTarget::Enemy
+                } else {
+                    AimTarget::Center
+                },
+                aim_override: None,
+            };
         }
 
         if me.primary_cooldown_remaining_ms == 0
@@ -813,11 +1029,22 @@ impl ProbeClientState {
         slot: u8,
         skill: &SkillProfile,
     ) -> Option<PlannedAction> {
-        let enemy = self.preferred_enemy_target(nearest_enemy, skill)?;
-        let distance = i32::from(distance_between(me.x, me.y, enemy.x, enemy.y));
-        Self::attack_window_for_skill(skill)
-            .contains(distance)
-            .then(|| Self::skill_cast_action(slot, AimTarget::Enemy, (enemy.x, enemy.y)))
+        if let Some(enemy) = self.preferred_enemy_target(nearest_enemy, skill) {
+            let distance = i32::from(distance_between(me.x, me.y, enemy.x, enemy.y));
+            return Self::attack_window_for_skill(skill)
+                .contains(distance)
+                .then(|| {
+                    Self::skill_cast_action(slot, AimTarget::Enemy, (enemy.x, enemy.y), false)
+                });
+        }
+        Self::skill_supports_blind_lane_cast(skill).then(|| {
+            Self::skill_cast_action(
+                slot,
+                AimTarget::Center,
+                self.blind_enemy_lane_target(me),
+                false,
+            )
+        })
     }
 
     fn support_skill_action(
@@ -836,10 +1063,55 @@ impl ProbeClientState {
                 return None;
             }
         }
+        if Self::skill_requires_hurt_target(skill)
+            && ally.hit_points >= ally.max_hit_points
+            && !Self::allow_full_health_support_cast(skill, self.observed_effects_this_round)
+        {
+            return None;
+        }
         let distance = i32::from(distance_between(me.x, me.y, ally.x, ally.y));
         Self::attack_window_for_skill(skill)
             .contains(distance)
-            .then(|| Self::skill_cast_action(slot, AimTarget::Ally, (ally.x, ally.y)))
+            .then(|| {
+                Self::skill_cast_action(
+                    slot,
+                    AimTarget::Ally,
+                    (ally.x, ally.y),
+                    ally.player_id == me.player_id,
+                )
+            })
+    }
+
+    fn support_skill_navigation(
+        &self,
+        me: &ArenaPlayerSnapshot,
+        allied_focus: Option<&TargetState>,
+    ) -> Option<(i16, i16)> {
+        if self.current_skill_exercised {
+            return None;
+        }
+        let (_, skill) = self.ready_current_skill(me)?;
+        if skill.role != SkillRole::Support {
+            return None;
+        }
+        let ally = allied_focus?;
+        if let Some(scope) = Self::skill_dispel_scope(&skill) {
+            if self.dispellable_status_count_for_target(ally.player_id, scope) == 0 {
+                return None;
+            }
+        }
+        if Self::skill_requires_hurt_target(&skill)
+            && ally.hit_points >= ally.max_hit_points
+            && !Self::allow_full_health_support_cast(&skill, self.observed_effects_this_round)
+        {
+            return None;
+        }
+        Self::range_adjustment(
+            (me.x, me.y),
+            (ally.x, ally.y),
+            Self::attack_window_for_skill(&skill),
+            me.team,
+        )
     }
 
     fn engage_skill_action(
@@ -852,20 +1124,38 @@ impl ProbeClientState {
         if self.current_skill_exercised {
             return None;
         }
-        let enemy = nearest_enemy?;
-        let distance = i32::from(distance_between(me.x, me.y, enemy.x, enemy.y));
-        let primary_window = self.primary_attack_window();
-        (Self::attack_window_for_skill(skill).contains(distance) && distance > primary_window.max)
-            .then(|| Self::skill_cast_action(slot, AimTarget::Enemy, (enemy.x, enemy.y)))
+        if let Some(enemy) = nearest_enemy {
+            let distance = i32::from(distance_between(me.x, me.y, enemy.x, enemy.y));
+            let primary_window = self.primary_attack_window();
+            return (Self::attack_window_for_skill(skill).contains(distance)
+                && distance > primary_window.max)
+                .then(|| {
+                    Self::skill_cast_action(slot, AimTarget::Enemy, (enemy.x, enemy.y), false)
+                });
+        }
+        Self::skill_supports_blind_lane_cast(skill).then(|| {
+            Self::skill_cast_action(
+                slot,
+                AimTarget::Center,
+                self.blind_enemy_lane_target(me),
+                false,
+            )
+        })
     }
 
     fn skill_cast_action(
         slot: u8,
         aim_target: AimTarget,
         aim_override: (i16, i16),
+        self_cast: bool,
     ) -> PlannedAction {
         PlannedAction {
-            buttons: game_net::BUTTON_CAST,
+            buttons: game_net::BUTTON_CAST
+                | if self_cast {
+                    game_net::BUTTON_SELF_CAST
+                } else {
+                    0
+                },
             ability_or_context: u16::from(slot),
             aim_target,
             aim_override: Some(aim_override),
@@ -886,6 +1176,11 @@ impl ProbeClientState {
             .cloned()
     }
 
+    fn current_skill_requires_stillness(&self) -> bool {
+        self.current_skill_profile()
+            .is_some_and(|skill| skill.behavior.cast_time_ms() > 0)
+    }
+
     fn preferred_enemy_target(
         &self,
         nearest_enemy: Option<&TargetState>,
@@ -904,9 +1199,50 @@ impl ProbeClientState {
         nearest_enemy.copied()
     }
 
+    fn blind_enemy_lane_target(&self, me: &ArenaPlayerSnapshot) -> (i16, i16) {
+        if let Some(focus) = self.objective_focus {
+            return focus.center;
+        }
+        if me.team == TeamSide::TeamA {
+            self.team_b_anchor
+        } else {
+            self.team_a_anchor
+        }
+    }
+
     fn current_skill_dispel_scope(&self) -> Option<DispelScope> {
         self.current_skill_profile()
             .and_then(|skill| Self::skill_dispel_scope(&skill))
+    }
+
+    fn current_skill_key(&self) -> Option<(SkillTree, u8)> {
+        self.current_skill_choice
+            .as_ref()
+            .map(|choice| (choice.tree.clone(), choice.tier))
+    }
+
+    fn range_adjustment(
+        origin: (i16, i16),
+        target: (i16, i16),
+        window: AttackWindow,
+        team: TeamSide,
+    ) -> Option<(i16, i16)> {
+        let distance = i32::from(distance_between(origin.0, origin.1, target.0, target.1));
+        if distance > window.max {
+            return Some((
+                target.0.saturating_sub(origin.0).signum(),
+                target.1.saturating_sub(origin.1).signum(),
+            ));
+        }
+        if distance < window.min {
+            let move_x = origin.0.saturating_sub(target.0).signum();
+            let move_y = origin.1.saturating_sub(target.1).signum();
+            if move_x == 0 && move_y == 0 {
+                return Some(Self::escape_overlap_vector(team));
+            }
+            return Some((move_x, move_y));
+        }
+        None
     }
 
     fn dispellable_status_count(player: &ArenaPlayerSnapshot, scope: DispelScope) -> usize {
@@ -1043,6 +1379,66 @@ impl ProbeClientState {
         }
     }
 
+    fn skill_requires_hurt_target(skill: &SkillProfile) -> bool {
+        let Some(payload) = Self::skill_payload(&skill.behavior) else {
+            return false;
+        };
+        payload.kind == CombatValueKind::Heal
+            && payload.amount > 0
+            && payload.status.is_none()
+            && payload.dispel.is_none()
+            && payload.interrupt_silence_duration_ms.is_none()
+    }
+
+    fn allow_full_health_support_cast(
+        skill: &SkillProfile,
+        observed_effects_this_round: usize,
+    ) -> bool {
+        Self::skill_requires_hurt_target(skill)
+            && observed_effects_this_round >= FULL_HEALTH_SUPPORT_CAST_EFFECT_THRESHOLD
+    }
+
+    fn support_target_priority(
+        me: &ArenaPlayerSnapshot,
+        player: &ArenaPlayerSnapshot,
+        skill: &SkillProfile,
+        observed_effects_this_round: usize,
+    ) -> (usize, u8, u8, u16, u16, u8) {
+        let dispel_count = Self::skill_dispel_scope(skill)
+            .map_or(0, |scope| Self::dispellable_status_count(player, scope));
+        let missing_hit_points = player.max_hit_points.saturating_sub(player.hit_points);
+        let can_receive_skill = if dispel_count == 0 && Self::skill_dispel_scope(skill).is_some() {
+            false
+        } else if Self::skill_requires_hurt_target(skill) && missing_hit_points == 0 {
+            Self::allow_full_health_support_cast(skill, observed_effects_this_round)
+        } else {
+            true
+        };
+        let distance = distance_between(me.x, me.y, player.x, player.y);
+        let can_cast_now =
+            can_receive_skill && Self::attack_window_for_skill(skill).contains(i32::from(distance));
+
+        (
+            dispel_count,
+            u8::from(can_cast_now),
+            u8::from(can_cast_now && player.player_id == me.player_id),
+            missing_hit_points,
+            u16::MAX.saturating_sub(distance),
+            u8::from(player.player_id != me.player_id),
+        )
+    }
+
+    fn skill_activation_is_immediate(skill: &SkillProfile) -> bool {
+        matches!(skill.behavior, SkillBehavior::Passive { .. })
+    }
+
+    fn should_withhold_primary_for_skill(
+        skill: &SkillProfile,
+        current_skill_exercised: bool,
+    ) -> bool {
+        !current_skill_exercised && skill.role == SkillRole::Support
+    }
+
     fn observe_local_skill_state(
         &mut self,
         logger: &mut ProbeLogger,
@@ -1058,6 +1454,13 @@ impl ProbeClientState {
         let Some(local) = self.local_player() else {
             return Ok(());
         };
+        let Some(skill) = self.current_skill_profile() else {
+            return Ok(());
+        };
+        if Self::skill_activation_is_immediate(&skill) {
+            self.mark_current_skill_exercised(logger, slot, "passive", previous_players)?;
+            return Ok(());
+        }
         let slot_index = usize::from(slot.saturating_sub(1));
         let cooldown_started = local
             .slot_cooldown_remaining_ms
@@ -1288,6 +1691,20 @@ impl ProbeClientState {
             })
     }
 
+    fn skill_supports_blind_lane_cast(skill: &SkillProfile) -> bool {
+        matches!(
+            skill.behavior,
+            SkillBehavior::Projectile { .. }
+                | SkillBehavior::Dash { .. }
+                | SkillBehavior::Teleport { .. }
+                | SkillBehavior::Summon { .. }
+                | SkillBehavior::Trap { .. }
+                | SkillBehavior::Ward { .. }
+                | SkillBehavior::Barrier { .. }
+                | SkillBehavior::Aura { .. }
+        )
+    }
+
     fn status_matches_dispel_scope(kind: ArenaStatusKind, scope: DispelScope) -> bool {
         match scope {
             DispelScope::Positive => !Self::is_negative_status(kind),
@@ -1315,6 +1732,85 @@ impl ProbeClientState {
             kind,
             ArenaStatusKind::Poison | ArenaStatusKind::Hot | ArenaStatusKind::Chill
         )
+    }
+
+    fn combat_debug_snapshot(&self) -> serde_json::Value {
+        let Some(me) = self.local_player() else {
+            return json!({
+                "client": self.label,
+                "state": "no_local_player",
+                "current_round": self.current_round,
+                "current_phase": format!("{:?}", self.current_phase),
+                "current_skill": self.current_skill_choice.as_ref().map(|choice| {
+                    json!({
+                        "tree": choice.tree.as_str(),
+                        "tier": choice.tier,
+                    })
+                }),
+            });
+        };
+
+        let nearest_enemy = self.nearest_enemy(me);
+        let allied_focus = self.best_ally_target(me);
+        let next_action = self.next_action(me, nearest_enemy.as_ref(), allied_focus.as_ref());
+        let current_skill_slot = self.current_skill_slot();
+        let slot_cooldown_ms = current_skill_slot
+            .and_then(|slot| {
+                me.slot_cooldown_remaining_ms
+                    .get(usize::from(slot.saturating_sub(1)))
+                    .copied()
+            })
+            .unwrap_or_default();
+
+        json!({
+            "client": self.label,
+            "player_id": me.player_id.get(),
+            "team": format!("{:?}", me.team),
+            "alive": me.alive,
+            "position": { "x": me.x, "y": me.y },
+            "hit_points": me.hit_points,
+            "max_hit_points": me.max_hit_points,
+            "mana": me.mana,
+            "max_mana": me.max_mana,
+            "current_cast_slot": me.current_cast_slot,
+            "current_cast_remaining_ms": me.current_cast_remaining_ms,
+            "unlocked_skill_slots": me.unlocked_skill_slots,
+            "current_round": self.current_round,
+            "current_phase": format!("{:?}", self.current_phase),
+            "current_skill_exercised": self.current_skill_exercised,
+            "current_skill": self.current_skill_choice.as_ref().map(|choice| {
+                json!({
+                    "tree": choice.tree.as_str(),
+                    "tier": choice.tier,
+                    "slot": current_skill_slot,
+                    "slot_cooldown_ms": slot_cooldown_ms,
+                })
+            }),
+            "nearest_enemy": nearest_enemy.map(|enemy| {
+                json!({
+                    "player_id": enemy.player_id.get(),
+                    "position": { "x": enemy.x, "y": enemy.y },
+                    "distance": distance_between(me.x, me.y, enemy.x, enemy.y),
+                    "hit_points": enemy.hit_points,
+                    "max_hit_points": enemy.max_hit_points,
+                })
+            }),
+            "ally_focus": allied_focus.map(|ally| {
+                json!({
+                    "player_id": ally.player_id.get(),
+                    "position": { "x": ally.x, "y": ally.y },
+                    "distance": distance_between(me.x, me.y, ally.x, ally.y),
+                    "hit_points": ally.hit_points,
+                    "max_hit_points": ally.max_hit_points,
+                })
+            }),
+            "next_action": {
+                "buttons": next_action.buttons,
+                "ability_or_context": next_action.ability_or_context,
+                "aim_target": format!("{:?}", next_action.aim_target),
+                "aim_override": next_action.aim_override.map(|(x, y)| json!({ "x": x, "y": y })),
+            },
+        })
     }
 }
 
@@ -1407,6 +1903,96 @@ fn repo_content_root() -> PathBuf {
         .join("..")
         .join("..")
         .join("content")
+}
+
+fn probe_navigation_map(content: &GameContent) -> &ArenaMapDefinition {
+    content
+        .map_by_id("template_arena")
+        .unwrap_or_else(|| content.map())
+}
+
+fn objective_focus_for_map(map: &ArenaMapDefinition) -> Option<ObjectiveFocus> {
+    objective_focus_from_mask(
+        map.width_units,
+        map.height_units,
+        map.tile_units,
+        &map.objective_mask,
+    )
+}
+
+fn objective_focus_from_mask(
+    width_units: u16,
+    height_units: u16,
+    tile_units: u16,
+    objective_mask: &[u8],
+) -> Option<ObjectiveFocus> {
+    if width_units == 0 || height_units == 0 || tile_units == 0 {
+        return None;
+    }
+
+    let width = usize::from(width_units / tile_units);
+    let height = usize::from(height_units / tile_units);
+    if width == 0 || height == 0 {
+        return None;
+    }
+    let tile_units_i32 = i32::from(tile_units);
+    let width_units_i32 = i32::from(width_units);
+    let height_units_i32 = i32::from(height_units);
+    let mut objective_tiles = Vec::<(i16, i16)>::new();
+    for index in 0..(width * height) {
+        if !mask_has_tile(objective_mask, index) {
+            continue;
+        }
+        let column = index % width;
+        let row = index / width;
+        let center_x = -width_units_i32 / 2
+            + i32::try_from(column).unwrap_or(i32::MAX) * tile_units_i32
+            + tile_units_i32 / 2;
+        let center_y = -height_units_i32 / 2
+            + i32::try_from(row).unwrap_or(i32::MAX) * tile_units_i32
+            + tile_units_i32 / 2;
+        objective_tiles.push((
+            i16::try_from(center_x).unwrap_or(i16::MAX),
+            i16::try_from(center_y).unwrap_or(i16::MAX),
+        ));
+    }
+    if objective_tiles.is_empty() {
+        return None;
+    }
+
+    let count = i32::try_from(objective_tiles.len()).unwrap_or(1);
+    let center_x = objective_tiles
+        .iter()
+        .map(|(x, _)| i32::from(*x))
+        .sum::<i32>()
+        / count;
+    let center_y = objective_tiles
+        .iter()
+        .map(|(_, y)| i32::from(*y))
+        .sum::<i32>()
+        / count;
+    let center = (
+        i16::try_from(center_x).unwrap_or(i16::MAX),
+        i16::try_from(center_y).unwrap_or(i16::MAX),
+    );
+    let hold_radius = objective_tiles
+        .iter()
+        .map(|(x, y)| distance_between(center.0, center.1, *x, *y))
+        .max()
+        .unwrap_or(0)
+        .saturating_add(tile_units);
+
+    Some(ObjectiveFocus {
+        center,
+        hold_radius,
+    })
+}
+
+fn mask_has_tile(mask: &[u8], index: usize) -> bool {
+    let byte_index = index / 8;
+    let bit_index = index % 8;
+    mask.get(byte_index)
+        .is_some_and(|byte| (byte & (1_u8 << bit_index)) != 0)
 }
 
 fn skill_role(behavior: &SkillBehavior) -> SkillRole {
@@ -1506,7 +2092,8 @@ pub async fn run_probe(config: ProbeConfig) -> ProbeResult<ProbeOutcome> {
         .map_err(|error| ProbeError::new(format!("probe content load failed: {error}")))?;
 
     let labels = ["probe-a1", "probe-a2", "probe-b1", "probe-b2"];
-    let map = content.map();
+    let map = probe_navigation_map(&content);
+    let objective_focus = objective_focus_for_map(map);
     let mut clients = Vec::new();
     for label in labels.into_iter().take(config.players_per_match) {
         logger.info("client_connecting", json!({ "client": label }))?;
@@ -1518,6 +2105,7 @@ pub async fn run_probe(config: ProbeConfig) -> ProbeResult<ProbeOutcome> {
             client,
             team_a_anchor,
             team_b_anchor,
+            objective_focus,
         ));
     }
 
@@ -1549,6 +2137,21 @@ struct ProbeRunner {
 }
 
 impl ProbeRunner {
+    fn effective_round_timeout(&self) -> Duration {
+        let objective_budget =
+            Duration::from_millis(u64::from(self.content.map().objective_target_ms));
+        self.config
+            .round_timeout
+            .max(objective_budget + Duration::from_secs(30))
+    }
+
+    fn effective_match_timeout(&self, planned_rounds: usize) -> Duration {
+        let rounds = u32::try_from(planned_rounds).unwrap_or(u32::MAX);
+        let minimum_budget = self.effective_round_timeout().saturating_mul(rounds)
+            + self.config.stage_timeout.saturating_mul(4);
+        self.config.match_timeout.max(minimum_budget)
+    }
+
     fn observed_mechanics(&self) -> BTreeSet<ProbeMechanicObservation> {
         let mut observed = self.observed_mechanics.clone();
         observed.extend(
@@ -1853,6 +2456,7 @@ impl ProbeRunner {
             client.current_skill_choice = None;
             client.current_skill_exercised = false;
             client.observed_effects_this_round = 0;
+            client.stationary_combat_snapshots = 0;
         }
         Ok(())
     }
@@ -1961,18 +2565,44 @@ impl ProbeRunner {
 
     async fn play_match_rounds(&mut self, plan: &MatchPlan) -> ProbeResult<bool> {
         let match_started_at = Instant::now();
-        for round_index in 0..plan.players[0].tiers.len() {
+        let planned_rounds = self
+            .config
+            .max_rounds_per_match
+            .map_or(plan.players[0].tiers.len(), |limit| {
+                limit.min(plan.players[0].tiers.len())
+            });
+        for round_index in 0..planned_rounds {
             let round = u8::try_from(round_index + 1).unwrap_or(u8::MAX);
             self.choose_round_skills(round_index).await?;
             self.wait_for_pre_combat_and_combat().await?;
 
+            let combat_outcome = self.drive_combat(round).await?;
             if matches!(
-                self.drive_combat(round).await?,
-                CombatDriveOutcome::ProbeLimited
+                combat_outcome,
+                CombatDriveOutcome::RoundFinished | CombatDriveOutcome::RoundSkillCoverageSatisfied
             ) {
+                self.ensure_round_skills_exercised(round)?;
+            }
+
+            if matches!(
+                combat_outcome,
+                CombatDriveOutcome::RoundSkillCoverageSatisfied
+                    | CombatDriveOutcome::RequiredMechanicsSatisfied
+                    | CombatDriveOutcome::LoopLimitReached
+            ) {
+                let reason = match combat_outcome {
+                    CombatDriveOutcome::RoundSkillCoverageSatisfied => "round_skill_coverage",
+                    CombatDriveOutcome::RequiredMechanicsSatisfied => "required_mechanics",
+                    CombatDriveOutcome::LoopLimitReached => "combat_loop_limit",
+                    CombatDriveOutcome::RoundFinished => "round_finished",
+                };
                 self.logger.info(
                     "match_combat_smoke_limit_reached",
-                    json!({ "match_index": plan.match_index, "round": round }),
+                    json!({
+                        "match_index": plan.match_index,
+                        "round": round,
+                        "reason": reason,
+                    }),
                 )?;
                 return Ok(true);
             }
@@ -1994,7 +2624,7 @@ impl ProbeRunner {
                 )?;
                 return Ok(true);
             }
-            if match_started_at.elapsed() > self.config.match_timeout {
+            if match_started_at.elapsed() > self.effective_match_timeout(planned_rounds) {
                 return Err(ProbeError::new("match exceeded the configured timeout"));
             }
         }
@@ -2024,7 +2654,7 @@ impl ProbeRunner {
             client.current_skill_choice = Some(choice);
             client.current_skill_exercised = false;
             client.observed_effects_this_round = 0;
-            self.covered_skills.insert((tree_plan.tree.clone(), tier));
+            client.stationary_combat_snapshots = 0;
         }
         Ok(())
     }
@@ -2079,7 +2709,8 @@ impl ProbeRunner {
         let mut last_progress_at = Instant::now();
         let mut previous_players = self.merge_visible_players();
         self.log_combat_progress(round, loop_count, "combat_progress", last_progress)?;
-        while started_at.elapsed() < self.config.round_timeout {
+        let round_timeout = self.effective_round_timeout();
+        while started_at.elapsed() < round_timeout {
             self.drain_all(Duration::from_millis(50)).await?;
             let current_players = self.merge_visible_players();
             self.observe_runner_mechanics(&previous_players, &current_players)?;
@@ -2102,6 +2733,17 @@ impl ProbeRunner {
             if self.round_finished(round) {
                 return Ok(CombatDriveOutcome::RoundFinished);
             }
+            if self.round_skill_smoke_satisfied(round) {
+                self.logger.info(
+                    "probe_round_skill_coverage_satisfied",
+                    json!({
+                        "round": round,
+                        "iterations": loop_count,
+                        "covered_skills": self.covered_skills.len(),
+                    }),
+                )?;
+                return Ok(CombatDriveOutcome::RoundSkillCoverageSatisfied);
+            }
             if self.required_mechanics_satisfied() {
                 self.logger.info(
                     "probe_required_mechanics_satisfied",
@@ -2115,7 +2757,7 @@ impl ProbeRunner {
                             .collect::<Vec<_>>(),
                     }),
                 )?;
-                return Ok(CombatDriveOutcome::ProbeLimited);
+                return Ok(CombatDriveOutcome::RequiredMechanicsSatisfied);
             }
 
             for client in &mut self.clients {
@@ -2128,6 +2770,10 @@ impl ProbeRunner {
                                 "client": client.label,
                                 "sequence": sequence,
                                 "round": round,
+                                "buttons": action.buttons,
+                                "ability_or_context": action.ability_or_context,
+                                "move": { "x": action.move_x, "y": action.move_y },
+                                "aim": { "x": action.aim_x, "y": action.aim_y },
                             }),
                         )?;
                     }
@@ -2145,17 +2791,28 @@ impl ProbeRunner {
                     "combat_loop_limit_reached",
                     json!({ "round": round, "iterations": loop_count }),
                 )?;
-                return Ok(CombatDriveOutcome::ProbeLimited);
+                return Ok(CombatDriveOutcome::LoopLimitReached);
             }
         }
 
-        Err(self.combat_timeout_error(round, last_progress))
+        self.log_combat_stall(round, loop_count, round_timeout.as_secs(), last_progress)?;
+        Err(self.combat_timeout_error(round, round_timeout, last_progress))
     }
 
     fn round_finished(&self, round: u8) -> bool {
         self.clients.iter().all(|client| {
             client.current_phase == PhaseState::Results || client.last_completed_round >= round
         })
+    }
+
+    fn round_skill_smoke_satisfied(&self, round: u8) -> bool {
+        self.config
+            .max_rounds_per_match
+            .is_some_and(|limit| usize::from(round) >= limit)
+            && self
+                .clients
+                .iter()
+                .all(|client| client.current_skill_exercised)
     }
 
     fn capture_combat_progress(&self) -> CombatProgressState {
@@ -2172,7 +2829,7 @@ impl ProbeRunner {
                     .entry(player_id)
                     .or_insert_with(|| player.clone());
             }
-            if let Some(me) = client.local_player() {
+            if let Some(me) = client.local_player().filter(|player| player.alive) {
                 if let Some(enemy) = client.nearest_enemy(me) {
                     let distance = distance_between(me.x, me.y, enemy.x, enemy.y);
                     min_enemy_distance = Some(
@@ -2265,13 +2922,24 @@ impl ProbeRunner {
                 "observed_effects": progress.observed_effects,
                 "exercised_skills": progress.exercised_skills,
             }),
-        )
+        )?;
+        for client in &self.clients {
+            self.logger
+                .info("combat_client_state", client.combat_debug_snapshot())?;
+        }
+        Ok(())
     }
 
-    fn combat_timeout_error(&self, round: u8, progress: CombatProgressState) -> ProbeError {
+    fn combat_timeout_error(
+        &self,
+        round: u8,
+        round_timeout: Duration,
+        progress: CombatProgressState,
+    ) -> ProbeError {
+        let missing_skills = self.pending_round_skill_descriptions();
         ProbeError::new(format!(
-            "round {round} did not finish within {}s (visible_players={} team_a_hp={} team_b_hp={} team_a_alive={} team_b_alive={} min_enemy_distance={:?} observed_effects={} exercised_skills={})",
-            self.config.round_timeout.as_secs(),
+            "round {round} did not finish within {}s (visible_players={} team_a_hp={} team_b_hp={} team_a_alive={} team_b_alive={} min_enemy_distance={:?} observed_effects={} exercised_skills={} missing_skills={:?})",
+            round_timeout.as_secs(),
             progress.visible_players,
             progress.team_a_hp,
             progress.team_b_hp,
@@ -2280,7 +2948,45 @@ impl ProbeRunner {
             progress.min_enemy_distance,
             progress.observed_effects,
             progress.exercised_skills,
+            missing_skills,
         ))
+    }
+
+    fn pending_round_skill_descriptions(&self) -> Vec<String> {
+        self.clients
+            .iter()
+            .filter(|client| !client.current_skill_exercised)
+            .map(|client| {
+                let skill = client
+                    .current_skill_key()
+                    .map(|(tree, tier)| format!("{tree} tier {tier}"))
+                    .unwrap_or_else(|| String::from("no current skill"));
+                format!("{}:{skill}", client.label)
+            })
+            .collect()
+    }
+
+    fn ensure_round_skills_exercised(&mut self, round: u8) -> ProbeResult<()> {
+        let missing = self.pending_round_skill_descriptions();
+        if !missing.is_empty() {
+            for client in self
+                .clients
+                .iter()
+                .filter(|client| !client.current_skill_exercised)
+            {
+                self.logger
+                    .info("combat_client_state", client.combat_debug_snapshot())?;
+            }
+            return Err(ProbeError::new(format!(
+                "round {round} ended before all selected skills were observed in live combat: {missing:?}"
+            )));
+        }
+        for client in &self.clients {
+            if let Some(skill_key) = client.current_skill_key() {
+                self.covered_skills.insert(skill_key);
+            }
+        }
+        Ok(())
     }
 
     async fn wait_for<F>(
@@ -2366,6 +3072,265 @@ mod probe_tests {
     }
 
     #[test]
+    fn pure_heal_support_skills_wait_for_an_injured_target() {
+        let content = test_content();
+        let cleric = build_combat_loadout(
+            &content,
+            &TreePlan {
+                tree: SkillTree::Cleric,
+                tiers: vec![1, 2, 3, 4, 5],
+            },
+        )
+        .expect("cleric loadout should build");
+        let bard = build_combat_loadout(
+            &content,
+            &TreePlan {
+                tree: SkillTree::new("Bard").expect("bard tree should parse"),
+                tiers: vec![1, 2, 3, 4, 5],
+            },
+        )
+        .expect("bard loadout should build");
+
+        assert!(ProbeClientState::skill_requires_hurt_target(
+            &cleric.round_skills[&1]
+        ));
+        assert!(!ProbeClientState::skill_requires_hurt_target(
+            &bard.round_skills[&4]
+        ));
+    }
+
+    #[test]
+    fn pure_heal_support_skills_fallback_after_sustained_combat() {
+        let content = test_content();
+        let cleric = build_combat_loadout(
+            &content,
+            &TreePlan {
+                tree: SkillTree::Cleric,
+                tiers: vec![1, 2, 3, 4, 5],
+            },
+        )
+        .expect("cleric loadout should build");
+
+        assert!(!ProbeClientState::allow_full_health_support_cast(
+            &cleric.round_skills[&1],
+            FULL_HEALTH_SUPPORT_CAST_EFFECT_THRESHOLD.saturating_sub(1),
+        ));
+        assert!(ProbeClientState::allow_full_health_support_cast(
+            &cleric.round_skills[&1],
+            FULL_HEALTH_SUPPORT_CAST_EFFECT_THRESHOLD,
+        ));
+    }
+
+    #[test]
+    fn support_target_priority_prefers_a_ready_self_heal_over_a_farther_ally() {
+        let content = test_content();
+        let cleric = build_combat_loadout(
+            &content,
+            &TreePlan {
+                tree: SkillTree::Cleric,
+                tiers: vec![1, 2, 3, 4, 5],
+            },
+        )
+        .expect("cleric loadout should build");
+
+        let me = ArenaPlayerSnapshot {
+            player_id: PlayerId::new(1).expect("player id should parse"),
+            player_name: game_domain::PlayerName::new("probe_a").expect("player name should parse"),
+            team: TeamSide::TeamA,
+            x: 0,
+            y: 0,
+            aim_x: 0,
+            aim_y: 0,
+            hit_points: 95,
+            max_hit_points: 105,
+            mana: 180,
+            max_mana: 180,
+            alive: true,
+            unlocked_skill_slots: 1,
+            primary_cooldown_remaining_ms: 0,
+            primary_cooldown_total_ms: 0,
+            slot_cooldown_remaining_ms: [0; 5],
+            slot_cooldown_total_ms: [0; 5],
+            equipped_skill_trees: [None, None, None, None, None],
+            current_cast_slot: None,
+            current_cast_remaining_ms: 0,
+            current_cast_total_ms: 0,
+            active_statuses: Vec::new(),
+        };
+        let ally = ArenaPlayerSnapshot {
+            player_id: PlayerId::new(2).expect("player id should parse"),
+            player_name: game_domain::PlayerName::new("probe_b").expect("player name should parse"),
+            team: TeamSide::TeamA,
+            x: 500,
+            y: 0,
+            aim_x: 0,
+            aim_y: 0,
+            hit_points: 70,
+            max_hit_points: 100,
+            mana: 180,
+            max_mana: 180,
+            alive: true,
+            unlocked_skill_slots: 1,
+            primary_cooldown_remaining_ms: 0,
+            primary_cooldown_total_ms: 0,
+            slot_cooldown_remaining_ms: [0; 5],
+            slot_cooldown_total_ms: [0; 5],
+            equipped_skill_trees: [None, None, None, None, None],
+            current_cast_slot: None,
+            current_cast_remaining_ms: 0,
+            current_cast_total_ms: 0,
+            active_statuses: Vec::new(),
+        };
+
+        assert!(
+            ProbeClientState::support_target_priority(&me, &me, &cleric.round_skills[&1], 0,)
+                > ProbeClientState::support_target_priority(
+                    &me,
+                    &ally,
+                    &cleric.round_skills[&1],
+                    0,
+                )
+        );
+    }
+
+    #[test]
+    fn support_navigation_closes_distance_to_an_injured_ally() {
+        let content = test_content();
+        let cleric = build_combat_loadout(
+            &content,
+            &TreePlan {
+                tree: SkillTree::Cleric,
+                tiers: vec![1, 2, 3, 4, 5],
+            },
+        )
+        .expect("cleric loadout should build");
+
+        let me = ArenaPlayerSnapshot {
+            player_id: PlayerId::new(1).expect("player id should parse"),
+            player_name: game_domain::PlayerName::new("probe_a").expect("player name should parse"),
+            team: TeamSide::TeamA,
+            x: 0,
+            y: 0,
+            aim_x: 0,
+            aim_y: 0,
+            hit_points: 280,
+            max_hit_points: 280,
+            mana: 180,
+            max_mana: 180,
+            alive: true,
+            unlocked_skill_slots: 1,
+            primary_cooldown_remaining_ms: 0,
+            primary_cooldown_total_ms: 0,
+            slot_cooldown_remaining_ms: [0; 5],
+            slot_cooldown_total_ms: [0; 5],
+            equipped_skill_trees: [None, None, None, None, None],
+            current_cast_slot: None,
+            current_cast_remaining_ms: 0,
+            current_cast_total_ms: 0,
+            active_statuses: Vec::new(),
+        };
+        let ally = TargetState {
+            player_id: PlayerId::new(2).expect("player id should parse"),
+            x: 420,
+            y: 24,
+            team: TeamSide::TeamA,
+            hit_points: 180,
+            max_hit_points: 240,
+        };
+
+        assert_eq!(
+            ProbeClientState::range_adjustment(
+                (me.x, me.y),
+                (ally.x, ally.y),
+                ProbeClientState::attack_window_for_skill(&cleric.round_skills[&1]),
+                me.team,
+            ),
+            Some((1, 1))
+        );
+    }
+
+    #[test]
+    fn passive_skills_count_as_immediate_live_coverage() {
+        let content = test_content();
+        let bard = build_combat_loadout(
+            &content,
+            &TreePlan {
+                tree: SkillTree::new("Bard").expect("bard tree should parse"),
+                tiers: vec![1, 2, 3, 4, 5],
+            },
+        )
+        .expect("bard loadout should build");
+        let cleric = build_combat_loadout(
+            &content,
+            &TreePlan {
+                tree: SkillTree::Cleric,
+                tiers: vec![1, 2, 3, 4, 5],
+            },
+        )
+        .expect("cleric loadout should build");
+
+        assert!(ProbeClientState::skill_activation_is_immediate(
+            &bard.round_skills[&2]
+        ));
+        assert!(!ProbeClientState::skill_activation_is_immediate(
+            &cleric.round_skills[&1]
+        ));
+    }
+
+    #[test]
+    fn blind_lane_fallback_supports_ranged_and_deployable_skills() {
+        let content = test_content();
+        let mage = build_combat_loadout(
+            &content,
+            &TreePlan {
+                tree: SkillTree::Mage,
+                tiers: vec![1, 2, 3, 4, 5],
+            },
+        )
+        .expect("mage loadout should build");
+        let bard = build_combat_loadout(
+            &content,
+            &TreePlan {
+                tree: SkillTree::new("Bard").expect("bard tree should parse"),
+                tiers: vec![1, 2, 3, 4, 5],
+            },
+        )
+        .expect("bard loadout should build");
+        let druid = build_combat_loadout(
+            &content,
+            &TreePlan {
+                tree: SkillTree::new("Druid").expect("druid tree should parse"),
+                tiers: vec![1, 2, 3, 4, 5],
+            },
+        )
+        .expect("druid loadout should build");
+        let cleric = build_combat_loadout(
+            &content,
+            &TreePlan {
+                tree: SkillTree::Cleric,
+                tiers: vec![1, 2, 3, 4, 5],
+            },
+        )
+        .expect("cleric loadout should build");
+
+        assert!(ProbeClientState::skill_supports_blind_lane_cast(
+            &bard.round_skills[&1]
+        ));
+        assert!(ProbeClientState::skill_supports_blind_lane_cast(
+            &mage.round_skills[&2]
+        ));
+        assert!(ProbeClientState::skill_supports_blind_lane_cast(
+            &druid.round_skills[&2]
+        ));
+        assert!(ProbeClientState::skill_supports_blind_lane_cast(
+            &bard.round_skills[&5]
+        ));
+        assert!(!ProbeClientState::skill_supports_blind_lane_cast(
+            &cleric.round_skills[&1]
+        ));
+    }
+
+    #[test]
     fn attack_window_requires_real_spacing_instead_of_point_blank_overlap() {
         let window = AttackWindow {
             min: 26,
@@ -2389,5 +3354,113 @@ mod probe_tests {
             ProbeClientState::escape_overlap_vector(TeamSide::TeamB),
             (1, 1)
         );
+    }
+
+    #[test]
+    fn objective_focus_centers_the_live_probe_on_the_authored_objective() {
+        let content = test_content();
+        let focus = objective_focus_for_map(probe_navigation_map(&content))
+            .expect("probe navigation map should expose an objective");
+
+        assert_eq!(focus.center, (0, 0));
+        assert!(focus.hold_radius >= content.map().tile_units);
+    }
+
+    #[test]
+    fn objective_focus_requires_runtime_objective_tiles() {
+        let empty_mask = vec![0_u8; 4];
+
+        assert_eq!(objective_focus_from_mask(250, 250, 50, &empty_mask), None);
+    }
+
+    #[test]
+    fn objective_patrol_keeps_searching_inside_the_hold_radius() {
+        let me = ArenaPlayerSnapshot {
+            player_id: PlayerId::new(1).expect("player id should parse"),
+            player_name: game_domain::PlayerName::new("probe-a1").expect("player name"),
+            team: TeamSide::TeamA,
+            x: 20,
+            y: 0,
+            aim_x: 0,
+            aim_y: 0,
+            hit_points: 100,
+            max_hit_points: 100,
+            mana: 100,
+            max_mana: 100,
+            alive: true,
+            unlocked_skill_slots: 1,
+            primary_cooldown_remaining_ms: 0,
+            primary_cooldown_total_ms: 0,
+            slot_cooldown_remaining_ms: [0; 5],
+            slot_cooldown_total_ms: [0; 5],
+            equipped_skill_trees: [None, None, None, None, None],
+            current_cast_slot: None,
+            current_cast_remaining_ms: 0,
+            current_cast_total_ms: 0,
+            active_statuses: Vec::new(),
+        };
+
+        assert_ne!(
+            ProbeClientState::objective_patrol_vector(&me, (0, 0), 50),
+            (0, 0)
+        );
+    }
+
+    #[test]
+    fn anti_stall_navigation_changes_the_vector_after_repeated_snapshots() {
+        assert_eq!(
+            ProbeClientState::detour_navigation_vector(TeamSide::TeamA, (1, 1), 0),
+            (1, 1)
+        );
+        assert_eq!(
+            ProbeClientState::detour_navigation_vector(
+                TeamSide::TeamA,
+                (1, 1),
+                NAVIGATION_STALL_SNAPSHOT_THRESHOLD,
+            ),
+            (1, 0)
+        );
+    }
+
+    #[test]
+    fn self_targeted_support_casts_request_self_cast_mode() {
+        let action = ProbeClientState::skill_cast_action(1, AimTarget::Ally, (0, 0), true);
+
+        assert_ne!(action.buttons & game_net::BUTTON_CAST, 0);
+        assert_ne!(action.buttons & game_net::BUTTON_SELF_CAST, 0);
+    }
+
+    #[test]
+    fn pending_support_skills_withhold_primary_until_coverage_lands() {
+        let content = test_content();
+        let cleric = build_combat_loadout(
+            &content,
+            &TreePlan {
+                tree: SkillTree::Cleric,
+                tiers: vec![1, 2, 3, 4, 5],
+            },
+        )
+        .expect("cleric loadout should build");
+        let bard = build_combat_loadout(
+            &content,
+            &TreePlan {
+                tree: SkillTree::new("Bard").expect("bard tree should parse"),
+                tiers: vec![1, 2, 3, 4, 5],
+            },
+        )
+        .expect("bard loadout should build");
+
+        assert!(ProbeClientState::should_withhold_primary_for_skill(
+            &cleric.round_skills[&1],
+            false,
+        ));
+        assert!(!ProbeClientState::should_withhold_primary_for_skill(
+            &cleric.round_skills[&1],
+            true,
+        ));
+        assert!(!ProbeClientState::should_withhold_primary_for_skill(
+            &bard.round_skills[&1],
+            false,
+        ));
     }
 }

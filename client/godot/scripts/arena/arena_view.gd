@@ -6,6 +6,13 @@ const PADDING := 8.0
 const PLAYER_RADIUS_UNITS := 28.0
 const FOG_EDGE_EXTENSION_RATIO := 0.52
 const FOG_EDGE_ALPHA_SCALE := 0.58
+const PLAYER_NAMEPLATE_TOP_GAP := 12.0
+const PLAYER_NAMEPLATE_TEXT_GAP := 6.0
+const PLAYER_NAMEPLATE_LINE_HEIGHT := 16.0
+const PLAYER_HP_BAR_HEIGHT := 5.0
+const PLAYER_MANA_BAR_HEIGHT := 4.0
+const PLAYER_RESOURCE_BAR_GAP := 3.0
+const PLAYER_CAST_BAR_CLEARANCE := 22.0
 const PLAYER_SHADOW_COLOR := Color(0.03, 0.05, 0.08, 0.26)
 const PROJECTILE_SHADOW_COLOR := Color(0.03, 0.05, 0.08, 0.18)
 const OBSTACLE_SHADOW_COLOR := Color(0.03, 0.04, 0.06, 0.16)
@@ -321,20 +328,26 @@ func _draw_players(arena_rect: Rect2) -> void:
 		var hp_ratio: float = 0.0
 		var max_hp: float = maxf(1.0, float(player.get("max_hit_points", 1)))
 		hp_ratio = clampf(float(player.get("hit_points", 0)) / max_hp, 0.0, 1.0)
-		var hp_width: float = radius * 2.2
-		var hp_origin: Vector2 = canvas_pos + Vector2(-hp_width * 0.5, radius + 10.0)
-		draw_rect(Rect2(hp_origin, Vector2(hp_width, 5.0)), Color8(65, 34, 34))
-		draw_rect(Rect2(hp_origin, Vector2(hp_width * hp_ratio, 5.0)), Color8(86, 198, 125))
+		var hp_width: float = _player_resource_bar_width(radius)
+		var hp_origin: Vector2 = _player_resource_bar_origin(canvas_pos, radius, hp_width)
+		draw_rect(Rect2(hp_origin, Vector2(hp_width, PLAYER_HP_BAR_HEIGHT)), Color8(65, 34, 34))
+		draw_rect(
+			Rect2(hp_origin, Vector2(hp_width * hp_ratio, PLAYER_HP_BAR_HEIGHT)),
+			Color8(86, 198, 125)
+		)
 		var max_mana: float = maxf(1.0, float(player.get("max_mana", 1)))
 		var mana_ratio: float = clampf(float(player.get("mana", 0)) / max_mana, 0.0, 1.0)
-		var mana_origin: Vector2 = hp_origin + Vector2(0.0, 8.0)
-		draw_rect(Rect2(mana_origin, Vector2(hp_width, 4.0)), Color8(28, 44, 78))
-		draw_rect(Rect2(mana_origin, Vector2(hp_width * mana_ratio, 4.0)), Color8(89, 163, 255))
+		var mana_origin: Vector2 = hp_origin + Vector2(0.0, PLAYER_HP_BAR_HEIGHT + PLAYER_RESOURCE_BAR_GAP)
+		draw_rect(Rect2(mana_origin, Vector2(hp_width, PLAYER_MANA_BAR_HEIGHT)), Color8(28, 44, 78))
+		draw_rect(
+			Rect2(mana_origin, Vector2(hp_width * mana_ratio, PLAYER_MANA_BAR_HEIGHT)),
+			Color8(89, 163, 255)
+		)
 		_draw_cast_bar(arena_rect, player, canvas_pos, radius)
 
 		if font != null:
 			var name_label := _player_name_label(player)
-			var name_position := canvas_pos + Vector2(-radius * 0.85, -radius - 12.0)
+			var name_position := _player_name_label_baseline(canvas_pos, radius, hp_width)
 			draw_string(
 				font,
 				name_position,
@@ -348,7 +361,7 @@ func _draw_players(arena_rect: Rect2) -> void:
 			if resource_label != "":
 				draw_string(
 					font,
-					canvas_pos + Vector2(-radius * 0.85, -radius - 28.0),
+					_player_resource_label_baseline(canvas_pos, radius, hp_width),
 					resource_label,
 					HORIZONTAL_ALIGNMENT_LEFT,
 					-1.0,
@@ -827,6 +840,25 @@ func _player_resource_label(player: Dictionary) -> String:
 	]
 
 
+func _player_resource_bar_width(radius: float) -> float:
+	return maxf(radius * 2.2, 24.0)
+
+
+func _player_resource_bar_origin(canvas_pos: Vector2, radius: float, bar_width: float) -> Vector2:
+	var stack_height := PLAYER_HP_BAR_HEIGHT + PLAYER_RESOURCE_BAR_GAP + PLAYER_MANA_BAR_HEIGHT
+	return canvas_pos + Vector2(-bar_width * 0.5, -radius - PLAYER_NAMEPLATE_TOP_GAP - stack_height)
+
+
+func _player_name_label_baseline(canvas_pos: Vector2, radius: float, bar_width: float) -> Vector2:
+	var resource_origin := _player_resource_bar_origin(canvas_pos, radius, bar_width)
+	return Vector2(canvas_pos.x - bar_width * 0.5, resource_origin.y - PLAYER_NAMEPLATE_TEXT_GAP)
+
+
+func _player_resource_label_baseline(canvas_pos: Vector2, radius: float, bar_width: float) -> Vector2:
+	var name_baseline := _player_name_label_baseline(canvas_pos, radius, bar_width)
+	return name_baseline + Vector2(0.0, -PLAYER_NAMEPLATE_LINE_HEIGHT)
+
+
 func _cast_label_for_player(player: Dictionary) -> String:
 	var slot := int(player.get("current_cast_slot", 0))
 	if slot <= 0:
@@ -837,11 +869,14 @@ func _cast_label_for_player(player: Dictionary) -> String:
 
 
 func _cast_bar_origin(player: Dictionary, canvas_pos: Vector2, radius: float, bar_width: float) -> Vector2:
-	var line_count := 1
+	var resource_width := _player_resource_bar_width(radius)
+	var top_baseline := _player_name_label_baseline(canvas_pos, radius, resource_width).y
 	if _player_resource_label(player) != "":
-		line_count += 1
-	var top_offset := radius + 44.0 + float(max(0, line_count - 1)) * 16.0
-	return canvas_pos + Vector2(-bar_width * 0.5, -top_offset)
+		top_baseline = _player_resource_label_baseline(canvas_pos, radius, resource_width).y
+	return Vector2(
+		canvas_pos.x - bar_width * 0.5,
+		top_baseline - PLAYER_CAST_BAR_CLEARANCE
+	)
 
 
 func _draw_cast_bar(arena_rect: Rect2, player: Dictionary, canvas_pos: Vector2, radius: float) -> void:

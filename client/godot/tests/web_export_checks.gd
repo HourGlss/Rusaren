@@ -26,6 +26,7 @@ func _init() -> void:
 	success = _assert_record_text_renders_extended_player_metrics() and success
 	success = _assert_round_and_match_summaries_and_combat_text() and success
 	success = _assert_player_token_palette_and_team_rings() and success
+	success = _assert_player_resource_nameplates_render_above_tokens() and success
 	success = _assert_remote_cast_labels_use_known_roster_skills() and success
 	success = _assert_resource_labels_only_show_for_local_player() and success
 	success = _assert_fog_rounds_only_on_visibility_boundary() and success
@@ -871,6 +872,39 @@ func _assert_resource_labels_only_show_for_local_player() -> bool:
 	arena_view.free()
 	if remote_label != "":
 		return _fail("arena view should not expose numeric health and mana labels for remote players")
+	return true
+
+
+func _assert_player_resource_nameplates_render_above_tokens() -> bool:
+	var state := ClientStateScript.new()
+	state.local_player_id = 11
+	var arena_view = ArenaViewScript.new()
+	arena_view.set_client_state(state)
+
+	var canvas_pos := Vector2(320, 240)
+	var radius := 24.0
+	var bar_width := arena_view._player_resource_bar_width(radius)
+	var bar_origin := arena_view._player_resource_bar_origin(canvas_pos, radius, bar_width)
+	if bar_origin.y >= canvas_pos.y - radius:
+		return _fail("player health and mana bars should anchor above the player token")
+
+	var name_baseline := arena_view._player_name_label_baseline(canvas_pos, radius, bar_width)
+	if name_baseline.y >= bar_origin.y:
+		return _fail("player name labels should sit above the health and mana bars")
+
+	var resource_baseline := arena_view._player_resource_label_baseline(canvas_pos, radius, bar_width)
+	if resource_baseline.y >= name_baseline.y:
+		return _fail("local numeric resource labels should sit above the player name")
+
+	var cast_origin := arena_view._cast_bar_origin({
+		"player_id": 11,
+		"hit_points": 93,
+		"mana": 41,
+		"current_cast_slot": 2,
+	}, canvas_pos, radius, 80.0)
+	arena_view.free()
+	if cast_origin.y >= resource_baseline.y:
+		return _fail("cast bars should stack above the overhead health and mana nameplate")
 	return true
 
 

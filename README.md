@@ -40,7 +40,7 @@ Not implemented yet:
 - the full 1.0 authored class and spell set beyond the current shipped runtime kit
 - shipped spell and movement audio playback beyond the new cue-id plumbing
 - more aggressive snapshot compression beyond the current full-vs-delta split
-- the full 1.0 Godot gameplay presentation bar: HUD polish, stronger spell visuals, and always-readable health and mana display in crowded fights
+- the full 1.0 Godot gameplay presentation bar beyond the current overhead health and mana nameplates: HUD polish and stronger spell visuals
 - rustdoc/API guidance that is complete enough for an external client or bot author to play through the game protocol without Godot
 - advanced vision features beyond the current per-player fog-of-war, explored-tile memory, and shrub sight blocking
 

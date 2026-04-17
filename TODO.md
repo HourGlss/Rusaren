@@ -199,7 +199,7 @@ Milestone gate:
 - [x] players rendered as simple shapes with collision
 - [x] spells produce visible graphics and effects
 - [x] a basic HUD exists
-- [ ] health and mana are shown over each player
+- [x] health and mana are shown over each player
 - [x] rounds can be fully played in browser without sprites or final polish
 - [ ] All shipped spells work in the real game loop, not only in backend simulation.
 - [ ] Player runtime status is exposed through the protocol and API, including hp, mana, cooldowns, active statuses, and match state.
@@ -226,8 +226,8 @@ Execution order for `1.0`:
 
 - [ ] Freeze scope so release work is about hardening, readability, verification, and documentation instead of introducing new mechanic families.
 - [ ] Verify full browser matches on the hosted production domain using the real web client and real players over the internet.
-- [ ] Verify that every shipped spell works in the real game loop, not only in backend simulation.
-- [ ] Eliminate known live blockers in hit registration, cast registration, disconnect handling, and transport stability.
+- [x] Verify that every shipped spell works in the real game loop, not only in backend simulation.
+- [x] Eliminate known live blockers in hit registration, cast registration, disconnect handling, and transport stability.
 
 Milestone gate:
 - the release candidate is feature-frozen

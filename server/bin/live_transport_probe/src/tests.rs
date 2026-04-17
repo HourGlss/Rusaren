@@ -83,12 +83,122 @@ simulation:
     execute_threshold_bps: 500
 
 classes:
+  Bard:
+    hit_points: 240
+    max_mana: 180
+    move_speed_units_per_second: 325
   Cleric:
     hit_points: 280
     max_mana: 180
     move_speed_units_per_second: 320
+  Druid:
+    hit_points: 240
+    max_mana: 180
+    move_speed_units_per_second: 320
   Mage:
     hit_points: 220
+    max_mana: 180
+    move_speed_units_per_second: 320
+  Rogue:
+    hit_points: 220
+    max_mana: 140
+    move_speed_units_per_second: 330
+  Necromancer:
+    hit_points: 220
+    max_mana: 150
+    move_speed_units_per_second: 320
+  Warrior:
+    hit_points: 260
+    max_mana: 120
+    move_speed_units_per_second: 310
+  Ranger:
+    hit_points: 220
+    max_mana: 140
+    move_speed_units_per_second: 325
+";
+const SUPPORT_MIX_PROBE_TEST_CONFIG_YAML: &str = r"lobby:
+  launch_countdown_seconds: 1
+
+match:
+  total_rounds: 1
+  skill_pick_seconds: 5
+  pre_combat_seconds: 1
+
+maps:
+  tile_units: 50
+  objective_target_ms_by_map:
+    prototype_arena: 30000
+    template_arena: 30000
+    training_arena: 30000
+  generation:
+    max_generation_attempts: 1
+    protected_tile_buffer_radius_tiles: 0
+    obstacle_edge_padding_tiles: 0
+    wall_segment_lengths_tiles: [2, 3]
+    long_wall_percent: 0
+    wall_candidate_skip_percent: 100
+    wall_min_spacing_manhattan_tiles: 0
+    pillar_candidate_skip_percent: 100
+    pillar_min_spacing_manhattan_tiles: 0
+    styles:
+      - shrub_clusters: 0
+        shrub_radius_tiles: 0
+        shrub_soft_radius_tiles: 0
+        shrub_fill_percent: 0
+        wall_segments: 0
+        isolated_pillars: 0
+
+simulation:
+  combat_frame_ms: 100
+  player_radius_units: 28
+  vision_radius_units: 2000
+  spawn_spacing_units: 80
+  default_aim_x_units: 120
+  default_aim_y_units: 0
+  mana_regen_per_second: 30
+  global_projectile_speed_bonus_bps: 0
+  teleport_resolution_steps: 48
+  movement_audio_step_interval_ms: 240
+  movement_audio_radius_units: 520
+  stealth_audio_radius_units: 170
+  brush_movement_audible_percent: 22
+  passive_bonus_caps:
+    player_speed_bps: 9000
+    projectile_speed_bps: 9000
+    cooldown_bps: 9000
+    cast_time_bps: 9500
+  movement_modifier_caps:
+    chill_bps: 8000
+    haste_bps: 6000
+    status_total_min_bps: -8000
+    status_total_max_bps: 6000
+    overall_total_min_bps: -8000
+    overall_total_max_bps: 9000
+    effective_scale_min_bps: 2000
+    effective_scale_max_bps: 16000
+  crowd_control_diminishing_returns:
+    window_ms: 15000
+    stages_bps: [10000, 5000, 2500, 0]
+  training_dummy:
+    base_hit_points: 100
+    health_multiplier: 100
+    execute_threshold_bps: 500
+
+classes:
+  Bard:
+    hit_points: 600
+    max_mana: 180
+    move_speed_units_per_second: 325
+  Cleric:
+    hit_points: 640
+    max_mana: 180
+    move_speed_units_per_second: 320
+  Druid:
+    hit_points: 600
+    max_mana: 180
+    move_speed_units_per_second: 320
+  Mage:
+    hit_points: 560
     max_mana: 180
     move_speed_units_per_second: 320
   Rogue:
@@ -114,6 +224,16 @@ const PROBE_TEST_TEMPLATE_ARENA: &str = r"#############
 #....XXX....#
 #....XXX....#
 #....XXX....#
+#...........#
+#...........#
+#############
+";
+const RELEASE_PROBE_TEST_TEMPLATE_ARENA: &str = r"#############
+#A.........B#
+#...........#
+#...........#
+#.....X.....#
+#...........#
 #...........#
 #...........#
 #############
@@ -725,16 +845,8 @@ fn mechanic_probe_content_root(prefix: &str, skill_files: &[(&str, &str)]) -> Pa
     let root = temp_content_root(prefix);
     remove_dir_if_exists(&root);
     copy_dir_all(&repo_content_root(), &root);
-    write_content_override(
-        &root,
-        "config/configurations.yaml",
-        PROBE_TEST_CONFIG_YAML,
-    );
-    write_content_override(
-        &root,
-        "maps/template_arena.txt",
-        PROBE_TEST_TEMPLATE_ARENA,
-    );
+    write_content_override(&root, "config/configurations.yaml", PROBE_TEST_CONFIG_YAML);
+    write_content_override(&root, "maps/template_arena.txt", PROBE_TEST_TEMPLATE_ARENA);
     let keep: Vec<&str> = skill_files
         .iter()
         .map(|(file_name, _)| *file_name)
@@ -744,6 +856,39 @@ fn mechanic_probe_content_root(prefix: &str, skill_files: &[(&str, &str)]) -> Pa
         write_skill_override(&root, file_name, yaml);
     }
     root
+}
+
+fn shipped_probe_content_root_with_overrides(
+    prefix: &str,
+    keep: &[&str],
+    config_yaml: &str,
+    arena_text: &str,
+) -> PathBuf {
+    let root = temp_content_root(prefix);
+    remove_dir_if_exists(&root);
+    copy_dir_all(&repo_content_root(), &root);
+    write_content_override(&root, "config/configurations.yaml", config_yaml);
+    write_content_override(&root, "maps/template_arena.txt", arena_text);
+    prune_skill_files(&root, keep);
+    root
+}
+
+fn shipped_probe_content_root(prefix: &str, keep: &[&str]) -> PathBuf {
+    shipped_probe_content_root_with_overrides(
+        prefix,
+        keep,
+        PROBE_TEST_CONFIG_YAML,
+        RELEASE_PROBE_TEST_TEMPLATE_ARENA,
+    )
+}
+
+fn support_mix_probe_content_root(prefix: &str, keep: &[&str]) -> PathBuf {
+    shipped_probe_content_root_with_overrides(
+        prefix,
+        keep,
+        SUPPORT_MIX_PROBE_TEST_CONFIG_YAML,
+        RELEASE_PROBE_TEST_TEMPLATE_ARENA,
+    )
 }
 
 fn periodic_probe_content_root() -> PathBuf {
@@ -813,10 +958,6 @@ async fn start_server_fast_with_content_root(
     .expect("server should spawn");
     let base_url = format!("ws://{}", server.local_addr());
     (server, base_url)
-}
-
-async fn start_server_fast() -> (game_api::DevServerHandle, String) {
-    start_server_fast_with_content_root(repo_content_root()).await
 }
 
 async fn run_probe_with_fresh_server(
@@ -989,12 +1130,16 @@ async fn live_probe_completes_one_real_webrtc_match_against_the_dev_server() {
         return;
     }
     let _guard = live_probe_test_mutex().lock().await;
-    let (server, base_url) = start_server_fast().await;
+    let content_root = shipped_probe_content_root(
+        "probe-release-smoke",
+        &["warrior.yaml", "rogue.yaml", "mage.yaml", "ranger.yaml"],
+    );
+    let (server, base_url) = start_server_fast_with_content_root(content_root.clone()).await;
     let output_path = temp_path("probe-log", "jsonl");
     let outcome = run_probe(ProbeConfig {
         origin: base_url,
         output_path: output_path.clone(),
-        content_root: None,
+        content_root: Some(content_root),
         max_games: Some(1),
         connect_timeout: Duration::from_secs(30),
         stage_timeout: Duration::from_secs(45),
@@ -1016,7 +1161,55 @@ async fn live_probe_completes_one_real_webrtc_match_against_the_dev_server() {
     .expect("probe should complete");
 
     assert_eq!(outcome.matches_completed, 1);
-    assert!(outcome.covered_skills >= 4);
+    assert!(fs::metadata(output_path).is_ok());
+
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn live_probe_verifies_mixed_bard_cleric_druid_mage_round_against_the_dev_server() {
+    if skip_live_probe_tests() {
+        return;
+    }
+    let _guard = live_probe_test_mutex().lock().await;
+    let content_root = support_mix_probe_content_root(
+        "probe-release-support-mix",
+        &[
+            "bard.yaml",
+            "cleric.yaml",
+            "druid.yaml",
+            "mage.yaml",
+            "warrior.yaml",
+        ],
+    );
+    let (server, base_url) = start_server_fast_with_content_root(content_root.clone()).await;
+    let output_path = temp_path("probe-support-mix-log", "jsonl");
+    let outcome = run_probe(ProbeConfig {
+        origin: base_url,
+        output_path: output_path.clone(),
+        content_root: Some(content_root),
+        max_games: Some(1),
+        connect_timeout: Duration::from_secs(30),
+        stage_timeout: Duration::from_secs(45),
+        round_timeout: Duration::from_secs(90),
+        match_timeout: Duration::from_secs(180),
+        input_cadence: Duration::from_millis(100),
+        players_per_match: 4,
+        preferred_tree_order: Some(vec![
+            String::from("Bard"),
+            String::from("Cleric"),
+            String::from("Druid"),
+            String::from("Mage"),
+        ]),
+        max_rounds_per_match: Some(1),
+        max_combat_loops_per_round: None,
+        required_mechanics: None,
+    })
+    .await
+    .expect("probe should verify the first mixed support/damage round");
+
+    assert_eq!(outcome.matches_completed, 1);
+    assert_eq!(outcome.covered_skills, 4);
     assert!(fs::metadata(output_path).is_ok());
 
     server.shutdown().await;
