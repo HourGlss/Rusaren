@@ -85,6 +85,7 @@ pub enum StatusKind {
     Stealth,
     Reveal,
     Fear,
+    HealingReduction,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -116,9 +117,56 @@ pub struct StatusDefinition {
 pub struct EffectPayload {
     pub kind: CombatValueKind,
     pub amount: u16,
+    pub amount_max: Option<u16>,
+    pub crit_chance_bps: u16,
+    pub crit_multiplier_bps: u16,
     pub status: Option<StatusDefinition>,
     pub interrupt_silence_duration_ms: Option<u16>,
     pub dispel: Option<DispelDefinition>,
+}
+
+impl EffectPayload {
+    #[must_use]
+    pub const fn amount_min(&self) -> u16 {
+        self.amount
+    }
+
+    #[must_use]
+    pub const fn amount_max(&self) -> u16 {
+        match self.amount_max {
+            Some(amount_max) => amount_max,
+            None => self.amount,
+        }
+    }
+
+    #[must_use]
+    pub const fn has_amount_range(&self) -> bool {
+        self.amount_max.is_some()
+    }
+
+    #[must_use]
+    pub const fn can_crit(&self) -> bool {
+        self.crit_chance_bps > 0
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProcTriggerKind {
+    Hit,
+    Crit,
+    Heal,
+    Tick,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProcResetDefinition {
+    pub trigger: ProcTriggerKind,
+    pub source_skill_ids: Vec<String>,
+    pub reset_skill_ids: Vec<String>,
+    pub instacast_skill_ids: Vec<String>,
+    pub instacast_costs_mana: bool,
+    pub instacast_starts_cooldown: bool,
+    pub internal_cooldown_ms: Option<u16>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -205,6 +253,7 @@ pub enum SkillBehavior {
         projectile_speed_bps: u16,
         cooldown_bps: u16,
         cast_time_bps: u16,
+        proc_reset: Option<ProcResetDefinition>,
     },
     Summon {
         cooldown_ms: u16,

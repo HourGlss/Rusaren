@@ -41,6 +41,7 @@ Not implemented yet:
 - shipped spell and movement audio playback beyond the new cue-id plumbing
 - more aggressive snapshot compression beyond the current full-vs-delta split
 - the full 1.0 Godot gameplay presentation bar beyond the current overhead health and mana nameplates: HUD polish and stronger spell visuals
+- the last pre-freeze combat mechanic additions we still care about for TBC-style class identity: healing reduction, crits, damage ranges, and proc/reset hooks
 - rustdoc/API guidance that is complete enough for an external client or bot author to play through the game protocol without Godot
 - advanced vision features beyond the current per-player fog-of-war, explored-tile memory, and shrub sight blocking
 
@@ -108,6 +109,10 @@ The runtime game content now lives under:
 
 Those files are the live source of truth for the backend. The Markdown docs under `shared/docs/`
 document the design, but they are no longer treated as runtime content.
+The current `1.0.1` combat additions are now live in the registry and authored content:
+`healing_reduction`, `critical_strike`, `damage_range`, and `proc_reset`.
+`proc_reset` passives can now author separate cooldown-reset targets and instant-follow-up targets,
+and can decide whether the proc-consumed cast costs mana or starts cooldown.
 Adding more classes is now mostly centralized around:
 - one new authored YAML file under `server/content/skills/`
 - optional mechanic-family additions in `server/content/mechanics/registry.yaml` when you want to declare a new planned mechanic or extend validation metadata

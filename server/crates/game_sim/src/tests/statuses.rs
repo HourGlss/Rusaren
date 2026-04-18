@@ -649,6 +649,9 @@ fn dispel_removes_negative_effects_and_lifebloom_blooms_on_dispel_or_expire() {
         game_content::EffectPayload {
             kind: CombatValueKind::Heal,
             amount: 0,
+            amount_max: None,
+            crit_chance_bps: 0,
+            crit_multiplier_bps: 0,
             status: None,
             interrupt_silence_duration_ms: None,
             dispel: Some(game_content::DispelDefinition {
@@ -745,6 +748,91 @@ fn dispel_removes_negative_effects_and_lifebloom_blooms_on_dispel_or_expire() {
             .all(|status| status.kind != StatusKind::Hot),
         "the hot should be gone after its bloom-on-expire fires"
     );
+}
+
+#[test]
+fn healing_reduction_status_reduces_direct_healing_by_the_strongest_effect() {
+    let content = content();
+    let mut world = world(
+        &content,
+        vec![seed(
+            &content,
+            1,
+            "Alice",
+            TeamSide::TeamA,
+            SkillTree::Cleric,
+            [None, None, None, None, None],
+        )],
+    );
+    let max_hit_points = class_hit_points(&content, &SkillTree::Cleric);
+    world
+        .players
+        .get_mut(&player_id(1))
+        .expect("alice")
+        .hit_points = max_hit_points - 30;
+
+    let weaker = world.apply_status(
+        player_id(2),
+        player_id(1),
+        1,
+        StatusDefinition {
+            kind: StatusKind::HealingReduction,
+            duration_ms: 3000,
+            tick_interval_ms: None,
+            magnitude: 2500,
+            max_stacks: 1,
+            trigger_duration_ms: None,
+            expire_payload: None,
+            dispel_payload: None,
+        },
+    );
+    assert!(weaker.is_some(), "weaker healing reduction should apply");
+    let stronger = world.apply_status(
+        player_id(3),
+        player_id(1),
+        1,
+        StatusDefinition {
+            kind: StatusKind::HealingReduction,
+            duration_ms: 3000,
+            tick_interval_ms: None,
+            magnitude: 5000,
+            max_stacks: 1,
+            trigger_duration_ms: None,
+            expire_payload: None,
+            dispel_payload: None,
+        },
+    );
+    assert!(
+        stronger.is_some(),
+        "stronger healing reduction should apply"
+    );
+
+    let events = world.apply_payload(
+        player_id(1),
+        1,
+        &[TargetEntity::Player(player_id(1))],
+        EffectPayload {
+            kind: CombatValueKind::Heal,
+            amount: 20,
+            amount_max: None,
+            crit_chance_bps: 0,
+            crit_multiplier_bps: 0,
+            status: None,
+            interrupt_silence_duration_ms: None,
+            dispel: None,
+        },
+    );
+    assert!(events.iter().any(|event| {
+        matches!(
+            event,
+            SimulationEvent::HealingApplied {
+                target,
+                amount,
+                critical,
+                ..
+            } if *target == player_id(1) && *amount == 10 && !*critical
+        )
+    }));
 }
 
 #[test]
@@ -1588,6 +1676,9 @@ fn aura_cast_end_payload_applies_when_a_toggle_aura_is_canceled() {
         cast_start_payload: Some(EffectPayload {
             kind: CombatValueKind::Heal,
             amount: 0,
+            amount_max: None,
+            crit_chance_bps: 0,
+            crit_multiplier_bps: 0,
             status: Some(StatusDefinition {
                 kind: StatusKind::Stealth,
                 duration_ms: 1200,
@@ -1604,6 +1695,9 @@ fn aura_cast_end_payload_applies_when_a_toggle_aura_is_canceled() {
         cast_end_payload: Some(EffectPayload {
             kind: CombatValueKind::Heal,
             amount: 0,
+            amount_max: None,
+            crit_chance_bps: 0,
+            crit_multiplier_bps: 0,
             status: Some(StatusDefinition {
                 kind: StatusKind::Haste,
                 duration_ms: 1500,
@@ -1621,6 +1715,9 @@ fn aura_cast_end_payload_applies_when_a_toggle_aura_is_canceled() {
         payload: EffectPayload {
             kind: CombatValueKind::Heal,
             amount: 0,
+            amount_max: None,
+            crit_chance_bps: 0,
+            crit_multiplier_bps: 0,
             status: Some(StatusDefinition {
                 kind: StatusKind::Stealth,
                 duration_ms: 1200,

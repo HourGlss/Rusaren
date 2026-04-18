@@ -653,6 +653,7 @@ fn status_kind_label(kind: game_content::StatusKind) -> &'static str {
         game_content::StatusKind::Stealth => "stealth",
         game_content::StatusKind::Reveal => "reveal",
         game_content::StatusKind::Fear => "fear",
+        game_content::StatusKind::HealingReduction => "healing_reduction",
     }
 }
 
@@ -747,6 +748,7 @@ fn map_simulation_event_to_log(event: &game_sim::SimulationEvent) -> Option<Comb
             target,
             slot,
             amount,
+            critical,
             remaining_hit_points,
             defeated,
             status_kind,
@@ -757,6 +759,7 @@ fn map_simulation_event_to_log(event: &game_sim::SimulationEvent) -> Option<Comb
             target_id: target.get(),
             slot: *slot,
             amount: *amount,
+            critical: *critical,
             remaining_hit_points: *remaining_hit_points,
             defeated: *defeated,
             status_kind: status_kind.map(|kind| status_kind_label(kind).to_string()),
@@ -767,6 +770,7 @@ fn map_simulation_event_to_log(event: &game_sim::SimulationEvent) -> Option<Comb
             target,
             slot,
             amount,
+            critical,
             resulting_hit_points,
             status_kind,
             trigger,
@@ -775,6 +779,7 @@ fn map_simulation_event_to_log(event: &game_sim::SimulationEvent) -> Option<Comb
             target_player_id: target.get(),
             slot: *slot,
             amount: *amount,
+            critical: *critical,
             resulting_hit_points: *resulting_hit_points,
             status_kind: status_kind.map(|kind| status_kind_label(kind).to_string()),
             trigger: trigger.map(map_trigger_reason),
@@ -938,6 +943,7 @@ fn map_simulation_event_to_log(event: &game_sim::SimulationEvent) -> Option<Comb
             target_id: *deployable_id,
             slot: 0,
             amount: *amount,
+            critical: false,
             remaining_hit_points: *remaining_hit_points,
             defeated: *destroyed,
             status_kind: None,

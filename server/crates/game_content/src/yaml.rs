@@ -107,6 +107,10 @@ pub(super) struct SkillYaml {
 pub(super) struct EffectPayloadYaml {
     pub(super) kind: String,
     pub(super) amount: Option<u16>,
+    pub(super) amount_min: Option<u16>,
+    pub(super) amount_max: Option<u16>,
+    pub(super) crit_chance_bps: Option<u16>,
+    pub(super) crit_multiplier_bps: Option<u16>,
     pub(super) status: Option<StatusYaml>,
     pub(super) interrupt_silence_duration_ms: Option<u16>,
     pub(super) dispel: Option<DispelYaml>,
@@ -152,10 +156,23 @@ pub(super) struct SkillBehaviorYaml {
     pub(super) projectile_speed_bps: Option<u16>,
     pub(super) cooldown_bps: Option<u16>,
     pub(super) cast_time_bps: Option<u16>,
+    pub(super) proc_reset: Option<ProcResetYaml>,
     pub(super) toggleable: Option<bool>,
     pub(super) cast_start_payload: Option<EffectPayloadYaml>,
     pub(super) cast_end_payload: Option<EffectPayloadYaml>,
     pub(super) payload: Option<EffectPayloadYaml>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ProcResetYaml {
+    pub(super) trigger: String,
+    pub(super) source_skill_ids: Option<Vec<String>>,
+    pub(super) reset_skill_ids: Option<Vec<String>>,
+    pub(super) instacast_skill_ids: Option<Vec<String>>,
+    pub(super) instacast_costs_mana: Option<bool>,
+    pub(super) instacast_starts_cooldown: Option<bool>,
+    pub(super) internal_cooldown_ms: Option<u16>,
 }
 
 #[derive(Debug, Deserialize)]

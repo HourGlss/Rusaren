@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::BTreeSet;
 
 #[test]
 fn melee_uses_class_stats_and_respects_cooldown() {
@@ -95,6 +96,190 @@ fn projectiles_hit_and_miss_based_on_geometry() {
         }
     }
     panic!("projectile should hit bob in open space");
+}
+
+#[test]
+fn direct_damage_crits_scale_output_and_mark_the_event() {
+    let content = content();
+    let mut skill = content
+        .skills()
+        .resolve(&choice(SkillTree::Mage, 1))
+        .expect("mage projectile")
+        .clone();
+    let behavior = match &mut skill.behavior {
+        SkillBehavior::Projectile { payload, .. } => {
+            payload.amount = 10;
+            payload.amount_max = None;
+            payload.crit_chance_bps = 10_000;
+            payload.crit_multiplier_bps = 20_000;
+            skill.behavior.clone()
+        }
+        other => panic!("expected projectile, found {other:?}"),
+    };
+
+    let mut world = world(
+        &content,
+        vec![
+            seed_with_slot_one_skill(
+                &content,
+                1,
+                "Alice",
+                TeamSide::TeamA,
+                SkillTree::Mage,
+                &skill,
+            ),
+            seed(
+                &content,
+                2,
+                "Bob",
+                TeamSide::TeamB,
+                SkillTree::Warrior,
+                [None, None, None, None, None],
+            ),
+        ],
+    );
+    set_player_pose(
+        &mut world,
+        player_id(1),
+        TEST_ATTACKER_X,
+        TEST_OPEN_LANE_Y,
+        TEST_AIM_X,
+        TEST_AIM_Y,
+    );
+    set_player_pose(
+        &mut world,
+        player_id(2),
+        TEST_ATTACKER_X + 180,
+        TEST_OPEN_LANE_Y,
+        TEST_AIM_X,
+        TEST_AIM_Y,
+    );
+
+    let events = resolve_skill_cast(&mut world, player_id(1), 1, behavior);
+    assert!(events.iter().any(|event| {
+        matches!(
+            event,
+            SimulationEvent::DamageApplied {
+                target,
+                amount,
+                critical,
+                ..
+            } if *target == player_id(2) && *amount == 20 && *critical
+        )
+    }));
+}
+
+#[test]
+fn direct_amount_ranges_roll_between_authored_bounds() {
+    let content = content();
+    let mut world = world(
+        &content,
+        vec![
+            seed(
+                &content,
+                1,
+                "Alice",
+                TeamSide::TeamA,
+                SkillTree::Mage,
+                [None, None, None, None, None],
+            ),
+            seed(
+                &content,
+                2,
+                "Bob",
+                TeamSide::TeamB,
+                SkillTree::Warrior,
+                [None, None, None, None, None],
+            ),
+        ],
+    );
+
+    let payload = EffectPayload {
+        kind: CombatValueKind::Damage,
+        amount: 7,
+        amount_max: Some(9),
+        crit_chance_bps: 0,
+        crit_multiplier_bps: 0,
+        status: None,
+        interrupt_silence_duration_ms: None,
+        dispel: None,
+    };
+    let target_tree = SkillTree::Warrior;
+    let max_hit_points = class_hit_points(&content, &target_tree);
+    let mut seen = BTreeSet::new();
+    for _ in 0..8 {
+        world
+            .players
+            .get_mut(&player_id(2))
+            .expect("bob")
+            .hit_points = max_hit_points;
+        let events = world.apply_payload(
+            player_id(1),
+            1,
+            &[TargetEntity::Player(player_id(2))],
+            payload.clone(),
+        );
+        let amount = damage_to(&events, player_id(2)).expect("range damage");
+        assert!(
+            (7..=9).contains(&amount),
+            "amount {amount} should stay in range"
+        );
+        seen.insert(amount);
+    }
+    assert!(
+        seen.len() > 1,
+        "ranged payloads should produce more than one authored result"
+    );
+}
+
+#[test]
+fn direct_heals_can_crit_and_mark_the_event() {
+    let content = content();
+    let mut world = world(
+        &content,
+        vec![seed(
+            &content,
+            1,
+            "Alice",
+            TeamSide::TeamA,
+            SkillTree::Cleric,
+            [None, None, None, None, None],
+        )],
+    );
+    let max_hit_points = class_hit_points(&content, &SkillTree::Cleric);
+    world
+        .players
+        .get_mut(&player_id(1))
+        .expect("alice")
+        .hit_points = max_hit_points - 30;
+    let payload = EffectPayload {
+        kind: CombatValueKind::Heal,
+        amount: 10,
+        amount_max: None,
+        crit_chance_bps: 10_000,
+        crit_multiplier_bps: 20_000,
+        status: None,
+        interrupt_silence_duration_ms: None,
+        dispel: None,
+    };
+
+    let events = world.apply_payload(
+        player_id(1),
+        1,
+        &[TargetEntity::Player(player_id(1))],
+        payload,
+    );
+    assert!(events.iter().any(|event| {
+        matches!(
+            event,
+            SimulationEvent::HealingApplied {
+                target,
+                amount,
+                critical,
+                ..
+            } if *target == player_id(1) && *amount == 20 && *critical
+        )
+    }));
 }
 
 #[test]

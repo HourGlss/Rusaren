@@ -388,6 +388,7 @@ impl ServerApp {
                 game_content::StatusKind::Stealth => ArenaStatusKind::Stealth,
                 game_content::StatusKind::Reveal => ArenaStatusKind::Reveal,
                 game_content::StatusKind::Fear => ArenaStatusKind::Fear,
+                game_content::StatusKind::HealingReduction => ArenaStatusKind::HealingReduction,
             },
             stacks: status.stacks,
             remaining_ms: status.remaining_ms,
@@ -593,6 +594,7 @@ fn append_behavior_lines(lines: &mut Vec<String>, behavior: &SkillBehavior) {
             projectile_speed_bps,
             cooldown_bps,
             cast_time_bps,
+            proc_reset,
         } => {
             let mut parts = Vec::new();
             if *player_speed_bps > 0 {
@@ -609,6 +611,15 @@ fn append_behavior_lines(lines: &mut Vec<String>, behavior: &SkillBehavior) {
             }
             if *cast_time_bps > 0 {
                 parts.push(format!("cast time -{}", format_bps_percent(*cast_time_bps)));
+            }
+            if let Some(proc_reset) = proc_reset {
+                let trigger = match proc_reset.trigger {
+                    game_content::ProcTriggerKind::Hit => "proc on hit",
+                    game_content::ProcTriggerKind::Crit => "proc on crit",
+                    game_content::ProcTriggerKind::Heal => "proc on heal",
+                    game_content::ProcTriggerKind::Tick => "proc on tick",
+                };
+                parts.push(String::from(trigger));
             }
             lines.push(if parts.is_empty() {
                 String::from("No passive modifiers")
@@ -704,12 +715,26 @@ fn append_behavior_lines(lines: &mut Vec<String>, behavior: &SkillBehavior) {
 }
 
 fn append_payload_lines(lines: &mut Vec<String>, payload: &EffectPayload) {
-    if payload.amount > 0 {
+    if payload.amount > 0 || payload.amount_max.is_some() {
         let value_kind = match payload.kind {
             CombatValueKind::Damage => "damage",
             CombatValueKind::Heal => "heal",
         };
-        lines.push(format!("Effect: {} {value_kind}", payload.amount));
+        let amount_label = if payload.has_amount_range() {
+            format!("{}-{}", payload.amount_min(), payload.amount_max())
+        } else {
+            payload.amount.to_string()
+        };
+        let mut effect_line = format!("Effect: {amount_label} {value_kind}");
+        if payload.can_crit() {
+            let _ = write!(
+                effect_line,
+                ", crit {} for {}",
+                format_bps_percent(payload.crit_chance_bps),
+                format_bps_percent(payload.crit_multiplier_bps)
+            );
+        }
+        lines.push(effect_line);
     }
 
     if let Some(status) = &payload.status {
@@ -790,6 +815,11 @@ fn format_status_summary(status: &StatusDefinition) -> String {
         StatusKind::Stealth => format!("Stealth for {}", format_duration_ms(status.duration_ms)),
         StatusKind::Reveal => format!("Reveal for {}", format_duration_ms(status.duration_ms)),
         StatusKind::Fear => format!("Fear for {}", format_duration_ms(status.duration_ms)),
+        StatusKind::HealingReduction => format!(
+            "Healing received -{} for {}",
+            format_bps_percent(status.magnitude),
+            format_duration_ms(status.duration_ms)
+        ),
     };
 
     let mut extras = Vec::new();
@@ -845,6 +875,7 @@ fn skill_ui_category(skill: &SkillDefinition) -> &'static str {
                         | StatusKind::Sleep
                         | StatusKind::Reveal
                         | StatusKind::Fear
+                        | StatusKind::HealingReduction
                 )
             )
         {

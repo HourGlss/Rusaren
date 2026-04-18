@@ -396,6 +396,7 @@ pub(super) fn read_arena_status_kind(
         10 => Ok(ArenaStatusKind::Stealth),
         11 => Ok(ArenaStatusKind::Reveal),
         12 => Ok(ArenaStatusKind::Fear),
+        13 => Ok(ArenaStatusKind::HealingReduction),
         other => Err(PacketError::InvalidEncodedArenaStatusKind(other)),
     }
 }
@@ -468,6 +469,7 @@ pub(super) fn encode_arena_status_kind(kind: ArenaStatusKind) -> u8 {
         ArenaStatusKind::Stealth => 10,
         ArenaStatusKind::Reveal => 11,
         ArenaStatusKind::Fear => 12,
+        ArenaStatusKind::HealingReduction => 13,
     }
 }
 

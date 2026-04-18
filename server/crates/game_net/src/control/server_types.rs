@@ -176,6 +176,7 @@ pub enum ArenaStatusKind {
     Stealth,
     Reveal,
     Fear,
+    HealingReduction,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

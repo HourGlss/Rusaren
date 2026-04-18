@@ -2,9 +2,17 @@ use super::{
     point_distance_sq, point_distance_units, round_f32_to_i32, saturating_i16, segment_distance_sq,
     travel_distance_units, truncate_line_to_obstacles, ArenaEffect, ArenaEffectKind,
     CombatValueKind, MovementIntent, PlayerId, ProjectileState, SimCastCancelReason, SimMissReason,
-    SimRemovedStatus, SimStatusRemovedReason, SimTargetKind, SimTriggerReason, SimulationEvent,
-    SimulationWorld, StatusDefinition, StatusInstance, StatusKind, TargetEntity,
+    SimPlayer, SimRemovedStatus, SimStatusRemovedReason, SimTargetKind, SimTriggerReason,
+    SimulationEvent, SimulationWorld, StatusDefinition, StatusInstance, StatusKind, TargetEntity,
 };
+use game_content::{ProcResetDefinition, ProcTriggerKind};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CombatProcEventKind {
+    DamageHit,
+    HealHit,
+    Tick,
+}
 
 impl SimulationWorld {
     fn player_overlap_radius(&self, radius: u16) -> u16 {
@@ -152,24 +160,7 @@ impl SimulationWorld {
             return Vec::new();
         }
 
-        let mut events = match payload.kind {
-            CombatValueKind::Damage => self.apply_damage_internal_with_context(
-                source,
-                slot,
-                targets,
-                payload.amount,
-                None,
-                None,
-            ),
-            CombatValueKind::Heal => self.apply_healing_internal_with_context(
-                source,
-                slot,
-                targets,
-                payload.amount,
-                None,
-                None,
-            ),
-        };
+        let mut events = self.apply_direct_payload_values(source, slot, targets, &payload);
 
         if let Some(silence_duration_ms) = payload.interrupt_silence_duration_ms {
             for target in targets {
@@ -237,6 +228,190 @@ impl SimulationWorld {
         events
     }
 
+    fn apply_direct_payload_values(
+        &mut self,
+        source: PlayerId,
+        slot: u8,
+        targets: &[TargetEntity],
+        payload: &game_content::EffectPayload,
+    ) -> Vec<SimulationEvent> {
+        match payload.kind {
+            CombatValueKind::Damage => {
+                let mut events = Vec::new();
+                for target in targets {
+                    let (amount, critical) = self.resolve_direct_payload_amount(payload);
+                    events.extend(self.apply_damage_internal_with_context(
+                        source,
+                        slot,
+                        &[*target],
+                        amount,
+                        None,
+                        None,
+                        critical,
+                    ));
+                }
+                events
+            }
+            CombatValueKind::Heal => {
+                let mut events = Vec::new();
+                for target in targets {
+                    let (amount, critical) = self.resolve_direct_payload_amount(payload);
+                    events.extend(self.apply_healing_internal_with_context(
+                        source,
+                        slot,
+                        &[*target],
+                        amount,
+                        None,
+                        None,
+                        critical,
+                    ));
+                }
+                events
+            }
+        }
+    }
+
+    fn resolve_direct_payload_amount(
+        &mut self,
+        payload: &game_content::EffectPayload,
+    ) -> (u16, bool) {
+        let mut amount = self.roll_u16_inclusive(payload.amount_min(), payload.amount_max());
+        let critical = payload.can_crit() && self.roll_bps(payload.crit_chance_bps);
+        if critical {
+            amount = Self::scale_amount_with_bps(amount, payload.crit_multiplier_bps);
+        }
+        (amount, critical)
+    }
+
+    fn scale_amount_with_bps(amount: u16, scale_bps: u16) -> u16 {
+        let scaled = u32::from(amount).saturating_mul(u32::from(scale_bps)) / 10_000;
+        u16::try_from(scaled).unwrap_or(u16::MAX)
+    }
+
+    fn try_trigger_proc_resets(
+        &mut self,
+        player_id: PlayerId,
+        slot: u8,
+        value_kind: CombatValueKind,
+        critical: bool,
+        periodic: bool,
+    ) {
+        let event_kind = if periodic {
+            CombatProcEventKind::Tick
+        } else if value_kind == CombatValueKind::Heal {
+            CombatProcEventKind::HealHit
+        } else {
+            CombatProcEventKind::DamageHit
+        };
+        let matching = self.collect_matching_proc_resets(player_id, slot, event_kind, critical);
+        for (passive_slot_index, proc_reset) in matching {
+            self.apply_proc_reset(player_id, passive_slot_index, &proc_reset);
+        }
+    }
+
+    fn collect_matching_proc_resets(
+        &self,
+        player_id: PlayerId,
+        slot: u8,
+        event_kind: CombatProcEventKind,
+        critical: bool,
+    ) -> Vec<(usize, ProcResetDefinition)> {
+        let Some(player) = self.players.get(&player_id) else {
+            return Vec::new();
+        };
+        player
+            .skills
+            .iter()
+            .enumerate()
+            .filter_map(|(index, skill)| {
+                let Some(game_content::SkillBehavior::Passive {
+                    proc_reset: Some(proc_reset),
+                    ..
+                }) = skill.as_ref().map(|skill| &skill.behavior)
+                else {
+                    return None;
+                };
+                if player.proc_cooldown_remaining_ms[index] > 0
+                    || !Self::proc_trigger_matches(proc_reset.trigger, event_kind, critical)
+                    || !Self::proc_source_matches(player, slot, proc_reset)
+                {
+                    return None;
+                }
+                Some((index, proc_reset.clone()))
+            })
+            .collect()
+    }
+
+    fn proc_trigger_matches(
+        trigger: ProcTriggerKind,
+        event_kind: CombatProcEventKind,
+        critical: bool,
+    ) -> bool {
+        match trigger {
+            ProcTriggerKind::Hit => event_kind == CombatProcEventKind::DamageHit,
+            ProcTriggerKind::Crit => critical,
+            ProcTriggerKind::Heal => event_kind == CombatProcEventKind::HealHit,
+            ProcTriggerKind::Tick => event_kind == CombatProcEventKind::Tick,
+        }
+    }
+
+    fn proc_source_matches(player: &SimPlayer, slot: u8, proc_reset: &ProcResetDefinition) -> bool {
+        if proc_reset.source_skill_ids.is_empty() {
+            return true;
+        }
+        Self::player_slot_reference_id(player, slot)
+            .is_some_and(|skill_id| proc_reset.source_skill_ids.iter().any(|id| id == skill_id))
+    }
+
+    fn player_slot_reference_id(player: &SimPlayer, slot: u8) -> Option<&str> {
+        if slot == 0 {
+            return Some(player.melee.id.as_str());
+        }
+        let slot_index = usize::from(slot.saturating_sub(1));
+        player
+            .skills
+            .get(slot_index)
+            .and_then(|skill| skill.as_ref())
+            .map(|skill| skill.id.as_str())
+    }
+
+    fn apply_proc_reset(
+        &mut self,
+        player_id: PlayerId,
+        passive_slot_index: usize,
+        proc_reset: &ProcResetDefinition,
+    ) {
+        let Some(player) = self.players.get_mut(&player_id) else {
+            return;
+        };
+        for (skill_index, skill) in player.skills.iter().enumerate() {
+            let Some(skill) = skill.as_ref() else {
+                continue;
+            };
+            if proc_reset
+                .reset_skill_ids
+                .iter()
+                .any(|skill_id| skill_id == &skill.id)
+            {
+                player.slot_cooldown_remaining_ms[skill_index] = 0;
+            }
+        }
+        if !proc_reset.instacast_skill_ids.is_empty() {
+            let passive_slot = u8::try_from(passive_slot_index + 1).unwrap_or(0);
+            player
+                .next_cast_procs
+                .retain(|proc_state| proc_state.passive_slot != passive_slot);
+            player.next_cast_procs.push(super::NextCastProc {
+                passive_slot,
+                skill_ids: proc_reset.instacast_skill_ids.clone(),
+                costs_mana: proc_reset.instacast_costs_mana,
+                starts_cooldown: proc_reset.instacast_starts_cooldown,
+            });
+        }
+        player.proc_cooldown_remaining_ms[passive_slot_index] =
+            proc_reset.internal_cooldown_ms.unwrap_or(0);
+    }
+
     #[cfg(test)]
     pub(super) fn apply_damage_internal(
         &mut self,
@@ -244,7 +419,7 @@ impl SimulationWorld {
         targets: &[TargetEntity],
         amount: u16,
     ) -> Vec<SimulationEvent> {
-        self.apply_damage_internal_with_context(attacker, 0, targets, amount, None, None)
+        self.apply_damage_internal_with_context(attacker, 0, targets, amount, None, None, false)
     }
 
     #[allow(clippy::too_many_lines)]
@@ -256,6 +431,7 @@ impl SimulationWorld {
         amount: u16,
         status_kind: Option<StatusKind>,
         trigger: Option<SimTriggerReason>,
+        critical: bool,
     ) -> Vec<SimulationEvent> {
         if amount == 0 {
             return Vec::new();
@@ -298,41 +474,50 @@ impl SimulationWorld {
                         }
                         continue;
                     }
-                    let Some(player) = self.players.get_mut(&player_id) else {
-                        continue;
+                    let (applied_damage, defeated, remaining_hit_points, proc_should_fire) = {
+                        let Some(player) = self.players.get_mut(&player_id) else {
+                            continue;
+                        };
+                        let applied_damage = damage.min(player.hit_points);
+                        player.hit_points = player.hit_points.saturating_sub(applied_damage);
+                        let defeated = player.hit_points == 0;
+                        if defeated {
+                            if let Some(cast) = player.active_cast.take() {
+                                events.push(SimulationEvent::CastCanceled {
+                                    player_id,
+                                    slot: cast.slot,
+                                    reason: SimCastCancelReason::Defeat,
+                                });
+                            }
+                            for removed in player
+                                .statuses
+                                .iter()
+                                .map(Self::removed_status)
+                                .collect::<Vec<_>>()
+                            {
+                                events.push(SimulationEvent::StatusRemoved {
+                                    source: removed.source,
+                                    target: player_id,
+                                    slot: removed.slot,
+                                    kind: removed.kind,
+                                    stacks: removed.stacks,
+                                    remaining_ms: removed.remaining_ms,
+                                    reason: SimStatusRemovedReason::Defeat,
+                                });
+                            }
+                            player.alive = false;
+                            player.moving = false;
+                            player.movement_intent = MovementIntent::zero();
+                            player.statuses.clear();
+                        }
+                        (
+                            applied_damage,
+                            defeated,
+                            player.hit_points,
+                            applied_damage > 0,
+                        )
                     };
-                    let applied_damage = damage.min(player.hit_points);
-                    player.hit_points = player.hit_points.saturating_sub(applied_damage);
-                    let defeated = player.hit_points == 0;
-                    if defeated {
-                        if let Some(cast) = player.active_cast.take() {
-                            events.push(SimulationEvent::CastCanceled {
-                                player_id,
-                                slot: cast.slot,
-                                reason: SimCastCancelReason::Defeat,
-                            });
-                        }
-                        for removed in player
-                            .statuses
-                            .iter()
-                            .map(Self::removed_status)
-                            .collect::<Vec<_>>()
-                        {
-                            events.push(SimulationEvent::StatusRemoved {
-                                source: removed.source,
-                                target: player_id,
-                                slot: removed.slot,
-                                kind: removed.kind,
-                                stacks: removed.stacks,
-                                remaining_ms: removed.remaining_ms,
-                                reason: SimStatusRemovedReason::Defeat,
-                            });
-                        }
-                        player.alive = false;
-                        player.moving = false;
-                        player.movement_intent = MovementIntent::zero();
-                        player.statuses.clear();
-                    }
+                    let periodic_damage = matches!(status_kind, Some(StatusKind::Poison));
 
                     for removed in removed_statuses {
                         events.push(SimulationEvent::StatusRemoved {
@@ -350,11 +535,21 @@ impl SimulationWorld {
                         target: player_id,
                         slot,
                         amount: applied_damage,
-                        remaining_hit_points: player.hit_points,
+                        critical,
+                        remaining_hit_points,
                         defeated,
                         status_kind,
                         trigger,
                     });
+                    if proc_should_fire {
+                        self.try_trigger_proc_resets(
+                            attacker,
+                            slot,
+                            CombatValueKind::Damage,
+                            critical,
+                            periodic_damage,
+                        );
+                    }
                     if defeated {
                         events.push(SimulationEvent::Defeat {
                             attacker: Some(attacker),
@@ -370,36 +565,49 @@ impl SimulationWorld {
                     else {
                         continue;
                     };
-                    let execute_threshold_bps =
-                        self.configuration.training_dummy.execute_threshold_bps;
-                    let applied_damage = amount.min(deployable.hit_points);
-                    deployable.hit_points = deployable.hit_points.saturating_sub(applied_damage);
-                    let threshold_hit_points = Self::training_dummy_execute_hit_points(
-                        deployable.max_hit_points,
-                        execute_threshold_bps,
-                    );
-                    let destroyed = match deployable.behavior {
-                        super::DeployableBehavior::TrainingDummyResetFull => {
-                            if deployable.hit_points <= threshold_hit_points {
-                                deployable.hit_points = deployable.max_hit_points;
+                    let (applied_damage, destroyed, remaining_hit_points) = {
+                        let execute_threshold_bps =
+                            self.configuration.training_dummy.execute_threshold_bps;
+                        let applied_damage = amount.min(deployable.hit_points);
+                        deployable.hit_points =
+                            deployable.hit_points.saturating_sub(applied_damage);
+                        let threshold_hit_points = Self::training_dummy_execute_hit_points(
+                            deployable.max_hit_points,
+                            execute_threshold_bps,
+                        );
+                        let destroyed = match deployable.behavior {
+                            super::DeployableBehavior::TrainingDummyResetFull => {
+                                if deployable.hit_points <= threshold_hit_points {
+                                    deployable.hit_points = deployable.max_hit_points;
+                                }
+                                false
                             }
-                            false
-                        }
-                        super::DeployableBehavior::TrainingDummyExecute => {
-                            if deployable.hit_points <= threshold_hit_points {
-                                deployable.hit_points = threshold_hit_points;
+                            super::DeployableBehavior::TrainingDummyExecute => {
+                                if deployable.hit_points <= threshold_hit_points {
+                                    deployable.hit_points = threshold_hit_points;
+                                }
+                                false
                             }
-                            false
-                        }
-                        _ => deployable.hit_points == 0,
+                            _ => deployable.hit_points == 0,
+                        };
+                        (applied_damage, destroyed, deployable.hit_points)
                     };
                     events.push(SimulationEvent::DeployableDamaged {
                         attacker,
                         deployable_id,
                         amount: applied_damage,
-                        remaining_hit_points: deployable.hit_points,
+                        remaining_hit_points,
                         destroyed,
                     });
+                    if applied_damage > 0 {
+                        self.try_trigger_proc_resets(
+                            attacker,
+                            slot,
+                            CombatValueKind::Damage,
+                            critical,
+                            false,
+                        );
+                    }
                     if destroyed {
                         destroyed_deployables.push(deployable_id);
                     }
@@ -476,6 +684,7 @@ impl SimulationWorld {
         amount: u16,
         status_kind: Option<StatusKind>,
         trigger: Option<SimTriggerReason>,
+        critical: bool,
     ) -> Vec<SimulationEvent> {
         if amount == 0 {
             return Vec::new();
@@ -486,25 +695,49 @@ impl SimulationWorld {
             let TargetEntity::Player(player_id) = *target else {
                 continue;
             };
-            let Some(player) = self.players.get_mut(&player_id) else {
-                continue;
-            };
-            if !player.alive {
-                continue;
-            }
+            let (healed, resulting_hit_points, proc_should_fire) = {
+                let Some(player) = self.players.get_mut(&player_id) else {
+                    continue;
+                };
+                if !player.alive {
+                    continue;
+                }
 
-            let missing = player.max_hit_points.saturating_sub(player.hit_points);
-            let healed = amount.min(missing);
-            player.hit_points = player.hit_points.saturating_add(healed);
+                let reduction_bps = player
+                    .statuses
+                    .iter()
+                    .filter(|status| status.kind == StatusKind::HealingReduction)
+                    .map(|status| status.magnitude.saturating_mul(u16::from(status.stacks)))
+                    .max()
+                    .unwrap_or(0)
+                    .min(10_000);
+                let missing = player.max_hit_points.saturating_sub(player.hit_points);
+                let reduced_amount =
+                    Self::scale_amount_with_bps(amount, 10_000_u16.saturating_sub(reduction_bps));
+                let healed = reduced_amount.min(missing);
+                player.hit_points = player.hit_points.saturating_add(healed);
+                (healed, player.hit_points, healed > 0)
+            };
+            let periodic_heal = matches!(status_kind, Some(StatusKind::Hot));
             events.push(SimulationEvent::HealingApplied {
                 source,
                 target: player_id,
                 slot,
                 amount: healed,
-                resulting_hit_points: player.hit_points,
+                critical: critical && healed > 0,
+                resulting_hit_points,
                 status_kind,
                 trigger,
             });
+            if proc_should_fire {
+                self.try_trigger_proc_resets(
+                    source,
+                    slot,
+                    CombatValueKind::Heal,
+                    critical,
+                    periodic_heal,
+                );
+            }
         }
         events
     }

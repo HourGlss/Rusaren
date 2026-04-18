@@ -25,7 +25,10 @@ skills:
       radius: 14
       payload:
         kind: damage
-        amount: 16
+        amount_min: 14
+        amount_max: 20
+        crit_chance_bps: 1800
+        crit_multiplier_bps: 18000
   - tier: 2
     id: ranger_disengage
     name: Disengage
@@ -86,3 +89,7 @@ skills:
         kind: damage
         amount: 10
         interrupt_silence_duration_ms: 8000
+        status:
+          kind: healing_reduction
+          duration_ms: 8000
+          magnitude: 5000

@@ -2437,6 +2437,7 @@ function Invoke-CallgraphReport {
     $outputPath = Join-Path $callgraphRoot "output.html"
     $fullScipPath = Join-Path $callgraphRoot "index.scip"
     $fullScipJsonPath = Join-Path $callgraphRoot "index.scip.json"
+    $scipIndexerStdoutPath = Join-Path $callgraphRoot "rust-analyzer.scip.stdout.txt"
     $scipIndexerDiagnosticsPath = Join-Path $callgraphRoot "rust-analyzer.scip.stderr.txt"
     $coreFallbackSvgPath = Join-Path $callgraphRoot "backend_core.simple.svg"
     $overviewFallbackSvgPath = Join-Path $callgraphRoot "backend_core.overview.simple.svg"
@@ -2477,13 +2478,27 @@ function Invoke-CallgraphReport {
             if (Test-Path $fullScipPath) {
                 Remove-Item -Force -Path $fullScipPath
             }
+            if (Test-Path $scipIndexerStdoutPath) {
+                Remove-Item -Force -Path $scipIndexerStdoutPath
+            }
             if (Test-Path $scipIndexerDiagnosticsPath) {
                 Remove-Item -Force -Path $scipIndexerDiagnosticsPath
             }
 
             $scipIndexerWarning = $null
-            & rust-analyzer scip . --output $fullScipPath 2> $scipIndexerDiagnosticsPath | Out-Host
-            $scipIndexerExitCode = $LASTEXITCODE
+            $scipIndexerProcess = Start-Process -FilePath "rust-analyzer" `
+                -ArgumentList @("scip", ".", "--output", $fullScipPath) `
+                -WorkingDirectory $serverRoot `
+                -NoNewWindow `
+                -Wait `
+                -PassThru `
+                -RedirectStandardOutput $scipIndexerStdoutPath `
+                -RedirectStandardError $scipIndexerDiagnosticsPath
+            $scipIndexerExitCode = $scipIndexerProcess.ExitCode
+            if (Test-Path $scipIndexerStdoutPath) {
+                Get-Content -Path $scipIndexerStdoutPath | Out-Host
+                Remove-Item -Force -Path $scipIndexerStdoutPath
+            }
             $scipIndexerDiagnostics = @(Get-RustAnalyzerScipDiagnostics -Path $scipIndexerDiagnosticsPath)
             if ($scipIndexerDiagnostics.Count -gt 0) {
                 Set-Content -Path $scipIndexerDiagnosticsPath -Value ($scipIndexerDiagnostics -join "`n") -Encoding utf8

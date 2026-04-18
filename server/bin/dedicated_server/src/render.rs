@@ -83,6 +83,7 @@ pub(crate) fn render_match_event(event: &MatchEvent) -> String {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 pub(crate) fn render_sim_event(event: &SimulationEvent) -> String {
     match event {
         SimulationEvent::PlayerMoved { player_id, x, y } => {
@@ -105,16 +106,18 @@ pub(crate) fn render_sim_event(event: &SimulationEvent) -> String {
             amount,
             remaining_hit_points,
             defeated,
+            critical,
             status_kind,
             trigger,
         } => format!(
-            "player {} hit player {} from slot {} for {} (remaining hp {}, defeated: {}, status: {:?}, trigger: {:?})",
+            "player {} hit player {} from slot {} for {} (remaining hp {}, defeated: {}, critical: {}, status: {:?}, trigger: {:?})",
             attacker.get(),
             target.get(),
             slot,
             amount,
             remaining_hit_points,
             defeated,
+            critical,
             status_kind,
             trigger
         ),
@@ -124,15 +127,17 @@ pub(crate) fn render_sim_event(event: &SimulationEvent) -> String {
             slot,
             amount,
             resulting_hit_points,
+            critical,
             status_kind,
             trigger,
         } => format!(
-            "player {} healed player {} from slot {} for {} (hp now {}, status: {:?}, trigger: {:?})",
+            "player {} healed player {} from slot {} for {} (hp now {}, critical: {}, status: {:?}, trigger: {:?})",
             source.get(),
             target.get(),
             slot,
             amount,
             resulting_hit_points,
+            critical,
             status_kind,
             trigger
         ),

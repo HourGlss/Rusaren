@@ -1332,6 +1332,9 @@ function Invoke-MiriSuite {
         @("game_domain")
     )
 
+    # Replay-based integration tests depend on the seed corpus existing in a fresh checkout.
+    Ensure-FuzzSeedCorpus
+
     $originalMiriFlags = $env:MIRIFLAGS
     $disableIsolationFlag = "-Zmiri-disable-isolation"
     $effectiveMiriFlags = if ([string]::IsNullOrWhiteSpace($originalMiriFlags)) {

@@ -237,6 +237,7 @@ fn collect_behavior_registry_coverage(
             projectile_speed_bps,
             cooldown_bps,
             cast_time_bps,
+            proc_reset,
         } => {
             coverage.behaviors.insert("passive");
             if *player_speed_bps > 0 {
@@ -250,6 +251,9 @@ fn collect_behavior_registry_coverage(
             }
             if *cast_time_bps > 0 {
                 coverage.passive_fields.insert("cast_time_bps");
+            }
+            if proc_reset.is_some() {
+                coverage.behaviors.insert("proc_reset");
             }
         }
         SkillBehavior::Summon { payload, .. } => {
@@ -296,6 +300,12 @@ fn collect_payload_registry_coverage(
     if payload.dispel.is_some() {
         behaviors.insert("dispel");
     }
+    if payload.has_amount_range() {
+        behaviors.insert("damage_range");
+    }
+    if payload.can_crit() {
+        behaviors.insert("critical_strike");
+    }
     if let Some(status) = &payload.status {
         statuses.insert(match status.kind {
             StatusKind::Poison => "poison",
@@ -310,6 +320,7 @@ fn collect_payload_registry_coverage(
             StatusKind::Stealth => "stealth",
             StatusKind::Reveal => "reveal",
             StatusKind::Fear => "fear",
+            StatusKind::HealingReduction => "healing_reduction",
         });
     }
 }
@@ -1055,6 +1066,128 @@ fn parse_skill_yaml_accepts_aura_cast_start_and_end_payloads() {
                 }),
                 ..
             },
+            ..
+        }
+    ));
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn parse_skill_yaml_accepts_payload_crit_range_and_proc_reset_fields() {
+    let yaml = r"
+tree: Rogue
+melee:
+  id: rogue_dual_cut
+  name: Dual Cut
+  description: slash
+  cooldown_ms: 450
+  range: 86
+  radius: 38
+  effect: melee_swing
+  payload:
+    kind: damage
+    amount: 22
+skills:
+  - tier: 1
+    id: rogue_spike
+    name: Spike
+    description: ranged opener
+    behavior:
+      kind: projectile
+      effect: skill_shot
+      cooldown_ms: 650
+      mana_cost: 14
+      speed: 360
+      range: 1500
+      radius: 14
+      payload:
+        kind: damage
+        amount_min: 8
+        amount_max: 12
+        crit_chance_bps: 2500
+        crit_multiplier_bps: 17500
+  - tier: 2
+    id: rogue_trap
+    name: Trap
+    description: trap
+    behavior:
+      kind: trap
+      effect: burst
+      cooldown_ms: 2200
+      mana_cost: 24
+      distance: 220
+      radius: 42
+      duration_ms: 6000
+      hit_points: 40
+      payload:
+        kind: damage
+        amount: 6
+  - tier: 3
+    id: rogue_teleport
+    name: Teleport
+    description: blink
+    behavior:
+      kind: teleport
+      effect: dash_trail
+      cooldown_ms: 1500
+      mana_cost: 20
+      distance: 240
+  - tier: 4
+    id: rogue_proc_talent
+    name: Proc Talent
+    description: proc
+    behavior:
+      kind: passive
+      effect: nova
+      proc_reset:
+        trigger: on_hit
+        source_skill_ids:
+          - rogue_spike
+        reset_skill_ids:
+          - rogue_teleport
+        instacast_skill_ids:
+          - rogue_trap
+        instacast_costs_mana: false
+        instacast_starts_cooldown: false
+        internal_cooldown_ms: 9000
+  - tier: 5
+    id: rogue_last
+    name: Last
+    description: filler
+    behavior:
+      kind: beam
+      effect: beam
+      cooldown_ms: 900
+      range: 200
+      radius: 16
+      payload:
+        kind: damage
+        amount: 4
+";
+    let parsed = parse_skill_yaml("skills/rogue.yaml", yaml).expect("yaml should parse");
+    assert!(matches!(
+        parsed.skills[0].behavior,
+        SkillBehavior::Projectile {
+            payload: EffectPayload {
+                amount: 8,
+                amount_max: Some(12),
+                crit_chance_bps: 2500,
+                crit_multiplier_bps: 17500,
+                ..
+            },
+            ..
+        }
+    ));
+    assert!(matches!(
+        parsed.skills[3].behavior,
+        SkillBehavior::Passive {
+            proc_reset: Some(ProcResetDefinition {
+                trigger: ProcTriggerKind::Hit,
+                instacast_costs_mana: false,
+                instacast_starts_cooldown: false,
+                internal_cooldown_ms: Some(9000),
+                ..
+            }),
             ..
         }
     ));

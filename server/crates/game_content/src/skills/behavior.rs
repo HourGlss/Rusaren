@@ -1,10 +1,10 @@
 use std::collections::BTreeMap;
 
-use crate::yaml::{DispelYaml, EffectPayloadYaml, SkillBehaviorYaml, StatusYaml};
+use crate::yaml::{DispelYaml, EffectPayloadYaml, ProcResetYaml, SkillBehaviorYaml, StatusYaml};
 use crate::{
     BehaviorSchema, CombatValueKind, ContentError, DispelDefinition, DispelScope, EffectPayload,
-    MechanicCatalog, NumericFieldRule, PayloadFieldRule, SkillBehavior, SkillEffectKind, StackRule,
-    StatusDefinition, StatusKind,
+    MechanicCatalog, NumericFieldRule, PayloadFieldRule, ProcResetDefinition, ProcTriggerKind,
+    SkillBehavior, SkillEffectKind, StackRule, StatusDefinition, StatusKind,
 };
 
 #[derive(Clone, Copy)]
@@ -216,6 +216,11 @@ fn parse_direct_skill_behavior(
     aux_payloads: &BehaviorAuxPayloads,
 ) -> Result<SkillBehavior, ContentError> {
     validate_no_aux_payloads(context.source, aux_payloads, &context.yaml.kind)?;
+    validate_no_proc_reset(
+        context.source,
+        &context.yaml.kind,
+        context.yaml.proc_reset.as_ref(),
+    )?;
     let cooldown_ms =
         require_present_u16(context.source, "cooldown_ms", Some(context.cooldown_ms))?;
     match context.yaml.kind.as_str() {
@@ -285,6 +290,11 @@ fn parse_deployable_skill_behavior(
     match context.yaml.kind.as_str() {
         "summon" => {
             validate_no_aux_payloads(context.source, aux_payloads, &context.yaml.kind)?;
+            validate_no_proc_reset(
+                context.source,
+                &context.yaml.kind,
+                context.yaml.proc_reset.as_ref(),
+            )?;
             validate_toggleable_flag(
                 context.source,
                 &context.yaml.kind,
@@ -303,6 +313,11 @@ fn parse_deployable_skill_behavior(
         }
         "ward" => {
             validate_no_aux_payloads(context.source, aux_payloads, &context.yaml.kind)?;
+            validate_no_proc_reset(
+                context.source,
+                &context.yaml.kind,
+                context.yaml.proc_reset.as_ref(),
+            )?;
             validate_toggleable_flag(
                 context.source,
                 &context.yaml.kind,
@@ -318,6 +333,11 @@ fn parse_deployable_skill_behavior(
         }
         "trap" => {
             validate_no_aux_payloads(context.source, aux_payloads, &context.yaml.kind)?;
+            validate_no_proc_reset(
+                context.source,
+                &context.yaml.kind,
+                context.yaml.proc_reset.as_ref(),
+            )?;
             validate_toggleable_flag(
                 context.source,
                 &context.yaml.kind,
@@ -336,6 +356,11 @@ fn parse_deployable_skill_behavior(
         }
         "barrier" => {
             validate_no_aux_payloads(context.source, aux_payloads, &context.yaml.kind)?;
+            validate_no_proc_reset(
+                context.source,
+                &context.yaml.kind,
+                context.yaml.proc_reset.as_ref(),
+            )?;
             validate_toggleable_flag(
                 context.source,
                 &context.yaml.kind,
@@ -472,6 +497,7 @@ fn parse_teleport_behavior(
     aux_payloads: &BehaviorAuxPayloads,
 ) -> Result<SkillBehavior, ContentError> {
     validate_no_aux_payloads(context.source, aux_payloads, "teleport")?;
+    validate_no_proc_reset(context.source, "teleport", context.yaml.proc_reset.as_ref())?;
     validate_toggleable_flag(
         context.source,
         "teleport",
@@ -491,6 +517,7 @@ fn parse_channel_behavior(
     aux_payloads: &BehaviorAuxPayloads,
 ) -> Result<SkillBehavior, ContentError> {
     validate_no_aux_payloads(context.source, aux_payloads, "channel")?;
+    validate_no_proc_reset(context.source, "channel", context.yaml.proc_reset.as_ref())?;
     validate_toggleable_flag(
         context.source,
         "channel",
@@ -536,11 +563,23 @@ fn parse_passive_behavior(
     let projectile_speed_bps = context.fields.projectile_speed_bps.unwrap_or(0);
     let cooldown_bps = context.fields.cooldown_bps.unwrap_or(0);
     let cast_time_bps = context.fields.cast_time_bps.unwrap_or(0);
-    if player_speed_bps == 0 && projectile_speed_bps == 0 && cooldown_bps == 0 && cast_time_bps == 0
+    let proc_reset = context
+        .yaml
+        .proc_reset
+        .as_ref()
+        .map(|definition| parse_proc_reset(context.source, definition))
+        .transpose()?;
+    if player_speed_bps == 0
+        && projectile_speed_bps == 0
+        && cooldown_bps == 0
+        && cast_time_bps == 0
+        && proc_reset.is_none()
     {
         return Err(ContentError::Validation {
             source: String::from(context.source),
-            message: String::from("passive behaviors must modify at least one stat"),
+            message: String::from(
+                "passive behaviors must modify at least one stat or declare proc_reset",
+            ),
         });
     }
     Ok(SkillBehavior::Passive {
@@ -548,6 +587,7 @@ fn parse_passive_behavior(
         projectile_speed_bps,
         cooldown_bps,
         cast_time_bps,
+        proc_reset,
     })
 }
 
@@ -641,6 +681,7 @@ fn parse_aura_behavior(
     context: BehaviorParseContext<'_>,
     aux_payloads: &BehaviorAuxPayloads,
 ) -> Result<SkillBehavior, ContentError> {
+    validate_no_proc_reset(context.source, "aura", context.yaml.proc_reset.as_ref())?;
     let toggleable = context.yaml.toggleable.unwrap_or(false);
     if toggleable
         && (context.fields.distance.unwrap_or(0) > 0 || context.fields.hit_points.is_some())
@@ -702,6 +743,20 @@ fn validate_no_aux_payloads(
     Ok(())
 }
 
+fn validate_no_proc_reset(
+    source: &str,
+    kind: &str,
+    proc_reset: Option<&ProcResetYaml>,
+) -> Result<(), ContentError> {
+    if proc_reset.is_some() {
+        return Err(ContentError::Validation {
+            source: String::from(source),
+            message: format!("behavior.proc_reset is not valid for behavior kind '{kind}'"),
+        });
+    }
+    Ok(())
+}
+
 fn validate_toggleable_flag(
     source: &str,
     kind: &str,
@@ -728,7 +783,9 @@ pub(super) fn parse_payload(
     })?;
 
     let kind = parse_payload_kind(source, &yaml.kind)?;
-    let amount = yaml.amount.unwrap_or(0);
+    let (amount, amount_max, has_direct_amount) = parse_payload_amount(source, field, &yaml)?;
+    let (crit_chance_bps, crit_multiplier_bps) =
+        parse_payload_crit(source, field, &yaml, has_direct_amount)?;
     let interrupt_silence_duration_ms = match yaml.interrupt_silence_duration_ms {
         Some(0) => {
             return Err(ContentError::Validation {
@@ -744,7 +801,7 @@ pub(super) fn parse_payload(
         .as_ref()
         .map(|definition| parse_dispel(source, field, definition))
         .transpose()?;
-    if amount == 0
+    if !has_direct_amount
         && yaml.status.is_none()
         && interrupt_silence_duration_ms.is_none()
         && dispel.is_none()
@@ -760,6 +817,9 @@ pub(super) fn parse_payload(
     Ok(EffectPayload {
         kind,
         amount,
+        amount_max,
+        crit_chance_bps,
+        crit_multiplier_bps,
         status: yaml
             .status
             .as_ref()
@@ -797,6 +857,82 @@ fn parse_dispel(
         scope,
         max_statuses,
     })
+}
+
+fn parse_payload_amount(
+    source: &str,
+    field: &str,
+    yaml: &EffectPayloadYaml,
+) -> Result<(u16, Option<u16>, bool), ContentError> {
+    if yaml.amount.is_some() && (yaml.amount_min.is_some() || yaml.amount_max.is_some()) {
+        return Err(ContentError::Validation {
+            source: String::from(source),
+            message: format!("{field} cannot mix amount with amount_min/amount_max"),
+        });
+    }
+    match (yaml.amount, yaml.amount_min, yaml.amount_max) {
+        (Some(amount), None, None) => Ok((amount, None, amount > 0)),
+        (None, Some(min), Some(max)) => {
+            if max < min {
+                return Err(ContentError::Validation {
+                    source: String::from(source),
+                    message: format!(
+                        "{field}.amount_max must be greater than or equal to amount_min"
+                    ),
+                });
+            }
+            Ok((min, Some(max), true))
+        }
+        (None, None, None) => Ok((0, None, false)),
+        _ => Err(ContentError::Validation {
+            source: String::from(source),
+            message: format!("{field}.amount_min and amount_max must be provided together"),
+        }),
+    }
+}
+
+fn parse_payload_crit(
+    source: &str,
+    field: &str,
+    yaml: &EffectPayloadYaml,
+    has_direct_amount: bool,
+) -> Result<(u16, u16), ContentError> {
+    let crit_chance_bps = match yaml.crit_chance_bps {
+        Some(0) => {
+            return Err(ContentError::Validation {
+                source: String::from(source),
+                message: format!("{field}.crit_chance_bps must be greater than zero when provided"),
+            });
+        }
+        Some(value) => value,
+        None => 0,
+    };
+    if yaml.crit_multiplier_bps.is_some() && crit_chance_bps == 0 {
+        return Err(ContentError::Validation {
+            source: String::from(source),
+            message: format!("{field}.crit_multiplier_bps requires crit_chance_bps"),
+        });
+    }
+    let crit_multiplier_bps = match yaml.crit_multiplier_bps {
+        Some(value) if value < 10_000 => {
+            return Err(ContentError::Validation {
+                source: String::from(source),
+                message: format!(
+                    "{field}.crit_multiplier_bps must be at least 10000 so crits do not reduce output"
+                ),
+            });
+        }
+        Some(value) => value,
+        None if crit_chance_bps > 0 => 15_000,
+        None => 0,
+    };
+    if crit_chance_bps > 0 && !has_direct_amount {
+        return Err(ContentError::Validation {
+            source: String::from(source),
+            message: format!("{field} crit settings require a direct amount or amount range"),
+        });
+    }
+    Ok((crit_chance_bps, crit_multiplier_bps))
 }
 
 fn parse_payload_kind(source: &str, raw: &str) -> Result<CombatValueKind, ContentError> {
@@ -905,11 +1041,132 @@ fn parse_status_kind(source: &str, raw: &str) -> Result<StatusKind, ContentError
         "stealth" => Ok(StatusKind::Stealth),
         "reveal" => Ok(StatusKind::Reveal),
         "fear" => Ok(StatusKind::Fear),
+        "healing_reduction" => Ok(StatusKind::HealingReduction),
         other => Err(ContentError::Validation {
             source: String::from(source),
             message: format!("unknown status kind '{other}'"),
         }),
     }
+}
+
+fn parse_proc_reset(
+    source: &str,
+    yaml: &ProcResetYaml,
+) -> Result<ProcResetDefinition, ContentError> {
+    let trigger = match yaml.trigger.as_str() {
+        "on_hit" => ProcTriggerKind::Hit,
+        "on_crit" => ProcTriggerKind::Crit,
+        "on_heal" => ProcTriggerKind::Heal,
+        "on_tick" => ProcTriggerKind::Tick,
+        other => {
+            return Err(ContentError::Validation {
+                source: String::from(source),
+                message: format!("behavior.proc_reset.trigger has unknown value '{other}'"),
+            });
+        }
+    };
+    let source_skill_ids = parse_skill_reference_list(
+        source,
+        "behavior.proc_reset.source_skill_ids",
+        yaml.source_skill_ids.as_deref(),
+    )?;
+    let reset_skill_ids = parse_skill_reference_list(
+        source,
+        "behavior.proc_reset.reset_skill_ids",
+        yaml.reset_skill_ids.as_deref(),
+    )?;
+    let instacast_skill_ids = parse_skill_reference_list(
+        source,
+        "behavior.proc_reset.instacast_skill_ids",
+        yaml.instacast_skill_ids.as_deref(),
+    )?;
+    if reset_skill_ids.is_empty() && instacast_skill_ids.is_empty() {
+        return Err(ContentError::Validation {
+            source: String::from(source),
+            message: String::from(
+                "behavior.proc_reset must reset at least one skill cooldown or grant at least one instacast target",
+            ),
+        });
+    }
+    let internal_cooldown_ms = match yaml.internal_cooldown_ms {
+        Some(0) => {
+            return Err(ContentError::Validation {
+                source: String::from(source),
+                message: String::from(
+                    "behavior.proc_reset.internal_cooldown_ms must be greater than zero when provided",
+                ),
+            });
+        }
+        Some(value) => Some(value),
+        None => None,
+    };
+    if instacast_skill_ids.is_empty()
+        && (yaml.instacast_costs_mana.is_some() || yaml.instacast_starts_cooldown.is_some())
+    {
+        return Err(ContentError::Validation {
+            source: String::from(source),
+            message: String::from(
+                "behavior.proc_reset instacast flags require instacast_skill_ids",
+            ),
+        });
+    }
+    Ok(ProcResetDefinition {
+        trigger,
+        source_skill_ids,
+        reset_skill_ids,
+        instacast_skill_ids,
+        instacast_costs_mana: yaml.instacast_costs_mana.unwrap_or(true),
+        instacast_starts_cooldown: yaml.instacast_starts_cooldown.unwrap_or(true),
+        internal_cooldown_ms,
+    })
+}
+
+fn parse_skill_reference_list(
+    source: &str,
+    field: &str,
+    values: Option<&[String]>,
+) -> Result<Vec<String>, ContentError> {
+    let Some(values) = values else {
+        return Ok(Vec::new());
+    };
+    if values.is_empty() {
+        return Err(ContentError::Validation {
+            source: String::from(source),
+            message: format!("{field} must not be empty when provided"),
+        });
+    }
+    let mut parsed = Vec::with_capacity(values.len());
+    for value in values {
+        validate_skill_reference_id(source, field, value)?;
+        if parsed.contains(value) {
+            return Err(ContentError::Validation {
+                source: String::from(source),
+                message: format!("{field} must not contain duplicate skill ids"),
+            });
+        }
+        parsed.push(value.clone());
+    }
+    Ok(parsed)
+}
+
+fn validate_skill_reference_id(source: &str, field: &str, value: &str) -> Result<(), ContentError> {
+    if value.trim().is_empty() {
+        return Err(ContentError::Validation {
+            source: String::from(source),
+            message: format!("{field} entries must not be empty"),
+        });
+    }
+    if value.chars().all(|character| {
+        character.is_ascii_lowercase()
+            || character.is_ascii_digit()
+            || matches!(character, '_' | '-')
+    }) {
+        return Ok(());
+    }
+    Err(ContentError::Validation {
+        source: String::from(source),
+        message: format!("{field} entries must use lowercase ascii letters, digits, '_' or '-'"),
+    })
 }
 
 fn behavior_schema<'a>(

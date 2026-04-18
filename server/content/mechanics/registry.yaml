@@ -361,6 +361,82 @@ behaviors:
         projectile_speed_bps: optional
         cooldown_bps: optional
         cast_time_bps: optional
+  - id: critical_strike
+    label: Critical Strike
+    implemented: true
+    inspiration: "WoW crit rolls, burst windows, and healing crits"
+    notes: "Optional payload crit chance and multiplier for direct damage and healing."
+    schema:
+      payload: required
+      cast_start_payload: optional
+      cast_end_payload: optional
+      allowed_effects: [skill_shot, beam, burst, nova, melee_swing, dash_trail]
+      numeric_fields:
+        cooldown_ms: required
+        cast_time_ms: optional
+        mana_cost: optional
+        range: optional
+        radius: optional
+        distance: optional
+        speed: optional
+        impact_radius: optional
+        duration_ms: optional
+        hit_points: optional
+        tick_interval_ms: optional
+        player_speed_bps: forbidden
+        projectile_speed_bps: forbidden
+        cooldown_bps: forbidden
+        cast_time_bps: forbidden
+  - id: damage_range
+    label: Damage Range
+    implemented: true
+    inspiration: "WoW min/max weapon damage and variable spell rolls"
+    notes: "Optional payload amount_min and amount_max for direct damage and healing rolls."
+    schema:
+      payload: required
+      cast_start_payload: optional
+      cast_end_payload: optional
+      allowed_effects: [skill_shot, beam, burst, nova, melee_swing, dash_trail]
+      numeric_fields:
+        cooldown_ms: required
+        cast_time_ms: optional
+        mana_cost: optional
+        range: optional
+        radius: optional
+        distance: optional
+        speed: optional
+        impact_radius: optional
+        duration_ms: optional
+        hit_points: optional
+        tick_interval_ms: optional
+        player_speed_bps: forbidden
+        projectile_speed_bps: forbidden
+        cooldown_bps: forbidden
+        cast_time_bps: forbidden
+  - id: proc_reset
+    label: Proc / Reset Hooks
+    implemented: true
+    inspiration: "WoW talent procs, cooldown resets, and free-cast windows"
+    notes: "Passive-only proc_reset hooks for on-hit/crit/heal/tick resets and instant follow-up casts."
+    schema:
+      payload: forbidden
+      allowed_effects: [nova]
+      numeric_fields:
+        cooldown_ms: forbidden
+        cast_time_ms: forbidden
+        mana_cost: forbidden
+        range: forbidden
+        radius: forbidden
+        distance: forbidden
+        speed: forbidden
+        impact_radius: forbidden
+        duration_ms: forbidden
+        hit_points: forbidden
+        tick_interval_ms: forbidden
+        player_speed_bps: optional
+        projectile_speed_bps: optional
+        cooldown_bps: optional
+        cast_time_bps: optional
 
 statuses:
   - id: poison
@@ -530,4 +606,18 @@ statuses:
         duration_ms: required
         tick_interval_ms: forbidden
         magnitude: zero
+        trigger_duration_ms: forbidden
+  - id: healing_reduction
+    label: Healing Reduction
+    implemented: true
+    inspiration: "WoW Mortal Strike, Wound Poison, and Aimed Shot healing pressure"
+    notes: "Reduces incoming healing by the strongest active authored percentage."
+    schema:
+      max_stacks: one
+      expire_payload: optional
+      dispel_payload: optional
+      numeric_fields:
+        duration_ms: required
+        tick_interval_ms: forbidden
+        magnitude: required
         trigger_duration_ms: forbidden

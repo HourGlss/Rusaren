@@ -1741,6 +1741,7 @@ impl ProbeClientState {
                 | ArenaStatusKind::Sleep
                 | ArenaStatusKind::Reveal
                 | ArenaStatusKind::Fear
+                | ArenaStatusKind::HealingReduction
         )
     }
 

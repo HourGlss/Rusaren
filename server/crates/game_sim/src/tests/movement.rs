@@ -1118,6 +1118,9 @@ fn deployable_advancement_target_positions_and_enemy_lookup_stay_precise() {
             payload: game_content::EffectPayload {
                 kind: CombatValueKind::Damage,
                 amount: 7,
+                amount_max: None,
+                crit_chance_bps: 0,
+                crit_multiplier_bps: 0,
                 status: None,
                 interrupt_silence_duration_ms: None,
                 dispel: None,

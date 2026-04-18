@@ -31,6 +31,23 @@ struct DashExecution {
     payload: Option<game_content::EffectPayload>,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct CastOverride {
+    consumed_proc_index: Option<usize>,
+    costs_mana: bool,
+    starts_cooldown: bool,
+}
+
+impl Default for CastOverride {
+    fn default() -> Self {
+        Self {
+            consumed_proc_index: None,
+            costs_mana: true,
+            starts_cooldown: true,
+        }
+    }
+}
+
 fn behavior_label(behavior: &SkillBehavior) -> &'static str {
     match behavior {
         SkillBehavior::Projectile { .. } => "projectile",
@@ -241,9 +258,15 @@ impl SimulationWorld {
         if matches!(skill.behavior, SkillBehavior::Passive { .. }) {
             return Vec::new();
         }
+        let cast_override = self.cast_override_for_skill(attacker, slot_index);
+        let effective_cast_time_ms = if cast_override.consumed_proc_index.is_some() {
+            0
+        } else {
+            self.effective_cast_time_ms(attacker, skill.behavior.cast_time_ms())
+        };
         let behavior_name = behavior_label(&skill.behavior);
         if matches!(skill.behavior, SkillBehavior::Channel { .. }) {
-            if self.effective_cast_time_ms(attacker, skill.behavior.cast_time_ms()) > 0 {
+            if effective_cast_time_ms > 0 {
                 if let Some(event) = self.start_pending_cast(
                     attacker,
                     attacker_state,
@@ -251,6 +274,7 @@ impl SimulationWorld {
                     slot_index,
                     self_target,
                     &skill.behavior,
+                    effective_cast_time_ms,
                 ) {
                     return vec![event];
                 }
@@ -263,12 +287,13 @@ impl SimulationWorld {
                 slot_index,
                 self_target,
                 skill.behavior,
+                cast_override,
             ) {
                 return vec![event];
             }
             return Vec::new();
         }
-        if self.effective_cast_time_ms(attacker, skill.behavior.cast_time_ms()) > 0 {
+        if effective_cast_time_ms > 0 {
             if let Some(event) = self.start_pending_cast(
                 attacker,
                 attacker_state,
@@ -276,6 +301,7 @@ impl SimulationWorld {
                 slot_index,
                 self_target,
                 &skill.behavior,
+                effective_cast_time_ms,
             ) {
                 return vec![event];
             }
@@ -296,6 +322,7 @@ impl SimulationWorld {
             slot_index,
             self_target,
             skill.behavior,
+            cast_override,
         ));
         events.push(SimulationEvent::CastCompleted {
             player_id: attacker,
@@ -313,12 +340,12 @@ impl SimulationWorld {
         slot_index: usize,
         self_target: bool,
         behavior: &SkillBehavior,
+        cast_time_ms: u16,
     ) -> Option<SimulationEvent> {
         if attacker_state.moving {
             return None;
         }
         let mana_cost = behavior.mana_cost();
-        let cast_time_ms = self.effective_cast_time_ms(attacker, behavior.cast_time_ms());
         let player = self.players.get_mut(&attacker)?;
         if player.active_cast.is_some() || player.mana < mana_cost {
             return None;
@@ -350,6 +377,7 @@ impl SimulationWorld {
         slot_index: usize,
         self_target: bool,
         behavior: SkillBehavior,
+        cast_override: CastOverride,
     ) -> Option<SimulationEvent> {
         let SkillBehavior::Channel {
             cooldown_ms,
@@ -368,11 +396,23 @@ impl SimulationWorld {
         if attacker_state.moving {
             return None;
         }
+        let mana_cost = if cast_override.costs_mana {
+            mana_cost
+        } else {
+            0
+        };
         let player = self.players.get(&attacker)?;
         if player.active_cast.is_some() || player.mana < mana_cost {
             return None;
         }
-        if !self.commit_skill_cast(attacker, slot_index, cooldown_ms, mana_cost) {
+        if !self.commit_skill_cast(
+            attacker,
+            slot_index,
+            cooldown_ms,
+            mana_cost,
+            cast_override.starts_cooldown,
+            cast_override.consumed_proc_index,
+        ) {
             return None;
         }
         if let Some(player) = self.players.get_mut(&attacker) {
@@ -413,8 +453,16 @@ impl SimulationWorld {
         slot_index: usize,
         behavior: SkillBehavior,
     ) -> bool {
-        self.start_pending_cast(attacker, attacker_state, slot, slot_index, false, &behavior)
-            .is_some()
+        self.start_pending_cast(
+            attacker,
+            attacker_state,
+            slot,
+            slot_index,
+            false,
+            &behavior,
+            self.effective_cast_time_ms(attacker, behavior.cast_time_ms()),
+        )
+        .is_some()
     }
 
     #[allow(clippy::too_many_lines)]
@@ -426,6 +474,7 @@ impl SimulationWorld {
         slot_index: usize,
         self_target: bool,
         behavior: SkillBehavior,
+        cast_override: CastOverride,
     ) -> Vec<SimulationEvent> {
         match behavior {
             SkillBehavior::Projectile {
@@ -444,7 +493,13 @@ impl SimulationWorld {
                 slot_index,
                 self_target,
                 cooldown_ms,
-                mana_cost,
+                if cast_override.costs_mana {
+                    mana_cost
+                } else {
+                    0
+                },
+                cast_override.starts_cooldown,
+                cast_override.consumed_proc_index,
                 speed,
                 range,
                 radius,
@@ -466,7 +521,13 @@ impl SimulationWorld {
                 slot_index,
                 self_target,
                 cooldown_ms,
-                mana_cost,
+                if cast_override.costs_mana {
+                    mana_cost
+                } else {
+                    0
+                },
+                cast_override.starts_cooldown,
+                cast_override.consumed_proc_index,
                 range,
                 radius,
                 effect,
@@ -487,7 +548,13 @@ impl SimulationWorld {
                 slot_index,
                 self_target,
                 cooldown_ms,
-                mana_cost,
+                if cast_override.costs_mana {
+                    mana_cost
+                } else {
+                    0
+                },
+                cast_override.starts_cooldown,
+                cast_override.consumed_proc_index,
                 distance,
                 effect,
                 impact_radius,
@@ -508,7 +575,13 @@ impl SimulationWorld {
                 slot_index,
                 self_target,
                 cooldown_ms,
-                mana_cost,
+                if cast_override.costs_mana {
+                    mana_cost
+                } else {
+                    0
+                },
+                cast_override.starts_cooldown,
+                cast_override.consumed_proc_index,
                 range,
                 radius,
                 effect,
@@ -528,7 +601,13 @@ impl SimulationWorld {
                 slot_index,
                 self_target,
                 cooldown_ms,
-                mana_cost,
+                if cast_override.costs_mana {
+                    mana_cost
+                } else {
+                    0
+                },
+                cast_override.starts_cooldown,
+                cast_override.consumed_proc_index,
                 radius,
                 effect,
                 payload,
@@ -546,7 +625,13 @@ impl SimulationWorld {
                 slot_index,
                 self_target,
                 cooldown_ms,
-                mana_cost,
+                if cast_override.costs_mana {
+                    mana_cost
+                } else {
+                    0
+                },
+                cast_override.starts_cooldown,
+                cast_override.consumed_proc_index,
                 distance,
                 effect,
             ),
@@ -570,7 +655,13 @@ impl SimulationWorld {
                 slot_index,
                 self_target,
                 cooldown_ms,
-                mana_cost,
+                if cast_override.costs_mana {
+                    mana_cost
+                } else {
+                    0
+                },
+                cast_override.starts_cooldown,
+                cast_override.consumed_proc_index,
                 distance,
                 radius,
                 duration_ms,
@@ -596,7 +687,13 @@ impl SimulationWorld {
                 slot_index,
                 self_target,
                 cooldown_ms,
-                mana_cost,
+                if cast_override.costs_mana {
+                    mana_cost
+                } else {
+                    0
+                },
+                cast_override.starts_cooldown,
+                cast_override.consumed_proc_index,
                 distance,
                 radius,
                 duration_ms,
@@ -620,7 +717,13 @@ impl SimulationWorld {
                 slot_index,
                 self_target,
                 cooldown_ms,
-                mana_cost,
+                if cast_override.costs_mana {
+                    mana_cost
+                } else {
+                    0
+                },
+                cast_override.starts_cooldown,
+                cast_override.consumed_proc_index,
                 distance,
                 radius,
                 duration_ms,
@@ -644,7 +747,13 @@ impl SimulationWorld {
                 slot_index,
                 self_target,
                 cooldown_ms,
-                mana_cost,
+                if cast_override.costs_mana {
+                    mana_cost
+                } else {
+                    0
+                },
+                cast_override.starts_cooldown,
+                cast_override.consumed_proc_index,
                 distance,
                 radius,
                 duration_ms,
@@ -672,7 +781,13 @@ impl SimulationWorld {
                 slot_index,
                 self_target,
                 cooldown_ms,
-                mana_cost,
+                if cast_override.costs_mana {
+                    mana_cost
+                } else {
+                    0
+                },
+                cast_override.starts_cooldown,
+                cast_override.consumed_proc_index,
                 distance,
                 radius,
                 duration_ms,
@@ -693,16 +808,59 @@ impl SimulationWorld {
         slot_index: usize,
         cooldown_ms: u16,
         mana_cost: u16,
+        starts_cooldown: bool,
+        consumed_proc_index: Option<usize>,
     ) -> bool {
         if !self.consume_skill_mana(attacker, mana_cost) {
             return false;
         }
         self.break_stealth(attacker);
-        let effective_cooldown_ms = self.effective_skill_cooldown_ms(attacker, cooldown_ms);
+        let effective_cooldown_ms = if starts_cooldown {
+            Some(self.effective_skill_cooldown_ms(attacker, cooldown_ms))
+        } else {
+            None
+        };
         if let Some(player) = self.players.get_mut(&attacker) {
-            player.slot_cooldown_remaining_ms[slot_index] = effective_cooldown_ms;
+            if let Some(effective_cooldown_ms) = effective_cooldown_ms {
+                player.slot_cooldown_remaining_ms[slot_index] = effective_cooldown_ms;
+            }
+            if let Some(index) = consumed_proc_index {
+                if index < player.next_cast_procs.len() {
+                    player.next_cast_procs.remove(index);
+                }
+            }
         }
         true
+    }
+
+    fn cast_override_for_skill(&self, attacker: PlayerId, slot_index: usize) -> CastOverride {
+        let Some(player) = self.players.get(&attacker) else {
+            return CastOverride::default();
+        };
+        let Some(skill_id) = player
+            .skills
+            .get(slot_index)
+            .and_then(|skill| skill.as_ref())
+            .map(|skill| skill.id.as_str())
+        else {
+            return CastOverride::default();
+        };
+        player
+            .next_cast_procs
+            .iter()
+            .enumerate()
+            .find_map(|(index, proc_state)| {
+                proc_state
+                    .skill_ids
+                    .iter()
+                    .any(|candidate| candidate == skill_id)
+                    .then_some(CastOverride {
+                        consumed_proc_index: Some(index),
+                        costs_mana: proc_state.costs_mana,
+                        starts_cooldown: proc_state.starts_cooldown,
+                    })
+            })
+            .unwrap_or_default()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -715,13 +873,22 @@ impl SimulationWorld {
         self_target: bool,
         cooldown_ms: u16,
         mana_cost: u16,
+        starts_cooldown: bool,
+        consumed_proc_index: Option<usize>,
         speed: u16,
         range: u16,
         radius: u16,
         effect: game_content::SkillEffectKind,
         payload: game_content::EffectPayload,
     ) -> Vec<SimulationEvent> {
-        if !self.commit_skill_cast(attacker, slot_index, cooldown_ms, mana_cost) {
+        if !self.commit_skill_cast(
+            attacker,
+            slot_index,
+            cooldown_ms,
+            mana_cost,
+            starts_cooldown,
+            consumed_proc_index,
+        ) {
             return Vec::new();
         }
 
@@ -748,12 +915,21 @@ impl SimulationWorld {
         self_target: bool,
         cooldown_ms: u16,
         mana_cost: u16,
+        starts_cooldown: bool,
+        consumed_proc_index: Option<usize>,
         range: u16,
         radius: u16,
         effect: game_content::SkillEffectKind,
         payload: game_content::EffectPayload,
     ) -> Vec<SimulationEvent> {
-        if !self.commit_skill_cast(attacker, slot_index, cooldown_ms, mana_cost) {
+        if !self.commit_skill_cast(
+            attacker,
+            slot_index,
+            cooldown_ms,
+            mana_cost,
+            starts_cooldown,
+            consumed_proc_index,
+        ) {
             return Vec::new();
         }
 
@@ -783,12 +959,21 @@ impl SimulationWorld {
         self_target: bool,
         cooldown_ms: u16,
         mana_cost: u16,
+        starts_cooldown: bool,
+        consumed_proc_index: Option<usize>,
         distance: u16,
         effect: game_content::SkillEffectKind,
         impact_radius: Option<u16>,
         payload: Option<game_content::EffectPayload>,
     ) -> Vec<SimulationEvent> {
-        if !self.commit_skill_cast(attacker, slot_index, cooldown_ms, mana_cost) {
+        if !self.commit_skill_cast(
+            attacker,
+            slot_index,
+            cooldown_ms,
+            mana_cost,
+            starts_cooldown,
+            consumed_proc_index,
+        ) {
             return Vec::new();
         }
 
@@ -818,12 +1003,21 @@ impl SimulationWorld {
         self_target: bool,
         cooldown_ms: u16,
         mana_cost: u16,
+        starts_cooldown: bool,
+        consumed_proc_index: Option<usize>,
         range: u16,
         radius: u16,
         effect: game_content::SkillEffectKind,
         payload: game_content::EffectPayload,
     ) -> Vec<SimulationEvent> {
-        if !self.commit_skill_cast(attacker, slot_index, cooldown_ms, mana_cost) {
+        if !self.commit_skill_cast(
+            attacker,
+            slot_index,
+            cooldown_ms,
+            mana_cost,
+            starts_cooldown,
+            consumed_proc_index,
+        ) {
             return Vec::new();
         }
 
@@ -853,11 +1047,20 @@ impl SimulationWorld {
         self_target: bool,
         cooldown_ms: u16,
         mana_cost: u16,
+        starts_cooldown: bool,
+        consumed_proc_index: Option<usize>,
         radius: u16,
         effect: game_content::SkillEffectKind,
         payload: game_content::EffectPayload,
     ) -> Vec<SimulationEvent> {
-        if !self.commit_skill_cast(attacker, slot_index, cooldown_ms, mana_cost) {
+        if !self.commit_skill_cast(
+            attacker,
+            slot_index,
+            cooldown_ms,
+            mana_cost,
+            starts_cooldown,
+            consumed_proc_index,
+        ) {
             return Vec::new();
         }
 
@@ -1017,6 +1220,7 @@ impl SimulationWorld {
                         slot_index,
                         self_target,
                         behavior,
+                        CastOverride::default(),
                     ) {
                         events.push(event);
                     }
@@ -1029,6 +1233,7 @@ impl SimulationWorld {
                         slot_index,
                         self_target,
                         behavior,
+                        CastOverride::default(),
                     );
                     events.extend(cast_events);
                     events.push(SimulationEvent::CastCompleted {
@@ -1448,10 +1653,19 @@ impl SimulationWorld {
         self_target: bool,
         cooldown_ms: u16,
         mana_cost: u16,
+        starts_cooldown: bool,
+        consumed_proc_index: Option<usize>,
         distance: u16,
         effect: game_content::SkillEffectKind,
     ) -> Vec<SimulationEvent> {
-        if !self.commit_skill_cast(attacker, slot_index, cooldown_ms, mana_cost) {
+        if !self.commit_skill_cast(
+            attacker,
+            slot_index,
+            cooldown_ms,
+            mana_cost,
+            starts_cooldown,
+            consumed_proc_index,
+        ) {
             return Vec::new();
         }
 
@@ -1509,6 +1723,8 @@ impl SimulationWorld {
         self_target: bool,
         cooldown_ms: u16,
         mana_cost: u16,
+        starts_cooldown: bool,
+        consumed_proc_index: Option<usize>,
         distance: u16,
         radius: u16,
         duration_ms: u16,
@@ -1518,7 +1734,14 @@ impl SimulationWorld {
         effect: game_content::SkillEffectKind,
         payload: game_content::EffectPayload,
     ) -> Vec<SimulationEvent> {
-        if !self.commit_skill_cast(attacker, slot_index, cooldown_ms, mana_cost) {
+        if !self.commit_skill_cast(
+            attacker,
+            slot_index,
+            cooldown_ms,
+            mana_cost,
+            starts_cooldown,
+            consumed_proc_index,
+        ) {
             return Vec::new();
         }
         let deployable_id = self.spawn_deployable_entity(
@@ -1554,13 +1777,22 @@ impl SimulationWorld {
         self_target: bool,
         cooldown_ms: u16,
         mana_cost: u16,
+        starts_cooldown: bool,
+        consumed_proc_index: Option<usize>,
         distance: u16,
         radius: u16,
         duration_ms: u16,
         hit_points: u16,
         _effect: game_content::SkillEffectKind,
     ) -> Vec<SimulationEvent> {
-        if !self.commit_skill_cast(attacker, slot_index, cooldown_ms, mana_cost) {
+        if !self.commit_skill_cast(
+            attacker,
+            slot_index,
+            cooldown_ms,
+            mana_cost,
+            starts_cooldown,
+            consumed_proc_index,
+        ) {
             return Vec::new();
         }
         let deployable_id = self.spawn_deployable_entity(
@@ -1590,6 +1822,8 @@ impl SimulationWorld {
         self_target: bool,
         cooldown_ms: u16,
         mana_cost: u16,
+        starts_cooldown: bool,
+        consumed_proc_index: Option<usize>,
         distance: u16,
         radius: u16,
         duration_ms: u16,
@@ -1597,7 +1831,14 @@ impl SimulationWorld {
         _effect: game_content::SkillEffectKind,
         payload: game_content::EffectPayload,
     ) -> Vec<SimulationEvent> {
-        if !self.commit_skill_cast(attacker, slot_index, cooldown_ms, mana_cost) {
+        if !self.commit_skill_cast(
+            attacker,
+            slot_index,
+            cooldown_ms,
+            mana_cost,
+            starts_cooldown,
+            consumed_proc_index,
+        ) {
             return Vec::new();
         }
         let deployable_id = self.spawn_deployable_entity(
@@ -1627,13 +1868,22 @@ impl SimulationWorld {
         self_target: bool,
         cooldown_ms: u16,
         mana_cost: u16,
+        starts_cooldown: bool,
+        consumed_proc_index: Option<usize>,
         distance: u16,
         radius: u16,
         duration_ms: u16,
         hit_points: u16,
         _effect: game_content::SkillEffectKind,
     ) -> Vec<SimulationEvent> {
-        if !self.commit_skill_cast(attacker, slot_index, cooldown_ms, mana_cost) {
+        if !self.commit_skill_cast(
+            attacker,
+            slot_index,
+            cooldown_ms,
+            mana_cost,
+            starts_cooldown,
+            consumed_proc_index,
+        ) {
             return Vec::new();
         }
         let deployable_id = self.spawn_deployable_entity(
@@ -1653,7 +1903,7 @@ impl SimulationWorld {
         self.spawn_deployable_events(attacker, slot, attacker_state, deployable_id)
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
     fn resolve_aura_cast(
         &mut self,
         attacker: PlayerId,
@@ -1663,6 +1913,8 @@ impl SimulationWorld {
         self_target: bool,
         cooldown_ms: u16,
         mana_cost: u16,
+        starts_cooldown: bool,
+        consumed_proc_index: Option<usize>,
         distance: u16,
         radius: u16,
         duration_ms: u16,
@@ -1679,7 +1931,14 @@ impl SimulationWorld {
         {
             return events;
         }
-        if !self.commit_skill_cast(attacker, slot_index, cooldown_ms, mana_cost) {
+        if !self.commit_skill_cast(
+            attacker,
+            slot_index,
+            cooldown_ms,
+            mana_cost,
+            starts_cooldown,
+            consumed_proc_index,
+        ) {
             return Vec::new();
         }
 

@@ -224,6 +224,10 @@ Execution order for `1.0`:
 
 ### 1.0.1 Scope Freeze And Live Verification
 
+- [x] Add a `healing_reduction` status family for Mortal Strike / Wound Poison / Aimed Shot style pressure.
+- [x] Add `critical_strike` support so direct damage and healing can resolve as crits instead of only fixed results.
+- [x] Add `damage_range` support so authored attacks and spells can roll min/max outcomes instead of one fixed amount.
+- [x] Add `proc_reset` hooks for talent-style triggers, cooldown resets, and free / instant follow-up casts.
 - [ ] Freeze scope so release work is about hardening, readability, verification, and documentation instead of introducing new mechanic families.
 - [ ] Verify full browser matches on the hosted production domain using the real web client and real players over the internet.
 - [x] Verify that every shipped spell works in the real game loop, not only in backend simulation.

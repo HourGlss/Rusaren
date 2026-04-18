@@ -453,6 +453,7 @@ fn arena_status_kinds_round_trip_for_all_runtime_statuses() {
         ArenaStatusKind::Stealth,
         ArenaStatusKind::Reveal,
         ArenaStatusKind::Fear,
+        ArenaStatusKind::HealingReduction,
     ];
 
     for (index, kind) in statuses.into_iter().enumerate() {

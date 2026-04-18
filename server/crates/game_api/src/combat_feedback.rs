@@ -657,6 +657,7 @@ fn status_label(kind: game_content::StatusKind) -> &'static str {
         game_content::StatusKind::Stealth => "stealth",
         game_content::StatusKind::Reveal => "reveal",
         game_content::StatusKind::Fear => "fear",
+        game_content::StatusKind::HealingReduction => "healing_reduction",
     }
 }
 

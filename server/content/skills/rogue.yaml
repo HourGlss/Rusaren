@@ -98,3 +98,14 @@ skills:
       effect: nova
       player_speed_bps: 1600
       cooldown_bps: 900
+      proc_reset:
+        trigger: on_hit
+        source_skill_ids:
+          - rogue_venom_shiv
+        reset_skill_ids:
+          - rogue_veil_step
+        instacast_skill_ids:
+          - rogue_lullwire_trap
+        instacast_costs_mana: false
+        instacast_starts_cooldown: false
+        internal_cooldown_ms: 12000

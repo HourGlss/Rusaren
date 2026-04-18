@@ -248,6 +248,7 @@ pub enum SimulationEvent {
         target: PlayerId,
         slot: u8,
         amount: u16,
+        critical: bool,
         remaining_hit_points: u16,
         defeated: bool,
         status_kind: Option<StatusKind>,
@@ -258,6 +259,7 @@ pub enum SimulationEvent {
         target: PlayerId,
         slot: u8,
         amount: u16,
+        critical: bool,
         resulting_hit_points: u16,
         status_kind: Option<StatusKind>,
         trigger: Option<SimTriggerReason>,
@@ -431,6 +433,8 @@ pub struct SimulationWorld {
     deployables: Vec<DeployableState>,
     next_deployable_id: u32,
     elapsed_ms: u32,
+    initial_roll_state: u64,
+    roll_state: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -458,9 +462,11 @@ struct SimPlayer {
     skills: [Option<SkillDefinition>; 5],
     primary_cooldown_remaining_ms: u16,
     slot_cooldown_remaining_ms: [u16; 5],
+    proc_cooldown_remaining_ms: [u16; 5],
     mana_regen_progress: u16,
     movement_audio_progress_ms: u16,
     statuses: Vec<StatusInstance>,
+    next_cast_procs: Vec<NextCastProc>,
     hard_cc_dr: CrowdControlDrState,
     movement_cc_dr: CrowdControlDrState,
     cast_cc_dr: CrowdControlDrState,
@@ -499,6 +505,14 @@ struct PendingCast {
     total_ms: u16,
     just_started: bool,
     mode: ActiveCastMode,
+}
+
+#[derive(Clone, Debug)]
+struct NextCastProc {
+    passive_slot: u8,
+    skill_ids: Vec<String>,
+    costs_mana: bool,
+    starts_cooldown: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -663,9 +677,11 @@ impl SimulationWorld {
                         skills: player.skills,
                         primary_cooldown_remaining_ms: 0,
                         slot_cooldown_remaining_ms: [0; 5],
+                        proc_cooldown_remaining_ms: [0; 5],
                         mana_regen_progress: 0,
                         movement_audio_progress_ms: 0,
                         statuses: Vec::new(),
+                        next_cast_procs: Vec::new(),
                         hard_cc_dr: CrowdControlDrState::default(),
                         movement_cc_dr: CrowdControlDrState::default(),
                         cast_cc_dr: CrowdControlDrState::default(),
@@ -697,7 +713,11 @@ impl SimulationWorld {
             deployables: Vec::new(),
             next_deployable_id: 1,
             elapsed_ms: 0,
+            initial_roll_state: 0,
+            roll_state: 0,
         };
+        world.initial_roll_state = world.compute_initial_roll_state();
+        world.roll_state = world.initial_roll_state;
         if let Some(owner) = world.players.keys().next().copied() {
             let owner_team = world
                 .players
@@ -807,6 +827,7 @@ impl SimulationWorld {
     pub fn reset_training_session(&mut self) {
         self.projectiles.clear();
         self.elapsed_ms = 0;
+        self.roll_state = self.initial_roll_state;
         self.deployables.retain(|deployable| {
             matches!(
                 deployable.behavior,
@@ -841,9 +862,11 @@ impl SimulationWorld {
             player.active_cast = None;
             player.primary_cooldown_remaining_ms = 0;
             player.slot_cooldown_remaining_ms = [0; 5];
+            player.proc_cooldown_remaining_ms = [0; 5];
             player.mana_regen_progress = 0;
             player.movement_audio_progress_ms = 0;
             player.statuses.clear();
+            player.next_cast_procs.clear();
             player.hard_cc_dr = CrowdControlDrState::default();
             player.movement_cc_dr = CrowdControlDrState::default();
             player.cast_cc_dr = CrowdControlDrState::default();
@@ -1055,6 +1078,7 @@ impl SimulationWorld {
                 projectile_speed_bps,
                 cooldown_bps,
                 cast_time_bps,
+                proc_reset: _,
             } = skill.behavior
             {
                 let caps = self.configuration.passive_bonus_caps;
@@ -1095,6 +1119,46 @@ impl SimulationWorld {
         let scaled =
             u32::from(base_speed).saturating_mul(10_000_u32 + u32::from(bonus_bps)) / 10_000;
         u16::try_from(scaled).unwrap_or(u16::MAX)
+    }
+
+    fn compute_initial_roll_state(&self) -> u64 {
+        let mut seed = 0x9E37_79B9_7F4A_7C15_u64
+            ^ u64::from(self.arena_width_units)
+            ^ (u64::from(self.arena_height_units) << 16)
+            ^ (u64::from(self.configuration.combat_frame_ms) << 32);
+        for player_id in self.players.keys() {
+            seed = seed
+                .wrapping_mul(0xBF58_476D_1CE4_E5B9)
+                .wrapping_add(u64::from(player_id.get()) << 1);
+        }
+        seed
+    }
+
+    fn next_roll_u64(&mut self) -> u64 {
+        self.roll_state = self.roll_state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut value = self.roll_state;
+        value = (value ^ (value >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        value = (value ^ (value >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        value ^ (value >> 31)
+    }
+
+    fn roll_u16_inclusive(&mut self, min: u16, max: u16) -> u16 {
+        if max <= min {
+            return min;
+        }
+        let span = u32::from(max) - u32::from(min) + 1;
+        let offset = u32::try_from(self.next_roll_u64() % u64::from(span)).unwrap_or(0);
+        min.saturating_add(u16::try_from(offset).unwrap_or(0))
+    }
+
+    fn roll_bps(&mut self, chance_bps: u16) -> bool {
+        if chance_bps == 0 {
+            return false;
+        }
+        if chance_bps >= 10_000 {
+            return true;
+        }
+        (self.next_roll_u64() % 10_000) < u64::from(chance_bps)
     }
 
     fn effective_primary_cooldown_ms(&self, player_id: PlayerId, base_ms: u16) -> u16 {
@@ -1252,6 +1316,7 @@ impl SimulationWorld {
     fn payload_hides_aura_visuals(payload: &game_content::EffectPayload) -> bool {
         Self::payload_applies_status_kind(payload, StatusKind::Stealth)
             && payload.amount == 0
+            && payload.amount_max.is_none()
             && payload.interrupt_silence_duration_ms.is_none()
             && payload.dispel.is_none()
     }
@@ -1269,7 +1334,8 @@ impl SimulationWorld {
             | StatusKind::Haste
             | StatusKind::Shield
             | StatusKind::Stealth
-            | StatusKind::Reveal => None,
+            | StatusKind::Reveal
+            | StatusKind::HealingReduction => None,
         }
     }
 
@@ -1332,6 +1398,7 @@ impl SimulationWorld {
                     | StatusKind::Sleep
                     | StatusKind::Reveal
                     | StatusKind::Fear
+                    | StatusKind::HealingReduction
             ),
             DispelScope::All => true,
         }

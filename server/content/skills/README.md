@@ -508,6 +508,53 @@ Passive caps in runtime:
 - `cooldown_bps` total passive reduction caps at `9000`
 - `cast_time_bps` total passive reduction caps at `9500`
 
+#### `behavior.proc_reset`
+
+Optional object. Valid only on `passive`.
+
+Accepted keys:
+
+- `trigger`
+- `source_skill_ids`
+- `reset_skill_ids`
+- `instacast_skill_ids`
+- `instacast_costs_mana`
+- `instacast_starts_cooldown`
+- `internal_cooldown_ms`
+
+Runtime meaning:
+
+- listens for the authored trigger on the passive owner
+- optionally filters to the listed `source_skill_ids` including melee IDs
+- resets cooldowns for each matching `reset_skill_ids`
+- grants one pending instant cast for `instacast_skill_ids`
+- `instacast_costs_mana: false` makes the consumed proc free
+- `instacast_starts_cooldown: false` keeps the consumed proc cast from starting cooldown
+- `internal_cooldown_ms` throttles how often the passive can trigger
+
+Accepted trigger strings:
+
+- `on_hit`
+- `on_crit`
+- `on_heal`
+- `on_tick`
+
+Example:
+
+```yaml
+behavior:
+  kind: passive
+  effect: nova
+  proc_reset:
+    trigger: on_hit
+    source_skill_ids: [rogue_venom_shiv]
+    reset_skill_ids: [rogue_veil_step, rogue_shadow_dance]
+    instacast_skill_ids: [rogue_lullwire_trap]
+    instacast_costs_mana: false
+    instacast_starts_cooldown: false
+    internal_cooldown_ms: 12000
+```
+
 #### `behavior.toggleable`
 
 Boolean. Only valid on `aura`.
@@ -900,6 +947,39 @@ Examples:
 - `amount: 18` means direct damage or healing of `18`
 - `amount: 0` is valid when the payload is pure status, pure dispel, or pure interrupt
 
+### `payload.amount_min` / `payload.amount_max`
+
+Optional `u16` pair for direct variable results.
+
+Rules:
+
+- author both together or neither
+- do not combine them with `payload.amount`
+- runtime rolls an inclusive value between them for each target hit
+
+### `payload.crit_chance_bps`
+
+Optional positive `u16`.
+
+Interpretation:
+
+- `100` = `1%`
+- `1500` = `15%`
+- `10000` = `100%`
+
+Requires a direct amount or amount range.
+
+### `payload.crit_multiplier_bps`
+
+Optional `u16`, used only when `payload.crit_chance_bps` is present.
+
+Interpretation:
+
+- `15000` = `150%` result on crit
+- `20000` = `200%` result on crit
+
+Defaults to `15000` when omitted and `payload.crit_chance_bps` is present.
+
 ### `payload.interrupt_silence_duration_ms`
 
 Optional positive `u16`.
@@ -942,6 +1022,7 @@ Runtime category map:
   - `sleep`
   - `reveal`
   - `fear`
+  - `healing_reduction`
 - all:
   - everything
 
@@ -989,6 +1070,7 @@ Accepted strings:
 - `stealth`
 - `reveal`
 - `fear`
+- `healing_reduction`
 
 ### Status Field Meanings
 
@@ -1014,6 +1096,7 @@ Meaning depends on the status:
 - `chill`: slow in basis points per stack
 - `haste`: move-speed bonus in basis points
 - `shield`: absorb amount per stack
+- `healing_reduction`: reduced healing received in basis points
 - `root`, `silence`, `stun`, `sleep`, `stealth`, `reveal`, `fear`: must be `0`
 
 #### `status.max_stacks`
@@ -1054,6 +1137,7 @@ Optional nested payload, applied when the status is removed by dispel.
 - `stealth`: prevents enemy targeting until damage or action breaks it
 - `reveal`: allows enemies to target stealthed units
 - `fear`: blocks actions and forces retreat from the source
+- `healing_reduction`: reduces incoming healing and does not stack additively at runtime; strongest wins
 
 ## Crowd-Control Diminishing Returns
 

@@ -73,6 +73,14 @@ An ability is just:
 - The protocol and Godot picker now use backend-authored class names instead of a fixed four-class wire enum.
 - If a new class needs a brand-new mechanic family, declare that family and its validation shape in `server/content/mechanics/registry.yaml` and then add the runtime execution path in the focused mechanic-specific locations in `game_sim`.
 
+## 1.0.1 combat additions
+- `healing_reduction` is now a shipped negative status for Mortal Strike / Wound Poison / Aimed Shot style reduced incoming healing. Runtime uses strongest-wins handling.
+- `critical_strike` is now a shipped direct-effect payload extension through `crit_chance_bps` and `crit_multiplier_bps`.
+- `damage_range` is now a shipped direct-effect payload extension through `amount_min` and `amount_max`.
+- `proc_reset` is now a shipped passive-only trigger block for on-hit / on-crit / on-heal / on-tick cooldown resets and instant follow-up casts.
+- `proc_reset` authoring supports separate `reset_skill_ids` and `instacast_skill_ids` lists, plus `instacast_costs_mana`, `instacast_starts_cooldown`, and optional passive `internal_cooldown_ms`.
+- Those four entries now remain documented in `server/content/mechanics/registry.yaml` as implemented mechanic families instead of pre-freeze stubs.
+
 ## Poison / Chill examples
 Poison-on-hit:
 - On weapon hit event -> ApplyStatus(Poison, 3s)

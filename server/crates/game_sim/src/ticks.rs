@@ -29,6 +29,9 @@ impl SimulationWorld {
             for remaining in &mut player.slot_cooldown_remaining_ms {
                 *remaining = remaining.saturating_sub(delta_ms);
             }
+            for remaining in &mut player.proc_cooldown_remaining_ms {
+                *remaining = remaining.saturating_sub(delta_ms);
+            }
         }
     }
 
@@ -126,6 +129,7 @@ impl SimulationWorld {
                             amount,
                             Some(kind),
                             None,
+                            false,
                         ));
                     }
                     StatusKind::Hot => {
@@ -136,6 +140,7 @@ impl SimulationWorld {
                             amount,
                             Some(kind),
                             None,
+                            false,
                         ));
                     }
                     StatusKind::Chill
@@ -147,7 +152,8 @@ impl SimulationWorld {
                     | StatusKind::Shield
                     | StatusKind::Stealth
                     | StatusKind::Reveal
-                    | StatusKind::Fear => {}
+                    | StatusKind::Fear
+                    | StatusKind::HealingReduction => {}
                 }
             }
             for (source, slot, status_kind, payload) in pending_expire_payloads {
