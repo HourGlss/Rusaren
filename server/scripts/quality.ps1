@@ -14,7 +14,7 @@ $serverRoot = Split-Path -Parent $PSScriptRoot
 $repoRoot = Split-Path -Parent $serverRoot
 Set-Location $serverRoot
 
-$cargoBin = Join-Path $HOME ".cargo\\bin"
+$cargoBin = Join-Path (Join-Path $HOME ".cargo") "bin"
 if (Test-Path $cargoBin) {
     $env:PATH = "$cargoBin$([System.IO.Path]::PathSeparator)$env:PATH"
 }
@@ -80,7 +80,7 @@ function Copy-FuzzSeedCorpus {
 
     Ensure-FuzzSeedCorpus
 
-    $sourceDir = Join-Path $serverRoot ("target\fuzz-seed-corpus\" + $Target)
+    $sourceDir = Join-Path (Join-Path (Join-Path $serverRoot "target") "fuzz-seed-corpus") $Target
     $targetDir = Join-Path $DestinationRoot $Target
 
     Remove-DirectoryIfExists -Path $targetDir
@@ -182,7 +182,7 @@ function Remove-DirectoryIfExists {
 }
 
 function Ensure-FuzzSeedCorpus {
-    $seedRoot = Join-Path $serverRoot "target\fuzz-seed-corpus"
+    $seedRoot = Join-Path (Join-Path $serverRoot "target") "fuzz-seed-corpus"
     if (Test-Path $seedRoot) {
         return
     }
@@ -292,8 +292,8 @@ function Invoke-LiveFuzzNative {
     }
 
     $maxTotalTime = Get-FuzzMaxTotalTime
-    $artifactRoot = Join-Path $serverRoot "fuzz\artifacts"
-    $generatedCorpusRoot = Join-Path $serverRoot "target\fuzz-generated-corpus"
+    $artifactRoot = Join-Path (Join-Path $serverRoot "fuzz") "artifacts"
+    $generatedCorpusRoot = Join-Path (Join-Path $serverRoot "target") "fuzz-generated-corpus"
     New-Item -ItemType Directory -Force -Path $artifactRoot | Out-Null
     New-Item -ItemType Directory -Force -Path $generatedCorpusRoot | Out-Null
 
@@ -316,8 +316,8 @@ function Invoke-LiveFuzzViaWsl {
     }
 
     $maxTotalTime = Get-FuzzMaxTotalTime
-    $artifactRoot = Join-Path $serverRoot "fuzz\artifacts"
-    $generatedCorpusRoot = Join-Path $serverRoot "target\fuzz-generated-corpus"
+    $artifactRoot = Join-Path (Join-Path $serverRoot "fuzz") "artifacts"
+    $generatedCorpusRoot = Join-Path (Join-Path $serverRoot "target") "fuzz-generated-corpus"
     New-Item -ItemType Directory -Force -Path $artifactRoot | Out-Null
     New-Item -ItemType Directory -Force -Path $generatedCorpusRoot | Out-Null
 
@@ -364,8 +364,8 @@ function Invoke-LiveFuzz {
 function Invoke-FuzzMergeNative {
     param([string[]]$Targets)
 
-    $generatedCorpusRoot = Join-Path $serverRoot "target\fuzz-generated-corpus"
-    $seedCorpusRoot = Join-Path $serverRoot "target\fuzz-seed-corpus"
+    $generatedCorpusRoot = Join-Path (Join-Path $serverRoot "target") "fuzz-generated-corpus"
+    $seedCorpusRoot = Join-Path (Join-Path $serverRoot "target") "fuzz-seed-corpus"
 
     foreach ($target in $Targets) {
         Ensure-FuzzSeedCorpus
@@ -393,8 +393,8 @@ function Invoke-FuzzMergeNative {
 function Invoke-FuzzMergeViaWsl {
     param([string[]]$Targets)
 
-    $generatedCorpusRoot = Join-Path $serverRoot "target\fuzz-generated-corpus"
-    $seedCorpusRoot = Join-Path $serverRoot "target\fuzz-seed-corpus"
+    $generatedCorpusRoot = Join-Path (Join-Path $serverRoot "target") "fuzz-generated-corpus"
+    $seedCorpusRoot = Join-Path (Join-Path $serverRoot "target") "fuzz-seed-corpus"
 
     $serverRootWsl = Convert-WindowsPathToWsl -Path $serverRoot
 
@@ -482,7 +482,7 @@ function Get-GodotExecutable {
             return $portableConsole
         }
 
-        $bundledConsole = Get-ChildItem -Path (Join-Path $serverRoot "tools\godot") -Recurse -File -Filter "Godot*_console.exe" -ErrorAction SilentlyContinue |
+        $bundledConsole = Get-ChildItem -Path (Join-Path (Join-Path $serverRoot "tools") "godot") -Recurse -File -Filter "Godot*_console.exe" -ErrorAction SilentlyContinue |
             Select-Object -First 1 -ExpandProperty FullName
         if (-not [string]::IsNullOrWhiteSpace($bundledConsole)) {
             return $bundledConsole
@@ -515,8 +515,8 @@ function Get-GodotExecutable {
 
 function Invoke-FrontendChecks {
     $godotExe = Get-GodotExecutable
-    $projectPath = Join-Path $repoRoot "client\godot"
-    $frontendReportRoot = Join-Path $serverRoot "target\reports\frontend"
+    $projectPath = Join-Path (Join-Path $repoRoot "client") "godot"
+    $frontendReportRoot = Join-Path (Join-Path (Join-Path $serverRoot "target") "reports") "frontend"
     $runtimeMonitorOutput = Join-Path $frontendReportRoot "runtime_monitors.json"
     $versionOutput = (& $godotExe --version 2>$null | Select-Object -First 1)
     if ($versionOutput -match '(\d+)\.(\d+)') {
@@ -583,7 +583,7 @@ function Get-MutationScratchLabel {
 }
 
 function Resolve-MutationOutputRoot {
-    $defaultOutputRoot = Join-Path $serverRoot "target\reports\mutants"
+    $defaultOutputRoot = Join-Path (Join-Path (Join-Path $serverRoot "target") "reports") "mutants"
     if ([string]::IsNullOrWhiteSpace($env:RARENA_MUTANTS_OUTPUT_DIR)) {
         return $defaultOutputRoot
     }
