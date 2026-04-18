@@ -7,8 +7,9 @@ use game_domain::{
     LobbyId, MatchId, PlayerId, PlayerRecord, ReadyState, SkillChoice, SkillTree, TeamSide,
 };
 use game_net::{
-    ArenaEffectSnapshot, ArenaPlayerSnapshot, ArenaStatusKind, ClientControlCommand,
-    LobbySnapshotPlayer, ServerControlEvent, SkillCatalogEntry,
+    ArenaDeltaSnapshot, ArenaEffectSnapshot, ArenaPlayerSnapshot, ArenaStateSnapshot,
+    ArenaStatusKind, ClientControlCommand, LobbySnapshotPlayer, ServerControlEvent,
+    SkillCatalogEntry,
 };
 use serde_json::json;
 
@@ -117,9 +118,9 @@ struct ObjectiveFocus {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct ArenaGeometry {
-    width_units: u16,
-    height_units: u16,
-    tile_units: u16,
+    width: u16,
+    height: u16,
+    tile_size: u16,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -467,30 +468,10 @@ impl ProbeClientState {
                 self.reset_after_match(logger)?;
             }
             ServerControlEvent::ArenaStateSnapshot { snapshot } => {
-                self.apply_snapshot(
-                    logger,
-                    &snapshot.players,
-                    snapshot.phase,
-                    Some(ArenaGeometry {
-                        width_units: snapshot.width,
-                        height_units: snapshot.height,
-                        tile_units: snapshot.tile_units,
-                    }),
-                    &snapshot.objective_tiles,
-                )?;
+                self.handle_arena_state_snapshot(logger, snapshot)?;
             }
             ServerControlEvent::ArenaDeltaSnapshot { snapshot } => {
-                self.apply_snapshot(
-                    logger,
-                    &snapshot.players,
-                    snapshot.phase,
-                    self.arena_geometry.map(|geometry| ArenaGeometry {
-                        width_units: geometry.width_units,
-                        height_units: geometry.height_units,
-                        tile_units: snapshot.tile_units,
-                    }),
-                    &snapshot.objective_tiles,
-                )?;
+                self.handle_arena_delta_snapshot(logger, snapshot)?;
             }
             ServerControlEvent::ArenaEffectBatch { effects } => {
                 self.apply_effect_batch(logger, effects)?;
@@ -498,6 +479,42 @@ impl ProbeClientState {
             _ => return Ok(false),
         }
         Ok(true)
+    }
+
+    fn handle_arena_state_snapshot(
+        &mut self,
+        logger: &mut ProbeLogger,
+        snapshot: &ArenaStateSnapshot,
+    ) -> ProbeResult<()> {
+        self.apply_snapshot(
+            logger,
+            &snapshot.players,
+            snapshot.phase,
+            Some(ArenaGeometry {
+                width: snapshot.width,
+                height: snapshot.height,
+                tile_size: snapshot.tile_units,
+            }),
+            &snapshot.objective_tiles,
+        )
+    }
+
+    fn handle_arena_delta_snapshot(
+        &mut self,
+        logger: &mut ProbeLogger,
+        snapshot: &ArenaDeltaSnapshot,
+    ) -> ProbeResult<()> {
+        self.apply_snapshot(
+            logger,
+            &snapshot.players,
+            snapshot.phase,
+            self.arena_geometry.map(|geometry| ArenaGeometry {
+                width: geometry.width,
+                height: geometry.height,
+                tile_size: snapshot.tile_units,
+            }),
+            &snapshot.objective_tiles,
+        )
     }
 
     fn handle_skill_or_error_event(
@@ -590,16 +607,16 @@ impl ProbeClientState {
         geometry: Option<ArenaGeometry>,
         objective_tiles: &[u8],
     ) -> ProbeResult<()> {
-        if let Some(geometry) = geometry.filter(|geometry| {
-            geometry.width_units > 0 && geometry.height_units > 0 && geometry.tile_units > 0
-        }) {
+        if let Some(geometry) = geometry
+            .filter(|geometry| geometry.width > 0 && geometry.height > 0 && geometry.tile_size > 0)
+        {
             self.arena_geometry = Some(geometry);
         }
         if let Some(runtime_objective_focus) = self.arena_geometry.and_then(|geometry| {
             objective_focus_from_mask(
-                geometry.width_units,
-                geometry.height_units,
-                geometry.tile_units,
+                geometry.width,
+                geometry.height,
+                geometry.tile_size,
                 objective_tiles,
             )
         }) {
@@ -2957,10 +2974,10 @@ impl ProbeRunner {
             .iter()
             .filter(|client| !client.current_skill_exercised)
             .map(|client| {
-                let skill = client
-                    .current_skill_key()
-                    .map(|(tree, tier)| format!("{tree} tier {tier}"))
-                    .unwrap_or_else(|| String::from("no current skill"));
+                let skill = client.current_skill_key().map_or_else(
+                    || String::from("no current skill"),
+                    |(tree, tier)| format!("{tree} tier {tier}"),
+                );
                 format!("{}:{skill}", client.label)
             })
             .collect()

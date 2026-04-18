@@ -13,6 +13,7 @@ Use the structure notes below to find the right file or subfolder quickly.
 - `generate-reports.ps1`: Generates the backend reports plus the Godot frontend quality report.
 - `install-tools.ps1`: Installs the Rust, fuzzing, docs, and analysis tools used by the repo scripts.
 - `play-local.ps1`: Starts the easiest local end-to-end browser path for the game.
+- `pre-commit-ci-guard.ps1`: Runs the local backend CI guard used by `pre-commit`, including workspace linting and a staged test-source scan for Miri-hostile helpers.
 - `quality.ps1`: Main orchestration script for linting, tests, fuzzing, frontend checks, reports, and other quality tasks.
 - `verus.ps1`: Runs the repo's Verus models and related proof-oriented checks.
 

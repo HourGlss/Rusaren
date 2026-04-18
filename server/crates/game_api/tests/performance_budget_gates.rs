@@ -1,7 +1,8 @@
 #![allow(clippy::expect_used)]
 
 use std::path::PathBuf;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 use game_api::{
     CombatLogEntry, CombatLogEvent, CombatLogPhase, CombatLogStore, ConnectionId, HeadlessClient,
@@ -53,11 +54,17 @@ fn percentile_ms(samples: &[f64], numerator: usize, denominator: usize) -> f64 {
 }
 
 fn temp_path(stem: &str, extension: &str) -> PathBuf {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system time should be after the unix epoch")
-        .as_nanos();
-    std::env::temp_dir().join(format!("rusaren-{stem}-{unique}.{extension}"))
+    static TEMP_PATH_COUNTER: AtomicU64 = AtomicU64::new(0);
+    let counter = TEMP_PATH_COUNTER.fetch_add(1, Ordering::Relaxed);
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("target")
+        .join("test-temp")
+        .join(format!(
+            "rusaren-{stem}-{}-{counter}.{extension}",
+            std::process::id()
+        ))
 }
 
 fn repo_content_root() -> PathBuf {

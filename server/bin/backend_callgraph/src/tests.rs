@@ -3,7 +3,7 @@ use protobuf::{EnumOrUnknown, MessageField};
 use scip::types::{
     symbol_information, Metadata, PositionEncoding, SymbolInformation, TextEncoding, ToolInfo,
 };
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 fn build_test_index(project_root: &Path) -> Index {
     let mut root_symbol = SymbolInformation::new();
@@ -75,11 +75,17 @@ fn build_test_index(project_root: &Path) -> Index {
 }
 
 fn unique_temp_dir() -> PathBuf {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system time should be after epoch")
-        .as_nanos();
-    std::env::temp_dir().join(format!("rarena-backend-callgraph-{unique}"))
+    static TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
+    let counter = TEMP_DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("target")
+        .join("test-temp")
+        .join(format!(
+            "rarena-backend-callgraph-{}-{counter}",
+            std::process::id()
+        ))
 }
 
 fn write_test_source(project_root: &Path) {

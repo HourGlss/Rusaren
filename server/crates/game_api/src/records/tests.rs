@@ -1,19 +1,21 @@
 use super::*;
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 fn player_name(raw: &str) -> PlayerName {
     PlayerName::new(raw).expect("valid player name")
 }
 
 fn temp_path(label: &str) -> PathBuf {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock should move forward")
-        .as_nanos();
-    std::env::temp_dir()
+    static TEMP_PATH_COUNTER: AtomicU64 = AtomicU64::new(0);
+    let counter = TEMP_PATH_COUNTER.fetch_add(1, Ordering::Relaxed);
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("target")
+        .join("test-temp")
         .join("rusaren-tests")
-        .join(format!("{label}-{}-{unique}", std::process::id()))
+        .join(format!("{label}-{}-{counter}", std::process::id()))
         .join("player-records.tsv")
 }
 

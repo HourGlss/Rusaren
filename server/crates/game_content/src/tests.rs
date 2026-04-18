@@ -3,7 +3,7 @@ use game_domain::{SkillChoice, SkillTree};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 const TEST_TILE_UNITS: u16 = 50;
 
@@ -1505,11 +1505,14 @@ skills:
 }
 
 fn temp_content_root(label: &str) -> PathBuf {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("current time should be after unix epoch")
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!("rarena-{label}-{nonce}"));
+    static TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
+    let counter = TEMP_DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("target")
+        .join("test-temp")
+        .join(format!("rarena-{label}-{}-{counter}", std::process::id()));
     if root.exists() {
         fs::remove_dir_all(&root).expect("existing temp dir should be removable");
     }

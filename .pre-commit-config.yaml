@@ -56,6 +56,13 @@ repos:
         pass_filenames: false
         files: ^server/(Cargo\.toml|Cargo\.lock|fuzz/|crates/(game_api|game_domain|game_net)/|scripts/(quality|install-tools)\.ps1)
 
+      - id: rust-ci-guard
+        name: rust ci guard
+        entry: powershell -NoProfile -ExecutionPolicy Bypass -File server/scripts/pre-commit-ci-guard.ps1
+        language: system
+        pass_filenames: false
+        files: ^server/(Cargo\.toml|Cargo\.lock|\.cargo/config\.toml|bin/.*\.rs|crates/.*\.rs|fuzz/.*\.rs)$
+
       - id: rust-lint
         name: rust lint
         entry: powershell -NoProfile -ExecutionPolicy Bypass -File server/scripts/quality.ps1 lint

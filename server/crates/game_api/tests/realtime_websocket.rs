@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use futures_util::{SinkExt, StreamExt};
 use game_api::{
@@ -336,28 +336,30 @@ fn connected_player_id(events: &[ServerControlEvent], expected_name: &str) -> Pl
 
 fn temp_record_store_path() -> PathBuf {
     static TEMP_PATH_COUNTER: AtomicU64 = AtomicU64::new(0);
-    let unique = match SystemTime::now().duration_since(UNIX_EPOCH) {
-        Ok(duration) => duration.as_nanos(),
-        Err(error) => panic!("system time should be after the unix epoch: {error}"),
-    };
     let counter = TEMP_PATH_COUNTER.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!(
-        "rusaren-realtime-websocket-{}-{unique}-{counter}.tsv",
-        std::process::id()
-    ))
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("target")
+        .join("test-temp")
+        .join(format!(
+            "rusaren-realtime-websocket-{}-{counter}.tsv",
+            std::process::id()
+        ))
 }
 
 fn temp_combat_log_path() -> PathBuf {
     static TEMP_PATH_COUNTER: AtomicU64 = AtomicU64::new(0);
-    let unique = match SystemTime::now().duration_since(UNIX_EPOCH) {
-        Ok(duration) => duration.as_nanos(),
-        Err(error) => panic!("system time should be after the unix epoch: {error}"),
-    };
     let counter = TEMP_PATH_COUNTER.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!(
-        "rusaren-realtime-websocket-{}-{unique}-{counter}.sqlite",
-        std::process::id()
-    ))
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("target")
+        .join("test-temp")
+        .join(format!(
+            "rusaren-realtime-websocket-{}-{counter}.sqlite",
+            std::process::id()
+        ))
 }
 
 fn repo_content_root() -> PathBuf {
@@ -392,11 +394,17 @@ fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) {
 }
 
 fn temp_content_root(prefix: &str) -> PathBuf {
-    let unique = match SystemTime::now().duration_since(UNIX_EPOCH) {
-        Ok(duration) => duration.as_nanos(),
-        Err(error) => panic!("system time should be after the unix epoch: {error}"),
-    };
-    std::env::temp_dir().join(format!("rusaren-content-root-{prefix}-{unique}"))
+    static TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
+    let counter = TEMP_DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("target")
+        .join("test-temp")
+        .join(format!(
+            "rusaren-content-root-{prefix}-{}-{counter}",
+            std::process::id()
+        ))
 }
 
 fn websocket_gameplay_content_root() -> PathBuf {
@@ -573,11 +581,17 @@ skills:
 }
 
 fn temp_web_client_root(prefix: &str, index_html: Option<&str>) -> PathBuf {
-    let unique = match SystemTime::now().duration_since(UNIX_EPOCH) {
-        Ok(duration) => duration.as_nanos(),
-        Err(error) => panic!("system time should be after the unix epoch: {error}"),
-    };
-    let root = std::env::temp_dir().join(format!("rusaren-web-root-{prefix}-{unique}"));
+    static TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
+    let counter = TEMP_DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("target")
+        .join("test-temp")
+        .join(format!(
+            "rusaren-web-root-{prefix}-{}-{counter}",
+            std::process::id()
+        ));
     if let Err(error) = fs::create_dir_all(&root) {
         panic!("temporary web client root should be created: {error}");
     }

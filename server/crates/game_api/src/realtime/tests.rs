@@ -15,7 +15,12 @@ fn test_state(
         DevServerState {
             runtime,
             ingress_tx,
-            web_client_root: std::env::temp_dir(),
+            web_client_root: PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("..")
+                .join("..")
+                .join("target")
+                .join("test-temp")
+                .join(format!("realtime-web-client-root-{}", std::process::id())),
             observability,
             next_connection_id: Arc::new(AtomicU64::new(1)),
             bootstrap_tokens: Arc::new(Mutex::new(SessionBootstrapTokenRegistry::new(

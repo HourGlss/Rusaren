@@ -606,6 +606,7 @@ git commit -m "Describe the change"
 
 Hook behavior:
 - `pre-commit` runs fast repo checks such as whitespace, TOML/YAML validation, `typos`, `taplo`, and Rust formatting.
+- `pre-commit` now also runs a backend CI guard that executes the same Rust lint lane as GitHub Actions and rejects staged test helpers that use `SystemTime::now()` or `std::env::temp_dir()`.
 - `pre-commit` also runs the current ingress fuzz smoke task when network-boundary or fuzz-target files change.
 - `post-commit` generates the HTML reports and writes them to `server/target/reports/output.html`.
 - `post-commit` also refreshes the docs site, Rust API docs, and backend call graph under `server/target/reports/`.
@@ -618,6 +619,7 @@ Current local fallback behavior:
 - if `cargo-nextest` is not installed, the quality script falls back to `cargo test`
 - fuzzing uses `cargo-fuzz` under `server/fuzz/` and is prioritized around ingress boundaries where external data enters the application, especially networking paths such as packet-header, control-command, server-control-event, input-frame, ingress-session decoding/validation, and WebRTC signaling JSON parsing
 - local Windows fuzzing is a smoke/build path; bounded live `cargo fuzz run` campaigns are enforced in Linux CI where the sanitizer runtime is available
+- the `miri` task runs the verified Miri-compatible package set with `-Zmiri-disable-isolation`; on Windows hosts it uses WSL, because the full workspace includes filesystem- and FFI-heavy crates that Miri cannot execute meaningfully
 - gameplay correctness is primarily enforced with Rust unit and integration tests, not fuzzing
 - project docs are generated from `shared/docs` through `mdBook`, while Rust API docs are generated with `cargo doc --workspace --all-features --no-deps`
 - browser-export smoke checks run in `.github/workflows/godot-web-smoke.yml` and verify that the exported shell can be hosted by `dedicated_server`

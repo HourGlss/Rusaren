@@ -1323,6 +1323,76 @@ while (Test-Path '$escapedSentinelPath') {
     }
 }
 
+function Invoke-MiriSuite {
+    # The full workspace includes FFI- and integration-heavy crates such as rusqlite-backed
+    # storage and WebRTC plumbing that Miri cannot execute meaningfully. Keep the Miri lane
+    # focused on the pure-Rust packages we have verified under Miri.
+    $miriPackageGroups = @(
+        @("backend_callgraph", "map_sample_builder"),
+        @("game_domain")
+    )
+
+    $originalMiriFlags = $env:MIRIFLAGS
+    $disableIsolationFlag = "-Zmiri-disable-isolation"
+    $effectiveMiriFlags = if ([string]::IsNullOrWhiteSpace($originalMiriFlags)) {
+        $disableIsolationFlag
+    }
+    elseif ($originalMiriFlags -match '(^|\s)-Zmiri-disable-isolation(\s|$)') {
+        $originalMiriFlags
+    }
+    else {
+        "$originalMiriFlags $disableIsolationFlag"
+    }
+
+    if ($isWindowsHost) {
+        if (-not (Test-WslAvailable)) {
+            throw "The Miri suite requires WSL on this Windows host. Install WSL or run the task from Linux."
+        }
+
+        $serverRootWsl = Convert-WindowsPathToWsl -Path $serverRoot
+        $serverRootQuoted = Convert-ToBashDoubleQuotedLiteral -Value $serverRootWsl
+        $toolchainQuoted = Convert-ToBashDoubleQuotedLiteral -Value $nightlyToolchain
+        $miriFlagsQuoted = Convert-ToBashDoubleQuotedLiteral -Value $effectiveMiriFlags
+
+        $bashLines = @(
+            "set -euo pipefail",
+            "cd $serverRootQuoted",
+            "export MIRIFLAGS=$miriFlagsQuoted"
+        )
+        foreach ($packageGroup in $miriPackageGroups) {
+            $packageArgs = @(
+                $packageGroup | ForEach-Object {
+                    "-p $(Convert-ToBashDoubleQuotedLiteral -Value $_)"
+                }
+            ) -join ' '
+            $bashLines += "rustup run $toolchainQuoted cargo miri test $packageArgs"
+        }
+
+        Invoke-WslBashCommand -Script ($bashLines -join "`n")
+        return
+    }
+
+    try {
+        $env:MIRIFLAGS = $effectiveMiriFlags
+
+        foreach ($packageGroup in $miriPackageGroups) {
+            $miriArgs = @("miri", "test")
+            foreach ($package in $packageGroup) {
+                $miriArgs += @("-p", $package)
+            }
+            rustup run $nightlyToolchain cargo @miriArgs
+        }
+    }
+    finally {
+        if ($null -eq $originalMiriFlags) {
+            Remove-Item Env:MIRIFLAGS -ErrorAction SilentlyContinue
+        }
+        else {
+            $env:MIRIFLAGS = $originalMiriFlags
+        }
+    }
+}
+
 function Invoke-QualityTask {
     param([string]$Name)
 
@@ -1383,7 +1453,7 @@ function Invoke-QualityTask {
         "deny" { rustup run stable cargo xdeny }
         "audit" { rustup run stable cargo xaudit }
         "udeps" { rustup run $nightlyToolchain cargo udeps --workspace --all-targets }
-        "miri" { rustup run $nightlyToolchain cargo miri test --workspace }
+        "miri" { Invoke-MiriSuite }
         "complexity" { & (Join-Path $PSScriptRoot "generate-reports.ps1") -Report complexity -FailOnCommandFailure }
         "clean-code" { & (Join-Path $PSScriptRoot "generate-reports.ps1") -Report clean-code -FailOnCommandFailure }
         "callgraph" { & (Join-Path $PSScriptRoot "generate-reports.ps1") -Report callgraph -FailOnCommandFailure }

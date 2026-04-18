@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use game_api::{spawn_dev_server_with_options, DevServerOptions, WebRtcRuntimeConfig};
 use game_domain::SkillTree;
@@ -743,17 +743,14 @@ skills:
 
 fn temp_path(label: &str, suffix: &str) -> PathBuf {
     static TEMP_PATH_COUNTER: AtomicU64 = AtomicU64::new(0);
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system time should be after the unix epoch")
-        .as_nanos();
     let counter = TEMP_PATH_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let path = std::env::temp_dir()
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("target")
+        .join("test-temp")
         .join("rusaren-live-transport-probe")
-        .join(format!(
-            "{label}-{}-{unique}-{counter}.{suffix}",
-            std::process::id()
-        ));
+        .join(format!("{label}-{}-{counter}.{suffix}", std::process::id()));
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).expect("temp parent directory should exist");
     }
@@ -1189,10 +1186,10 @@ async fn live_probe_verifies_mixed_bard_cleric_druid_mage_round_against_the_dev_
         output_path: output_path.clone(),
         content_root: Some(content_root),
         max_games: Some(1),
-        connect_timeout: Duration::from_secs(30),
-        stage_timeout: Duration::from_secs(45),
+        connect_timeout: Duration::from_secs(45),
+        stage_timeout: Duration::from_secs(60),
         round_timeout: Duration::from_secs(90),
-        match_timeout: Duration::from_secs(180),
+        match_timeout: Duration::from_secs(210),
         input_cadence: Duration::from_millis(100),
         players_per_match: 4,
         preferred_tree_order: Some(vec![

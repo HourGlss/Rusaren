@@ -127,7 +127,7 @@ fn splitmix64(mut value: u64) -> u64 {
 mod tests {
     use std::error::Error;
     use std::fs;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     use super::{default_output_dir, remove_existing_samples, splitmix64, Args};
 
@@ -136,11 +136,17 @@ mod tests {
     }
 
     fn unique_temp_dir() -> PathBuf {
-        let nanos = match SystemTime::now().duration_since(UNIX_EPOCH) {
-            Ok(value) => value.as_nanos(),
-            Err(error) => panic!("system time should be after epoch: {error}"),
-        };
-        std::env::temp_dir().join(format!("rarena-map-sample-builder-{nanos}"))
+        static TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
+        let counter = TEMP_DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("target")
+            .join("test-temp")
+            .join(format!(
+                "rarena-map-sample-builder-{}-{counter}",
+                std::process::id()
+            ))
     }
 
     use std::ffi::OsString;

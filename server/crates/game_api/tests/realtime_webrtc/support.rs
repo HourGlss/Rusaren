@@ -3,28 +3,30 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 fn temp_record_store_path() -> PathBuf {
     static TEMP_PATH_COUNTER: AtomicU64 = AtomicU64::new(0);
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system time should be after the unix epoch")
-        .as_nanos();
     let counter = TEMP_PATH_COUNTER.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!(
-        "rusaren-realtime-webrtc-{}-{unique}-{counter}.tsv",
-        std::process::id()
-    ))
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("target")
+        .join("test-temp")
+        .join(format!(
+            "rusaren-realtime-webrtc-{}-{counter}.tsv",
+            std::process::id()
+        ))
 }
 
 fn temp_combat_log_path() -> PathBuf {
     static TEMP_PATH_COUNTER: AtomicU64 = AtomicU64::new(0);
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system time should be after the unix epoch")
-        .as_nanos();
     let counter = TEMP_PATH_COUNTER.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!(
-        "rusaren-realtime-webrtc-{}-{unique}-{counter}.sqlite",
-        std::process::id()
-    ))
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("target")
+        .join("test-temp")
+        .join(format!(
+            "rusaren-realtime-webrtc-{}-{counter}.sqlite",
+            std::process::id()
+        ))
 }
 
 fn repo_content_root() -> PathBuf {
@@ -39,11 +41,17 @@ fn repo_content_root() -> PathBuf {
 }
 
 fn temp_web_client_root(prefix: &str) -> PathBuf {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system time should be after the unix epoch")
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!("rusaren-webrtc-web-root-{prefix}-{unique}"));
+    static TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
+    let counter = TEMP_DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("target")
+        .join("test-temp")
+        .join(format!(
+            "rusaren-webrtc-web-root-{prefix}-{}-{counter}",
+            std::process::id()
+        ));
     std::fs::create_dir_all(&root).expect("temporary web client root should be created");
     root
 }
