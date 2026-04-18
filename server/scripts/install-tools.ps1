@@ -190,6 +190,8 @@ foreach ($component in $stableComponents) {
     rustup component add $component --toolchain stable | Out-Host
 }
 
+rustup component add llvm-tools-preview --toolchain $nightlyToolchain | Out-Host
+
 if ($QualityWorkflow) {
     Ensure-CargoBinstall
 }

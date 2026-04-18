@@ -382,11 +382,13 @@ The report-level coverage score uses three quantities:
 
 ```python
 coverage_score = (
-    0.50 * runtime_line_coverage
-    + 0.30 * runtime_function_coverage
-    + 0.20 * runtime_region_coverage
+    0.05 * runtime_line_coverage
+    + 0.05 * runtime_function_coverage
+    + 0.90 * runtime_positive_region_coverage
 )
 ```
+
+The region term is no longer a plain binary LLVM region percentage. The report now expands conditional regions into branch outcomes so partially exercised decisions receive partial credit. A simple conditional has two outcome slots, and a short-circuit decision such as `a && b` can contribute four slots across its two branch regions. That means a decision can score `25%`, `50%`, `75%`, or `100%` depending on how many required branch outcomes the test suite actually covers.
 
 However, the repository also demonstrates an important quality truth: the existence of a coverage mechanism does not imply that the mechanism is healthy on every machine at every moment. The current generated root report records a recent failure of the coverage report path on this host. That should be read neither as the absence of coverage tooling nor as a reason to trust the tooling blindly. It is evidence that the pipeline includes coverage, and also evidence that the coverage lane itself must be monitored.
 

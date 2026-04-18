@@ -30,6 +30,12 @@ $docsArtifactRoot = Join-Path $reportsRoot "docs"
 $rustdocArtifactRoot = Join-Path $reportsRoot "rustdoc"
 $hardeningRoot = Join-Path $reportsRoot "hardening"
 $frontendRoot = Join-Path $reportsRoot "frontend"
+$nightlyToolchain = if ([string]::IsNullOrWhiteSpace($env:RARENA_NIGHTLY_TOOLCHAIN)) {
+    "nightly-2026-03-01"
+}
+else {
+    $env:RARENA_NIGHTLY_TOOLCHAIN
+}
 
 function Escape-Html {
     param([AllowNull()][string]$Value)
@@ -413,6 +419,121 @@ function Get-OptionalArrayPropertyValue {
     }
 
     return ,@($value)
+}
+
+function Get-CoverageTupleValue {
+    param(
+        [AllowNull()]
+        [object]$Tuple,
+        [int]$Index
+    )
+
+    if ($null -eq $Tuple) {
+        return 0.0
+    }
+
+    if ($Tuple -is [System.Array]) {
+        if ($Index -lt $Tuple.Length) {
+            return [double]$Tuple[$Index]
+        }
+
+        return 0.0
+    }
+
+    $valueProperty = $Tuple.PSObject.Properties["value"]
+    if ($null -ne $valueProperty) {
+        return Get-CoverageTupleValue -Tuple $valueProperty.Value -Index $Index
+    }
+
+    return 0.0
+}
+
+function Get-CoverageBranchSpanKey {
+    param([AllowNull()][object]$BranchRecord)
+
+    if ($null -eq $BranchRecord) {
+        return $null
+    }
+
+    return "{0}:{1}-{2}:{3}:{4}" -f `
+        [int](Get-CoverageTupleValue -Tuple $BranchRecord -Index 0), `
+        [int](Get-CoverageTupleValue -Tuple $BranchRecord -Index 1), `
+        [int](Get-CoverageTupleValue -Tuple $BranchRecord -Index 2), `
+        [int](Get-CoverageTupleValue -Tuple $BranchRecord -Index 3), `
+        [int](Get-CoverageTupleValue -Tuple $BranchRecord -Index 8)
+}
+
+function Get-CoverageEffectiveRegionMetrics {
+    param([Parameter(Mandatory)][object]$CoverageFile)
+
+    $regionSummary = $CoverageFile.summary.regions
+    $regionCovered = [int]$regionSummary.covered
+    $regionTotal = [int]$regionSummary.count
+    $branchGroups = @{}
+
+    $branchRecords = Get-OptionalPropertyValue -InputObject $CoverageFile -PropertyName "branches"
+    foreach ($branchRecord in @($branchRecords)) {
+        $branchKey = Get-CoverageBranchSpanKey -BranchRecord $branchRecord
+        if ([string]::IsNullOrWhiteSpace($branchKey)) {
+            continue
+        }
+
+        if (-not $branchGroups.ContainsKey($branchKey)) {
+            $branchGroups[$branchKey] = [pscustomobject]@{
+                TrueCount = 0.0
+                FalseCount = 0.0
+            }
+        }
+
+        $branchGroups[$branchKey].TrueCount += [double](Get-CoverageTupleValue -Tuple $branchRecord -Index 4)
+        $branchGroups[$branchKey].FalseCount += [double](Get-CoverageTupleValue -Tuple $branchRecord -Index 5)
+    }
+
+    $branchRegionTotal = 0
+    $branchRegionCoveredBinary = 0
+    $branchOutcomeTotal = 0
+    $branchOutcomeCovered = 0
+    foreach ($branchGroup in $branchGroups.Values) {
+        $branchRegionTotal += 1
+        $branchOutcomeTotal += 2
+
+        if (($branchGroup.TrueCount + $branchGroup.FalseCount) -gt 0) {
+            $branchRegionCoveredBinary += 1
+        }
+        if ($branchGroup.TrueCount -gt 0) {
+            $branchOutcomeCovered += 1
+        }
+        if ($branchGroup.FalseCount -gt 0) {
+            $branchOutcomeCovered += 1
+        }
+    }
+
+    $effectiveRegionTotal = $regionTotal - $branchRegionTotal + $branchOutcomeTotal
+    $effectiveRegionCovered = $regionCovered - $branchRegionCoveredBinary + $branchOutcomeCovered
+    $effectiveRegionPercent = if ($effectiveRegionTotal -gt 0) {
+        ([double]$effectiveRegionCovered / [double]$effectiveRegionTotal) * 100.0
+    }
+    else {
+        0.0
+    }
+
+    return [pscustomobject]@{
+        RawRegionCovered = $regionCovered
+        RawRegionTotal = $regionTotal
+        RawRegionPercent = if ($regionTotal -gt 0) {
+            ([double]$regionCovered / [double]$regionTotal) * 100.0
+        }
+        else {
+            0.0
+        }
+        BranchRegionTotal = $branchRegionTotal
+        BranchRegionCoveredBinary = $branchRegionCoveredBinary
+        BranchOutcomeTotal = $branchOutcomeTotal
+        BranchOutcomeCovered = $branchOutcomeCovered
+        EffectiveRegionCovered = $effectiveRegionCovered
+        EffectiveRegionTotal = $effectiveRegionTotal
+        EffectiveRegionPercent = $effectiveRegionPercent
+    }
 }
 
 function Get-BackendCoreRuntimeFiles {
@@ -1631,14 +1752,14 @@ function Invoke-CoverageReport {
     }
 
     $usedNextest = Test-ToolAvailable -CommandName "cargo-nextest"
-    $executionMode = "cargo llvm-cov test"
+    $executionMode = "cargo llvm-cov test --branch"
     if (-not $usedNextest) {
         $notes.Add("cargo-nextest is not installed; coverage fell back to cargo test.")
     }
 
     try {
         Invoke-CheckedCommand -Description "cargo llvm-cov clean" -Command {
-            rustup run stable cargo llvm-cov clean --workspace | Out-Host
+            rustup run $nightlyToolchain cargo llvm-cov clean --workspace | Out-Host
         }
         if (Test-Path $coverageRoot) {
             Remove-Item -Recurse -Force -Path $coverageRoot
@@ -1651,13 +1772,13 @@ function Invoke-CoverageReport {
                 Invoke-CheckedCommand -Description "cargo llvm-cov nextest" -Command {
                     $env:RARENA_SKIP_LIVE_PROBE_TESTS = "1"
                     try {
-                        rustup run stable cargo llvm-cov nextest --workspace --all-features --no-report | Out-Host
+                        rustup run $nightlyToolchain cargo llvm-cov nextest --workspace --all-features --branch --no-report | Out-Host
                     }
                     finally {
                         Remove-Item Env:RARENA_SKIP_LIVE_PROBE_TESTS -ErrorAction SilentlyContinue
                     }
                 }
-                $executionMode = "cargo llvm-cov nextest"
+                $executionMode = "cargo llvm-cov nextest --branch"
             }
             catch {
                 $notes.Add("cargo llvm-cov nextest failed on this host; coverage fell back to cargo llvm-cov test.")
@@ -1666,7 +1787,7 @@ function Invoke-CoverageReport {
                 Invoke-CheckedCommand -Description "cargo llvm-cov test" -Command {
                     $env:RARENA_SKIP_LIVE_PROBE_TESTS = "1"
                     try {
-                        rustup run stable cargo llvm-cov --workspace --all-features --no-report | Out-Host
+                        rustup run $nightlyToolchain cargo llvm-cov --workspace --all-features --branch --no-report | Out-Host
                     }
                     finally {
                         Remove-Item Env:RARENA_SKIP_LIVE_PROBE_TESTS -ErrorAction SilentlyContinue
@@ -1678,7 +1799,7 @@ function Invoke-CoverageReport {
             Invoke-CheckedCommand -Description "cargo llvm-cov test" -Command {
                 $env:RARENA_SKIP_LIVE_PROBE_TESTS = "1"
                 try {
-                    rustup run stable cargo llvm-cov --workspace --all-features --no-report | Out-Host
+                    rustup run $nightlyToolchain cargo llvm-cov --workspace --all-features --branch --no-report | Out-Host
                 }
                 finally {
                     Remove-Item Env:RARENA_SKIP_LIVE_PROBE_TESTS -ErrorAction SilentlyContinue
@@ -1687,10 +1808,10 @@ function Invoke-CoverageReport {
         }
 
         Invoke-CheckedCommand -Description "cargo llvm-cov json report" -Command {
-            rustup run stable cargo llvm-cov report --json --summary-only --output-path $summaryPath | Out-Host
+            rustup run $nightlyToolchain cargo llvm-cov report --branch --json --output-path $summaryPath | Out-Host
         }
         Invoke-CheckedCommand -Description "cargo llvm-cov html report" -Command {
-            rustup run stable cargo llvm-cov report --html --output-dir $coverageRoot | Out-Host
+            rustup run $nightlyToolchain cargo llvm-cov report --branch --html --output-dir $coverageRoot | Out-Host
         }
 
         $coverageJson = Get-Content -Path $summaryPath -Raw | ConvertFrom-Json
@@ -1701,16 +1822,24 @@ function Invoke-CoverageReport {
         foreach ($file in @($coverageData.files)) {
             $displayPath = Convert-ToDisplayPath -Path $file.filename
             $coveredPaths[$displayPath] = $true
+            $effectiveRegionMetrics = Get-CoverageEffectiveRegionMetrics -CoverageFile $file
             $files += [pscustomobject]@{
                 DisplayPath = $displayPath
                 NormalizedPath = $displayPath -replace '\\', '/'
                 LinePercent = [double]$file.summary.lines.percent
                 FunctionPercent = [double]$file.summary.functions.percent
-                RegionPercent = [double]$file.summary.regions.percent
+                RegionPercent = [double]$effectiveRegionMetrics.EffectiveRegionPercent
+                RawRegionPercent = [double]$effectiveRegionMetrics.RawRegionPercent
                 CoveredLines = [int]$file.summary.lines.covered
                 TotalLines = [int]$file.summary.lines.count
                 CoveredFunctions = [int]$file.summary.functions.covered
                 TotalFunctions = [int]$file.summary.functions.count
+                CoveredRegions = [int]$effectiveRegionMetrics.EffectiveRegionCovered
+                TotalRegions = [int]$effectiveRegionMetrics.EffectiveRegionTotal
+                RawCoveredRegions = [int]$effectiveRegionMetrics.RawRegionCovered
+                RawTotalRegions = [int]$effectiveRegionMetrics.RawRegionTotal
+                BranchOutcomeCovered = [int]$effectiveRegionMetrics.BranchOutcomeCovered
+                BranchOutcomeTotal = [int]$effectiveRegionMetrics.BranchOutcomeTotal
             }
         }
 
@@ -1736,35 +1865,34 @@ function Invoke-CoverageReport {
         else {
             0.0
         }
-        $runtimeRegionCovered = 0
-        $runtimeRegionTotal = 0
-        foreach ($runtimeFile in $runtimeFiles) {
-            $coverageFile = @($coverageData.files | Where-Object {
-                (Convert-ToDisplayPath -Path $_.filename) -eq $runtimeFile.DisplayPath
-            } | Select-Object -First 1)
-            if ($coverageFile.Count -eq 0) {
-                continue
-            }
-
-            $runtimeRegionCovered += [int]$coverageFile[0].summary.regions.covered
-            $runtimeRegionTotal += [int]$coverageFile[0].summary.regions.count
-        }
+        $runtimeRegionCovered = ($runtimeFiles | Measure-Object -Property CoveredRegions -Sum).Sum
+        $runtimeRegionTotal = ($runtimeFiles | Measure-Object -Property TotalRegions -Sum).Sum
         $runtimeRegionPercent = if ($runtimeRegionTotal -gt 0) {
             ([double]$runtimeRegionCovered / [double]$runtimeRegionTotal) * 100.0
         }
         else {
             0.0
         }
+        $runtimeRawRegionCovered = ($runtimeFiles | Measure-Object -Property RawCoveredRegions -Sum).Sum
+        $runtimeRawRegionTotal = ($runtimeFiles | Measure-Object -Property RawTotalRegions -Sum).Sum
+        $runtimeRawRegionPercent = if ($runtimeRawRegionTotal -gt 0) {
+            ([double]$runtimeRawRegionCovered / [double]$runtimeRawRegionTotal) * 100.0
+        }
+        else {
+            0.0
+        }
         $scoreSummary = New-ScoreSummary `
-            -Score (($runtimeLinePercent * 0.5) + ($runtimeFunctionPercent * 0.3) + ($runtimeRegionPercent * 0.2)) `
-            -Formula "50% runtime line + 30% runtime function + 20% runtime region coverage" `
+            -Score (($runtimeLinePercent * 0.05) + ($runtimeFunctionPercent * 0.05) + ($runtimeRegionPercent * 0.90)) `
+            -Formula "5% runtime line + 5% runtime function + 90% runtime positive region coverage" `
             -Breakdown @(
                 "Runtime lines: $(Format-Percent -Value $runtimeLinePercent)",
                 "Runtime functions: $(Format-Percent -Value $runtimeFunctionPercent)",
-                "Runtime regions: $(Format-Percent -Value $runtimeRegionPercent)"
+                "Runtime positive regions: $(Format-Percent -Value $runtimeRegionPercent)"
             )
         $notes.Add("Doctests are validated separately by ./scripts/quality.ps1 doc but are not included here because stable doctest coverage is still unavailable in this workflow.")
         $notes.Add("Headline coverage scoring is scoped to backend runtime source files under crates/*/src/*.rs.")
+        $notes.Add("Conditional runtime regions now receive fractional credit from nightly LLVM branch coverage. A partially exercised conditional can score below 100% instead of being treated as fully covered after a single hit.")
+        $notes.Add("Runtime positive region coverage excludes benches because only backend runtime source files under crates/*/src/*.rs are scored.")
         $notes.Add("This Rust coverage export does not measure GDScript. The Godot shell exists and has a headless protocol-check script, but browser and WebRTC coverage remain outside this report.")
 
         foreach ($sourceFile in ($SourceInventory.Keys | Sort-Object)) {
@@ -1805,12 +1933,12 @@ function Invoke-CoverageReport {
   <div class="metric"><span class="muted">Coverage score</span><strong>$(Format-Score -Score $scoreSummary.Score) $(Format-GradeBadge -Grade $scoreSummary.Grade)</strong><div class="detail">$(Escape-Html $scoreSummary.Formula)</div></div>
   <div class="metric"><span class="muted">Runtime line coverage</span><strong>$(Format-Percent -Value $runtimeLinePercent)</strong></div>
   <div class="metric"><span class="muted">Runtime function coverage</span><strong>$(Format-Percent -Value $runtimeFunctionPercent)</strong></div>
-  <div class="metric"><span class="muted">Runtime region coverage</span><strong>$(Format-Percent -Value $runtimeRegionPercent)</strong></div>
+  <div class="metric"><span class="muted">Runtime positive region coverage</span><strong>$(Format-Percent -Value $runtimeRegionPercent)</strong><div class="detail">Raw LLVM region coverage: $(Escape-Html (Format-Percent -Value $runtimeRawRegionPercent))</div></div>
   <div class="metric"><span class="muted">Scored runtime files</span><strong>$($runtimeFiles.Count)</strong></div>
   <div class="metric"><span class="muted">Execution mode</span><strong>$(Escape-Html $executionMode)</strong></div>
 </div>
 <div class="panel">
-  <p class="muted">The headline score is based on backend runtime source files. The table below still includes tooling and test files emitted by the coverage export.</p>
+  <p class="muted">The headline score is based on backend runtime source files. Conditional regions expand into branch outcomes so partially tested decisions receive partial credit instead of binary full credit. The table below still includes tooling and test files emitted by the coverage export.</p>
   <h2>Per-file summary</h2>
   <table>
     <thead>
@@ -1820,7 +1948,7 @@ function Invoke-CoverageReport {
         <th>Covered lines</th>
         <th>Functions</th>
         <th>Covered functions</th>
-        <th>Regions</th>
+        <th>Positive regions</th>
       </tr>
     </thead>
     <tbody>
@@ -1851,6 +1979,7 @@ $(($noteItems -join "`n"))
                 Lines = $runtimeLinePercent
                 Functions = $runtimeFunctionPercent
                 Regions = $runtimeRegionPercent
+                RawRegions = $runtimeRawRegionPercent
             }
         }
     }
