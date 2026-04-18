@@ -399,11 +399,10 @@ async fn admin_dashboard(
         let response = AdminDiagnosticsResponse {
             generated_unix_ms: std::time::SystemTime::now()
                 .duration_since(std::time::SystemTime::UNIX_EPOCH)
-                .map(|duration: std::time::Duration| {
+                .map_or(0, |duration: std::time::Duration| {
                     u64::try_from(duration.as_millis().min(u128::from(u64::MAX)))
                         .unwrap_or(u64::MAX)
-                })
-                .unwrap_or(0),
+                }),
             runtime: stats.clone(),
             app_diagnostics: app_diagnostics.clone(),
             recent_matches,

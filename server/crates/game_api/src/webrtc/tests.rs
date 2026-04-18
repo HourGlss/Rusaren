@@ -8,7 +8,7 @@ fn config_with_turn() -> WebRtcRuntimeConfig {
             String::from("turn:turn.example.com:3478?transport=tcp"),
         ],
         turn_shared_secret: Some(String::from("shared-secret")),
-        turn_ttl: Duration::from_secs(600),
+        turn_ttl: Duration::from_mins(10),
     }
 }
 
@@ -68,7 +68,7 @@ fn runtime_config_requires_secret_for_turn_urls() {
         stun_urls: Vec::new(),
         turn_urls: vec![String::from("turn:turn.example.com:3478?transport=udp")],
         turn_shared_secret: None,
-        turn_ttl: Duration::from_secs(300),
+        turn_ttl: Duration::from_mins(5),
     };
 
     assert_eq!(
@@ -88,7 +88,7 @@ fn runtime_config_rejects_blank_urls_and_zero_ttl() {
         ],
         turn_urls: Vec::new(),
         turn_shared_secret: None,
-        turn_ttl: Duration::from_secs(300),
+        turn_ttl: Duration::from_mins(5),
     };
     assert_eq!(
         blank_stun.validate(),
@@ -99,7 +99,7 @@ fn runtime_config_rejects_blank_urls_and_zero_ttl() {
         stun_urls: Vec::new(),
         turn_urls: vec![String::from("turn:turn.example.com:3478"), String::new()],
         turn_shared_secret: Some(String::from("shared-secret")),
-        turn_ttl: Duration::from_secs(300),
+        turn_ttl: Duration::from_mins(5),
     };
     assert_eq!(
         blank_turn.validate(),
@@ -169,7 +169,7 @@ fn runtime_config_reports_clock_and_url_validation_failures_from_ice_servers() {
         stun_urls: vec![String::from(" ")],
         turn_urls: Vec::new(),
         turn_shared_secret: None,
-        turn_ttl: Duration::from_secs(60),
+        turn_ttl: Duration::from_mins(1),
     };
     assert_eq!(
         invalid_url.ice_servers_for_connection(connection_id, UNIX_EPOCH),

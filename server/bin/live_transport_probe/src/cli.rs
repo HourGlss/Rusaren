@@ -91,7 +91,7 @@ impl CliArgs {
             connect_timeout: Duration::from_secs(20),
             stage_timeout: Duration::from_secs(30),
             round_timeout: Duration::from_secs(90),
-            match_timeout: Duration::from_secs(600),
+            match_timeout: Duration::from_mins(10),
             input_cadence: Duration::from_millis(100),
             players_per_match: 4,
             preferred_tree_order: None,
@@ -197,7 +197,7 @@ mod tests {
         assert_eq!(config.max_games, Some(2));
         assert_eq!(config.max_rounds_per_match, Some(4));
         assert_eq!(config.round_timeout, Duration::from_secs(90));
-        assert_eq!(config.match_timeout, Duration::from_secs(600));
+        assert_eq!(config.match_timeout, Duration::from_mins(10));
         assert!(config.content_root.is_none());
     }
 }

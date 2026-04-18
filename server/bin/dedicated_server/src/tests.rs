@@ -58,7 +58,7 @@ fn parse_csv_urls_discards_blank_entries() {
 fn parse_turn_ttl_accepts_positive_values_and_rejects_zero() {
     assert_eq!(
         parse_turn_ttl(Some(String::from("600"))).expect("ttl should parse"),
-        Duration::from_secs(600)
+        Duration::from_mins(10)
     );
     assert_eq!(
         parse_turn_ttl(Some(String::from("0"))).expect_err("zero should be rejected"),

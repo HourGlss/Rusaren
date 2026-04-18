@@ -56,7 +56,7 @@ const SESSION_BOOTSTRAP_TOKEN_BYTES: usize = 24;
 const SESSION_BOOTSTRAP_TOKEN_TTL: Duration = Duration::from_secs(30);
 const MAX_SESSION_BOOTSTRAP_TOKEN_BYTES: usize = 96;
 const MAX_SESSION_BOOTSTRAP_TOKENS: usize = 4096;
-const SESSION_BOOTSTRAP_RATE_LIMIT_WINDOW: Duration = Duration::from_secs(60);
+const SESSION_BOOTSTRAP_RATE_LIMIT_WINDOW: Duration = Duration::from_mins(1);
 const SESSION_BOOTSTRAP_RATE_LIMIT_MAX_REQUESTS: usize = 20;
 
 #[derive(Clone)]
@@ -308,9 +308,9 @@ pub struct DevServerOptions {
 
 impl Default for DevServerOptions {
     fn default() -> Self {
-        let simulation_step_ms = GameContent::bundled()
-            .map(|content| content.configuration().simulation.combat_frame_ms)
-            .unwrap_or(100);
+        let simulation_step_ms = GameContent::bundled().map_or(100, |content| {
+            content.configuration().simulation.combat_frame_ms
+        });
         Self {
             tick_interval: Duration::from_millis(u64::from(simulation_step_ms)),
             simulation_step_ms,
