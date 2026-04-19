@@ -67,8 +67,14 @@ function Invoke-FuzzBuild {
         return
     }
 
+    $hostTripleLine = rustup run $nightlyToolchain rustc -vV | Select-String '^host: ' | Select-Object -First 1
+    if ($null -eq $hostTripleLine) {
+        throw "Unable to determine the Rust host triple for cargo-fuzz."
+    }
+    $hostTriple = $hostTripleLine.Line.Substring(6).Trim()
+
     foreach ($target in $Targets) {
-        rustup run $nightlyToolchain cargo fuzz build $target
+        rustup run $nightlyToolchain cargo fuzz build --target $hostTriple $target
     }
 }
 
@@ -283,6 +289,29 @@ function Invoke-WslBashCommand {
     & (Get-Command wsl.exe -ErrorAction SilentlyContinue).Source -d $distribution -- bash -lc $normalizedScript
 }
 
+function Get-WslRustHostTriple {
+    param([string]$Toolchain)
+
+    $toolchainQuoted = Convert-ToBashDoubleQuotedLiteral -Value $Toolchain
+    $bashCommand = @"
+set -euo pipefail
+if [ -f "`$HOME/.cargo/env" ]; then . "`$HOME/.cargo/env"; fi
+rustup run $toolchainQuoted rustc -vV | sed -n 's/^host: //p'
+"@
+
+    $hostTriple = @(
+        Invoke-WslBashCommand -Script $bashCommand |
+            ForEach-Object { $_.ToString().Trim() } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    ) | Select-Object -First 1
+
+    if ([string]::IsNullOrWhiteSpace($hostTriple)) {
+        throw "Unable to determine the Rust host triple from WSL."
+    }
+
+    return $hostTriple
+}
+
 function Invoke-NativeBashCommand {
     param([string]$Script)
 
@@ -326,9 +355,20 @@ function Invoke-LiveFuzzNative {
 
         $bashCommand = @"
 set -euo pipefail
-if [ -f "\$HOME/.cargo/env" ]; then . "\$HOME/.cargo/env"; fi
+if [ -f "`$HOME/.cargo/env" ]; then . "`$HOME/.cargo/env"; fi
 cd $serverRootQuoted
-rustup run $toolchainQuoted cargo fuzz run $targetQuoted $corpusQuoted -- $artifactPrefixQuoted $maxTotalQuoted
+target_triple=`$(rustup run $toolchainQuoted rustc -vV | sed -n 's/^host: //p')
+if [ -z "`$target_triple" ]; then
+  echo "failed to determine the Rust host triple for cargo-fuzz"
+  exit 1
+fi
+rustup run $toolchainQuoted cargo fuzz build --target "`$target_triple" $targetQuoted
+binary_path="fuzz/target/`$target_triple/release/$target"
+if [ ! -x "`$binary_path" ]; then
+  echo "failed to locate built fuzz binary for $target"
+  exit 1
+fi
+"`$binary_path" $artifactPrefixQuoted $maxTotalQuoted $corpusQuoted
 "@
         Invoke-NativeBashCommand -Script $bashCommand
     }
@@ -349,6 +389,7 @@ function Invoke-LiveFuzzViaWsl {
     New-Item -ItemType Directory -Force -Path $generatedCorpusRoot | Out-Null
 
     $serverRootWsl = Convert-WindowsPathToWsl -Path $serverRoot
+    $wslHostTripleQuoted = Convert-ToBashDoubleQuotedLiteral -Value (Get-WslRustHostTriple -Toolchain $nightlyToolchain)
 
     foreach ($target in $Targets) {
         Copy-FuzzSeedCorpus -Target $target -DestinationRoot $generatedCorpusRoot
@@ -365,9 +406,9 @@ function Invoke-LiveFuzzViaWsl {
 
         $bashCommand = @"
 set -euo pipefail
-if [ -f "\$HOME/.cargo/env" ]; then . "\$HOME/.cargo/env"; fi
+if [ -f "`$HOME/.cargo/env" ]; then . "`$HOME/.cargo/env"; fi
 cd $serverRootQuoted
-rustup run $toolchainQuoted cargo fuzz run $targetQuoted $corpusQuoted -- $artifactPrefixQuoted $maxTotalQuoted
+rustup run $toolchainQuoted cargo fuzz run --target $wslHostTripleQuoted $targetQuoted $corpusQuoted -- $artifactPrefixQuoted $maxTotalQuoted
 "@
         Invoke-WslBashCommand -Script $bashCommand
     }
@@ -423,9 +464,14 @@ function Invoke-FuzzMergeNative {
 
         $bashCommand = @"
 set -euo pipefail
-if [ -f "\$HOME/.cargo/env" ]; then . "\$HOME/.cargo/env"; fi
+if [ -f "`$HOME/.cargo/env" ]; then . "`$HOME/.cargo/env"; fi
 cd $serverRootQuoted
-rustup run $toolchainQuoted cargo fuzz run $targetQuoted -- "-merge=1" $seedQuoted $generatedQuoted
+target_triple=`$(rustup run $toolchainQuoted rustc -vV | sed -n 's/^host: //p')
+if [ -z "`$target_triple" ]; then
+  echo "failed to determine the Rust host triple for cargo-fuzz"
+  exit 1
+fi
+rustup run $toolchainQuoted cargo fuzz run --target "`$target_triple" $targetQuoted -- "-merge=1" $seedQuoted $generatedQuoted
 "@
         Invoke-NativeBashCommand -Script $bashCommand
     }
@@ -438,6 +484,7 @@ function Invoke-FuzzMergeViaWsl {
     $seedCorpusRoot = Join-Path (Join-Path $serverRoot "target") "fuzz-seed-corpus"
 
     $serverRootWsl = Convert-WindowsPathToWsl -Path $serverRoot
+    $wslHostTripleQuoted = Convert-ToBashDoubleQuotedLiteral -Value (Get-WslRustHostTriple -Toolchain $nightlyToolchain)
 
     foreach ($target in $Targets) {
         Ensure-FuzzSeedCorpus
@@ -466,9 +513,9 @@ function Invoke-FuzzMergeViaWsl {
 
         $bashCommand = @"
 set -euo pipefail
-if [ -f "\$HOME/.cargo/env" ]; then . "\$HOME/.cargo/env"; fi
+if [ -f "`$HOME/.cargo/env" ]; then . "`$HOME/.cargo/env"; fi
 cd $serverRootQuoted
-rustup run $toolchainQuoted cargo fuzz run $targetQuoted -- "-merge=1" $seedQuoted $generatedQuoted
+rustup run $toolchainQuoted cargo fuzz run --target $wslHostTripleQuoted $targetQuoted -- "-merge=1" $seedQuoted $generatedQuoted
 "@
         Invoke-WslBashCommand -Script $bashCommand
     }
