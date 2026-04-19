@@ -8,6 +8,10 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+Set-StrictMode -Version Latest
+if ($PSVersionTable.PSVersion.Major -ge 7) {
+    $PSNativeCommandUseErrorActionPreference = $true
+}
 
 $serverRoot = Split-Path -Parent $PSScriptRoot
 $toolRoot = Join-Path $serverRoot "tools"
