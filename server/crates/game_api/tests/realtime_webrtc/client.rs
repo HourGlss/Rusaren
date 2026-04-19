@@ -1,4 +1,8 @@
 use super::*;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+const WEBRTC_CONNECT_ATTEMPTS: usize = 3;
+const WEBRTC_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
 struct HelloMessage {
     ice_servers: Vec<WebRtcIceServerConfig>,
@@ -16,21 +20,51 @@ pub(super) struct WebRtcClient {
 
 impl WebRtcClient {
     pub(super) async fn connect(base_url: &str, player_name_raw: &str) -> Self {
+        let mut failures = Vec::new();
+        for attempt in 1..=WEBRTC_CONNECT_ATTEMPTS {
+            match Self::try_connect(base_url, player_name_raw).await {
+                Ok(client) => return client,
+                Err(error) => {
+                    failures.push(format!("attempt {attempt}: {error}"));
+                    if attempt < WEBRTC_CONNECT_ATTEMPTS {
+                        tokio::time::sleep(Duration::from_millis(250 * attempt as u64)).await;
+                    }
+                }
+            }
+        }
+
+        panic!(
+            "webrtc client should connect within {WEBRTC_CONNECT_ATTEMPTS} attempts: {}",
+            failures.join("; ")
+        );
+    }
+
+    async fn try_connect(base_url: &str, player_name_raw: &str) -> Result<Self, String> {
         let signal_url = bootstrap_signal_url(base_url).await;
         let (stream, _) = connect_async(&signal_url)
             .await
-            .expect("signaling websocket should connect");
+            .map_err(|error| format!("signaling websocket should connect: {error}"))?;
         let (mut signal_writer, mut signal_reader) = stream.split();
-        let hello = recv_hello(&mut signal_reader).await;
+        let hello = recv_hello(&mut signal_reader).await?;
 
-        let peer = Arc::new(create_client_peer(&hello.ice_servers).await);
+        let peer = Arc::new(create_client_peer(&hello.ice_servers).await?);
         let (signal_tx, mut signal_rx) = mpsc::unbounded_channel::<ClientSignalMessage>();
         let (event_tx, event_rx) = mpsc::unbounded_channel::<ServerControlEvent>();
         let (control_open_tx, control_open_rx) = oneshot::channel::<()>();
+        let (startup_error_tx, mut startup_error_rx) = mpsc::unbounded_channel::<String>();
+        let startup_complete = Arc::new(AtomicBool::new(false));
+        let startup_error_tx_for_writer = startup_error_tx.clone();
 
         tokio::spawn(async move {
             while let Some(message) = signal_rx.recv().await {
-                let text = serde_json::to_string(&message).expect("signal messages should encode");
+                let text = match serde_json::to_string(&message) {
+                    Ok(text) => text,
+                    Err(error) => {
+                        let _ = startup_error_tx_for_writer
+                            .send(format!("signal messages should encode: {error}"));
+                        break;
+                    }
+                };
                 if signal_writer
                     .send(ClientMessage::Text(text.into()))
                     .await
@@ -43,13 +77,13 @@ impl WebRtcClient {
 
         let control = create_client_channel(Arc::clone(&peer), "control", control_init())
             .await
-            .expect("control data channel should be created");
+            .map_err(|error| format!("control data channel should be created: {error}"))?;
         let input = create_client_channel(Arc::clone(&peer), "input", unreliable_init(1))
             .await
-            .expect("input data channel should be created");
+            .map_err(|error| format!("input data channel should be created: {error}"))?;
         let snapshot = create_client_channel(Arc::clone(&peer), "snapshot", unreliable_init(2))
             .await
-            .expect("snapshot data channel should be created");
+            .map_err(|error| format!("snapshot data channel should be created: {error}"))?;
 
         install_event_channel(&control, event_tx.clone(), Some(control_open_tx));
         install_event_channel(&snapshot, event_tx.clone(), None);
@@ -73,23 +107,46 @@ impl WebRtcClient {
         }));
 
         let peer_for_reader = Arc::clone(&peer);
+        let startup_complete_for_reader = Arc::clone(&startup_complete);
+        let startup_error_tx_for_reader = startup_error_tx.clone();
         tokio::spawn(async move {
             while let Some(message_result) = signal_reader.next().await {
                 let message = match message_result {
                     Ok(message) => message,
-                    Err(error) => panic!("signaling websocket should stay readable: {error}"),
+                    Err(error) => {
+                        if !startup_complete_for_reader.load(Ordering::Relaxed) {
+                            let _ = startup_error_tx_for_reader.send(format!(
+                                "signaling websocket should stay readable until transport startup completes: {error}"
+                            ));
+                        }
+                        break;
+                    }
                 };
-                match message {
+                let result = match message {
                     ClientMessage::Text(text) => {
                         let signal_message = serde_json::from_str::<ServerSignalMessage>(&text)
-                            .expect("server signal JSON should decode");
-                        apply_server_signal(&peer_for_reader, &event_tx, signal_message).await;
+                            .map_err(|error| format!("server signal JSON should decode: {error}"));
+                        match signal_message {
+                            Ok(signal_message) => {
+                                apply_server_signal(&peer_for_reader, &event_tx, signal_message)
+                                    .await
+                            }
+                            Err(error) => Err(error),
+                        }
                     }
-                    ClientMessage::Binary(_) => {
-                        panic!("server signaling should not send binary websocket frames");
-                    }
+                    ClientMessage::Binary(_) => Err(String::from(
+                        "server signaling should not send binary websocket frames",
+                    )),
                     ClientMessage::Close(_) => break,
-                    ClientMessage::Ping(_) | ClientMessage::Pong(_) | ClientMessage::Frame(_) => {}
+                    ClientMessage::Ping(_) | ClientMessage::Pong(_) | ClientMessage::Frame(_) => {
+                        Ok(())
+                    }
+                };
+                if let Err(error) = result {
+                    if !startup_complete_for_reader.load(Ordering::Relaxed) {
+                        let _ = startup_error_tx_for_reader.send(error);
+                    }
+                    break;
                 }
             }
         });
@@ -97,21 +154,36 @@ impl WebRtcClient {
         let offer = peer
             .create_offer(None)
             .await
-            .expect("webrtc offer should be created");
+            .map_err(|error| format!("webrtc offer should be created: {error}"))?;
         peer.set_local_description(offer.clone())
             .await
-            .expect("local offer should be applied");
+            .map_err(|error| format!("local offer should be applied: {error}"))?;
         let local_offer = peer.local_description().await.unwrap_or(offer);
         signal_tx
             .send(ClientSignalMessage::SessionDescription {
                 description: SignalingSessionDescription::from_rtc_description(&local_offer),
             })
-            .expect("local offer should be sent");
+            .map_err(|_| String::from("local offer should be sent"))?;
 
-        tokio::time::timeout(Duration::from_secs(15), control_open_rx)
-            .await
-            .expect("control data channel should open in time")
-            .expect("control open notifier should succeed");
+        tokio::select! {
+            startup_error = startup_error_rx.recv() => {
+                let message = startup_error.unwrap_or_else(|| {
+                    String::from("webrtc startup ended before the control data channel opened")
+                });
+                return Err(message);
+            }
+            open_result = tokio::time::timeout(WEBRTC_CONNECT_TIMEOUT, control_open_rx) => {
+                open_result
+                    .map_err(|_| {
+                        format!(
+                            "control data channel should open within {} seconds",
+                            WEBRTC_CONNECT_TIMEOUT.as_secs()
+                        )
+                    })?
+                    .map_err(|_| String::from("control open notifier should succeed"))?;
+            }
+        }
+        startup_complete.store(true, Ordering::Relaxed);
 
         let mut client = Self {
             signal_tx,
@@ -123,22 +195,29 @@ impl WebRtcClient {
             next_input_seq: 1,
         };
         client
-            .send_command(ClientControlCommand::Connect {
+            .try_send_command(ClientControlCommand::Connect {
                 player_name: player_name(player_name_raw),
             })
-            .await;
-        client
+            .await?;
+        Ok(client)
     }
 
     pub(super) async fn send_command(&mut self, command: ClientControlCommand) {
+        self.try_send_command(command)
+            .await
+            .expect("command packet should send");
+    }
+
+    async fn try_send_command(&mut self, command: ClientControlCommand) -> Result<(), String> {
         let packet = command
             .encode_packet(self.next_control_seq, 0)
-            .expect("command packet should encode");
+            .map_err(|error| format!("command packet should encode: {error}"))?;
         self.control
             .send(&Bytes::from(packet))
             .await
-            .expect("command packet should send");
+            .map_err(|error| format!("command packet should send: {error}"))?;
         self.next_control_seq += 1;
+        Ok(())
     }
 
     pub(super) async fn recv_event(&mut self) -> ServerControlEvent {
@@ -197,12 +276,14 @@ pub(super) fn slot_one_cast_input(client_input_tick: u32) -> ValidatedInputFrame
 
 async fn recv_hello(
     signal_reader: &mut futures_util::stream::SplitStream<SignalStream>,
-) -> HelloMessage {
+) -> Result<HelloMessage, String> {
     while let Some(message_result) = signal_reader.next().await {
-        match message_result.expect("signaling websocket should stay readable") {
+        match message_result
+            .map_err(|error| format!("signaling websocket should stay readable: {error}"))?
+        {
             ClientMessage::Text(text) => {
                 let message = serde_json::from_str::<ServerSignalMessage>(&text)
-                    .expect("server signal JSON should decode");
+                    .map_err(|error| format!("server signal JSON should decode: {error}"))?;
                 if let ServerSignalMessage::Hello {
                     protocol_version,
                     ice_servers,
@@ -213,23 +294,29 @@ async fn recv_hello(
                     assert_eq!(channels.control, 0);
                     assert_eq!(channels.input, 1);
                     assert_eq!(channels.snapshot, 2);
-                    return HelloMessage { ice_servers };
+                    return Ok(HelloMessage { ice_servers });
                 }
             }
-            ClientMessage::Binary(_) => panic!("hello must be delivered as websocket text"),
-            ClientMessage::Close(_) => panic!("signaling websocket closed before hello"),
+            ClientMessage::Binary(_) => {
+                return Err(String::from("hello must be delivered as websocket text"));
+            }
+            ClientMessage::Close(_) => {
+                return Err(String::from("signaling websocket closed before hello"));
+            }
             ClientMessage::Ping(_) | ClientMessage::Pong(_) | ClientMessage::Frame(_) => {}
         }
     }
 
-    panic!("signaling websocket ended before hello")
+    Err(String::from("signaling websocket ended before hello"))
 }
 
-async fn create_client_peer(ice_servers: &[WebRtcIceServerConfig]) -> RTCPeerConnection {
+async fn create_client_peer(
+    ice_servers: &[WebRtcIceServerConfig],
+) -> Result<RTCPeerConnection, String> {
     let mut media_engine = MediaEngine::default();
     media_engine
         .register_default_codecs()
-        .expect("default codecs should register");
+        .map_err(|error| format!("default codecs should register: {error}"))?;
     let api = APIBuilder::new().with_media_engine(media_engine).build();
     api.new_peer_connection(RTCConfiguration {
         ice_servers: ice_servers
@@ -239,7 +326,7 @@ async fn create_client_peer(ice_servers: &[WebRtcIceServerConfig]) -> RTCPeerCon
         ..Default::default()
     })
     .await
-    .expect("client peer connection should be created")
+    .map_err(|error| format!("client peer connection should be created: {error}"))
 }
 
 async fn create_client_channel(
@@ -309,30 +396,33 @@ async fn apply_server_signal(
     peer: &Arc<RTCPeerConnection>,
     event_tx: &mpsc::UnboundedSender<ServerControlEvent>,
     signal_message: ServerSignalMessage,
-) {
+) -> Result<(), String> {
     match signal_message {
         ServerSignalMessage::Hello { .. } => {
-            panic!("received duplicate hello after client initialization");
+            return Err(String::from(
+                "received duplicate hello after client initialization",
+            ));
         }
         ServerSignalMessage::SessionDescription { description } => {
             assert_eq!(description.sdp_type, "answer");
             let remote_description = description
                 .to_rtc_description()
-                .expect("server answer should parse");
+                .map_err(|error| format!("server answer should parse: {error}"))?;
             peer.set_remote_description(remote_description)
                 .await
-                .expect("server answer should apply");
+                .map_err(|error| format!("server answer should apply: {error}"))?;
         }
         ServerSignalMessage::IceCandidate { candidate } => {
             let candidate_init = candidate
                 .to_rtc_candidate_init()
-                .expect("server ICE candidate should parse");
+                .map_err(|error| format!("server ICE candidate should parse: {error}"))?;
             peer.add_ice_candidate(candidate_init)
                 .await
-                .expect("server ICE candidate should apply");
+                .map_err(|error| format!("server ICE candidate should apply: {error}"))?;
         }
         ServerSignalMessage::Error { message } => {
             let _ = event_tx.send(ServerControlEvent::Error { message });
         }
     }
+    Ok(())
 }
