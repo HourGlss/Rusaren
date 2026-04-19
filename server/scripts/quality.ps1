@@ -283,6 +283,18 @@ function Invoke-WslBashCommand {
     & (Get-Command wsl.exe -ErrorAction SilentlyContinue).Source -d $distribution -- bash -lc $normalizedScript
 }
 
+function Invoke-NativeBashCommand {
+    param([string]$Script)
+
+    $bashCommand = Get-Command bash -ErrorAction SilentlyContinue
+    if ($null -eq $bashCommand) {
+        throw "bash is required for native Linux/macOS fuzz commands."
+    }
+
+    $normalizedScript = $Script.Replace("`r`n", "`n").Replace("`r", "`n")
+    & $bashCommand.Source -lc $normalizedScript
+}
+
 function Invoke-LiveFuzzNative {
     param([string[]]$Targets)
 
@@ -303,7 +315,22 @@ function Invoke-LiveFuzzNative {
         $artifactDir = Join-Path $artifactRoot $target
         New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
 
-        rustup run $nightlyToolchain cargo fuzz run $target $corpusDir -- "-artifact_prefix=$artifactDir/" "-max_total_time=$maxTotalTime"
+        Write-Host "fuzz target: $target"
+
+        $serverRootQuoted = Convert-ToBashDoubleQuotedLiteral -Value $serverRoot
+        $toolchainQuoted = Convert-ToBashDoubleQuotedLiteral -Value $nightlyToolchain
+        $targetQuoted = Convert-ToBashDoubleQuotedLiteral -Value $target
+        $corpusQuoted = Convert-ToBashDoubleQuotedLiteral -Value $corpusDir
+        $artifactPrefixQuoted = Convert-ToBashDoubleQuotedLiteral -Value ("-artifact_prefix={0}/" -f $artifactDir)
+        $maxTotalQuoted = Convert-ToBashDoubleQuotedLiteral -Value ("-max_total_time={0}" -f $maxTotalTime)
+
+        $bashCommand = @"
+set -euo pipefail
+if [ -f "\$HOME/.cargo/env" ]; then . "\$HOME/.cargo/env"; fi
+cd $serverRootQuoted
+rustup run $toolchainQuoted cargo fuzz run $targetQuoted $corpusQuoted -- $artifactPrefixQuoted $maxTotalQuoted
+"@
+        Invoke-NativeBashCommand -Script $bashCommand
     }
 }
 
@@ -386,7 +413,21 @@ function Invoke-FuzzMergeNative {
             New-Item -ItemType Directory -Force -Path $seedDir | Out-Null
         }
 
-        rustup run $nightlyToolchain cargo fuzz run $target -- "-merge=1" $seedDir $generatedDir
+        Write-Host "merge target: $target"
+
+        $serverRootQuoted = Convert-ToBashDoubleQuotedLiteral -Value $serverRoot
+        $toolchainQuoted = Convert-ToBashDoubleQuotedLiteral -Value $nightlyToolchain
+        $targetQuoted = Convert-ToBashDoubleQuotedLiteral -Value $target
+        $seedQuoted = Convert-ToBashDoubleQuotedLiteral -Value $seedDir
+        $generatedQuoted = Convert-ToBashDoubleQuotedLiteral -Value $generatedDir
+
+        $bashCommand = @"
+set -euo pipefail
+if [ -f "\$HOME/.cargo/env" ]; then . "\$HOME/.cargo/env"; fi
+cd $serverRootQuoted
+rustup run $toolchainQuoted cargo fuzz run $targetQuoted -- "-merge=1" $seedQuoted $generatedQuoted
+"@
+        Invoke-NativeBashCommand -Script $bashCommand
     }
 }
 
